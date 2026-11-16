@@ -635,6 +635,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
     let vars = session_vars(scenario)?;
     let bot_trader = meter.trader();
+    let making_session = markets[primary].scenario.making.is_some();
     let mut account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
@@ -651,7 +652,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             last_scan: base_slot,
             ..PerpFills::default()
         }),
-        making_fills: markets[primary].scenario.making.is_some().then(|| MakingFills {
+        making_fills: making_session.then(|| MakingFills {
             bot: bot_trader,
             parties,
             last_scan: base_slot,
@@ -1241,11 +1242,11 @@ impl PerpAccount {
         }
         if let Some(read) = self.making_fills.as_mut() {
             let bot = read.bot;
-            let primary = self.markets[self.primary].market.id();
+            let primary = self.own().scenario.instrument().to_string();
             let forced: HashSet<(u128, bool)> = records
                 .fills
                 .iter()
-                .filter(|fill| &fill.instrument == primary)
+                .filter(|fill| fill.instrument.to_string() == primary)
                 .flat_map(|fill| {
                     [
                         (fill.taker == bot).then_some((fill.sequence, true)),
@@ -1310,8 +1311,12 @@ impl PerpAccount {
         let records = patiently("the market's fills", || self.meter.market_records(after)).await?;
         // The record is the primary market's: a market's fill sequence is
         // its own, so another market's fills would collide in `seen`.
-        let primary = self.markets[self.primary].market.id();
-        for fill in records.fills.iter().filter(|f| &f.instrument == primary) {
+        let primary = self.own().scenario.instrument().to_string();
+        for fill in records
+            .fills
+            .iter()
+            .filter(|f| f.instrument.to_string() == primary)
+        {
             for record in MakingFill::of(fill, &read.bot, &read.parties, self.base_slot) {
                 // A trade between the bot's own accounts is two records.
                 let key = (fill.sequence, record.role == "taker");
