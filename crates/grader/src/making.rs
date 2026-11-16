@@ -23,7 +23,7 @@
 //! quoting wider than a taker will pay doesn't fill it at all.
 
 use mtx_core::Side;
-use mtx_kit::protocols::phoenix::eternal::PerpFill;
+use mtx_kit::protocols::fills::MarketFill;
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
 
@@ -104,7 +104,7 @@ impl Parties {
 impl MakingFill {
     /// `fill` as the bot's trader accounts `bots` (its cross-margin account
     /// and any subaccount) traded it, if they did.
-    pub fn of(fill: &PerpFill, bots: &[Pubkey], parties: &Parties, base_slot: u64) -> Vec<Self> {
+    pub fn of(fill: &MarketFill, bots: &[Pubkey], parties: &Parties, base_slot: u64) -> Vec<Self> {
         let (taker_is_bot, maker_is_bot) = (bots.contains(&fill.taker), bots.contains(&fill.maker));
         let price = crate::session::grader_f64(fill.price);
         let base = crate::session::grader_f64(fill.quantity);
@@ -724,6 +724,7 @@ impl MakingFamily {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
@@ -1161,11 +1162,11 @@ mod tests {
         Pubkey::new_from_array([n; 32])
     }
 
-    fn fill(taker: Pubkey, maker: Pubkey, side: Side) -> PerpFill {
-        PerpFill {
+    fn fill(taker: Pubkey, maker: Pubkey, side: Side) -> MarketFill {
+        MarketFill {
             slot: 1_050,
             instrument: mtx_kit::InstrumentId("phoenix:perp:SPCX".into()),
-            sequence: (7, 3),
+            sequence: (7 << 32) + 3,
             taker,
             maker,
             taker_side: side,
@@ -1174,6 +1175,7 @@ mod tests {
             unix_timestamp: 0,
             taker_fee: "0.108".parse().unwrap(),
             maker_fee: "-0.01".parse().unwrap(),
+            maker_order: None,
         }
     }
 

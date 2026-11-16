@@ -13,6 +13,7 @@
 //! and the quantity in base lots.
 
 use base64::Engine;
+use rust_decimal::Decimal;
 use solana_pubkey::Pubkey;
 
 use super::OpenBookV2Market;
@@ -88,6 +89,9 @@ pub fn heap_fills(
                 price: market.price_lots_to_price(i64_at(data, e + 104)),
                 quantity: market.base_lots_to_quantity(i64_at(data, e + 120)),
                 unix_timestamp: u64_at(data, e + 8) as i64,
+                taker_fee: Decimal::ZERO,
+                maker_fee: Decimal::ZERO,
+                maker_order: None,
             });
         }
         node = usize::from(u16_at(data, o));
@@ -124,6 +128,9 @@ pub fn fill_log(data: &[u8], market: &OpenBookV2Market, slot: u64) -> Option<Mar
         price: market.price_lots_to_price(price),
         quantity: market.base_lots_to_quantity(quantity),
         unix_timestamp: timestamp as i64,
+        taker_fee: Decimal::ZERO,
+        maker_fee: Decimal::ZERO,
+        maker_order: None,
     })
 }
 

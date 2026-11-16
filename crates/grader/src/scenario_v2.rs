@@ -43,12 +43,16 @@ use crate::{
     orders::{CloseOut, ExecutionOrder, NetScoring, Participation},
     phoenix::SLOTS_BETWEEN_STEPS,
     scenario::{
-        Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, StopOut, StopRule, VENUE,
-        Waypoint, move_slots,
+        BoundOn, Funding, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, RawSends, Scenario, StopOut, StopRule,
+        VENUE, Waypoint, move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
     txlayer::TxLayer,
 };
+
+/// How far, in percent of the start mark, a net-scored session's fair path may
+/// end from its level: the drift is taken on one and the value on the other.
+const NET_CLOSE_TOLERANCE_PCT: f64 = 0.01;
 
 /// The schema version this module reads and writes.
 pub const SCHEMA: u32 = 2;
@@ -272,6 +276,10 @@ pub struct Scoring {
     /// Score the PnL net of the starting holding's price drift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<NetScoring>,
+    /// The path the hindsight bound is valued on (see
+    /// [`crate::scenario::BoundOn`]).
+    #[serde(default, skip_serializing_if = "BoundOn::is_default")]
+    pub bound_on: BoundOn,
     /// Perp markets, by symbol, whose residual position a broker takes at
     /// the close, at a haircut the PnL pays. An order's market has its own
     /// broker, the order's.
@@ -744,9 +752,44 @@ impl ScenarioV2 {
         if self.assets.wallet.is_some()
             || self.scoring.bound_usd.is_some()
             || self.scoring.participation.is_some()
-            || self.scoring.net.is_some()
         {
-            return Err("turn_data, participation and net are for spot scenarios".into());
+            return Err("turn_data and participation are for spot scenarios".into());
+        }
+        if let Some(net) = &self.scoring.net {
+            if net.venue_position.is_some() {
+                return Err("net: venue_position is for spot scenarios".into());
+            }
+            if self
+                .venues
+                .perp
+                .as_ref()
+                .is_some_and(|p| p.funding.is_some())
+                && self.start_position() != 0.0
+            {
+                return Err(
+                    "net: a funded start position needs a measured hold baseline, \
+                     which net scoring doesn't have"
+                        .into(),
+                );
+            }
+        }
+        if let Some(fair) = &self.market_model.fair_path
+            && self.scoring.net.is_some()
+        {
+            let end = self.duration_slots;
+            let gap = (crate::making::level_at(fair, end)
+                - crate::making::level_at(&self.market_model.path, end))
+            .abs();
+            if gap > NET_CLOSE_TOLERANCE_PCT {
+                return Err(format!(
+                    "net: the fair path ends {gap:.4}% from the level at the close; \
+                     a net-scored session needs them equal (within {NET_CLOSE_TOLERANCE_PCT}%), \
+                     or a bot that holds would not score 0"
+                ));
+            }
+        }
+        if self.scoring.bound_on == BoundOn::FairPath && self.market_model.fair_path.is_none() {
+            return Err("scoring: bound_on fair_path needs market_model.fair_path".into());
         }
         Ok(())
     }
@@ -824,6 +867,29 @@ impl ScenarioV2 {
     /// only those, so a wider universe would go unenforced. It has no term
     /// (the session sets it); a perp mandate has a drawdown limit.
     fn mandate_covers_the_market(&self) -> Result<(), String> {
+        // A session prices only its own market at each measurement, so no
+        // session can enforce a rule across instruments until sessions
+        // trade several markets.
+        if self.mandate.universe.iter().any(|a| a.hedge.is_some()) {
+            return Err(
+                "mandate: a hedge needs its two instruments priced together, and no session \
+                 prices more than its own market yet"
+                    .into(),
+            );
+        }
+        if self
+            .mandate
+            .limits
+            .exposures
+            .iter()
+            .any(|e| e.weights.len() > 1)
+        {
+            return Err(
+                "mandate: an exposure across several instruments needs them priced together, \
+                 and no session prices more than its own market yet"
+                    .into(),
+            );
+        }
         if let Some(lending) = &self.venues.lending {
             let mut wanted = lending.instruments();
             let mut universe: Vec<InstrumentRef> = self
@@ -1181,6 +1247,7 @@ impl ScenarioV2 {
             order,
             participation: scoring.participation,
             net: scoring.net,
+            bound_on: scoring.bound_on,
             start_positions: assets.start_positions,
             close_out: scoring.close_out,
             reference_pnl_usd: scoring.reference_pnl_usd,
@@ -1251,8 +1318,8 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 )
             }
             None => {
-                if v1.turn_data.is_some() || v1.participation.is_some() || v1.net.is_some() {
-                    return Err("turn_data, participation and net are for spot scenarios".into());
+                if v1.turn_data.is_some() || v1.participation.is_some() {
+                    return Err("turn_data and participation are for spot scenarios".into());
                 }
                 (
                     Venues {
@@ -1329,6 +1396,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 bound_usd: v1.spot.as_ref().and_then(|s| s.bound_usd),
                 participation: v1.participation.clone(),
                 net: v1.net.clone(),
+                bound_on: v1.bound_on,
                 close_out: v1.close_out.clone(),
                 stop_out: v1.stop_out.clone(),
             },
@@ -1400,6 +1468,8 @@ pub enum ParseError {
 
 #[cfg(test)]
 mod tests {
+    use mtx_core::mandate::{Exposure, Hedge};
+
     use super::*;
     use crate::{making::MakingFamily, scenario::ShockFamily, weekend::WeekendFamily};
 
@@ -1639,13 +1709,11 @@ mod tests {
         s.mandate
             .limits
             .exposures
-            .push(mtx_core::mandate::Exposure {
-                name: "net".into(),
-                weights: [(s.perp_instrument(), 1.0)].into(),
-                max_abs_usd: None,
-                max_abs_fraction_of_start: Some(0.5),
-                from_slots_after_start: 0,
-            });
+            .push(Exposure::max_abs_fraction_of_start(
+                "net",
+                [(s.perp_instrument(), 1.0)].into(),
+                0.5,
+            ));
         assert!(s.validate().unwrap_err().contains("starts flat"));
         s.mandate.limits.exposures[0].max_abs_fraction_of_start = None;
         s.mandate.limits.exposures[0].max_abs_usd = Some(1_000.0);
@@ -1654,6 +1722,33 @@ mod tests {
         s.mandate.version = "v0.1".into();
         s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
         assert!(s.validate().unwrap_err().contains("taking"));
+        // Review probe: hedges and exposures across instruments validated,
+        // and no session could enforce them. They're refused, and say why.
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        let both: Vec<_> = s
+            .mandate
+            .universe
+            .iter()
+            .map(|a| (a.instrument.clone(), 1.0))
+            .collect();
+        assert_eq!(both.len(), 2);
+        s.mandate
+            .limits
+            .exposures
+            .push(Exposure::max_abs_usd("net", both, 1_000.0));
+        assert_eq!(s.mandate.validate(), Ok(()));
+        assert!(
+            s.validate()
+                .unwrap_err()
+                .contains("an exposure across several instruments")
+        );
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        let against = s.mandate.universe[0].instrument.clone();
+        s.mandate.universe[1].hedge = Some(Hedge::new(against, 1.0));
+        assert_eq!(s.mandate.validate(), Ok(()));
+        assert!(s.validate().unwrap_err().contains("a hedge needs"));
         // A market-making session records taker fills: it may.
         let mut s = making();
         s.mandate.version = "v0.1".into();
@@ -1706,6 +1801,77 @@ mod tests {
         let mut s = shock();
         s.schema = 1;
         assert!(s.validate().unwrap_err().contains("schema"));
+    }
+
+    #[test]
+    fn a_perp_can_be_net_scored_against_holding_its_start_position() {
+        let mut s = shock();
+        let half = s.mandate.universe[0].max_position / 2.0;
+        s.assets.start_positions.insert("SPCX".into(), half);
+        s.scoring.net = Some(NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert!(v1.net.is_some());
+        let round = ScenarioV2::try_from(&v1).unwrap();
+        assert_eq!(round.scoring.net, s.scoring.net);
+        assert_eq!(v1.valuation(), "oracle");
+
+        let mut with_venue = s.clone();
+        with_venue.scoring.net.as_mut().unwrap().venue_position =
+            Some(crate::orders::VenuePosition {
+                limit: 1.0,
+                price_bps: 1.0,
+            });
+        assert!(
+            with_venue
+                .validate()
+                .unwrap_err()
+                .contains("venue_position")
+        );
+
+        let mut funded = s.clone();
+        funded.venues.perp = Some(PerpVenue {
+            funding: Some(Funding {
+                interval_seconds: 3_600,
+                period_seconds: 86_400,
+                max_rate: 1,
+                mark: None,
+            }),
+            liquidator: None,
+        });
+        assert!(
+            funded
+                .validate()
+                .unwrap_err()
+                .contains("funded start position")
+        );
+        funded.assets.start_positions.clear();
+        funded.validate().unwrap();
+
+        let mut bound = s.clone();
+        bound.scoring.bound_on = BoundOn::FairPath;
+        assert!(bound.validate().unwrap_err().contains("fair_path"));
+        bound.market_model.fair_path = Some(vec![Waypoint::at(10, -4.0), Waypoint::at(20, 0.0)]);
+        // The level ends at 0 on this scenario's path; the fair path may not
+        // end elsewhere.
+        bound.market_model.path = vec![Waypoint::at(10, -6.0), Waypoint::at(20, 0.0)];
+        bound.validate().unwrap();
+        let mut apart = bound.clone();
+        apart.market_model.fair_path = Some(vec![Waypoint::at(10, -4.0)]);
+        assert!(apart.validate().unwrap_err().contains("fair path ends"));
+        apart.scoring.net = None;
+        apart.validate().unwrap();
+        let on_fair = bound.clone().into_scenario().unwrap();
+        let mut on_path = on_fair.clone();
+        on_path.bound_on = BoundOn::Path;
+        let fair_tv = on_fair.hindsight_bound_usd(100.0);
+        assert!((fair_tv - on_fair.max_position() * 100.0 * 0.08).abs() < 1e-9);
+        assert_ne!(fair_tv, on_path.hindsight_bound_usd(100.0));
+        let json = serde_json::to_string(&on_path).unwrap();
+        assert!(!json.contains("bound_on"));
     }
 
     #[test]

@@ -75,7 +75,10 @@ def request_for(found: dict, key: str) -> urllib.request.Request:
     else:
         url = f"{upstream}/chat/completions"
         tokens = "max_completion_tokens" if found["api"] == "openai" else "max_tokens"
-        body = {"model": found["model"], "messages": prompt, tokens: 1}
+        # A reasoning model can't answer in one token: OpenAI's then refuse
+        # the request ("max_tokens or model output limit was reached"), and
+        # behind a router ask for at least 16.
+        body = {"model": found["model"], "messages": prompt, tokens: 64}
         headers = {"Authorization": f"Bearer {key}"}
     return urllib.request.Request(
         url, data=json.dumps(body).encode(), headers={**headers, "Content-Type": "application/json"}, method="POST"
@@ -97,6 +100,10 @@ def preflight(names: list[str]) -> int:
             print(f"ok   {name}: {found['model']} at {found['upstream']}")
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace").replace(key, "<key>")[:300]
+            # The model answered and ran out of room: it's reachable.
+            if e.code == 400 and "output limit was reached" in detail:
+                print(f"ok   {name}: {found['model']} at {found['upstream']} (answered past the preflight's budget)")
+                continue
             print(f"FAIL {name}: {found['model']}: HTTP {e.code}: {detail}")
             failed += 1
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:

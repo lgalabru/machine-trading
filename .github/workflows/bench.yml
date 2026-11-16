@@ -79,7 +79,7 @@ jobs:
           if [ -n "$BATCH" ]; then
             [[ "$BATCH" =~ ^[0-9]{8}-[0-9]{6}-x[0-9]+$ ]] || { echo "::error::bad batch"; exit 1; }
           fi
-          ops/bench/ssh.sh status ${BATCH:+"$BATCH"} | tee "$RUNNER_TEMP/status.txt"
+          bash ops/bench/ssh.sh status ${BATCH:+"$BATCH"} | tee "$RUNNER_TEMP/status.txt"
           { echo '```'; cat "$RUNNER_TEMP/status.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
   start:
@@ -111,7 +111,7 @@ jobs:
           for m in "${models[@]}"; do
             [[ "$m" =~ ^((hermes|native):)?((openai|anthropic)/)?[a-z0-9][a-z0-9.-]{0,63}$ ]] || { echo "::error::bad model: $m"; exit 1; }
           done
-          ops/bench/ssh.sh start "$GITHUB_SHA" "$VERSION" "$K" "$N" "$LIMIT" "${models[@]}" | tee "$RUNNER_TEMP/start.txt"
+          bash ops/bench/ssh.sh start "$GITHUB_SHA" "$VERSION" "$K" "$N" "$LIMIT" "${models[@]}" | tee "$RUNNER_TEMP/start.txt"
           batch="$(sed -n 's/^batch=//p' "$RUNNER_TEMP/start.txt")"
           {
             echo "## Started $batch"
@@ -144,7 +144,7 @@ jobs:
           set -euo pipefail
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version is X.Y.Z"; exit 1; }
           [[ "$BATCH" =~ ^[0-9]{8}-[0-9]{6}-x[0-9]+$ ]] || { echo "::error::bad batch"; exit 1; }
-          ops/bench/ssh.sh publish "$BATCH" "$VERSION" ${FORCE:+"$FORCE"} > "$RUNNER_TEMP/publish.txt"
+          bash ops/bench/ssh.sh publish "$BATCH" "$VERSION" ${FORCE:+"$FORCE"} > "$RUNNER_TEMP/publish.txt"
           sed -n '/^release_json<<EOF_RELEASE_JSON$/,/^EOF_RELEASE_JSON$/p' "$RUNNER_TEMP/publish.txt" | sed '1d;$d' > "$RUNNER_TEMP/release.json"
           # Only a release in the results dataset, for this version.
           jq -e --arg v "$VERSION" '.version == $v and .store.repo == "solana-foundation/machine-trading-results" and (.store.sha256 | test("^[0-9a-f]{64}$"))' \

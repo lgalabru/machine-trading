@@ -70,6 +70,7 @@
 #[cfg(feature = "chain")]
 pub mod chain;
 pub mod core;
+mod inputs;
 #[cfg(feature = "chain")]
 pub mod lending;
 #[cfg(any(feature = "chain", feature = "spot-venue"))]
@@ -98,6 +99,7 @@ mod tx;
 
 #[cfg(feature = "phoenix")]
 pub use bot::*;
+pub use inputs::{BrokerHaircut, CloseOuts, SessionOrder, SessionVarError, StartPositions};
 #[cfg(unix)]
 pub use mtx_core::Turns;
 pub use mtx_core::{

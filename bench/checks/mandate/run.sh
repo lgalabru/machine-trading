@@ -24,8 +24,10 @@ grade() {
 grade blind-long "$root/bench/checks/ladder/blind-long" --trusted
 grade starter "$root/bots/starter"
 python3 -I - "$out" <<'PY'
-import json, sys
+import json, re, sys
 out = sys.argv[1]
+# Each breach's message, as the audit words it.
+rules = {"gross_notional": "of gross notional", "exposure": "deadline exposure"}
 want = {
     "blind-long": {
         "mandate-gross-over": "gross_notional",
@@ -42,21 +44,23 @@ for bot, cases in want.items():
     seen, terms = {}, {}
     for s in report["scenarios"]:
         session = s.get("session", s)
-        seen[session["scenario"]] = (s.get("disqualified"), session.get("notional_breach"), session["peak_position"])
+        samples = session.get("samples", {}).get("samples", [])
+        seen[session["scenario"]] = (s.get("disqualified"), len(samples), session["peak_position"])
         terms[session["scenario"]] = session["mandate"]["term"]
     for name, rule in cases.items():
-        why, breach, peak = seen[name]
-        print(f"{bot} {name}: peak {peak}, breach {breach}, disqualified {why!r}")
+        why, samples, peak = seen[name]
+        print(f"{bot} {name}: peak {peak}, {samples} samples, disqualified {why!r}")
+        assert samples > 0, f"{bot} {name} kept no samples for the audit"
         if rule is None:
-            assert breach is None and why is None, f"{bot} {name} should pass"
+            assert why is None, f"{bot} {name} should pass"
         else:
-            assert breach and breach["rule"] == rule, f"{bot} {name} should break {rule}"
-            assert why, f"{bot} {name} should be disqualified"
+            assert why and rules[rule] in why, f"{bot} {name} should break {rule}"
     if bot == "blind-long":
         assert seen["mandate-gross-within"][2] > 60, "blind-long never took its position"
-        _, breach, _ = seen["mandate-deadline-passed"]
+        why, _, _ = seen["mandate-deadline-passed"]
+        slot = int(re.search(r"at slot (\d+)", why).group(1))
         term = terms["mandate-deadline-passed"]
-        print("deadline breached at slot", breach["slot"], "of term", term)
-        assert breach["slot"] >= term["from_slot"] + 40, "the deadline was enforced before its start"
+        print("deadline breached at slot", slot, "of term", term)
+        assert slot >= term["from_slot"] + 40, "the deadline was enforced before its start"
 print("MANDATE_SMOKE_OK")
 PY

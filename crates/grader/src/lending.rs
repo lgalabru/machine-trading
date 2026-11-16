@@ -39,7 +39,7 @@ use std::{
 
 use async_trait::async_trait;
 use mtx_core::{
-    mandate::{InstrumentRef, Kind, Mandate, Observed, PositionRange, Term},
+    mandate::{InstrumentRef, Kind, Mandate, Observed, PositionRange},
     turns::Step,
 };
 use mtx_kit::{
@@ -906,13 +906,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots + warped;
-    let mandate = Mandate {
-        term: Some(Term {
-            from_slot: None,
-            until_slot: end_slot,
-        }),
-        ..scenario.mandate.clone()
-    };
+    let mandate = scenario.mandate.clone().with_term(base_slot, end_slot);
     let mut account = LendingAccount {
         scenario: scenario.clone(),
         chain: chain.clone(),
@@ -1698,7 +1692,8 @@ impl Account for LendingAccount {
             liquidatable: end.health.is_some_and(|h| h < 1.0),
             refused_calls: done.refused_calls,
             forced_closes: done.forced_closes,
-            notional_breach: None,
+            samples: Default::default(),
+            term_start: Default::default(),
             liquidator: done.liquidator,
             bot_exit: done.bot_exit,
             late_slots: done.late_slots,
