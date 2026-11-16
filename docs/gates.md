@@ -94,7 +94,7 @@ high]` overrides), never under the anchor floor `φ`, and with a per-session
 Sharpe of at least 0.25 (`"min_sharpe"`). Each anchor must be the task's own
 bot: the reference rung runs `bench/tasks/<task>/reference` (the crate the
 image builds into the verifier's anchor), untold; the informed rung runs
-`checks/bots/informed` with `tell_regime: true`; neither sets `env` or
+`checks/bots/informed` with `tell_latent: true`; neither sets `env` or
 `may_breach` (the ladder leaves a `may_breach` rung's breaches out of its
 clean runs). A v2 task is released on v2
 alone, so either miss refuses it: there is no fallback to v1 or to the

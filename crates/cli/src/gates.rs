@@ -1762,8 +1762,8 @@ mod tests {
             "anchors": { "reference": "reference", "informed": "informed" },
             "rungs": [
                 { "name": "blind-long", "dir": "bench/checks/ladder/blind-long" },
-                { "name": "reference", "dir": "bench/tasks/t-spcx/reference" },
-                { "name": "informed", "dir": "bench/tasks/t-spcx/checks/bots/informed", "tell_latent": true }
+                { "name": "reference", "dir": "bench/tasks/flash-crash-spcx/reference" },
+                { "name": "informed", "dir": "bench/tasks/flash-crash-spcx/checks/bots/informed", "tell_latent": true }
             ]
         });
         let root = authoring::repo_root();

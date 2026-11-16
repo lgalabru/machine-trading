@@ -1112,9 +1112,11 @@ pub fn anchor_dirs(task: &str) -> (String, String) {
 /// from the ladder file alone: each must be a rung, never `may_breach`, the
 /// reference the task's own reference crate, run as it is (no `env`, not
 /// told), and the
-/// informed bot the task's informed crate, told the session's regime
-/// (`tell_regime`, the ladder's tell), so a better-tuned bot that reads
-/// nothing can't pose as the 1.
+/// informed bot the task's informed crate, told the session's latent state
+/// (`tell_latent`, what the verifier's `--informed` tells it) and not the
+/// whole regime (`tell_regime`, which holds the session's future), so
+/// neither a better-tuned bot that reads nothing nor an oracle can pose as
+/// the 1.
 pub fn anchor_rung_problems(ladder: &Value, task: &str) -> Vec<String> {
     let mut problems = Vec::new();
     let (reference_dir, informed_dir) = anchor_dirs(task);
@@ -1156,13 +1158,17 @@ pub fn anchor_rung_problems(ladder: &Value, task: &str) -> Vec<String> {
                 "the {role} anchor `{name}` is `may_breach`: an anchor stays inside its mandate, and the ladder must report it if it doesn't"
             ));
         }
-        let told = rung["tell_regime"] == Value::Bool(true);
+        let latent = rung["tell_latent"] == Value::Bool(true);
+        let regime = rung["tell_regime"] == Value::Bool(true);
         match role {
-            "reference" if told => problems.push(format!(
-                "the reference anchor `{name}` is told the regime (`tell_regime`): the 0.5 reads the market as a bot does"
+            "reference" if latent || regime => problems.push(format!(
+                "the reference anchor `{name}` is told the session (`tell_latent` or `tell_regime`): the 0.5 reads the market as a bot does"
             )),
-            "informed" if !told => problems.push(format!(
-                "the informed anchor `{name}` isn't told the regime (`tell_regime: true`): without the task's tell it isn't the 1"
+            "informed" if regime => problems.push(format!(
+                "the informed anchor `{name}` is told the whole regime (`tell_regime`), the session's future too: that is an oracle, not the 1; tell it the latent state (`tell_latent: true`), as the verifier does"
+            )),
+            "informed" if !latent => problems.push(format!(
+                "the informed anchor `{name}` isn't told the latent state (`tell_latent: true`): without what the verifier tells it, it isn't the 1"
             )),
             _ => {}
         }
@@ -1171,7 +1177,7 @@ pub fn anchor_rung_problems(ladder: &Value, task: &str) -> Vec<String> {
 }
 
 /// The anchors a v2 task's ladder names: the task's own bots, the informed
-/// one told the regime and no longer the scaffold's copy of the reference,
+/// one told the latent state and no longer the scaffold's copy of the reference,
 /// and the verifier grading against the anchor the image builds from the
 /// reference crate. What's wrong, if anything.
 pub fn anchor_problems(root: &Path, task: &str) -> Vec<String> {
@@ -1777,8 +1783,10 @@ mod tests {
             elsewhere.contains("not the task's reference bot"),
             "{elsewhere}"
         );
-        let untold = tamper(&|l| l["rungs"][4]["tell_regime"] = json!(false));
+        let untold = tamper(&|l| l["rungs"][4]["tell_latent"] = json!(false));
         assert!(untold.contains("isn't told"), "{untold}");
+        let oracle = tamper(&|l| l["rungs"][4]["tell_regime"] = json!(true));
+        assert!(oracle.contains("future"), "{oracle}");
         let tuned = tamper(&|l| l["rungs"][4]["env"] = json!({ "EDGE": "2" }));
         assert!(tuned.contains("sets `env`"), "{tuned}");
         for i in [3, 4] {
