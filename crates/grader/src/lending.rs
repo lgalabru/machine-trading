@@ -990,6 +990,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         reopen_slot: None,
         vars: Vec::new(),
         cast,
+        roster: Default::default(),
         cranks: vec![Box::new(KaminoCrank { books, keeper })],
         account: Box::new(account),
     })

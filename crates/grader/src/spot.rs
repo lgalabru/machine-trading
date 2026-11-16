@@ -855,6 +855,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         reopen_slot: None,
         vars: Vec::new(),
         cast,
+        roster: Default::default(),
         cranks: Vec::new(),
         account: Box::new(account),
     })
