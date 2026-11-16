@@ -682,12 +682,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     // of: the account as the term starts.
     if mandate.needs_term_start() {
         let now = account.measure().await?;
-        let (position, price) = account.priced(&now, base_slot);
-        let holdings = [PricedPosition {
-            instrument: &account.instrument,
-            position,
-            price,
-        }];
+        let holdings = account.priced(&now, base_slot);
         let sample = Sample::new(base_slot, &holdings).map_err(MeterError::Unsupported)?;
         account
             .observed
@@ -1438,21 +1433,26 @@ impl PerpAccount {
         market.start_mark_usd * (1.0 + level / 100.0)
     }
 
+    /// Each market's position in `measurement`, priced as the notional
+    /// rules read it: a market the account holds nothing in is flat.
+    fn priced(&self, measurement: &Measurement, slot: u64) -> Vec<PricedPosition<'_>> {
+        self.markets
+            .iter()
+            .map(|market| PricedPosition {
+                instrument: &market.instrument,
+                position: position_in(measurement, &market.id),
+                price: Self::notional_price_usd(market, slot, self.base_slot),
+            })
+            .collect()
+    }
+
     /// Keeps `measurement`, each market's position priced, for the
     /// mandate's notional rules, if it has any: the audit judges the
     /// samples against its own mandate. A market the account holds nothing
     /// in is flat.
     fn record_notional(&mut self, measurement: &Measurement, slot: u64) -> Result<()> {
         if self.mandate.checks_samples() {
-            let holdings: Vec<PricedPosition> = self
-                .markets
-                .iter()
-                .map(|market| PricedPosition {
-                    instrument: &market.instrument,
-                    position: position_in(measurement, &market.id),
-                    price: Self::notional_price_usd(market, slot, self.base_slot),
-                })
-                .collect();
+            let holdings = self.priced(measurement, slot);
             let sample = Sample::new(slot, &holdings).map_err(MeterError::Unsupported)?;
             self.observed
                 .record_sample(&sample)
