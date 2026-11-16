@@ -129,6 +129,10 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
     ]
     if rung.get("tell_regime"):
         command.append("--tell-regime")
+    # A v2 task's informed rung: told each session's latent state, as the
+    # verifier tells its informed bot (`mtx grade --informed`).
+    if rung.get("tell_latent"):
+        command.append("--tell-latent")
     # The steps of the rungs whose mark displacement is read, and of nop's,
     # the baseline.
     if "push" in rung or rung["name"] == "nop":

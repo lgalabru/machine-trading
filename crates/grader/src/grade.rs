@@ -517,6 +517,10 @@ pub struct GradeOptions<'a> {
     /// with `anchor_jobs` sessions at once (it's trusted: it can share the
     /// machine with itself). Its PnL replaces whatever the scenarios carry.
     pub reference_dir: Option<&'a Path>,
+    /// The task's informed bot, to run on the same scenarios after the
+    /// reference, as scoring v2's 1 (see [`Informed`]). Its PnL replaces
+    /// whatever the scenarios carry, as the reference's does.
+    pub informed: Option<Informed<'a>>,
     pub anchor_jobs: usize,
     /// Each scenario's regime, as JSON, handed to the bot (not the
     /// reference): the ladder's regime oracle only.
@@ -549,6 +553,75 @@ pub struct GradeOptions<'a> {
     /// as it always has. (The bot's seeds are salted through `keys`: see
     /// [`SessionKeys::salt_strategy_seeds`].)
     pub v2_sessions: bool,
+}
+
+/// The task's informed bot as a grade runs it (see
+/// [`GradeOptions::informed`]): trusted like the reference, with
+/// `anchor_jobs` sessions at once, on sessions of its own, after the
+/// reference's and before the bot's.
+pub struct Informed<'a> {
+    pub dir: &'a Path,
+    /// Each scenario's latent state ([`crate::generators::Hidden::latent`]),
+    /// handed to the informed bot as `MTX_REGIME`, and to no other bot: what
+    /// the task's data could tell in principle, never the session's future.
+    /// None for scenarios from files, which carry no draw.
+    pub latent: Option<&'a [String]>,
+}
+
+/// A directory only the grader can enter, removed with everything in it
+/// when dropped.
+struct PrivateDir(std::path::PathBuf);
+
+impl PrivateDir {
+    fn create(prefix: &str) -> Result<Self> {
+        let path = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(&path)
+            .map_err(io_error(&path))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for PrivateDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Every file under `dir`, by its path relative to `dir`, read into
+/// memory.
+fn read_files(dir: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).map_err(io_error(&at))? {
+            let path = entry.map_err(io_error(&at))?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let bytes = std::fs::read(&path).map_err(io_error(&path))?;
+                let relative = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
+                files.push((relative, bytes));
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Write `files` (see [`read_files`]) under `to`, replacing what it held.
+fn write_files(to: &Path, files: &[(std::path::PathBuf, Vec<u8>)]) -> Result<()> {
+    if to.exists() {
+        std::fs::remove_dir_all(to).map_err(io_error(to))?;
+    }
+    for (relative, bytes) in files {
+        let path = to.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(io_error(parent))?;
+        }
+        std::fs::write(&path, bytes).map_err(io_error(&path))?;
+    }
+    Ok(())
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -620,7 +693,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         )
         .await?;
         check_timing(&anchors)?;
-        check_anchors(&anchors)?;
+        check_anchors("the reference", &anchors)?;
         for (scenario, anchor) in scenarios.iter_mut().zip(&anchors) {
             scenario.reference_pnl_usd = Some((anchor.pnl_usd * 100.0).round() / 100.0);
         }
@@ -629,6 +702,45 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "reference graded"
         );
         anchored = anchors;
+    }
+    let mut informed_sessions = Vec::new();
+    // The informed bot's logs may say what it was told: written where only
+    // the grader can enter, then held in memory, with nothing of them on
+    // disk, while the bot runs.
+    let mut informed_logs = None;
+    if let Some(informed) = &opts.informed {
+        let logs = PrivateDir::create("mtx-informed-logs")?;
+        let sessions = run_sessions(
+            opts.snapshot_dir,
+            informed.dir,
+            &scenarios,
+            &logs.0,
+            opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
+            informed.latent,
+            false,
+            true,
+            None,
+            opts.keys.role("informed"),
+            session::Rules {
+                every_slot: opts.v2_sessions,
+            },
+        )
+        .await?;
+        check_timing(&sessions)?;
+        check_anchors("the informed bot", &sessions)?;
+        // As `calibrate --informed` saves them in a scenario file.
+        for (scenario, session) in scenarios.iter_mut().zip(&sessions) {
+            scenario.informed_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
+            scenario.informed_max_drawdown_usd =
+                Some((session.max_drawdown_usd * 100.0).round() / 100.0);
+        }
+        info!(
+            informed_pnl_usd = sessions.iter().map(|s| s.pnl_usd).sum::<f64>(),
+            "informed bot graded"
+        );
+        informed_sessions = sessions;
+        informed_logs = Some(read_files(&logs.0)?);
+        drop(logs);
     }
     let sessions = run_sessions(
         opts.snapshot_dir,
@@ -647,7 +759,11 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     )
     .await?;
     check_timing(&sessions)?;
-    // Every bot has stopped: the scenarios can be written out.
+    // Every bot has stopped: the informed bot's logs join the others, and
+    // the scenarios can be written out.
+    if let Some(logs) = &informed_logs {
+        write_files(&opts.log_dir.join("informed"), logs)?;
+    }
     if let Some(dir) = opts.detail_dir {
         // Whatever a bot left there goes first, links included: the
         // grader writes as root.
@@ -657,6 +773,15 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             Err(_) => {}
         }
         write_details(dir, "reference", &anchored, &scenarios, opts.annotations)?;
+        if opts.informed.is_some() {
+            write_details(
+                dir,
+                "informed",
+                &informed_sessions,
+                &scenarios,
+                opts.annotations,
+            )?;
+        }
         write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
     }
     let mut report = score(sessions.into_iter().zip(&scenarios).collect());
@@ -998,7 +1123,7 @@ fn check_timing(sessions: &[SessionReport]) -> Result<()> {
 /// Void the grade, rather than score the bot against a broken baseline, if
 /// the reference didn't run cleanly: a disqualification, a crash, or turns
 /// it didn't finish.
-fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
+fn check_anchors(role: &str, anchors: &[SessionReport]) -> Result<()> {
     let broken: Vec<String> = anchors
         .iter()
         .filter_map(|a| {
@@ -1021,10 +1146,7 @@ fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
     if broken.is_empty() {
         Ok(())
     } else {
-        Err(Error::Degraded(format!(
-            "the reference: {}",
-            broken.join(", ")
-        )))
+        Err(Error::Degraded(format!("{role}: {}", broken.join(", "))))
     }
 }
 
@@ -1066,35 +1188,49 @@ fn disqualification(session: &SessionReport) -> Option<String> {
 /// Run the bot on each scenario and record its PnL as the scenario's
 /// reference, losses included: the reward normalizes by the set's total.
 /// Sessions the reference itself would be disqualified from are reported, not
-/// saved.
+/// saved. A scenario with a path is saved there; a drawn one, which has no
+/// file, keeps its PnL in memory, for the caller to write out (`mtx calibrate
+/// --draw` writes an anchors file).
 ///
 /// With `informed`, the bot is the task's informed bot and its PnL is saved
 /// as the scenario's [`Scenario::informed_pnl_usd`] instead: scoring v2's 1.
-#[allow(clippy::too_many_arguments)]
+/// It is handed `latent`, as a grade hands it to its informed bot (see
+/// [`Informed`]). `keys` are the sessions' keys: a drawn set's, from its
+/// secret, sign as a grade of the same set does.
+pub struct Calibration<'a> {
+    pub snapshot_dir: &'a Path,
+    pub bot_dir: &'a Path,
+    pub log_dir: &'a Path,
+    pub first_bot_user: usize,
+    pub jobs: usize,
+    pub informed: bool,
+    pub latent: Option<&'a [String]>,
+    pub keys: &'a SessionKeys,
+    pub v2_sessions: bool,
+}
+
 pub async fn calibrate(
-    snapshot_dir: &Path,
-    bot_dir: &Path,
-    scenarios: &mut [(std::path::PathBuf, Scenario)],
-    log_dir: &Path,
-    first_bot_user: usize,
-    jobs: usize,
-    informed: bool,
-    v2_sessions: bool,
+    opts: Calibration<'_>,
+    scenarios: &mut [(Option<std::path::PathBuf>, Scenario)],
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
     let sessions = run_sessions(
-        snapshot_dir,
-        bot_dir,
+        opts.snapshot_dir,
+        opts.bot_dir,
         &list,
-        log_dir,
-        first_bot_user..first_bot_user + jobs,
-        None,
+        opts.log_dir,
+        opts.first_bot_user..opts.first_bot_user + opts.jobs,
+        opts.latent,
         false,
         true,
         None,
-        SessionKeys::random().role("reference"),
+        opts.keys.role(if opts.informed {
+            "informed"
+        } else {
+            "reference"
+        }),
         session::Rules {
-            every_slot: v2_sessions,
+            every_slot: opts.v2_sessions,
         },
     )
     .await?;
@@ -1105,19 +1241,21 @@ pub async fn calibrate(
         if disqualification(session).is_none() {
             let pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
             let drawdown_usd = Some((session.max_drawdown_usd * 100.0).round() / 100.0);
-            if informed {
+            if opts.informed {
                 scenario.informed_pnl_usd = pnl_usd;
                 scenario.informed_max_drawdown_usd = drawdown_usd;
             } else {
                 scenario.reference_pnl_usd = pnl_usd;
                 scenario.reference_max_drawdown_usd = drawdown_usd;
             }
-            scenario.save(path)?;
+            if let Some(path) = path {
+                scenario.save(path)?;
+            }
         } else {
             tracing::warn!(
                 scenario = scenario.name,
                 pnl_usd = session.pnl_usd,
-                "reference bot was disqualified; not calibrated"
+                "the anchor was disqualified; not calibrated"
             );
         }
     }
@@ -1396,6 +1534,7 @@ mod tests {
             jobs: 1,
             first_bot_user: 0,
             reference_dir: None,
+            informed: None,
             anchor_jobs: 1,
             regimes: None,
             stop_on_disqualify: false,
