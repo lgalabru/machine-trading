@@ -486,6 +486,13 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
         &mut skipped,
     )?;
     started.sort();
+    // Skipped files by their path in the batch: an absolute path names the
+    // machine and its user, and the release is public.
+    let prefix = format!("{}/", batch.display());
+    let skipped: Vec<String> = skipped
+        .iter()
+        .map(|s| s.strip_prefix(&prefix).unwrap_or(s).to_string())
+        .collect();
     let release = json!({
         "version": version,
         "source": batch.file_name().map(|n| n.to_string_lossy().to_string()),
@@ -946,6 +953,12 @@ mod tests {
         std::fs::write(trial.join("artifacts/app/bot/target/big"), "built").unwrap();
         std::fs::write(trial.join("agent/trajectory.json"), r#"{"steps":[]}"#).unwrap();
         std::fs::write(trial.join("agent/claude-code.txt"), "raw").unwrap();
+        // Over the size cap: left out, and named by its path in the batch.
+        std::fs::write(
+            trial.join("artifacts/app/bot/model.bin"),
+            vec![7u8; 2 << 20],
+        )
+        .unwrap();
         std::fs::create_dir_all(trial.join("verifier/bot/reference")).unwrap();
         std::fs::write(trial.join("verifier/bot/hidden-1.log"), "bot log").unwrap();
         std::fs::write(trial.join("verifier/bot/reference/hidden-1.log"), "ref log").unwrap();
@@ -965,6 +978,21 @@ mod tests {
         assert!(!out.join("artifacts/app/bot/.env").exists());
         assert!(!out.join("artifacts/app/bot/target").exists());
         assert!(!results.join("1.0.0/.seed").exists());
+        assert!(!out.join("artifacts/app/bot/model.bin").exists());
+        let release: Value = serde_json::from_str(
+            &std::fs::read_to_string(results.join("1.0.0/release.json")).unwrap(),
+        )
+        .unwrap();
+        let skipped: Vec<&str> = release["skipped"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|s| s.as_str())
+            .collect();
+        assert_eq!(
+            skipped,
+            ["job/task__a/artifacts/app/bot/model.bin (2097152 bytes)"]
+        );
         assert_eq!(releases(&results).len(), 1);
         assert!(
             publish(&batch, "1.0.0", &results, false, None, true).is_err(),
