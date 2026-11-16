@@ -20,7 +20,16 @@ use mtx_grader::{
 };
 use serde_json::{Value, json};
 
-use crate::review::Root;
+use crate::{review::Root, versions::Stamp};
+
+/// A trial's name under its root, for messages.
+fn trial_name(trial: &Path, root: &Path) -> String {
+    trial
+        .strip_prefix(root)
+        .unwrap_or(trial)
+        .display()
+        .to_string()
+}
 
 /// Which scores a grade reports.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -244,6 +253,8 @@ pub fn rescore(
         report
             .score_v2(params)
             .with_context(|| path.display().to_string())?;
+        // Scored by these settings now, whatever scored the grade before.
+        report.versions.scoring_hash = Some(scoring_v2::spec_hash(params));
         if let Some(v2) = &report.v2 {
             check_reference_sessions(
                 &original,
@@ -390,11 +401,31 @@ pub fn describe(difference: &Difference) -> String {
 /// files don't read back (a release from before reports had their present
 /// shape) as failed, with why. Under `--scoring v2`, each trial's v2 too,
 /// with its task's `--eta`.
-pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
+pub fn rescore_trials(
+    root: &Root,
+    scoring: &ScoringArgs,
+    allow_version_mismatch: bool,
+) -> Result<Value> {
     let trials = crate::review::discover(&root.path);
     if trials.is_empty() {
         bail!("no Harbor trials under {}", root.path.display());
     }
+    // Trials of one task must have been graded by one task and one scoring
+    // spec, or their rescores can't be aggregated: the stamps are the
+    // reports', before this rescore.
+    let stamps: Vec<_> = trials
+        .iter()
+        .filter_map(|trial| {
+            let report = crate::review::read_json(&trial.join("verifier/report.json"))?;
+            Some(Stamp::of_report(
+                &trial_name(trial, &root.path),
+                &task_of(trial),
+                &report,
+            ))
+        })
+        .collect();
+    let mixed = crate::versions::mismatches(&stamps);
+    crate::versions::enforce(&format!("{}", root.label), &mixed, allow_version_mismatch)?;
     let mut rows = Vec::new();
     // Each task's v2 grades, by model, for the comparison across runs.
     let mut graded: BTreeMap<String, Vec<Graded>> = BTreeMap::new();
@@ -504,6 +535,7 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
         "changed": changed,
         "skipped": skipped,
         "failed": failed,
+        "version_mismatch": crate::versions::to_json(&mixed),
         "rescored": rows,
     });
     if scoring.scoring != Scoring::V1 {
@@ -628,7 +660,7 @@ mod tests {
             path: dir.clone(),
             published: false,
         };
-        let summary = rescore_trials(&root, &args(Scoring::V2, &[])).unwrap();
+        let summary = rescore_trials(&root, &args(Scoring::V2, &[]), false).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(
             (summary["skipped"].clone(), summary["failed"].clone()),
@@ -740,5 +772,39 @@ mod tests {
             let value: serde_json::Value = serde_json::from_str(&text).unwrap();
             assert_eq!(value.as_f64().unwrap().to_bits(), x.to_bits(), "{text}");
         }
+    }
+
+    #[test]
+    fn a_batch_rescore_refuses_trials_graded_by_other_versions_unless_allowed() {
+        let root = crate::versions::tests::root_of(&[
+            ("flash-crash-spcx", Some("f1"), Some("s")),
+            ("flash-crash-spcx", Some("f1"), Some("s2")),
+        ]);
+        let error = rescore_trials(&root, &args(Scoring::V1, &[]), false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("scoring spec differs"), "{error}");
+        let summary = rescore_trials(&root, &args(Scoring::V1, &[]), true).unwrap();
+        assert_eq!(summary["version_mismatch"][0]["field"], "scoring spec");
+        std::fs::remove_dir_all(&root.path).unwrap();
+    }
+
+    #[test]
+    fn a_rescore_carries_the_task_fingerprint_and_stamps_the_new_scoring() {
+        use mtx_grader::versions::Versions;
+        let versions = Versions {
+            task_fingerprint: Some("ff".into()),
+            scoring_hash: Some("old".into()),
+        };
+        let verdict: Verdict = serde_json::from_value(json!({
+            "versions": {"task_fingerprint": "ff", "scoring_hash": "old"}
+        }))
+        .unwrap();
+        let report = grade::rescore(vec![], verdict);
+        assert_eq!(report.versions, versions);
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["versions"]["task_fingerprint"], "ff");
+        let params = Params::new(Ceiling::Informed { eta_override: None });
+        assert_eq!(scoring_v2::spec_hash(&params).len(), 64);
     }
 }

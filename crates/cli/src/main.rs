@@ -472,6 +472,11 @@ enum BenchCommand {
         /// Don't open a browser.
         #[arg(long)]
         no_open: bool,
+        /// Go on although the trials mix task fingerprints or scoring
+        /// hashes (their scores aren't on one scale); the output lists the
+        /// mismatch.
+        #[arg(long)]
+        allow_version_mismatch: bool,
         /// Where published releases are; defaults to this checkout's
         /// bench/results.
         #[arg(long)]
@@ -501,6 +506,11 @@ enum BenchCommand {
         /// nothing.
         #[arg(long)]
         local: bool,
+        /// Go on although the trials mix task fingerprints or scoring
+        /// hashes (their scores aren't on one scale); the output lists the
+        /// mismatch.
+        #[arg(long)]
+        allow_version_mismatch: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -559,6 +569,11 @@ enum BenchCommand {
         /// Fail unless every trial scores as it was reported.
         #[arg(long)]
         check: bool,
+        /// Go on although the trials mix task fingerprints or scoring
+        /// hashes (their scores aren't on one scale); the output lists the
+        /// mismatch.
+        #[arg(long)]
+        allow_version_mismatch: bool,
         #[arg(long)]
         results: Option<PathBuf>,
         #[command(flatten)]
@@ -575,6 +590,11 @@ enum BenchCommand {
         /// Server port for --open; 0 picks a free one.
         #[arg(long, default_value_t = 0)]
         port: u16,
+        /// Go on although the trials mix task fingerprints or scoring
+        /// hashes (their scores aren't on one scale); the output lists the
+        /// mismatch.
+        #[arg(long)]
+        allow_version_mismatch: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -892,8 +912,11 @@ async fn run() -> Result<()> {
         }
         Command::Task(TaskCommand::Fingerprint { task }) => {
             let root = authoring::repo_root();
-            let fingerprint = versions::fingerprint(&root, &task, &|p| std::fs::read(root.join(p)).ok())?;
-            serde_json::to_string_pretty(&serde_json::json!({ "task": task, "fingerprint": fingerprint }))?
+            let fingerprint =
+                versions::fingerprint(&root, &task, &|p| std::fs::read(root.join(p)).ok())?;
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "task": task, "fingerprint": fingerprint }),
+            )?
         }
         Command::Task(TaskCommand::List) => {
             serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
@@ -901,11 +924,16 @@ async fn run() -> Result<()> {
         Command::Bench(BenchCommand::Rescore {
             path,
             check,
+            allow_version_mismatch,
             results,
             scoring,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
-            let summary = rescore::rescore_trials(&publish::resolve(&path, &results)?, &scoring)?;
+            let summary = rescore::rescore_trials(
+                &publish::resolve(&path, &results)?,
+                &scoring,
+                allow_version_mismatch,
+            )?;
             if check && (summary["changed"] != 0 || summary["failed"] != 0) {
                 eprintln!("{}", serde_json::to_string_pretty(&summary)?);
                 anyhow::bail!(
@@ -968,6 +996,7 @@ async fn run() -> Result<()> {
             path,
             port,
             no_open,
+            allow_version_mismatch,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
@@ -975,6 +1004,7 @@ async fn run() -> Result<()> {
             let summary = review::review(
                 publish::roots(first, &results),
                 review::ReviewOptions {
+                    allow_version_mismatch,
                     port,
                     open: !no_open,
                     start: None,
@@ -1041,6 +1071,7 @@ async fn run() -> Result<()> {
             force,
             artifacts,
             local,
+            allow_version_mismatch,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
@@ -1052,6 +1083,7 @@ async fn run() -> Result<()> {
                 force,
                 artifacts.as_deref(),
                 local,
+                allow_version_mismatch,
             )?;
             ui::done(format!(
                 "Published {} trial{} to {} ({:.1} MB)",
@@ -1128,6 +1160,7 @@ async fn run() -> Result<()> {
             range,
             open,
             port,
+            allow_version_mismatch,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
@@ -1136,7 +1169,7 @@ async fn run() -> Result<()> {
                 publish::resolve(&a, &results)?,
                 publish::resolve(&b, &results)?,
             );
-            let cmp = publish::compare(&a, &b);
+            let cmp = publish::compare_checked(&a, &b, allow_version_mismatch)?;
             publish::print_compare(&cmp);
             if open {
                 let start = format!("compare/{}...{}", a.label, b.label);
@@ -1147,6 +1180,7 @@ async fn run() -> Result<()> {
                 review::review(
                     roots,
                     review::ReviewOptions {
+                        allow_version_mismatch,
                         port,
                         open: true,
                         start: Some(start),
@@ -1340,12 +1374,10 @@ async fn run() -> Result<()> {
         } => {
             let v2 = scoring.params(None)?;
             let versions = mtx_grader::versions::Versions {
-                task_fingerprint: task_fingerprint.or_else(|| {
-                    std::fs::read_to_string(versions::VERIFIER_FINGERPRINT)
-                        .ok()
-                        .map(|t| t.trim().to_string())
-                        .filter(|t| !t.is_empty())
-                }),
+                task_fingerprint: versions::recorded_fingerprint(
+                    task_fingerprint,
+                    std::path::Path::new(versions::VERIFIER_FINGERPRINT),
+                ),
                 scoring_hash: v2.as_ref().map(mtx_grader::scoring_v2::spec_hash),
             };
             let mut regimes: Option<Vec<String>> = None;

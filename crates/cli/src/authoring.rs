@@ -1748,6 +1748,8 @@ mod tests {
             [
                 PathBuf::from(format!("bench/tasks/{name}/environment/Dockerfile")),
                 PathBuf::from(format!("bench/tasks/{name}/instruction.md")),
+                // The rules the grader reads changed, so the task did.
+                PathBuf::from(format!("bench/tasks/{name}/tests/task.fingerprint")),
             ]
         );
         let (scoring, detail) = state_of(&status(&root, name).unwrap(), "scoring");

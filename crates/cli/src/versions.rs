@@ -24,6 +24,15 @@ pub const FINGERPRINT_FILE: &str = "tests/task.fingerprint";
 /// What a missing stamp reads as.
 pub const UNVERSIONED: &str = "unversioned";
 
+/// The fingerprint a grade records: the one given, else the file the
+/// verifier ships (blank counts as none).
+pub fn recorded_fingerprint(given: Option<String>, file: &Path) -> Option<String> {
+    given
+        .or_else(|| std::fs::read_to_string(file).ok())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+}
+
 /// The seed and size of the scenario draw whose bytes stand for the task's
 /// scenario family and its parameters. Public, never a hidden set's.
 const FAMILY_SEED: u64 = 0x7461_736b_6670;
@@ -96,7 +105,11 @@ pub fn fingerprint(
         }
     }
     if let Some(snapshot) = snapshot {
-        let manifest = read(&PathBuf::from("snapshots").join(&snapshot).join("manifest.json"));
+        let manifest = read(
+            &PathBuf::from("snapshots")
+                .join(&snapshot)
+                .join("manifest.json"),
+        );
         parts.push((format!("snapshot {snapshot}"), manifest.unwrap_or_default()));
     }
     let family = mtx_grader::generators::generator(&generator)
@@ -191,7 +204,10 @@ pub fn mismatches(stamps: &[Stamp]) -> Vec<Mismatch> {
     tasks.dedup();
     for task in tasks {
         for (field, pick) in [
-            ("task fingerprint", (|s: &Stamp| s.fingerprint.clone()) as fn(&Stamp) -> _),
+            (
+                "task fingerprint",
+                (|s: &Stamp| s.fingerprint.clone()) as fn(&Stamp) -> _,
+            ),
             ("scoring spec", |s: &Stamp| s.scoring.clone()),
         ] {
             let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -236,7 +252,12 @@ pub fn describe(mismatches: &[Mismatch]) -> String {
                 .groups
                 .iter()
                 .map(|(value, trials)| {
-                    format!("{} ({} trial{})", short(value), trials.len(), plural(trials.len()))
+                    format!(
+                        "{} ({} trial{})",
+                        short(value),
+                        trials.len(),
+                        plural(trials.len())
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join(" vs ");
@@ -312,7 +333,7 @@ pub fn by_task(stamps: &[Stamp]) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn stamp(trial: &str, task: &str, fp: Option<&str>, sc: Option<&str>) -> Stamp {
@@ -347,7 +368,9 @@ mod tests {
         assert_eq!(found[0].field, "task fingerprint");
         assert_eq!(found[0].groups.len(), 3);
         assert_eq!(found[1].field, "scoring spec");
-        let error = enforce("this batch", &found, false).unwrap_err().to_string();
+        let error = enforce("this batch", &found, false)
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("t1: task fingerprint differs"), "{error}");
         assert!(error.contains("--allow-version-mismatch"), "{error}");
         assert!(enforce("this batch", &found, true).is_ok());
@@ -359,16 +382,37 @@ mod tests {
         let old = [stamp("a", "t", None, None), stamp("b", "t", None, None)];
         assert!(mismatches(&old).is_empty());
         assert_eq!(unversioned(&old), ["a", "b"]);
-        let mixed = [stamp("a", "t", None, None), stamp("b", "t", Some("f"), Some("s"))];
+        let mixed = [
+            stamp("a", "t", None, None),
+            stamp("b", "t", Some("f"), Some("s")),
+        ];
         assert_eq!(mismatches(&mixed).len(), 2);
         assert_eq!(unversioned(&mixed), ["a"]);
+    }
+
+    #[test]
+    fn a_grade_records_the_given_fingerprint_else_the_verifiers_file() {
+        let file = std::env::temp_dir().join(format!("mtx-fp-{}", uuid::Uuid::new_v4().simple()));
+        assert_eq!(recorded_fingerprint(None, &file), None);
+        std::fs::write(&file, "abc\n").unwrap();
+        assert_eq!(recorded_fingerprint(None, &file).as_deref(), Some("abc"));
+        assert_eq!(
+            recorded_fingerprint(Some("x".into()), &file).as_deref(),
+            Some("x")
+        );
+        std::fs::write(&file, "\n").unwrap();
+        assert_eq!(recorded_fingerprint(None, &file), None);
+        std::fs::remove_file(&file).unwrap();
     }
 
     #[test]
     fn a_stamp_reads_a_reports_versions_and_a_release_summarises_them() {
         let report = json!({"versions": {"task_fingerprint": "ff", "scoring_hash": "ss"}});
         let s = Stamp::of_report("t", "task", &report);
-        assert_eq!((s.fingerprint.as_deref(), s.scoring.as_deref()), (Some("ff"), Some("ss")));
+        assert_eq!(
+            (s.fingerprint.as_deref(), s.scoring.as_deref()),
+            (Some("ff"), Some("ss"))
+        );
         assert_eq!(Stamp::of_report("t", "task", &json!({})).fingerprint, None);
         let v = by_task(&[s.clone(), stamp("u", "task", Some("gg"), Some("ss"))]);
         assert_eq!(v["task"]["task_fingerprint"], "mixed");
@@ -409,18 +453,28 @@ mod tests {
         for rel in ["README.md", "DESIGN.md"] {
             assert_eq!(with(&root, task, rel, &|t| t + "\nreworded"), base, "{rel}");
         }
-        let version = |t: String| t.replacen("version = \"", "version = \"9", 1);
+        let version = |t: String| t.replacen("\nversion = \"", "\nversion = \"9", 1);
         assert_eq!(with(&root, task, "task.toml", &version), base, "version");
         let digest = |t: String| t.replace("@sha256:", "@sha256:0");
         assert_eq!(with(&root, task, "task.toml", &digest), base, "digest");
         // What it measures: each one moves it, and no two alike.
         let mut seen = vec![base];
         for (rel, what, f) in [
-            ("instruction.md", "mandate", (|t| t + "\nloss limit 1") as fn(String) -> String),
-            ("tests/test.sh", "grader flags", |t| t + "\n# --loss-weight 2"),
-            ("environment/practice/practice-1.json", "practice", |t| format!(" {t}")),
+            (
+                "instruction.md",
+                "mandate",
+                (|t| t + "\nloss limit 1") as fn(String) -> String,
+            ),
+            ("tests/test.sh", "grader flags", |t| {
+                t + "\n# --loss-weight 2"
+            }),
+            ("environment/practice/practice-1.json", "practice", |t| {
+                format!(" {t}")
+            }),
             ("reference/Cargo.toml", "anchor", |t| t + "\n# x"),
-            ("task.toml", "spec", |t| t.replace("[agent]", "[agent]\nextra = 1")),
+            ("task.toml", "spec", |t| {
+                t.replace("[agent]", "[agent]\nextra = 1")
+            }),
         ] {
             let fp = with(&root, task, rel, &f);
             assert!(!seen.contains(&fp), "{what} didn't move the fingerprint");
@@ -440,5 +494,64 @@ mod tests {
         });
         assert_ne!(a, b);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A root of finished, graded trials: `(task, fingerprint, scoring)` each.
+    pub(crate) fn root_of(trials: &[(&str, Option<&str>, Option<&str>)]) -> crate::review::Root {
+        let dir = std::env::temp_dir().join(format!("mtx-ver-{}", uuid::Uuid::new_v4().simple()));
+        for (n, (task, fp, sc)) in trials.iter().enumerate() {
+            let trial = dir.join(format!("job/{task}__{n}"));
+            std::fs::create_dir_all(trial.join("verifier")).unwrap();
+            std::fs::write(
+                trial.join("result.json"),
+                json!({"trial_name": format!("{task}__{n}"), "task_name": format!("o/{task}"),
+                    "finished_at": "x", "agent_info": {"model_info": {"name": "m"}}})
+                .to_string(),
+            )
+            .unwrap();
+            let mut report = json!({"reward": 0.5, "scenarios": []});
+            report["versions"] = json!({"task_fingerprint": fp, "scoring_hash": sc});
+            std::fs::write(trial.join("verifier/report.json"), report.to_string()).unwrap();
+        }
+        crate::review::Root {
+            label: dir.file_name().unwrap().to_string_lossy().into_owned(),
+            path: dir,
+            published: false,
+        }
+    }
+
+    #[test]
+    fn a_root_reads_its_trials_stamps_and_the_gate_reads_the_root() {
+        let root = root_of(&[
+            ("t", Some("f1"), Some("s")),
+            ("t", Some("f2"), Some("s")),
+            ("u", Some("g"), Some("s")),
+        ]);
+        let stamps = crate::review::stamps_of(&root);
+        assert_eq!(stamps.len(), 3);
+        let found = mismatches(&stamps);
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            (found[0].task.as_str(), found[0].field),
+            ("t", "task fingerprint")
+        );
+        std::fs::remove_dir_all(&root.path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn review_refuses_a_root_that_mixes_versions() {
+        let root = root_of(&[("t", Some("f1"), Some("s")), ("t", Some("f2"), Some("s"))]);
+        let options = |allow| crate::review::ReviewOptions {
+            allow_version_mismatch: allow,
+            port: 0,
+            open: false,
+            start: None,
+        };
+        let error = crate::review::review(vec![root.clone()], options(false))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("task fingerprint differs"), "{error}");
+        std::fs::remove_dir_all(&root.path).unwrap();
     }
 }

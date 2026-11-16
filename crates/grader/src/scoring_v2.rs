@@ -1423,13 +1423,33 @@ mod tests {
         assert_eq!(hash.len(), 64);
         assert_eq!(hash, spec_hash(&base.clone()));
         let moved = [
-            Params { loss_weight: 2.0, ..base.clone() },
-            Params { anchor_floor: Some(0.2), ..base.clone() },
-            Params { risk_weight: 0.0, ..base.clone() },
-            Params { hindsight_cost: 1e-3, ..base.clone() },
-            Params { resamples: 10, ..base.clone() },
-            Params { headline: true, ..base.clone() },
-            Params::new(Ceiling::Informed { eta_override: Some(0.5) }),
+            Params {
+                loss_weight: 2.0,
+                ..base.clone()
+            },
+            Params {
+                anchor_floor: Some(0.2),
+                ..base.clone()
+            },
+            Params {
+                risk_weight: 0.0,
+                ..base.clone()
+            },
+            Params {
+                hindsight_cost: 1e-3,
+                ..base.clone()
+            },
+            Params {
+                resamples: 10,
+                ..base.clone()
+            },
+            Params {
+                headline: true,
+                ..base.clone()
+            },
+            Params::new(Ceiling::Informed {
+                eta_override: Some(0.5),
+            }),
             Params::new(Ceiling::Given(Default::default())),
         ];
         for p in &moved {
@@ -1442,7 +1462,10 @@ mod tests {
         // A change to a scoring constant changes this hash: if it is
         // deliberate, bump CODE_VERSION and update the pin.
         let base = Params::new(Ceiling::Informed { eta_override: None });
-        assert_eq!(spec_hash(&base), "e9831e46d28292f1ecd332c1e459466741bb6b3ded9d18798bbd8b054b869602");
+        assert_eq!(
+            spec_hash(&base),
+            "e9831e46d28292f1ecd332c1e459466741bb6b3ded9d18798bbd8b054b869602"
+        );
     }
 
     use super::*;

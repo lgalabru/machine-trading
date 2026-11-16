@@ -27,12 +27,12 @@ pub mod scenario;
 pub mod scenario_v2;
 pub mod scoring_v2;
 pub mod session;
-pub mod versions;
 pub mod simulated;
 pub mod snapshot;
 pub mod spot;
 pub mod txlayer;
 pub mod venue;
+pub mod versions;
 pub mod wasm;
 pub mod weekend;
 
