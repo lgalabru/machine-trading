@@ -434,6 +434,16 @@ fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
 const PRACTICE_LINE: &str = "- `mtx-practice`: grades `/app/bot` on the practice scenarios in `/opt/mtx/practice` by the same rules and settings as the hidden scenarios (scoring v2, each scenario against the reference's and the informed bot's PnL on it), and prints a JSON report: your `reward` (the v2 score), the `v2` block that explains it, and each session's PnL. Bot logs go to `/tmp/mtx-practice-logs/`. It runs three sessions at a time (`MTX_JOBS=1` for one).";
 /// The instruction's `mtx` line for a v2 task.
 const MTX_LINE: &str = "- `mtx`: the grader itself. `mtx scenario generate --out DIR --prefix NAME --count N --seed S` draws more scenarios from the same family. They carry neither anchor's PnL, so `mtx-practice` can't score them by v2 and says so: use them to see your bot run and read its logs.";
+/// Point a copied bot's process entry (`src/main.rs`) at its own library,
+/// renamed from `from` to `to` (packages, as Cargo.toml names them).
+fn rename_crate(dir: &Path, from: &str, to: &str) -> Result<()> {
+    let main = dir.join("src/main.rs");
+    if let Ok(source) = std::fs::read_to_string(&main) {
+        let ident = |package: &str| format!("{}::", package.replace('-', "_"));
+        std::fs::write(&main, source.replace(&ident(from), &ident(to)))?;
+    }
+    Ok(())
+}
 
 /// Point a copied bot's process entry (`src/main.rs`) at its own library,
 /// renamed from `from` to `to` (packages, as Cargo.toml names them).
