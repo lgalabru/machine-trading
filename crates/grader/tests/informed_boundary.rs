@@ -26,6 +26,7 @@ fn probe(dir: &Path, logs: &Path) {
         format!(
             r#"#!/bin/bash
 echo "MTX_REGIME=${{MTX_REGIME-<unset>}}"
+echo "UID=$(id -u)"
 env | grep -q '^MTX_REGIME=' && echo "ENV_HAS_REGIME"
 [ -e "{logs}/informed" ] && echo "SAW_INFORMED_LOGS"
 for dir in "{tmp}"/mtx-informed-logs-*; do
@@ -148,9 +149,14 @@ async fn the_informed_bot_is_told_the_latent_state_and_the_bot_nothing() {
     }
     assert!(with.scenarios[0].informed_pnl_usd.is_some());
     // The probe works: run while its own logs were in the grader's private
-    // directory, the informed bot saw it and read what it was told there.
+    // directory, the informed bot saw it. Whether it could read what it was
+    // told there depends on who it ran as: the directory is the grader's
+    // alone (0700), so the grader's own user reads it and the bot user a
+    // grader running as root drops to (as in CI and the verifier) must not.
     assert!(told.contains("SAW_PRIVATE_DIR"), "{told}");
-    assert!(told.contains("READ_PRIVATE_LOGS"), "{told}");
+    let grader_uid = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&work).unwrap());
+    let same_user = told.contains(&format!("UID={grader_uid}\n"));
+    assert_eq!(told.contains("READ_PRIVATE_LOGS"), same_user, "{told}");
 
     // The bot was told nothing, and the informed bot's logs weren't there
     // while it ran.
