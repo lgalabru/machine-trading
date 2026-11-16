@@ -220,6 +220,10 @@ pub struct Competitor {
     pub competitor_bps: f64,
     /// How the grader's own maker competes.
     pub competition: Competition,
+    /// Where the snapshot's makers are widened to, when it isn't
+    /// `competitor_bps` (see [`Making::makers_bps`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub makers_bps: Option<f64>,
 }
 
 /// The transaction layer.
@@ -498,6 +502,7 @@ impl Actors {
                 competitor_bps: competitor.competitor_bps,
                 competition: competitor.competition,
                 takers: self.takers.clone(),
+                makers_bps: competitor.makers_bps,
             }
             .validate(duration_slots)
             .map_err(|reason| format!("making: {reason}"));
@@ -1095,6 +1100,7 @@ impl ScenarioV2 {
                     competitor_bps: c.competitor_bps,
                     competition: c.competition,
                     takers,
+                    makers_bps: c.makers_bps,
                 }),
                 None,
                 Vec::new(),
@@ -1223,6 +1229,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 Some(Competitor {
                     competitor_bps: making.competitor_bps,
                     competition: making.competition,
+                    makers_bps: making.makers_bps,
                 }),
                 None,
                 making.takers.clone(),
