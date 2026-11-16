@@ -756,8 +756,9 @@ leak-audit:
     if [ -n "$gen_hits" ]; then
       echo "LEAK: generator source in $image:"; echo "$gen_hits" | sed 's/^/  /'; found=1
     fi
-    if docker run --rm --entrypoint grep "$image" -qaF -e 'market-making-v2' -e 'funding-carry' /usr/local/bin/mtx; then
-      echo "LEAK: $image's mtx registers a scenario generator"; found=1
+    # The families' code, by its mangled type names, is not in the binary.
+    if docker run --rm --entrypoint grep "$image" -qaE '[0-9](Shock|Making|Carry|Weekend)Family' /usr/local/bin/mtx; then
+      echo "LEAK: $image's mtx holds a scenario family's code"; found=1
     fi
     for needle in "${needles[@]}"; do
       hits="$(docker run --rm --entrypoint grep "$image" -rlsF --exclude-dir=proc --exclude-dir=sys \
