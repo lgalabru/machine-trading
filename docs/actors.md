@@ -78,7 +78,11 @@ session fills in their wallets as it starts, handed over as `MTX_REGIME`:
 `{"wallets": {"informed": ["<pubkey>"], "decoy": ["<pubkey>"]}}`. The kinds are
 the report's actors' (`noise`, `informed`, `chaser`, `decoy`, `spoofer`,
 `iceberg`, `stop-hunter`, …), and `rfq-informed`, the ids of the RFQ clients
-that are informed (`c3` for the requests `c3-0`, `c3-1`, …). A kind the
+that are informed (`c3` for the requests `c3-0`, `c3-1`, …). The wallets
+are the actors' authorities (signing keys). Phoenix's events and fills name the
+trader account, a PDA of the authority, so a bot must map each with
+`Exchange::trader_account(&authority)` before matching them; unmapped, nothing
+matches and it silently trades uninformed. A kind the
 session doesn't have is an error, not a silent gap. A regime with no `roster`
 is handed over unchanged.
 
@@ -121,7 +125,12 @@ earns against the index, no more. With `over_idle_desk`, the idle desk's
 earnings come out: the session's PnL and the drawdown its mandate is audited
 by are the desk's less what `desk_base` of the asset would have made held, so a
 desk that quotes nothing scores 0, and a desk that does is scored on its fills
-and the inventory they leave. The report's `actors.desk` gives the
+and the inventory they leave. `over_idle_desk` and `scoring.net` both score over holding the start, but
+differently: `net` values the held start position of the perp (at the fair
+path's move where there is one, else the level's) and takes its own drawdown
+series, while `over_idle_desk` takes the desk's token at Phoenix's index. Use
+`net` for a perp position the bot starts with and `over_idle_desk` for an RFQ
+desk's inventory; a scenario with both is refused. The report's `actors.desk` gives the
 desk's token, USDC and index at the start and the end.
 
 Before each swap, and again after one fails, the grader reads both wallets'

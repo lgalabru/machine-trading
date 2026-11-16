@@ -630,6 +630,7 @@ impl ScenarioV2 {
         self.venues_are_one_kind()?;
         self.flows_do_not_mix()?;
         self.library_is_for_perps()?;
+        self.one_score_over_holding()?;
         self.takers_pricing_is_valid()?;
         if self.venues.spot.is_some() {
             self.spot_is_alone()?;
@@ -1030,6 +1031,25 @@ impl ScenarioV2 {
     fn flows_do_not_mix(&self) -> Result<(), String> {
         if self.actors.competitor.is_some() && self.market_model.closed_period.is_some() {
             return Err("a scenario has either making or offhours, not both".into());
+        }
+        Ok(())
+    }
+
+    /// `scoring.net` and an RFQ desk's `over_idle_desk` both score over
+    /// holding the start, with different price references and drawdown
+    /// series: a scenario picks one.
+    fn one_score_over_holding(&self) -> Result<(), String> {
+        let over_idle = self
+            .actors
+            .library
+            .as_ref()
+            .and_then(|l| l.rfq_clients.as_ref())
+            .is_some_and(|rfq| rfq.over_idle_desk);
+        if over_idle && self.scoring.net.is_some() {
+            return Err(
+                "actors.rfq_clients.over_idle_desk and scoring.net both score over holding the start: use one"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -1668,6 +1688,25 @@ mod tests {
         let mut s = shock();
         s.schema = 1;
         assert!(s.validate().unwrap_err().contains("schema"));
+    }
+
+    #[test]
+    fn an_rfq_desk_over_the_idle_desk_is_not_also_net_scored() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let mut library = parse(everyone).unwrap().actors.unwrap();
+        library.rfq_clients.as_mut().unwrap().over_idle_desk = true;
+        let mut s = shock();
+        s.actors.library = Some(library);
+        s.validate().unwrap();
+        s.scoring.net = Some(NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        let refused = s.validate().unwrap_err();
+        assert!(
+            refused.contains("over_idle_desk") && refused.contains("use one"),
+            "{refused}"
+        );
     }
 
     #[test]

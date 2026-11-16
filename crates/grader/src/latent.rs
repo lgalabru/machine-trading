@@ -2,16 +2,25 @@
 //!
 //! A family that draws per-session roles (which actors are informed, which
 //! are decoys, who hunts) describes what a perfect reader of the task's data
-//! could know of the session as a [`Latent`]: a set of fields, each declared
-//! [`Knowable`] as an identity or a process. A session's realised draws (a
-//! shock's direction, when an order comes, a path) have no way in: a field
-//! can't be added without saying why it is knowable in principle.
+//! could know of the session as a [`Latent`]: a set of fields, each labelled
+//! [`Knowable`] as an identity or a process. The label makes a builder say
+//! why a field is knowable; it doesn't check that it is. What keeps a
+//! session's realised draws (a shock's direction, when an order comes, a
+//! path) out is the family's `LATENT_FIELDS` table and its test
+//! (infra/47), which lists every field a family may tell and fails on any
+//! other that varies from session to session.
 //!
 //! Who is who needs the session's own addresses, which no one knows before
 //! it starts (they come from the grade's secret). So a latent names the
 //! *kinds* of actor to tell ([`Latent::roster`]), and the session fills in
 //! their wallets as it starts ([`resolve`]): `{"roster": ["informed"]}` is
 //! handed over as `{"wallets": {"informed": ["<pubkey>", ..]}}`.
+//!
+//! Those pubkeys are the actors' *authorities* (their signing keys). Phoenix's
+//! events and fills name the trader account, a PDA of the authority
+//! (`Exchange::trader_account(&authority)`), so an informed bot must map each
+//! authority to its trader account before matching events: unmapped, nothing
+//! ever matches and it silently trades uninformed.
 //!
 //! The grader hands the latent to the informed bot as `MTX_REGIME`, and to no
 //! other (see `docs/gates.md`). A regime with no `roster` is handed over
