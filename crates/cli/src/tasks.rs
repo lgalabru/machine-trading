@@ -51,6 +51,20 @@ pub struct Task {
     pub reference: Reference,
     /// The ladder bots' crates, `bench/tasks/<dir>/checks/bots/*`.
     pub check_bots: Vec<String>,
+    /// A v2 task's informed bot, which the verifier runs on its hidden sets
+    /// beside the reference: the crate of the ladder's `anchors.informed`
+    /// rung, when it names one with a crate.
+    pub informed: Option<InformedBot>,
+}
+
+/// A v2 task's informed bot crate, as the image builds it into
+/// `/opt/mtx/anchors/<anchor>-informed` ([`Task::informed_anchor`]).
+#[derive(Debug, Clone)]
+pub struct InformedBot {
+    pub package: String,
+    pub bin: String,
+    /// The crate's directory, from the repository's root.
+    pub dir: String,
 }
 
 /// The reference bot's crate, `reference/Cargo.toml`.
@@ -65,6 +79,12 @@ impl Task {
     /// The reference crate's directory, from the repository's root.
     pub fn reference_dir(&self) -> String {
         format!("bench/tasks/{}/reference", self.dir)
+    }
+
+    /// Where the image puts the informed bot for the verifier, under
+    /// `/opt/mtx/anchors`: beside the reference's anchor.
+    pub fn informed_anchor(&self) -> String {
+        format!("{}-informed", self.mtx.anchor())
     }
 }
 
@@ -212,21 +232,22 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
             parsed.task.name
         );
     }
-    let cargo = folder.join("reference/Cargo.toml");
-    let manifest: CargoToml =
-        toml::from_str(&std::fs::read_to_string(&cargo).with_context(|| {
-            format!(
-                "{}: a task's reference bot is its reference/ crate",
-                cargo.display()
-            )
-        })?)
-        .with_context(|| cargo.display().to_string())?;
-    let reference = Reference {
-        bin: manifest
-            .bin
-            .first()
-            .map_or_else(|| manifest.package.name.clone(), |b| b.name.clone()),
-        package: manifest.package.name,
+    let reference = crate_of(&folder.join("reference")).with_context(|| {
+        format!(
+            "{}: a task's reference bot is its reference/ crate",
+            folder.join("reference/Cargo.toml").display()
+        )
+    })?;
+    let informed = if mtx.headline == Headline::V2 {
+        informed_dir(root, &dir).and_then(|informed| {
+            crate_of(&root.join(&informed)).ok().map(|bot| InformedBot {
+                package: bot.package,
+                bin: bot.bin,
+                dir: informed,
+            })
+        })
+    } else {
+        None
     };
     let mut check_bots: Vec<String> = std::fs::read_dir(folder.join("checks/bots"))
         .into_iter()
@@ -247,7 +268,40 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
         mtx,
         reference,
         check_bots,
+        informed,
     })
+}
+
+/// A bot crate's package, and the binary it runs as a process.
+fn crate_of(dir: &Path) -> Result<Reference> {
+    let cargo = dir.join("Cargo.toml");
+    let manifest: CargoToml = toml::from_str(&std::fs::read_to_string(&cargo)?)
+        .with_context(|| cargo.display().to_string())?;
+    Ok(Reference {
+        bin: manifest
+            .bin
+            .first()
+            .map_or_else(|| manifest.package.name.clone(), |b| b.name.clone()),
+        package: manifest.package.name,
+    })
+}
+
+/// The directory of the bot a task's ladder names as its informed anchor
+/// (`anchors.informed`, a rung's name), from the repository's root.
+pub fn informed_dir(root: &Path, task: &str) -> Option<String> {
+    let path = root
+        .join("bench/tasks")
+        .join(task)
+        .join("checks/ladder.json");
+    let ladder: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let name = ladder["anchors"]["informed"].as_str()?;
+    ladder["rungs"]
+        .as_array()?
+        .iter()
+        .find(|r| r["name"] == name)?["dir"]
+        .as_str()
+        .map(str::to_string)
 }
 
 /// `items` without repeats, in order.
@@ -304,13 +358,25 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         format!(
             "# {GENERATED}\n# <anchor> <package> <binary> <directory>, one per task.\n{}\n",
             join(
-                &|t| format!(
-                    "{} {} {} {}",
-                    t.mtx.anchor(),
-                    t.reference.package,
-                    t.reference.bin,
-                    t.reference_dir()
-                ),
+                &|t| {
+                    let mut lines = format!(
+                        "{} {} {} {}",
+                        t.mtx.anchor(),
+                        t.reference.package,
+                        t.reference.bin,
+                        t.reference_dir()
+                    );
+                    if let Some(informed) = &t.informed {
+                        lines += &format!(
+                            "\n{} {} {} {}",
+                            t.informed_anchor(),
+                            informed.package,
+                            informed.bin,
+                            informed.dir
+                        );
+                    }
+                    lines
+                },
                 "\n"
             )
         )
@@ -581,6 +647,7 @@ mod tests {
                 bin: "mtx-x".into(),
             },
             check_bots: vec![],
+            informed: None,
         }
     }
 
