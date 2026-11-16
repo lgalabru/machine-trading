@@ -566,7 +566,7 @@ fn toml_string(s: &str) -> String {
     serde_json::to_string(s.trim()).unwrap_or_default()
 }
 
-fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> Result<()> {
     std::fs::create_dir_all(to).with_context(|| to.display().to_string())?;
     for entry in std::fs::read_dir(from).with_context(|| from.display().to_string())? {
         let entry = entry?;

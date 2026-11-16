@@ -21,6 +21,8 @@
 //! - the task tables in `README.md` and `bench/tasks/README.md`, between
 //!   their `mtx:tasks` markers;
 //! - each task's `solution/`: a copy of its reference, but `main.rs`;
+//! - each task's `tests/task.fingerprint`, the hash the verifier writes into
+//!   every report ([`crate::versions::fingerprint`]);
 //! - the scoring rules in a v2 task's `instruction.md`, between its
 //!   `mtx:scoring` markers ([`crate::scoring_text`]).
 
@@ -382,6 +384,17 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
                 with_practice_scoring(&text, &practice_scoring(&script)).into_bytes(),
             );
         }
+        // Last: it reads the files above as they will be.
+        let fingerprint = crate::versions::fingerprint(root, &task.dir, &|path| {
+            files
+                .get(path)
+                .cloned()
+                .or_else(|| std::fs::read(root.join(path)).ok())
+        })?;
+        files.insert(
+            folder.join(crate::versions::FINGERPRINT_FILE),
+            format!("{fingerprint}\n").into_bytes(),
+        );
     }
     Ok(files)
 }

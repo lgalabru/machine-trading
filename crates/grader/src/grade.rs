@@ -117,6 +117,10 @@ pub struct GradeReport {
     /// score, and `skill` and `reference_ratio` are left out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headline: Option<String>,
+    /// The task and the scoring rule that produced this grade: grades with
+    /// other versions aren't comparable.
+    #[serde(default, skip_serializing_if = "crate::versions::Versions::is_empty")]
+    pub versions: crate::versions::Versions,
     pub scenarios: Vec<ScenarioResult>,
     /// The reference's sessions, when the grade ran it: kept out of the
     /// report (its PnL is in [`ScenarioResult::reference_pnl_usd`]), for the
@@ -719,6 +723,8 @@ pub struct Verdict {
     pub tampered: Option<String>,
     pub not_graded: Option<String>,
     pub eval_seed_sha256: Option<String>,
+    #[serde(default)]
+    pub versions: crate::versions::Versions,
 }
 
 /// Score a finished grade again from what it wrote, without running a
@@ -736,6 +742,7 @@ pub fn rescore(sessions: Vec<(SessionReport, Scenario)>, verdict: Verdict) -> Gr
         }
     };
     report.eval_seed_sha256 = verdict.eval_seed_sha256;
+    report.versions = verdict.versions;
     if let Some(reason) = verdict.tampered {
         report.tamper(reason);
     }
@@ -835,6 +842,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         markout: total_markout(&scenarios),
         v2: None,
         headline: None,
+        versions: Default::default(),
         scenarios,
         anchors: Vec::new(),
     }

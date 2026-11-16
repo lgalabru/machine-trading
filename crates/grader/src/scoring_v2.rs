@@ -80,6 +80,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// The scoring code's version: bump it with any change to how `score` maps
+/// sessions to a score that no constant or [`Params`] field captures, so the
+/// spec hash moves ([`spec_hash`]).
+pub const CODE_VERSION: &str = "2.0";
 /// The loss weight `k` by default.
 pub const LOSS_WEIGHT: f64 = 1.5;
 /// The reference anchor's floor `φ`, as a share of the ceiling, by default.
@@ -142,6 +146,43 @@ pub struct Params {
     /// report, and the 1 must be the task's informed bot: a grade that would
     /// take a hindsight, proxy or given ceiling fails instead.
     pub headline: bool,
+}
+
+/// A hash of everything that fixes how a grade is scored: the code version,
+/// every default and floor, the clamps, and these settings (`k`, `φ`, `λ`,
+/// the ceiling, the hindsight cost, the resamples, the headline). Written
+/// into every report: two scores are on one scale only when it matches.
+pub fn spec_hash(params: &Params) -> String {
+    let ceiling = match &params.ceiling {
+        Ceiling::Informed { eta_override } => serde_json::json!({ "informed": eta_override }),
+        Ceiling::Given(given) => serde_json::json!({ "given": given }),
+    };
+    let spec = serde_json::json!({
+        "code": CODE_VERSION,
+        "defaults": {
+            "loss_weight": LOSS_WEIGHT,
+            "anchor_floor": ANCHOR_FLOOR,
+            "hindsight_anchor_floor": HINDSIGHT_ANCHOR_FLOOR,
+            "risk_weight": RISK_WEIGHT,
+            "hindsight_cost": HINDSIGHT_COST,
+            "raw_floor": RAW_FLOOR,
+            "breach_cap_one": BREACH_CAP_ONE,
+            "breach_cap_more": BREACH_CAP_MORE,
+            "resamples": RESAMPLES,
+            "ci_level": CI_LEVEL,
+        },
+        "score_clamp": [0.0, 1.0],
+        "params": {
+            "loss_weight": params.loss_weight,
+            "anchor_floor": params.anchor_floor,
+            "risk_weight": params.risk_weight,
+            "ceiling": ceiling,
+            "hindsight_cost": params.hindsight_cost,
+            "resamples": params.resamples,
+            "headline": params.headline,
+        },
+    });
+    crate::versions::hash_parts([("scoring-spec", spec.to_string().as_bytes())])
 }
 
 impl Params {
@@ -1375,6 +1416,35 @@ impl SplitMix64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_spec_hash_moves_with_every_setting_and_only_with_them() {
+        let base = Params::new(Ceiling::Informed { eta_override: None });
+        let hash = spec_hash(&base);
+        assert_eq!(hash.len(), 64);
+        assert_eq!(hash, spec_hash(&base.clone()));
+        let moved = [
+            Params { loss_weight: 2.0, ..base.clone() },
+            Params { anchor_floor: Some(0.2), ..base.clone() },
+            Params { risk_weight: 0.0, ..base.clone() },
+            Params { hindsight_cost: 1e-3, ..base.clone() },
+            Params { resamples: 10, ..base.clone() },
+            Params { headline: true, ..base.clone() },
+            Params::new(Ceiling::Informed { eta_override: Some(0.5) }),
+            Params::new(Ceiling::Given(Default::default())),
+        ];
+        for p in &moved {
+            assert_ne!(spec_hash(p), hash, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn the_default_spec_hash_is_pinned() {
+        // A change to a scoring constant changes this hash: if it is
+        // deliberate, bump CODE_VERSION and update the pin.
+        let base = Params::new(Ceiling::Informed { eta_override: None });
+        assert_eq!(spec_hash(&base), "e9831e46d28292f1ecd332c1e459466741bb6b3ded9d18798bbd8b054b869602");
+    }
+
     use super::*;
 
     /// Sessions with a hindsight bound of 1,000 and an informed bot making

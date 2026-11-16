@@ -42,6 +42,7 @@ mod tables;
 mod tasks;
 mod tools;
 mod ui;
+mod versions;
 
 /// The snapshot `scenario new` and `play` start from: the checkout's, by
 /// absolute path, so an installed `mtx` finds it from any directory.
@@ -203,6 +204,11 @@ enum Command {
         /// `bot/<scenario>.json.gz` and `reference/<scenario>.json.gz`.
         #[arg(long)]
         details: Option<PathBuf>,
+        /// The task's fingerprint, written into the report with the scoring
+        /// spec's hash (default: the file `mtx task sync` ships to the
+        /// verifier, /tests/task.fingerprint, if it is there).
+        #[arg(long, env = "MTX_TASK_FINGERPRINT")]
+        task_fingerprint: Option<String>,
         #[command(flatten)]
         scoring: rescore::ScoringArgs,
     },
@@ -406,6 +412,10 @@ enum TaskCommand {
     Guide { step: String },
     /// The repository's tasks.
     List,
+    /// A task's fingerprint: a hash over what changes what it measures (its
+    /// spec, scenario family, practice files, anchors, mandate and grader
+    /// version), as every grade of it records.
+    Fingerprint { task: String },
     /// Write the lists kept from the task folders' `[metadata.mtx]`: the
     /// Justfile's and the image's task lists, the dataset's and the READMEs'
     /// tables.
@@ -880,6 +890,11 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&stale)?
         }
+        Command::Task(TaskCommand::Fingerprint { task }) => {
+            let root = authoring::repo_root();
+            let fingerprint = versions::fingerprint(&root, &task, &|p| std::fs::read(root.join(p)).ok())?;
+            serde_json::to_string_pretty(&serde_json::json!({ "task": task, "fingerprint": fingerprint }))?
+        }
         Command::Task(TaskCommand::List) => {
             serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
         }
@@ -1320,9 +1335,19 @@ async fn run() -> Result<()> {
             reward,
             report,
             details,
+            task_fingerprint,
             scoring,
         } => {
             let v2 = scoring.params(None)?;
+            let versions = mtx_grader::versions::Versions {
+                task_fingerprint: task_fingerprint.or_else(|| {
+                    std::fs::read_to_string(versions::VERIFIER_FINGERPRINT)
+                        .ok()
+                        .map(|t| t.trim().to_string())
+                        .filter(|t| !t.is_empty())
+                }),
+                scoring_hash: v2.as_ref().map(mtx_grader::scoring_v2::spec_hash),
+            };
             let mut regimes: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.
             let mut annotations: Option<Vec<serde_json::Value>> = None;
@@ -1418,6 +1443,7 @@ async fn run() -> Result<()> {
             // the report is written with its v1 scores first; as the one
             // score, nothing is: a v1 score never stands in for it.
             let v2_failed = v2.as_ref().and_then(|params| graded.score_v2(params).err());
+            graded.versions = versions;
             let json = serde_json::to_string_pretty(&graded)?;
             if let Some(path) = report {
                 match report_to_write(v2.as_ref(), v2_failed.is_some(), &json) {
