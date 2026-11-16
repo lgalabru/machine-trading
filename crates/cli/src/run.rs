@@ -27,8 +27,8 @@ use mtx_kit::{Action, AmountUnit, Intent, LineOptions, SendState, Session, Side,
 pub struct Run<'a> {
     pub dir: &'a Path,
     pub task: Option<&'a str>,
-    /// A scenario: the studio's (`practice-101`, the default, `practice-102`),
-    /// one of the task's practice set (`practice-3`), or a file.
+    /// A scenario: the studio's (`practice-101`, the default, `practice-102`,
+    /// `practice-103`), one of the task's practice set (`practice-3`), or a file.
     pub scenario: Option<&'a str>,
     pub build: bool,
     pub debug: bool,
@@ -141,7 +141,7 @@ fn scenario_path(dir: &Path, root: &Path, task: &str, asked: Option<&str>) -> Re
     if path.is_file() {
         return Ok(path);
     }
-    // The studio's own scenarios (practice-101, practice-102), written out
+    // The studio's own scenarios (practice-101 to practice-103), written out
     // where the run's logs go.
     if let Some(bytes) = crate::studio::builtin_scenario(asked) {
         let out = dir

@@ -25,7 +25,7 @@ docs together.
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet`; a perp session's `start_positions`, signed base units by market symbol |
-| `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
+| `venues` | Exactly one of `perp` (with its `funding`, `liquidator` and `impact`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
@@ -167,6 +167,66 @@ A scenario that lists Phoenix's program in `tx.raw_sends` is refused with a
 liquidator: a bot that could send Phoenix's own instructions could liquidate
 its accounts itself. The code is `crates/grader/src/keeper.rs`, and
 `bench/checks/keeper/run.sh` checks it end to end.
+
+## Price impact: `venues.perp.impact`
+
+By default a perp session's book is centred on the path, and the path is a
+schedule: the snapshot's makers come back at full depth on every planned
+move. A bot that walks the book pays for the depth it takes and then finds
+the book back where it was. A scenario can keep the book where trades leave
+it instead:
+
+```json
+"venues": { "perp": { "impact": { "permanent_share": 0.5, "half_life_slots": 10, "max_bps": 150 } } }
+```
+
+- `permanent_share`: of the distance trades walked the book, the share that
+  stays for good, from 0 to 1 (0.5 when absent). The rest fades.
+- `half_life_slots`: slots the fading part takes to halve.
+- `max_bps`: the most the impact moves the book either way, in basis points
+  of the book's level (150 when absent, 190 at most).
+
+The path is then played by a Surfpool scenario script, not a schedule of
+overrides (`surfnet_registerScenario`'s `scripts`). On the first slot of
+each step it reads the touch: a best ask further from the makers' centre
+than their own quotes is depth taken, and the same for the bids. It centres
+the makers on the path's book level plus what was walked, at once in full,
+and lets the fading part decay. On the step's second slot it reads the
+makers' quotes as the move left them, which the next step's trades are
+measured against: Phoenix's makers quote further out on a side they were
+filled on.
+
+What this means for a session:
+
+- **The impact is never more than the trade moved the book**, so a round
+  trip costs the spread at least: a bot is not paid to push the price.
+- **Every taker's trades count**: the bot's, the tape's and the actors'.
+  A trade smaller than the size at the touch leaves the touch, and counts
+  for nothing until the touch is gone.
+- **Only the book moves.** The oracles stay on the scenario's index, and
+  the account is valued at the scenario's book level (`valuation` `book`),
+  not at the price trades pushed the book to.
+- **The first slot centres the makers and the index on the starting mark**,
+  where a session without impact leaves them as the snapshot had them
+  until the path's first move. A planned move lands on the first slot of
+  the step the schedule would land it in, and is uncrossed in that slot.
+- Each step records `impact_bps`, how far the makers are centred from the
+  book's level, and a component sees `MTX_IMPACT=1` in its session vars.
+
+The impact is state the script writes, not orders. Volume is still what
+traded: the bot's fills and the takers', which are transactions.
+
+Impact is refused with market making or a closed period (their makers are
+placed their own way), with the scenario's own `oracles` (the script writes
+Phoenix's index), with the `refill` actor (the fading part is the depth
+coming back) and with the transaction layer (it lands the bot's sends on
+any slot, and the script reads trades between steps). The code is
+`crates/grader/src/impact.rs`, and `bench/checks/impact/run.sh` checks it
+end to end.
+
+On the 2026-10-29 SPCX snapshot, buying 35 SPCX (about $5,000) walks the
+asks 2 ticks (1.4 bp), and 350 SPCX (about $49,000) walks them 28 ticks
+(20 bp).
 
 ## Example
 

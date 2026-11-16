@@ -32,12 +32,13 @@ solana-rpc-client-api = "4.3"
 solana-signer = "3"
 solana-transaction = { version = "4.3", features = ["wincode"] }
 # The sandboxing from surfpool#902 (cheatcode locks, SDK snapshots, clock
-# restore), merged, plus the secret RPC path of surfpool#934, on top of
-# main. Switch to a release once both ship.
-surfpool-sdk = { git = "https://github.com/solana-foundation/surfpool", branch = "feat/secret-path" }
+# restore), merged, plus the secret RPC path of surfpool#934 and the
+# scenario scripts of surfpool#953 (a scenario's `impact` runs as one), on
+# top of main. Switch to a release once all three ship.
+surfpool-sdk = { git = "https://github.com/solana-foundation/surfpool", branch = "feat/scenario-scripts" }
 # The scenario format and the override template registry, from the same tree.
-surfpool-core = { git = "https://github.com/solana-foundation/surfpool", branch = "feat/secret-path" }
-surfpool-types = { git = "https://github.com/solana-foundation/surfpool", branch = "feat/secret-path" }
+surfpool-core = { git = "https://github.com/solana-foundation/surfpool", branch = "feat/scenario-scripts" }
+surfpool-types = { git = "https://github.com/solana-foundation/surfpool", branch = "feat/scenario-scripts" }
 reqwest = { version = "0.12", default-features = false }
 thiserror = "2"
 libc = "0.2"

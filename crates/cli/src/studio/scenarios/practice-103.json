@@ -1,0 +1,46 @@
+{
+  "name": "practice-103",
+  "description": "Sixty steps, with price impact and other traders: SPCX falls 2% at step 11 and is back above its start at step 36. The cap is 700 SPCX, and the book stays where trades leave it: half of that for good, half fading.",
+  "symbol": "SPCX",
+  "duration_slots": 120,
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 700.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 20000.0
+    }
+  },
+  "path": [
+    {
+      "slot": 21,
+      "level_pct": -2.0
+    },
+    {
+      "slot": 71,
+      "level_pct": 0.5
+    }
+  ],
+  "impact": {
+    "permanent_share": 0.5,
+    "half_life_slots": 10.0,
+    "max_bps": 150.0
+  },
+  "actors": {
+    "scale": {
+      "trades_per_minute": 1.5,
+      "trade_size": 0.6,
+      "trade_size_sigma": 0.6
+    },
+    "noise": [
+      {
+        "wallets": 3,
+        "flow_mult": 40.0
+      }
+    ]
+  }
+}

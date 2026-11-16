@@ -1391,6 +1391,12 @@ fn trace_json(trace: &StepTrace) -> Value {
             "position": a.position,
             "position_change": a.position_change,
             "level_usd": a.level_usd,
+            // With the scenario's `impact`: how far trades have the book
+            // from the scenario's level.
+            "impact_bps": a.impact_bps,
+            // What traded on the market since the step before, between
+            // anyone: the candles' highs, lows and volume.
+            "trades": a.trades,
         })),
     })
 }

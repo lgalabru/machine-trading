@@ -445,6 +445,7 @@ impl WeekendFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            impact: None,
         };
         (scenario, shape)
     }

@@ -389,11 +389,27 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }
         phoenix::check_funding(&rpc, &phoenix, &scenario.symbol, funding)?;
     }
-    chain::register_scenario(
-        &rpc,
-        &scenario.name,
-        scenario.overrides(perp_asset_map, start_mark_ticks),
-    )?;
+    // With an impact, a script plays the path instead of the schedule: each
+    // slot it centres the makers on the path's book level plus what trades
+    // walking the book left (see [`crate::impact`]).
+    let overrides = scenario.overrides(perp_asset_map, start_mark_ticks);
+    let impact_state = match &scenario.impact {
+        Some(impact) => {
+            let state = opts.keys.keypair("impact", 0).pubkey();
+            let script = impact.script(&crate::impact::ScriptSetup {
+                symbol: &scenario.symbol,
+                start_mark_ticks,
+                overrides: &overrides,
+                state,
+            });
+            chain::register_scripted_scenario(&rpc, &scenario.name, Vec::new(), vec![script])?;
+            Some(state)
+        }
+        None => {
+            chain::register_scenario(&rpc, &scenario.name, overrides)?;
+            None
+        }
+    };
     let oracle_starts = match &scenario.oracles {
         Some(oracles) => crate::oracles::register(
             &rpc,
@@ -505,6 +521,12 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         peak_value_usd: start_value_usd,
         max_drawdown_usd: 0.0,
         positions_outside_universe: 0,
+        impact_state,
+        // A session someone watches step by step charts what traded.
+        tape: opts.observer.is_some().then(|| MarketTape {
+            last_scan: base_slot,
+            seen: HashSet::new(),
+        }),
         rfqs,
         desk: swaps.map(|(_, desk)| desk),
         desk_start: None,
@@ -784,6 +806,16 @@ struct PerpFills {
     open_orders: Vec<(InstrumentRef, CoreSide)>,
 }
 
+/// Where a session is in the market's fills: every match on the market,
+/// between anyone, as its transactions recorded them.
+struct MarketTape {
+    /// The slot fills were last read at. Each read starts a slot earlier,
+    /// for what landed in that slot after it, and skips matches it has.
+    last_scan: u64,
+    /// Each match's sequence on the market.
+    seen: HashSet<u128>,
+}
+
 /// A perp session's account: the bot's Phoenix trader account, metered.
 struct PerpAccount {
     scenario: Scenario,
@@ -814,6 +846,10 @@ struct PerpAccount {
     max_drawdown_usd: f64,
     /// Phoenix positions (or orders) in markets other than the scenario's.
     positions_outside_universe: u32,
+    /// Where the impact script publishes the impact, if the scenario has one.
+    impact_state: Option<Pubkey>,
+    /// The market's own fills, where the session reads them for a chart.
+    tape: Option<MarketTape>,
     /// The requests for quotes open to the bot, if RFQ clients send any.
     rfqs: Option<RfqBoard>,
     /// What its RFQ fills settle in, if they do, and what the desk held at
@@ -1051,6 +1087,28 @@ impl PerpAccount {
         Ok(())
     }
 
+    /// What traded on the market since the last read, between anyone.
+    /// Nothing where the session doesn't read it.
+    async fn traded(&mut self, slot: u64) -> Result<Option<crate::session::StepTrades>> {
+        let Some(tape) = self.tape.as_mut() else {
+            return Ok(None);
+        };
+        let after = tape.last_scan.saturating_sub(1);
+        let records = patiently("the market's fills", || self.meter.market_records(after)).await?;
+        let mut trades = crate::session::StepTrades::default();
+        for fill in records.fills {
+            if tape.seen.insert(fill.sequence) {
+                trades.add(
+                    grader_f64(fill.price),
+                    grader_f64(fill.quantity),
+                    fill.taker_side == CoreSide::Buy,
+                );
+            }
+        }
+        tape.last_scan = slot;
+        Ok(Some(trades))
+    }
+
     /// What the bot's wallet holds for its RFQ desk, and the asset's
     /// reference price, Phoenix's index for the perp. Nothing without a
     /// desk. The wallet holds what its token accounts of each mint hold, as
@@ -1141,6 +1199,7 @@ impl Account for PerpAccount {
 
     async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord> {
         self.scan(slot).await?;
+        let trades = self.traded(slot).await?;
         let scenario = &self.scenario;
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
@@ -1157,6 +1216,20 @@ impl Account for PerpAccount {
             .value;
         let usd = |ticks: u64| self.phoenix.ticks_to_usd(&self.market, ticks);
         let start_mark_usd = self.start_mark_usd;
+        // What the script published at the last slot; nothing before its
+        // first call.
+        let impact_bps = match &self.impact_state {
+            Some(state) => Some({
+                let rpc = mtx_kit::rpc_client(&self.rpc_url);
+                rpc.get_account_with_commitment(state, rpc.commitment())?
+                    .value
+                    .and_then(|account| {
+                        crate::impact::ImpactReading::from_account_data(&account.data)
+                    })
+                    .map_or(0.0, |reading| reading.total_bps)
+            }),
+            None => None,
+        };
         Ok(StepRecord {
             k,
             at,
@@ -1168,6 +1241,8 @@ impl Account for PerpAccount {
             fair_usd: scenario.fair_value_usd(start_mark_usd, at),
             best_bid_usd: bbo.best_bid_ticks().map(usd),
             best_ask_usd: bbo.best_ask_ticks().map(usd),
+            impact_bps,
+            trades,
             position,
             value_usd,
             pnl_usd: value_usd - self.start_value_usd,

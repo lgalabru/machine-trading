@@ -32,6 +32,19 @@ pub struct Override {
 }
 
 pub fn register_scenario(rpc: &RpcClient, name: &str, overrides: Vec<Override>) -> Result<()> {
+    register_scripted_scenario(rpc, name, overrides, Vec::new())
+}
+
+/// A scenario with scripts: Lua the surfnet calls every slot, which reads
+/// the chain and queues overrides (Surfpool's scenario scripts). Their
+/// intervals count from the slot the scenario is registered at, as the
+/// overrides' slots do.
+pub fn register_scripted_scenario(
+    rpc: &RpcClient,
+    name: &str,
+    overrides: Vec<Override>,
+    scripts: Vec<Value>,
+) -> Result<()> {
     let overrides: Vec<Value> = overrides
         .into_iter()
         .map(|o| {
@@ -53,6 +66,7 @@ pub fn register_scenario(rpc: &RpcClient, name: &str, overrides: Vec<Override>) 
         "description": name,
         "tags": ["mtx"],
         "overrides": overrides,
+        "scripts": scripts,
     });
     call(rpc, "surfnet_registerScenario", json!([scenario]))?;
     info!(name, "scenario registered");

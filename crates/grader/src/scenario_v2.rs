@@ -140,6 +140,11 @@ pub struct PerpVenue {
     /// liquidates during the session.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquidator: Option<crate::keeper::Liquidator>,
+    /// The bot's own price impact on the book (see [`crate::impact`]).
+    /// Without it, the book is where the path puts it whatever the bot
+    /// trades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact: Option<crate::impact::Impact>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -320,6 +325,9 @@ impl Venues {
         }
         if let Some(liquidator) = self.perp.as_ref().and_then(|p| p.liquidator.as_ref()) {
             liquidator.validate()?;
+        }
+        if let Some(impact) = self.perp.as_ref().and_then(|p| p.impact.as_ref()) {
+            impact.validate()?;
         }
         let Some(spot) = &self.spot else {
             return Ok(());
@@ -591,6 +599,7 @@ impl ScenarioV2 {
                 );
             }
         }
+        self.impact_plays_a_plain_path()?;
         if let Some(layer) = self.tx.as_ref().and_then(|tx| tx.layer.as_ref()) {
             layer
                 .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
@@ -698,6 +707,55 @@ impl ScenarioV2 {
         crate::lending::validate_warps(&market.warps, self.duration_slots)?;
         if !market.warps.is_empty() && self.faults.is_some() {
             return Err("warps: a session with clock jumps has no execution faults".into());
+        }
+        Ok(())
+    }
+
+    /// The impact script plays the path itself and reads trades off the
+    /// makers' touch, so it takes a plain path: no market making or closed
+    /// period (their makers are placed their own way, and a competing
+    /// maker's quotes are the touch), no oracle feeds of the scenario's (the
+    /// script writes the index), no refill actor (the script is what brings
+    /// the depth back), and no transaction layer (the script reads trades
+    /// between a step's blocks and the next step's, and the layer lands the
+    /// bot's sends on any slot).
+    fn impact_plays_a_plain_path(&self) -> Result<(), String> {
+        if self
+            .venues
+            .perp
+            .as_ref()
+            .is_none_or(|perp| perp.impact.is_none())
+        {
+            return Ok(());
+        }
+        if self.actors.competitor.is_some() || self.market_model.closed_period.is_some() {
+            return Err(
+                "impact: not with market making or a closed period: their makers are placed their own way"
+                    .into(),
+            );
+        }
+        if self.oracles.is_some() {
+            return Err(
+                "impact: not with the scenario's own oracle feeds: the impact script writes Phoenix's index"
+                    .into(),
+            );
+        }
+        if self
+            .actors
+            .library
+            .as_ref()
+            .is_some_and(|library| library.refill.is_some())
+        {
+            return Err(
+                "impact: not with the refill actor: the impact's fading part is the depth coming back"
+                    .into(),
+            );
+        }
+        if self.tx.as_ref().is_some_and(|tx| tx.layer.is_some()) {
+            return Err(
+                "impact: not with the transaction layer yet: it lands the bot's sends on any slot, and the impact reads trades between steps"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -1124,7 +1182,8 @@ impl ScenarioV2 {
             making,
             offhours,
             funding: venues.perp.as_ref().and_then(|p| p.funding),
-            liquidator: venues.perp.and_then(|p| p.liquidator),
+            liquidator: venues.perp.as_ref().and_then(|p| p.liquidator),
+            impact: venues.perp.and_then(|p| p.impact),
             tape,
             spot,
             faults,
@@ -1210,6 +1269,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                         perp: Some(PerpVenue {
                             funding: v1.funding,
                             liquidator: v1.liquidator,
+                            impact: v1.impact,
                         }),
                         spot: None,
                         lending: None,
@@ -1504,6 +1564,7 @@ mod tests {
                 mark: None,
             }),
             liquidator: None,
+            impact: None,
         });
         assert!(s.venues.validate().unwrap_err().contains("funding"));
 
@@ -1866,6 +1927,61 @@ mod tests {
         s.tx.as_mut().unwrap().raw_sends.as_mut().unwrap().programs =
             vec!["11111111111111111111111111111111".into()];
         assert_eq!(s.validate(), Ok(()));
+    }
+
+    /// The impact lives on the perp venue, round-trips through v1, values
+    /// the account at the scenario's book level, and is refused where the
+    /// script could not play the path or read the touch.
+    #[test]
+    fn an_impact_lives_on_the_perp_venue_and_is_refused_where_it_cannot_hold() {
+        use crate::impact::Impact;
+        let impact = Impact {
+            permanent_share: 0.5,
+            half_life_slots: 8.0,
+            max_bps: 150.0,
+        };
+        let mut s = shock();
+        assert_eq!(s.clone().into_scenario().unwrap().valuation(), "mark");
+        s.venues.perp.get_or_insert_with(Default::default).impact = Some(impact);
+        assert_eq!(s.validate(), Ok(()));
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(
+            text.contains(
+                r#""impact":{"permanent_share":0.5,"half_life_slots":8.0,"max_bps":150.0}"#
+            )
+        );
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.impact, Some(impact));
+        assert_eq!(v1.valuation(), "book");
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+        // A v1 file says it at the top level.
+        let flat = serde_json::to_string(&v1).unwrap();
+        assert_eq!(parse(&flat).unwrap().impact, Some(impact));
+        // Absent, nothing of it is written.
+        assert!(!serde_json::to_string(&shock()).unwrap().contains("impact"));
+
+        let mut bad = s.clone();
+        bad.venues.perp.as_mut().unwrap().impact = Some(Impact {
+            half_life_slots: 0.0,
+            ..impact
+        });
+        assert!(bad.validate().unwrap_err().contains("half_life_slots"));
+
+        let mut refilled = s.clone();
+        refilled.actors.library = Some(crate::actors::Library {
+            refill: Some(serde_json::from_str(r#"{"half_life_slots":[4,40]}"#).unwrap()),
+            ..Default::default()
+        });
+        assert!(
+            refilled
+                .validate()
+                .unwrap_err()
+                .starts_with("impact: not with the refill actor")
+        );
+
+        let mut spot_impact = spot();
+        spot_impact.venues.perp = s.venues.perp.clone();
+        assert!(spot_impact.validate().is_err());
     }
 
     fn lending(check: &str) -> Scenario {

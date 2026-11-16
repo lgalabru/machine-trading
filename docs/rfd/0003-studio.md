@@ -24,8 +24,8 @@ current directory (`--bot-path` for another: its directory or its
 `Cargo.toml`). The bot is a
 workspace: a strategy crate (`mtx bot new`'s layout: `Cargo.toml`,
 `Justfile`, `src/lib.rs`) and the scenarios it plays (`scenarios/*.json`,
-seeded with the studio's own: `practice-101`, 5 steps, and `practice-102`,
-10). Four resizable panels, as Rex lays
+seeded with the studio's own: `practice-101`, 5 steps, `practice-102`,
+10, and `practice-103`, 60 steps with price impact). Four resizable panels, as Rex lays
 out its panes:
 
 ```

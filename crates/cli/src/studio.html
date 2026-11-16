@@ -135,6 +135,7 @@
   #chart { position: absolute; inset: 0; }
   #chart svg { display: block; width: 100%; height: 100%; cursor: crosshair; }
   #chart text { font: 500 10px var(--mono); fill: #8e8e93; }
+  #chart #ohlc, #chart #ohlc-vol { font: 500 11px var(--sans); }
   #chart .lab { font: 700 9px var(--sans); letter-spacing: .09em; fill: #52525b; }
   .market-body { display: flex; flex-direction: column; }
   .market-body .plot { flex: 1; min-height: 0; position: relative; }
@@ -847,7 +848,7 @@ $("scenario").addEventListener("change", (e) => {
   clearSession(); store.set("scenario2", e.target.value); loadScenario(e.target.value);
 });
 $("open-scenario").addEventListener("click", () => { if (scenarioPath()) openFile(scenarioPath()); });
-$("legend").innerHTML = `<span><i style="background:#fafafa"></i>mark</span><span><i style="background:repeating-linear-gradient(90deg,#71717a 0 3px,transparent 3px 6px)"></i>planned</span><span><i style="background:#7aa2f7"></i>position</span><span><i style="background:#5ed16a"></i>PnL</span>`;
+$("legend").innerHTML = `<span title="Candles: the book's mid over each bar, wicks to the highest ask and lowest bid; bars under them are what traded"><i style="background:linear-gradient(90deg,#6edd8c 0 50%,#e9645e 50% 100%);height:8px;width:8px;border-radius:1px"></i>price</span><span title="Dimmed candles: the scenario's path, for the steps still to play"><i style="background:linear-gradient(90deg,#6edd8c 0 50%,#e9645e 50% 100%);height:8px;width:8px;border-radius:1px;opacity:.4"></i>planned</span><span><i style="background:#7aa2f7"></i>position</span><span><i style="background:#5ed16a"></i>PnL</span>`;
 
 const cur = () => (S.sel !== null && S.steps[S.sel] ? S.sel : S.steps.length - 1);
 $("market-stats").innerHTML = `<span class="big" id="s-pnl">$0.00</span><span class="dwrap"><span class="d off" id="s-dpnl"></span></span>` +
@@ -935,6 +936,65 @@ function flashStats(prev, now) {
 }
 
 // The chart: price, position and PnL over the scenario's steps, one x axis.
+//
+// The price is drawn as candles, in the look of Phoenix's own chart. A
+// candle is built from two kinds of data, and says which it had:
+//
+// - The book, once a step: its body runs from the book's mid when the bar
+//   opened to the mid when it closed. The mid is the makers' centre, which a
+//   scenario's impact moves with what was traded; a step without a
+//   two-sided book falls back on the mark.
+// - The market's trades, where the session reads them (`account.trades`,
+//   every match on the market between anyone): the wicks reach the highest
+//   and lowest price that traded in the bar, and the volume is what traded,
+//   in USDC. Without them the wicks stop at the mids, and the volume is
+//   what the strategy filled plus the scenario's taker orders, at the bar's
+//   price.
+//
+// Volume is never a price move nobody traded.
+const UP = "#6edd8c", DOWN = "#e9645e";
+const twoSided = (m) => isNum(m.best_bid) && isNum(m.best_ask) && m.best_bid < m.best_ask;
+const priceOf = (s) => (twoSided(s.market) ? (s.market.best_bid + s.market.best_ask) / 2 : s.market.mark);
+// Steps a candle: the fewest that keep candles `minPx` apart.
+const barSteps = (n, plotW, minPx = 9) => [1, 2, 3, 5, 10, 15, 20, 30, 50, 100, 200].find((b) => (n / b) * minPx <= plotW) || 500;
+function candlesOf(steps, bar, takers = []) {
+  const out = [];
+  const taped = steps.some((s) => s.account?.trades);
+  let prev = steps.length ? priceOf(steps[0]) : 0;
+  for (let k0 = 0; k0 < steps.length; k0 += bar) {
+    const part = steps.slice(k0, k0 + bar), prices = part.map(priceOf);
+    const c = { k0, k1: k0 + part.length - 1, open: prev, close: prices.at(-1), high: Math.max(prev, ...prices), low: Math.min(prev, ...prices), volume: 0, base: 0, trades: 0, taped };
+    for (const s of part) {
+      const t = s.account?.trades;
+      if (t) {
+        if (t.count) { c.high = Math.max(c.high, t.high_usd); c.low = Math.min(c.low, t.low_usd); }
+        c.volume += t.quote_usd; c.base += t.base; c.trades += t.count;
+      } else {
+        const filled = Math.abs(s.account?.position_change || 0);
+        c.base += filled; c.volume += filled * priceOf(s);
+      }
+    }
+    prev = c.close;
+    out.push(c);
+  }
+  // Without the market's trades, a taker's order counts in the bar it was
+  // sent in, once that bar has played.
+  if (!taped) for (const tk of takers) { const c = out[Math.floor(tk.k / bar)]; if (c && tk.k <= c.k1) { c.base += tk.size; c.volume += tk.size * c.close; } }
+  return out;
+}
+// The scenario's plan as candles, on the same bars: what the path alone
+// would draw, before a session has played it. A planned level holds for its
+// step, so a bar's high and low are the levels it passes through.
+function plannedCandles(planned, bar, start) {
+  const out = [];
+  let prev = isNum(start) ? start : planned[0];
+  for (let k0 = 0; k0 < planned.length; k0 += bar) {
+    const part = planned.slice(k0, k0 + bar);
+    out.push({ k0, k1: k0 + part.length - 1, open: prev, close: part.at(-1), high: Math.max(prev, ...part), low: Math.min(prev, ...part), volume: 0, planned: true });
+    prev = part.at(-1);
+  }
+  return out;
+}
 let drawQueued = false, hoverK = null;
 const drawSoon = () => { if (!drawQueued) { drawQueued = true; requestAnimationFrame(() => { drawQueued = false; draw(); }); } };
 let geo = null;
@@ -950,7 +1010,11 @@ function draw() {
   const x = (k) => L + (k / n) * (W - L - R), xc = (k) => x(k + .5);
   const start = S.started?.start_mark;
   const planned = plan.map((p) => (isNum(start) ? start * (1 + p.level_pct / 100) : p.mark_usd));
-  const marks = steps.map((s) => s.market.mark);
+  const marks = steps.map(priceOf);
+  const bar = barSteps(n, W - L - R);
+  const bars = candlesOf(steps, bar, S.plan?.takers || []);
+  // The bars the session hasn't reached yet, from the plan.
+  const ahead = plannedCandles(planned, bar, isNum(start) ? start : S.plan?.start_mark_usd).filter((c) => c.k0 >= steps.length);
   const cap = S.started?.cap ?? S.plan?.scenario?.mandate?.universe?.[0]?.max_position ?? 1;
   const range = (vals, pad = .08, floor = 0) => {
     let lo = Math.min(...vals), hi = Math.max(...vals);
@@ -959,10 +1023,13 @@ function draw() {
     const mid = (hi + lo) / 2;
     return [mid - span / 2 - span * pad, mid + span / 2 + span * pad];
   };
-  const [plo, phi] = range([...planned, ...marks], .1, (planned[0] || 100) * .004);
+  const [plo, phi] = range([...planned, ...marks, ...bars.flatMap((c) => [c.high, c.low])], .1, (planned[0] || 100) * .004);
   const pnls = steps.map((s) => s.account.pnl_usd);
   const [nlo, nhi] = range([0, ...pnls], .15, 2);
-  const yp = (v) => y0 + (1 - (v - plo) / (phi - plo)) * hp;
+  // The foot of the price pane is the volume's: prices keep above it.
+  // and the top is the candle's line of prices.
+  const hv = hp * .18, ht = 30;
+  const yp = (v) => y0 + ht + (1 - (v - plo) / (phi - plo)) * (hp - hv - ht);
   const yq = (v) => y1 + (1 - (v + cap) / (2 * cap)) * hq;
   const yn = (v) => y2 + (1 - (v - nlo) / (nhi - nlo)) * hn;
   // Each value holds for its step, then jumps.
@@ -974,27 +1041,48 @@ function draw() {
   for (const v of ticks(plo, phi, Math.max(2, Math.floor(hp / 44)))) o.push(`<line x1="${L}" x2="${W - R}" y1="${yp(v)}" y2="${yp(v)}" stroke="#18181b"/><text x="${W - R + 6}" y="${yp(v) + 3}">${fix(v, phi - plo < 4 ? 2 : 1)}</text>`);
   for (const v of [-cap, 0, cap]) o.push(`<line x1="${L}" x2="${W - R}" y1="${yq(v)}" y2="${yq(v)}" stroke="${v ? "#18181b" : "#2c2c30"}" ${v ? 'stroke-dasharray="2 4"' : ""}/><text x="${W - R + 6}" y="${yq(v) + 3}">${v > 0 ? "+" : ""}${units(v)}</text>`);
   for (const v of ticks(nlo, nhi, 2)) o.push(`<line x1="${L}" x2="${W - R}" y1="${yn(v)}" y2="${yn(v)}" stroke="${Math.abs(v) < 1e-9 ? "#2c2c30" : "#18181b"}"/><text x="${W - R + 6}" y="${yn(v) + 3}">${Math.abs(v) < 1e-9 ? "$0" : susd(v, Math.abs(nhi - nlo) < 20 ? 1 : 0)}</text>`);
-  o.push(`<text class="lab" x="${L}" y="${y0 + 9}">PRICE</text><text class="lab" x="${L}" y="${y1 + 9}">POSITION</text><text class="lab" x="${L}" y="${y2 + 9}">PNL</text>`);
+  o.push(`<text id="ohlc" x="${L}" y="${y0 + 10}"></text><text id="ohlc-vol" x="${L}" y="${y0 + 24}"></text><text class="lab" x="${L}" y="${y1 + 9}">POSITION</text><text class="lab" x="${L}" y="${y2 + 9}">PNL</text>`);
   const every = [1, 2, 5, 10, 20, 25, 50, 100, 200].find((e) => (n / e) * 46 < W - L - R) || 500;
   for (let k = every; k <= n; k += every) o.push(`${every === 1 && k < n ? `<line x1="${x(k)}" x2="${x(k)}" y1="${T}" y2="${H - B}" stroke="#131316"/>` : every > 1 ? `<line x1="${xc(k - 1)}" x2="${xc(k - 1)}" y1="${T}" y2="${H - B}" stroke="#131316"/>` : ""}<text x="${xc(k - 1)}" y="${H - 7}" text-anchor="middle">${k}</text>`);
   // The scenario: its planned path, and the takers' orders.
-  if (planned.length) o.push(`<path d="${path(planned, yp)}" fill="none" stroke="#71717a" stroke-width="1.2" stroke-dasharray="3 3" opacity="${steps.length ? .7 : 1}"/>`);
-  for (const tk of S.plan?.takers || []) o.push(`<line x1="${xc(tk.k)}" x2="${xc(tk.k)}" y1="${y0 + hp}" y2="${y0 + hp - Math.min(14, 3 + tk.size * 3)}" stroke="${tk.side === "bid" || tk.side === "buy" ? "#5ed16a" : "#ff5f57"}" opacity=".55"/>`);
+  // Dimmed candles for what is still to play; behind what has played, the
+  // plan stays as a dashed line to read the session against.
+  const pitch = x(bar) - x(0), body = Math.max(1, Math.min(22, pitch * .72));
+  const candle = (c, opacity) => {
+    const mid = (x(c.k0) + x(c.k0 + bar)) / 2, color = c.close >= c.open ? UP : DOWN;
+    const top = yp(Math.max(c.open, c.close)), bottom = yp(Math.min(c.open, c.close));
+    return `<g opacity="${opacity}"><line x1="${mid.toFixed(1)}" x2="${mid.toFixed(1)}" y1="${yp(c.high).toFixed(1)}" y2="${yp(c.low).toFixed(1)}" stroke="${color}" stroke-width="${body > 5 ? 1.2 : 1}"/>` +
+      `<rect x="${(mid - body / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${body.toFixed(1)}" height="${Math.max(1.2, bottom - top).toFixed(1)}" fill="${color}"/></g>`;
+  };
+  if (steps.length && planned.length) o.push(`<path d="${path(planned.slice(0, steps.length), yp)}" fill="none" stroke="#71717a" stroke-width="1.2" stroke-dasharray="3 3" opacity=".7"/>`);
+  for (const c of ahead) o.push(candle(c, steps.length ? .3 : .55));
+  // The takers' orders still to come: ticks along the foot of the price pane.
+  for (const tk of S.plan?.takers || []) if (tk.k >= steps.length) o.push(`<line x1="${xc(tk.k)}" x2="${xc(tk.k)}" y1="${y0 + hp}" y2="${y0 + hp - Math.min(14, 3 + tk.size * 3)}" stroke="${tk.side === "bid" || tk.side === "buy" ? UP : DOWN}" opacity=".4"/>`);
   // The session.
   if (steps.length) {
-    const book = steps.filter((s) => isNum(s.market.best_bid) && isNum(s.market.best_ask));
-    if (book.length === steps.length) o.push(`<path d="${path(steps.map((s) => s.market.best_ask), yp)}${[...steps].reverse().map((s, i) => `V${yp(s.market.best_bid).toFixed(1)}H${x(steps.length - 1 - i).toFixed(1)}`).join("")}Z" fill="rgba(250,250,250,.07)"/>`);
-    o.push(`<path d="${path(marks, yp)}" fill="none" stroke="#fafafa" stroke-width="1.5" stroke-linejoin="round"/>`);
+    // Volume first, under the candles: bars along the foot of the price
+    // pane, as tall as the most traded bar makes them.
+    const most = Math.max(...bars.map((c) => c.volume), 0);
+    for (const c of bars) {
+      if (!(c.volume > 0)) continue;
+      const mid = (x(c.k0) + x(c.k0 + bar)) / 2, h = Math.max(1.5, (c.volume / most) * (hv - 4));
+      o.push(`<rect x="${(mid - body / 2).toFixed(1)}" y="${(y0 + hp - h).toFixed(1)}" width="${body.toFixed(1)}" height="${h.toFixed(1)}" fill="${c.close >= c.open ? UP : DOWN}" opacity=".3"/>`);
+    }
+    for (const c of bars) o.push(candle(c, 1));
+    // The last price: a dotted line across, and its tag on the axis.
+    const tip = bars.at(-1), lastColor = tip.close >= tip.open ? UP : DOWN, ly = yp(tip.close);
+    o.push(`<line x1="${L}" x2="${W - R}" y1="${ly.toFixed(1)}" y2="${ly.toFixed(1)}" stroke="${lastColor}" stroke-width="1" stroke-dasharray="1 3" opacity=".8"/>` +
+      `<rect x="${W - R + 2}" y="${(ly - 8).toFixed(1)}" width="${R - 4}" height="16" rx="2" fill="${lastColor}"/><text x="${W - R + 6}" y="${(ly + 3.5).toFixed(1)}" style="fill:#0b0c0f;font-weight:700">${fix(tip.close, 2)}</text>`);
     const pos = steps.map((s) => s.account.position);
     o.push(`<path d="${stepPath(pos, yq)}V${yq(0)}H${x(0)}Z" fill="rgba(122,162,247,.16)"/><path d="${stepPath(pos, yq)}" fill="none" stroke="#7aa2f7" stroke-width="1.4"/>`);
     const last = pnls.at(-1), color = last >= 0 ? "#5ed16a" : "#ff5f57";
     o.push(`<path d="${path(pnls, yn)}V${yn(0)}H${x(0)}Z" fill="${last >= 0 ? "rgba(94,209,106,.13)" : "rgba(255,95,87,.13)"}"/><path d="${path(pnls, yn)}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linejoin="round"/>`);
     // What the strategy asked for (hollow), and what filled (solid).
     steps.forEach((s, i) => {
-      if (s.failed) o.push(`<path d="M${xc(i) - 4},${yp(s.market.mark) - 4}l8,8m0,-8l-8,8" stroke="#ff5f57" stroke-width="1.6"/>`);
-      else if (s.sent.length) o.push(`<circle cx="${xc(i)}" cy="${yp(s.market.mark)}" r="3" fill="#000" stroke="#7aa2f7" stroke-width="1.3"/>`);
+      if (s.failed) o.push(`<path d="M${xc(i) - 4},${yp(marks[i]) - 4}l8,8m0,-8l-8,8" stroke="#ff5f57" stroke-width="1.6"/>`);
+      else if (s.sent.length) o.push(`<circle cx="${xc(i)}" cy="${yp(marks[i])}" r="3" fill="#000" stroke="#7aa2f7" stroke-width="1.3"/>`);
       const ch = s.account.position_change;
-      if (ch) { const up = ch > 0, px = xc(i), py = yp(s.market.mark) + (up ? 12 : -12); o.push(`<path d="M${px},${py + (up ? -6 : 6)}l5,${up ? 8 : -8}h-10z" fill="${up ? "#5ed16a" : "#ff5f57"}" stroke="#000" stroke-width=".8"/>`); }
+      if (ch) { const up = ch > 0, px = xc(i), py = yp(marks[i]) + (up ? 12 : -12); o.push(`<path d="M${px},${py + (up ? -6 : 6)}l5,${up ? 8 : -8}h-10z" fill="${up ? UP : DOWN}" stroke="#000" stroke-width=".8"/>`); }
     });
   }
   // Breakpoints on the axis, the playhead, the selection.
@@ -1003,33 +1091,59 @@ function draw() {
   if (steps.length) {
     const head = steps.length - 1;
     if (k !== head) o.push(`<rect x="${x(head)}" width="${Math.max(1, x(1) - x(0))}" y="${T}" height="${H - B - T}" fill="#a2ef5b" opacity=".06"/>`);
-    o.push(`<rect x="${x(k)}" width="${Math.max(1.2, x(1) - x(0))}" y="${T}" height="${H - B - T}" fill="#a2ef5b" opacity="${x(1) - x(0) > 3 ? .1 : .9}"/><circle cx="${xc(k)}" cy="${yp(steps[k].market.mark)}" r="3.5" fill="#a2ef5b" stroke="#000"/>`);
+    o.push(`<rect x="${x(k)}" width="${Math.max(1.2, x(1) - x(0))}" y="${T}" height="${H - B - T}" fill="#a2ef5b" opacity="${x(1) - x(0) > 3 ? .1 : .9}"/><circle cx="${xc(k)}" cy="${yp(marks[k])}" r="3.5" fill="#a2ef5b" stroke="#000"/>`);
   }
   o.push(`<line id="cross" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="rgba(250,250,250,.3)" visibility="hidden"/>`);
   host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${o.join("")}</svg>`;
-  geo = { L, R, W, H, B, n, x: xc, planned };
+  geo = { L, R, W, H, B, n, x: xc, planned, bar, bars, ahead };
+  showCandle(hoverK);
   if (hoverK !== null) showCross(hoverK);
 }
 new ResizeObserver(drawSoon).observe($("chart"));
 const kAt = (e) => { const r = $("chart").getBoundingClientRect(); return Math.min(geo.n - 1, Math.max(0, Math.floor(((e.clientX - r.left - geo.L) / (geo.W - geo.L - geo.R)) * geo.n))); };
 function showCross(k) { const c = document.getElementById("cross"); if (c && geo) { c.setAttribute("x1", geo.x(k)); c.setAttribute("x2", geo.x(k)); c.setAttribute("visibility", "visible"); } }
+// The line over the price pane, as Phoenix's chart has it: the candle under
+// the pointer (or the last one) as O H L C, its change, and its volume.
+const candleAt = (k) => geo && (geo.bars.find((c) => k >= c.k0 && k <= c.k1) || geo.ahead.find((c) => k >= c.k0 && k <= c.k1));
+function showCandle(k) {
+  const head = document.getElementById("ohlc"), vol = document.getElementById("ohlc-vol");
+  if (!head || !geo) return;
+  const c = (k !== null && candleAt(k)) || geo.bars.at(-1) || geo.ahead.at(-1);
+  if (!c) { head.innerHTML = vol.innerHTML = ""; return; }
+  const color = c.close >= c.open ? UP : DOWN, change = c.close - c.open, pct = c.open ? (change / c.open) * 100 : 0;
+  const part = (label, value) => `<tspan style="fill:#8e8e93">${label}</tspan><tspan style="fill:${color}">${fix(value)}</tspan> `;
+  head.innerHTML = part("O", c.open) + part("H", c.high) + part("L", c.low) + part("C", c.close) +
+    `<tspan style="fill:${color}">${change >= 0 ? "+" : "−"}${fix(Math.abs(change))} (${change >= 0 ? "+" : "−"}${fix(Math.abs(pct))}%)</tspan>` +
+    (c.planned ? `<tspan style="fill:#52525b"> planned</tspan>` : "");
+  vol.innerHTML = c.planned ? "" : `<tspan style="fill:#8e8e93">Volume (USDC) </tspan><tspan style="fill:${color}">${fix(c.volume, 0)}</tspan>` +
+    (c.taped ? `<tspan style="fill:#52525b">  ${c.trades} trade${c.trades === 1 ? "" : "s"}</tspan>` : "");
+}
+// A candle's rows in the tip: what it spans, its four prices, what traded.
+function candleRows(c, bar, row) {
+  if (!c) return "";
+  const cls = c.close >= c.open ? "pos" : "neg";
+  return (bar > 1 ? row("candle", `steps ${c.k0 + 1}–${c.k1 + 1}`) : "") +
+    row("open · close", `${fix(c.open)} · ${fix(c.close)}`, cls) + row("high · low", `${fix(c.high)} · ${fix(c.low)}`) +
+    (c.volume > 0 ? row("volume", `$${fix(c.volume, 0)} · ${units(c.base)}`) : "");
+}
 $("chart").addEventListener("mousemove", (e) => {
   if (!geo) return;
   const k = (hoverK = kAt(e)), s = S.steps[k], tip = $("tip");
   showCross(k);
+  showCandle(k);
   const row = (a, b, cls = "") => `<div class="r"><span>${a}</span><b class="${cls}">${b}</b></div>`;
   const onAxis = e.clientY - $("chart").getBoundingClientRect().top > geo.H - geo.B;
   tip.innerHTML = `<b>step ${k + 1}</b>${S.bps.steps.has(k + 1) ? ' <span class="neg">● breakpoint</span>' : ""}` +
-    (s ? row("mark", usd(s.market.mark)) + row("position", s.account.position === 0 ? "flat" : sunits(s.account.position)) + row("pnl", susd(s.account.pnl_usd), tone(s.account.pnl_usd)) +
+    (s ? candleRows(geo.bars[Math.floor(k / geo.bar)], geo.bar, row) + row("mark", usd(s.market.mark)) + (isNum(s.account.impact_bps) ? row("impact", `${s.account.impact_bps >= 0 ? "+" : "−"}${fix(Math.abs(s.account.impact_bps), 1)} bp`, s.account.impact_bps ? tone(s.account.impact_bps) : "") : "") + row("position", s.account.position === 0 ? "flat" : sunits(s.account.position)) + row("pnl", susd(s.account.pnl_usd), tone(s.account.pnl_usd)) +
       (s.account.position_change ? row("filled", sunits(s.account.position_change), s.account.position_change > 0 ? "pos" : "neg") : "") + (s.sent.length ? row("sent", `${s.sent.length} order${s.sent.length > 1 ? "s" : ""}`) : "") +
       (s.printed.length ? `<div style="color:var(--text-3);max-width:260px;white-space:normal">${esc(s.printed[0])}</div>` : "")
-      : isNum(geo.planned[k]) ? row("planned", usd(geo.planned[k])) : "") +
+      : isNum(geo.planned[k]) ? candleRows(geo.ahead.find((c) => k >= c.k0 && k <= c.k1), geo.bar, row) + row("planned", usd(geo.planned[k])) : "") +
     `<div style="color:var(--text-4);margin-top:3px">${onAxis ? "click: toggle a breakpoint" : s ? "click: show this step" : "⇧-click: break here"}</div>`;
   tip.style.display = "block";
   const tw = tip.offsetWidth;
   tip.style.left = Math.min(e.clientX + 14, innerWidth - tw - 8) + "px"; tip.style.top = e.clientY + 14 + "px";
 });
-$("chart").addEventListener("mouseleave", () => { hoverK = null; $("tip").style.display = "none"; document.getElementById("cross")?.setAttribute("visibility", "hidden"); });
+$("chart").addEventListener("mouseleave", () => { hoverK = null; showCandle(null); $("tip").style.display = "none"; document.getElementById("cross")?.setAttribute("visibility", "hidden"); });
 $("chart").addEventListener("click", (e) => {
   if (!geo) return;
   const k = kAt(e), onAxis = e.clientY - $("chart").getBoundingClientRect().top > geo.H - geo.B;
