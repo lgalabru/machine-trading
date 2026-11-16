@@ -118,16 +118,20 @@ the README.
   through the grader's maker's lean, buys ahead of a confirmed rise, stands
   aside ahead of a sell burst, and leaves the broker what costs more to
   buy. It doesn't parse the tape and doesn't size anything to the move.
-- **The informed bot (1)** is told the session's latent state, as the
-  verifier's `mtx grade --informed` hands it (`MTX_REGIME`): the session's
-  kind (calm, up or down) and its book (the grader's maker's half-spread,
-  quote size and look delay, and the backstop). It is not told when the
-  move starts or lands, how far it goes, or where the bursts and fake-outs
-  fall: in an up session it front-loads the order in the first tenth of
-  the session, in a down one it waits until the oracle has fallen 0.35%
-  from the high and stopped falling, in a calm one it works passively. It
-  trades through the same order sheet under the same mandate, costs and
-  latency.
+- **The informed bot (1)** is told what #47's boundary allows: identity
+  and process facts, never a session's draws. The latent names the
+  `informed` taker account in its roster, which the session resolves to
+  that account's wallet, and gives the book's process (the grader's
+  maker's half-spread, quote size and look delay, and the backstop). The
+  informed trader is seated in every session and trades noise like every
+  account; ahead of a move its burst comes from it, and each fake-out from
+  one other account. The bot maps the wallet to its Phoenix trader account,
+  reads that account's NVDA position every step, and takes a net change of
+  0.6 NVDA within 120 slots as the burst: up, it buys the rest at once
+  (paying up to 40 bp over the broker); down, it waits until the oracle has
+  fallen 0.35% from the high and stopped falling; until then, or in a calm
+  session, it works passively. It isn't told whether the session moves,
+  which way, when or how far.
 
 ## Failure modes, priced
 

@@ -212,6 +212,11 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
+    ("perp-accumulate", "roster", Knowable::Identity),
+    ("perp-accumulate", "maker_bps", Knowable::Process),
+    ("perp-accumulate", "maker_size", Knowable::Process),
+    ("perp-accumulate", "react_slots", Knowable::Process),
+    ("perp-accumulate", "backstop_bps", Knowable::Process),
 ];
 
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
@@ -250,13 +255,14 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
     })
 }
 
-/// The session's kind (calm, or an informed move up or down) and its
-/// book: the grader's maker's half-spread, quote size and look delay, and
-/// the makers' backstop. Not when the move starts or lands, how far it goes,
-/// or where the bursts and fake-outs fall.
+/// Who the informed trader is (its taker account's wallet, through the
+/// roster) and the book's process: the grader's maker's half-spread, quote
+/// size and look delay, and the makers' backstop. Not whether the session
+/// moves, which way, when or how far, or where the bursts and fake-outs
+/// fall.
 fn accumulate_latent(shape: &AccumulateShape) -> Value {
     json!({
-        "regime": shape.regime,
+        "roster": ["informed"],
         "maker_bps": shape.maker_bps,
         "maker_size": shape.maker_size,
         "react_slots": shape.react_slots,

@@ -215,6 +215,10 @@ pub struct Actors {
     /// model's `fair_path`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub takers_pricing: Option<crate::actors::Pricing>,
+    /// For a market-making scenario: who is who among the taker accounts, by
+    /// kind (see [`Making::roles`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub taker_roles: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -511,9 +515,13 @@ impl Actors {
                 competition: competitor.competition,
                 takers: self.takers.clone(),
                 makers_bps: competitor.makers_bps,
+                roles: self.taker_roles.clone(),
             }
             .validate(duration_slots)
             .map_err(|reason| format!("making: {reason}"));
+        }
+        if !self.taker_roles.is_empty() {
+            return Err("taker_roles are a market-making scenario's".into());
         }
         if closed_period {
             return Ok(());
@@ -1156,6 +1164,7 @@ impl ScenarioV2 {
             takers,
             library,
             takers_pricing,
+            taker_roles,
         } = actors;
         let (making, offhours, tape) = match (competitor, closed_period) {
             (Some(c), _) => (
@@ -1164,6 +1173,7 @@ impl ScenarioV2 {
                     competition: c.competition,
                     takers,
                     makers_bps: c.makers_bps,
+                    roles: taker_roles,
                 }),
                 None,
                 Vec::new(),
@@ -1334,6 +1344,11 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 takers,
                 library: v1.actors.clone(),
                 takers_pricing: v1.takers_pricing,
+                taker_roles: v1
+                    .making
+                    .as_ref()
+                    .map(|m| m.roles.clone())
+                    .unwrap_or_default(),
             },
             faults: v1.faults.clone(),
             tx: (v1.raw_sends.is_some() || v1.tx_layer.is_some()).then(|| Tx {

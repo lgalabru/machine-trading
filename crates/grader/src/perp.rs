@@ -214,10 +214,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         )),
         (None, None) => None,
     };
+    // The taker accounts' wallets, for a scenario that says who is who
+    // among them (`making.roles`).
+    let mut taker_wallets: Vec<String> = Vec::new();
     if let Some((widened_ticks, orders, pricing)) = takers {
         let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS)
             .map(|i| opts.keys.keypair("taker", i as u32))
             .collect();
+        taker_wallets = keypairs.iter().map(|k| k.pubkey().to_string()).collect();
         parties.takers = keypairs
             .iter()
             .map(|k| phoenix.trader_account(&k.pubkey()))
@@ -457,6 +461,21 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }
         rfqs = built.rfq;
         roster = built.roster;
+    }
+    // Who is who among the takers: each kind's accounts, as their wallets.
+    if let Some(making) = &scenario.making {
+        let roster: &mut crate::actors::library::Roster = &mut roster;
+        for (kind, accounts) in &making.roles {
+            let entry = roster.entry(kind.clone()).or_default();
+            for account in accounts {
+                let wallet = taker_wallets
+                    .get(*account as usize)
+                    .ok_or_else(|| Error::Latent(format!("no taker account {account}")))?;
+                if !entry.contains(wallet) {
+                    entry.push(wallet.clone());
+                }
+            }
+        }
     }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.

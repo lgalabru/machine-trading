@@ -42,6 +42,10 @@ use crate::{
     scenario::{Scenario, SplitMix64, VENUE},
 };
 
+/// Mixed into a session's seed for the stream its burst accounts are drawn
+/// from.
+const ACCOUNTS_STREAM: u64 = 0x5eed_acc0_0075;
+
 /// NVDA's market calibration, built in so hidden sets need no file.
 const NVDA_CALIBRATION: &str =
     include_str!("../../../calibration/market/nvda.20261113.903d1120.toml");
@@ -59,6 +63,9 @@ pub struct Shape {
     pub move_pct: Option<f64>,
     /// The first slot of each burst, informed first, and whether it is.
     pub bursts: Vec<(u64, bool)>,
+    /// The taker account the informed trader sends from: seated in every
+    /// session, informed or calm.
+    pub informed_account: u8,
     /// The grader's maker: its half-spread, quote size and look delay, and
     /// the snapshot makers' backstop, in basis points.
     pub maker_bps: f64,
@@ -270,8 +277,20 @@ impl AccumulateFamily {
             let side = if rng.next_f64() < 0.5 { 1.0 } else { -1.0 };
             bursts.push((at, side, false));
         }
+        // Who sends each burst: one account a burst, the informed trader's
+        // seated in every session (it trades noise like any account), each
+        // fake-out from one of the others. Drawn on a stream of their own,
+        // so the session's other draws don't move with them.
+        let mut seats = SplitMix64(seed ^ ACCOUNTS_STREAM);
+        let informed_account = (seats.next_u64() % u64::from(TAKER_ACCOUNTS)) as u8;
         let mut burst_starts = Vec::new();
         for &(at, side, informed) in &bursts {
+            let account = if informed {
+                informed_account
+            } else {
+                let other = seats.next_u64() % (u64::from(TAKER_ACCOUNTS) - 1);
+                ((u64::from(informed_account) + 1 + other) % u64::from(TAKER_ACCOUNTS)) as u8
+            };
             let lead = rng.range_u64(self.burst_lead).min(at.max(1));
             let mut first = at;
             for _ in 0..rng.range_u64(self.burst_orders) {
@@ -282,7 +301,8 @@ impl AccumulateFamily {
                 } else {
                     TakerSide::Sell
                 };
-                takers.push(self.order(&mut rng, slot, side, maker_bps));
+                let order = self.order(&mut rng, slot, side, maker_bps);
+                takers.push(TakerOrder { account, ..order });
             }
             burst_starts.push((first, informed));
         }
@@ -311,6 +331,7 @@ impl AccumulateFamily {
             end: (sign != 0.0).then_some(end),
             move_pct: (sign != 0.0).then_some(round3(sign * size_pct)),
             bursts: burst_starts,
+            informed_account,
             maker_bps,
             maker_size,
             react_slots,
@@ -337,6 +358,7 @@ impl AccumulateFamily {
                 },
                 takers,
                 makers_bps: Some(backstop_bps),
+                roles: [("informed".to_string(), vec![informed_account])].into(),
             }),
             offhours: None,
             funding: None,
