@@ -112,6 +112,11 @@ pub struct GradeReport {
     /// which it leaves as they are.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v2: Option<ScoreV2>,
+    /// `"v2"` when scoring v2 is the grade's one score
+    /// ([`scoring_v2::Params::headline`]): `reward` is then v2's clamped
+    /// score, and `skill` and `reference_ratio` are left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headline: Option<String>,
     pub scenarios: Vec<ScenarioResult>,
     /// The reference's sessions, when the grade ran it: kept out of the
     /// report (its PnL is in [`ScenarioResult::reference_pnl_usd`]), for the
@@ -203,8 +208,7 @@ impl GradeReport {
                     .and_then(|s| s.disqualified.clone())
             });
         if let (true, Some(reason)) = (self.scenarios.is_empty(), &fatal) {
-            self.v2 = Some(scoring_v2::unscored(params, reason.clone()));
-            return Ok(());
+            return self.set_v2(scoring_v2::unscored(params, reason.clone()), params);
         }
         let v2 = self
             .scenarios
@@ -246,10 +250,11 @@ impl GradeReport {
                     ));
                 }
                 // A perp start position moves with the price too, unless an
-                // order scores the session against doing nothing; and it
-                // earns or pays the scenario's funding, which the order's
-                // drift doesn't take out.
-                if session.start_position != 0.0 && session.order.is_none() {
+                // order or net scoring scores the session against doing
+                // nothing (holding the start); and it earns or pays the
+                // scenario's funding, which neither's drift takes out.
+                if session.start_position != 0.0 && session.order.is_none() && session.net.is_none()
+                {
                     return Err(format!(
                         "{}: a perp session's starting position can move with the price, \
                          and v2 doesn't run a nop anchor yet",
@@ -327,6 +332,26 @@ impl GradeReport {
             (Err(_), Some(reason)) => scoring_v2::unscored(params, reason),
             (Err(why), None) => return Err(Error::ScoringV2(why)),
         };
+        self.set_v2(v2, params)
+    }
+
+    /// Keep `v2` in the report; when it is the headline, it is the grade's
+    /// one score, on real anchors: its 1 is the task's informed bot (no
+    /// hindsight, proxy or given ceiling), and no v1 score is beside it.
+    fn set_v2(&mut self, v2: ScoreV2, params: &scoring_v2::Params) -> Result<()> {
+        if params.headline {
+            if v2.fatal.is_none() && v2.ceiling != "informed" {
+                return Err(Error::ScoringV2(format!(
+                    "v2 is this grade's headline, but its 1 is `{}`: every session needs the \
+                     task's informed bot's PnL",
+                    v2.ceiling
+                )));
+            }
+            self.reward = v2.score;
+            self.skill = None;
+            self.reference_ratio = None;
+            self.headline = Some("v2".into());
+        }
         self.v2 = Some(v2);
         Ok(())
     }
@@ -384,6 +409,10 @@ impl GradeReport {
                 ("score_v2_raw".to_string(), v2.raw),
                 ("score_v2_raw_unfloored".to_string(), v2.raw_unfloored),
                 ("score_v2_edge".to_string(), v2.edge),
+                (
+                    "score_v2_raw_before_charge".to_string(),
+                    v2.raw_before_charge.unwrap_or(v2.raw),
+                ),
                 ("score_v2_ci_lo".to_string(), v2.ci_lo),
                 ("score_v2_ci_hi".to_string(), v2.ci_hi),
                 (
@@ -639,11 +668,11 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         }
     }
     report.anchors = anchored;
+    // The scores are the caller's to log: the grade may yet be scored by
+    // v2 alone, and then v1's are never shown.
     info!(
-        reward = report.reward,
         pnl_usd = report.pnl_usd,
         bound_pnl_usd = report.bound_pnl_usd,
-        reference_ratio = report.reference_ratio,
         "graded"
     );
     Ok(report)
@@ -824,6 +853,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         replay: None,
         markout: total_markout(&scenarios),
         v2: None,
+        headline: None,
         scenarios,
         anchors: Vec::new(),
     }
@@ -1419,6 +1449,7 @@ mod tests {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            making_fills: Vec::new(),
             tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
@@ -1531,6 +1562,7 @@ mod tests {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
@@ -1843,6 +1875,51 @@ mod tests {
     }
 
     #[test]
+    fn a_v2_headline_is_the_grades_one_score_on_the_informed_bot() {
+        let headline = |ceiling| scoring_v2::Params {
+            headline: true,
+            ..scoring_v2::Params::new(ceiling)
+        };
+        let mut s = scenario(Some(100.0));
+        // No informed bot: no fallback to a proxy or the hindsight ceiling.
+        let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        let refused = proxied
+            .score_v2(&headline(scoring_v2::Ceiling::Informed {
+                eta_override: Some(0.5),
+            }))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("informed bot"), "{refused}");
+        assert!(proxied.v2.is_none() && proxied.skill.is_some());
+        // Nor a ceiling given outright: the 1 is the informed bot's.
+        let given = scoring_v2::Ceiling::Given([("s".to_string(), 400.0)].into_iter().collect());
+        let mut handed = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        let refused = handed.score_v2(&headline(given)).unwrap_err().to_string();
+        assert!(refused.contains("`given`"), "{refused}");
+
+        s.informed_pnl_usd = Some(400.0);
+        let mut graded = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        graded
+            .score_v2(&headline(scoring_v2::Ceiling::Informed {
+                eta_override: None,
+            }))
+            .unwrap();
+        let v2 = graded.v2.clone().unwrap();
+        assert_eq!(graded.reward, v2.score);
+        assert_eq!(graded.headline.as_deref(), Some("v2"));
+        let rewards = graded.rewards();
+        assert_eq!(rewards["reward"], v2.score);
+        assert!(!rewards.contains_key("skill") && !rewards.contains_key("reference_ratio"));
+        let json = serde_json::to_value(&graded).unwrap();
+        assert!(json.get("skill").is_none() && json["headline"] == "v2");
+
+        // Tampering is the floor: reward 0 under the headline too.
+        graded.tamper("wrote the reward".into());
+        assert_eq!(graded.reward, 0.0);
+        assert_eq!(graded.v2.unwrap().raw, scoring_v2::RAW_FLOOR);
+    }
+
+    #[test]
     fn without_v2_a_report_is_as_before() {
         let s = scenario(Some(200.0));
         let report = score(vec![(session(300.0), &s), (session(-100.0), &s)]);
@@ -2013,6 +2090,53 @@ mod tests {
         let mut sold = held;
         sold.positions[0].lowest = 0.0;
         assert!(traded(&sold));
+    }
+
+    /// Net scoring scores a perp start position against holding it, so v2
+    /// takes it without an order: a bot that held scores the hold's 0, the
+    /// nop anchor. Funding on the start is still refused, net or not: the
+    /// hold baseline doesn't take it out.
+    #[test]
+    fn v2_takes_a_start_position_under_net_scoring_with_the_hold_as_nop() {
+        let s = scenario(Some(100.0));
+        let mut held = session(-40.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let refused = score(vec![(held.clone(), &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+
+        let net = crate::orders::NetReport {
+            value_change_usd: -40.0,
+            drift_usd: -40.0,
+            inventory_charge_usd: 0.0,
+            venue_charge_usd: 0.0,
+            venue_net: Vec::new(),
+        };
+        held.pnl_usd = net.pnl_usd();
+        held.net = Some(net);
+        assert_eq!(held.pnl_usd, 0.0);
+        let mut report = score(vec![(held.clone(), &s)]);
+        report.score_v2(&v2()).unwrap();
+        let scored = report.v2.as_ref().unwrap();
+        assert_eq!(scored.sessions[0].nop_usd, 0.0);
+        assert_eq!(scored.sessions[0].bot_usd, 0.0);
+        assert!(scored.raw.abs() < 1e-9, "{}", scored.raw);
+
+        let mut funded = held;
+        funded.start_funded = true;
+        let refused = score(vec![(funded, &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("funding"), "{refused}");
     }
 
     /// The reference levered past its limit: it earns more where it holds,

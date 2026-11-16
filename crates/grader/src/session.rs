@@ -228,6 +228,10 @@ pub struct SessionReport {
     pub perp_fills: Vec<crate::perp::PerpFillRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub perp_open_orders: Vec<(InstrumentRef, mtx_core::Side)>,
+    /// A market-making session: every fill of the bot's, in the order
+    /// Phoenix recorded them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub making_fills: Vec<crate::making::MakingFill>,
     /// The transaction layer: each slot's block in order, what became of
     /// each of the bot's sends, and what it paid.
     #[serde(skip_serializing_if = "Option::is_none")]
