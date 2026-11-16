@@ -288,7 +288,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
 
     let test_path = to.join("tests/test.sh");
     // The verifier's 0.5 is this task's reference, which the image builds
-    // under the family's anchor name, and its 1 the informed bot beside it.
+    // under the family's anchor name.
     let test = v2_verifier(
         &std::fs::read_to_string(&test_path)?,
         &format!("{family}-informed"),
@@ -430,6 +430,10 @@ fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
     )
 }
 
+/// The instruction's `mtx-practice` line for a v2 task.
+const PRACTICE_LINE: &str = "- `mtx-practice`: grades `/app/bot` on the practice scenarios in `/opt/mtx/practice` by the same rules and settings as the hidden scenarios (scoring v2, each scenario against the reference's and the informed bot's PnL on it), and prints a JSON report: your `reward` (the v2 score), the `v2` block that explains it, and each session's PnL. Bot logs go to `/tmp/mtx-practice-logs/`. It runs three sessions at a time (`MTX_JOBS=1` for one).";
+/// The instruction's `mtx` line for a v2 task.
+const MTX_LINE: &str = "- `mtx`: the grader itself. `mtx scenario generate --out DIR --prefix NAME --count N --seed S` draws more scenarios from the same family. They carry neither anchor's PnL, so `mtx-practice` can't score them by v2 and says so: use them to see your bot run and read its logs.";
 /// Point a copied bot's process entry (`src/main.rs`) at its own library,
 /// renamed from `from` to `to` (packages, as Cargo.toml names them).
 fn rename_crate(dir: &Path, from: &str, to: &str) -> Result<()> {
@@ -1419,7 +1423,7 @@ pub fn guide(step: &str) -> Option<&'static str> {
             "The reference sets the 1.0 line: a reasonable, simple strategy, not an optimum, sized to the cap and inside the loss limit on every session. Avoid mechanical biases (a bid always placed before the ask). It runs on the same hidden sessions in every grade, so hidden sets need no calibration; practice scenarios do. Keep the oracle identical: `just solution`. Then build the ladder: nop, a blind bet, a naive strategy, the reference, a ceiling, as strict inequalities (`just ladder <family>`). Deeper: SKILL.md step 3, references/ladder-and-ceilings.md."
         }
         "anchors" => {
-            "Scoring v2 has three anchors: doing nothing (0), the reference (0.5) and the informed bot (1). The informed bot is a bot, not a hindsight figure: it knows every fact the task's data could tell in principle (the regime, the informed wallets, the fair-value model, the funding process, the cost curves) but not the session's future randomness, and it trades the same market under the same costs, mandate and latency. What it is told is the session's latent state, which the family's generator picks (`Hidden::latent` in crates/grader/src/generators.rs; never where the session goes): the verifier hands it as MTX_REGIME with `mtx grade --informed`, on the same hidden set as the bot, and the ladder's informed rung gets the same through `tell_latent`. The bot is told nothing. The scaffold puts a copy of the reference in checks/bots/informed, marked TODO(informed): rewrite it, drop the marker, and keep both named in checks/ladder.json's `anchors` ({\"reference\": \"reference\", \"informed\": \"informed\"}). Freeze both before any model run. Calibrate the practice scenarios with each: `just calibrate` for the reference, then `mtx calibrate --informed --v2-sessions` for the informed bot. The strength band (`mtx gates`): on the ladder's sets the informed bot beats the reference, the reference's weighted PnL is between 0.2 and 0.7 of the informed bot's (`anchors.band` overrides), so it's never `anchor_floored`, and its per-session Sharpe is at least 0.25 (`anchors.min_sharpe`)."
+            "Scoring v2 has three anchors: doing nothing (0), the reference (0.5) and the informed bot (1). The informed bot is a bot, not a hindsight figure: it knows every fact the task's data could tell in principle (the regime, the informed wallets, the fair-value model, the funding process, the cost curves) but not the session's future randomness, and it trades the same market under the same costs, mandate and latency. What it is told is the session's latent state, which the family's generator picks and classifies (`LATENT_FIELDS` in crates/grader/src/generators.rs: actor identities and the process, never a session's realised draws, so flash-crash's shock tells it nothing): the verifier hands it as MTX_REGIME with `mtx grade --informed`, on the same hidden set as the bot, and the ladder's informed rung gets the same through `tell_latent`. The bot is told nothing. The scaffold puts a copy of the reference in checks/bots/informed, marked TODO(informed): rewrite it, drop the marker, and keep both named in checks/ladder.json's `anchors` ({\"reference\": \"reference\", \"informed\": \"informed\"}). Freeze both before any model run. Calibrate the practice scenarios with each: `just calibrate` for the reference, then `mtx calibrate --informed --v2-sessions` for the informed bot. The strength band (`mtx gates`): on the ladder's sets the informed bot beats the reference, the reference's weighted PnL is between 0.2 and 0.7 of the informed bot's (`anchors.band` overrides), so it's never `anchor_floored`, and its per-session Sharpe is at least 0.25 (`anchors.min_sharpe`)."
         }
         "scoring" => {
             "A v2 task's verifier grades with `--scoring v2-headline --v2-sessions`, so Harbor's `reward` is v2's clamped score and no v1 score is reported, and it grades every session (no `--stop-on-disqualify`). It runs the task's informed bot on the same hidden set with `--informed /opt/mtx/anchors/<anchor>-informed` (the image builds it there from the crate the ladder's `anchors.informed` names, listed in bench/image/anchors.txt by `mtx task sync`): one more bot run per session, after the reference's. The grade fails rather than fall back to the hindsight ceiling when a session lacks the informed bot's PnL; `--loss-weight`, `--risk-weight` and `--anchor-floor` only if the task needs other settings than the grader's. The agent is told the rules (D5): instruction.md's Scoring section holds the `mtx:scoring` markers, and `mtx task sync` writes the rules between them from the grader's settings and test.sh's flags. `mtx task check` fails when they're stale. Write only what's specific to the task around them: the hidden set's size and split, the valuation."
@@ -1707,9 +1711,6 @@ mod tests {
         let (anchors, detail) = state_of(&steps, "anchors");
         assert_eq!(anchors, "todo");
         assert!(detail.contains(INFORMED_TODO), "{detail}");
-        let live = crate::gates::informed_on_hidden_sets(&root, name, &test);
-        assert_eq!(live.status, crate::gates::Status::Fail);
-        assert!(live.detail.contains(INFORMED_TODO), "{}", live.detail);
         // The base's contract still mentions v1's scores: flagged until the
         // author rewrites those lines for v2.
         let (scoring, detail) = state_of(&steps, "scoring");
@@ -1725,6 +1726,9 @@ mod tests {
             .collect();
         std::fs::write(task.join("instruction.md"), &rewritten).unwrap();
         let steps = status(&root, name).unwrap();
+        let live = crate::gates::informed_on_hidden_sets(&root, name, &test);
+        assert_eq!(live.status, crate::gates::Status::Fail);
+        assert!(live.detail.contains(INFORMED_TODO), "{}", live.detail);
         assert_eq!(
             state_of(&steps, "scoring").0,
             "done",
@@ -1764,8 +1768,7 @@ mod tests {
         }
 
         // The anchors are the task's own bots, or none: a `reference` that
-        // runs a blind bet, an informed bot that isn't told the latent state
-        // (or is told the whole regime), or a
+        // runs a blind bet, an informed bot that isn't told the regime, or a
         // verifier grading against another anchor is refused.
         let ladder_path = task.join("checks/ladder.json");
         let tamper = |edit: &dyn Fn(&mut Value)| {

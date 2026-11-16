@@ -26,6 +26,7 @@ finished ladder) adjust a run.
 | | the best informed policy makes at least 2x the best non-reading one | ladder rungs |
 | | the oracle (the reference) scores skill 1.0, or under scoring v2 0.5 before the near-breach charge and any breach penalty (`score_v2_raw_before_charge`), with `reward` v2's score and no `skill` beside it; the charge, anchored on the informed bot's drawdowns, can take a reference that draws down deeper under 0.5 by design, and is reported beside it, not checked; nop scores 0 under Harbor | full: `just harbor-checks` |
 | | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive) | ladder, per-session PnL |
+| | no task's verifier tells the graded bot anything (`--tell-latent`, `--tell-regime`) | `tests/test.sh` |
 | | a v2 task's verifier runs its informed bot on the hidden set: `tests/test.sh` draws its set, grades only a component and passes `--informed /opt/mtx/anchors/<anchor>-informed`, which `bench/image/anchors.txt` builds from the ladder's informed anchor, and that bot is written (v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh`, `anchors.txt` |
 | Graded correctly | the exploit bots stay inside their limits (a pushing bot that moved the mark too little is `no_power`, and fails); no rung is refused or disqualified | ladder |
 | | the probe bots land in their scoring v2 bands, and a probe with no power (a breacher that never breached) fails | ladder, when the task declares `probes` (`bench/checks/probes/README.md`) |
@@ -94,7 +95,7 @@ high]` overrides), never under the anchor floor `φ`, and with a per-session
 Sharpe of at least 0.25 (`"min_sharpe"`). Each anchor must be the task's own
 bot: the reference rung runs `bench/tasks/<task>/reference` (the crate the
 image builds into the verifier's anchor), untold; the informed rung runs
-`checks/bots/informed` with `tell_regime: true`; neither sets `env` or
+`checks/bots/informed` with `tell_latent: true`; neither sets `env` or
 `may_breach` (the ladder leaves a `may_breach` rung's breaches out of its
 clean runs). A v2 task is released on v2
 alone, so either miss refuses it: there is no fallback to v1 or to the
@@ -104,15 +105,32 @@ checks `not run`.
 The verifier measures the 1 on the hidden set it grades: `mtx grade
 --informed <dir>` runs the informed bot on the same sessions after the
 reference and before the bot, and v2 anchors its 1 to that PnL. The informed
-bot is handed each session's latent state as `MTX_REGIME`: the fields of the
-draw its family's generator picks as knowable (`Hidden::latent`: a shock's
-kind, the funding process, who is who), never the session's future (where a
-move ends, when an order comes, the path). The bot is handed nothing; the
-informed bot's logs stay in a directory only the grader can enter until
-every bot has stopped; its sessions have their own keys and surfnets, so
-the bot's sessions are the same with or without it. The ladder's informed
-rung is told the same (`"tell_latent": true`). It costs one more bot run
-per session.
+bot is handed each session's latent state as `MTX_REGIME`: only facts
+knowable in principle (WAVE2_11 Part B, change 8), never the session's
+realised draws. Each field is classified in `LATENT_FIELDS`
+(crates/grader/src/generators.rs), and a test fails on any field that
+changes from session to session without a class:
+
+| Family | Field | Class | Why |
+| --- | --- | --- | --- |
+| funding-carry | `informed_share`, `lag_slots`, `hold_slots` | process | how the session's episodes are drawn and behave, not which ones come |
+| funding-carry | `funding`, `cap_pct`, `noise_pct` | process | the funding process and the index's noise |
+| weekend-gap | `informed`, `informed_account`, `worker`, `worker_account` | identity | whether an informed trader and a one-sided worker are seated, and from which of the grader's accounts |
+| weekend-gap | `impact_pct`, `half_life_slots` | process | the impact curve |
+| flash-crash | none | | the shock (direction, legs, aftermath) is the session's one draw |
+| market-making | none | | whether an order is informed is the order's own draw |
+
+Withheld as realised draws: a shock's direction, legs, aftermath, size and
+timing; carry episodes (kind and timing); which way weekend-gap's worker
+trades (`worker_side`), where the weekend took SPCX, anyone's order slots,
+and every path. The bot is handed nothing, and a task's `tests/test.sh` may
+not pass `--tell-latent` or `--tell-regime` (`bot-told-nothing`). The
+informed bot's logs are read into the grader's memory and their directory
+removed before the bot's first session, then written beside the others once
+every bot has stopped; its sessions have their own keys and surfnets, so the
+bot's sessions are the same with or without it. The ladder's informed rung
+is told the same (`"tell_latent": true`). It costs one more bot run per
+session.
 
 Gates grade each task on its own snapshot: `[metadata] snapshot` in its
 `task.toml`, else the `MTX_SNAPSHOT` its verifier image sets, else the

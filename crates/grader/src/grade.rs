@@ -250,10 +250,11 @@ impl GradeReport {
                     ));
                 }
                 // A perp start position moves with the price too, unless an
-                // order scores the session against doing nothing; and it
-                // earns or pays the scenario's funding, which the order's
-                // drift doesn't take out.
-                if session.start_position != 0.0 && session.order.is_none() {
+                // order or net scoring scores the session against doing
+                // nothing (holding the start); and it earns or pays the
+                // scenario's funding, which neither's drift takes out.
+                if session.start_position != 0.0 && session.order.is_none() && session.net.is_none()
+                {
                     return Err(format!(
                         "{}: a perp session's starting position can move with the price, \
                          and v2 doesn't run a nop anchor yet",
@@ -587,27 +588,38 @@ impl Drop for PrivateDir {
     }
 }
 
-/// Move the files under `from` into `to`, which may be on another file
-/// system, replacing what `to` held.
-fn move_dir(from: &Path, to: &Path) -> Result<()> {
+/// Every file under `dir`, by its path relative to `dir`, read into
+/// memory.
+fn read_files(dir: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).map_err(io_error(&at))? {
+            let path = entry.map_err(io_error(&at))?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let bytes = std::fs::read(&path).map_err(io_error(&path))?;
+                let relative = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
+                files.push((relative, bytes));
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Write `files` (see [`read_files`]) under `to`, replacing what it held.
+fn write_files(to: &Path, files: &[(std::path::PathBuf, Vec<u8>)]) -> Result<()> {
     if to.exists() {
         std::fs::remove_dir_all(to).map_err(io_error(to))?;
     }
-    if let Some(parent) = to.parent() {
-        std::fs::create_dir_all(parent).map_err(io_error(parent))?;
-    }
-    if std::fs::rename(from, to).is_ok() {
-        return Ok(());
-    }
-    std::fs::create_dir_all(to).map_err(io_error(to))?;
-    for entry in std::fs::read_dir(from).map_err(io_error(from))? {
-        let entry = entry.map_err(io_error(from))?;
-        let (source, target) = (entry.path(), to.join(entry.file_name()));
-        if entry.file_type().map_err(io_error(&source))?.is_dir() {
-            move_dir(&source, &target)?;
-        } else {
-            std::fs::copy(&source, &target).map_err(io_error(&source))?;
+    for (relative, bytes) in files {
+        let path = to.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(io_error(parent))?;
         }
+        std::fs::write(&path, bytes).map_err(io_error(&path))?;
     }
     Ok(())
 }
@@ -692,13 +704,12 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         anchored = anchors;
     }
     let mut informed_sessions = Vec::new();
-    // The informed bot's logs may say what it was told: they stay where no
-    // bot can read them until every bot has stopped.
-    let informed_logs = match &opts.informed {
-        Some(_) => Some(PrivateDir::create("mtx-informed-logs")?),
-        None => None,
-    };
-    if let (Some(informed), Some(logs)) = (&opts.informed, &informed_logs) {
+    // The informed bot's logs may say what it was told: written where only
+    // the grader can enter, then held in memory, with nothing of them on
+    // disk, while the bot runs.
+    let mut informed_logs = None;
+    if let Some(informed) = &opts.informed {
+        let logs = PrivateDir::create("mtx-informed-logs")?;
         let sessions = run_sessions(
             opts.snapshot_dir,
             informed.dir,
@@ -728,6 +739,8 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "informed bot graded"
         );
         informed_sessions = sessions;
+        informed_logs = Some(read_files(&logs.0)?);
+        drop(logs);
     }
     let sessions = run_sessions(
         opts.snapshot_dir,
@@ -749,7 +762,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     // Every bot has stopped: the informed bot's logs join the others, and
     // the scenarios can be written out.
     if let Some(logs) = &informed_logs {
-        move_dir(&logs.0, &opts.log_dir.join("informed"))?;
+        write_files(&opts.log_dir.join("informed"), logs)?;
     }
     if let Some(dir) = opts.detail_dir {
         // Whatever a bot left there goes first, links included: the
@@ -1687,6 +1700,7 @@ mod tests {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
@@ -2218,6 +2232,53 @@ mod tests {
         let mut sold = held;
         sold.positions[0].lowest = 0.0;
         assert!(traded(&sold));
+    }
+
+    /// Net scoring scores a perp start position against holding it, so v2
+    /// takes it without an order: a bot that held scores the hold's 0, the
+    /// nop anchor. Funding on the start is still refused, net or not: the
+    /// hold baseline doesn't take it out.
+    #[test]
+    fn v2_takes_a_start_position_under_net_scoring_with_the_hold_as_nop() {
+        let s = scenario(Some(100.0));
+        let mut held = session(-40.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let refused = score(vec![(held.clone(), &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+
+        let net = crate::orders::NetReport {
+            value_change_usd: -40.0,
+            drift_usd: -40.0,
+            inventory_charge_usd: 0.0,
+            venue_charge_usd: 0.0,
+            venue_net: Vec::new(),
+        };
+        held.pnl_usd = net.pnl_usd();
+        held.net = Some(net);
+        assert_eq!(held.pnl_usd, 0.0);
+        let mut report = score(vec![(held.clone(), &s)]);
+        report.score_v2(&v2()).unwrap();
+        let scored = report.v2.as_ref().unwrap();
+        assert_eq!(scored.sessions[0].nop_usd, 0.0);
+        assert_eq!(scored.sessions[0].bot_usd, 0.0);
+        assert!(scored.raw.abs() < 1e-9, "{}", scored.raw);
+
+        let mut funded = held;
+        funded.start_funded = true;
+        let refused = score(vec![(funded, &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("funding"), "{refused}");
     }
 
     /// The reference levered past its limit: it earns more where it holds,
