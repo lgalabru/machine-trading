@@ -1604,6 +1604,8 @@ mod tests {
             positions: vec![],
             positions_outside_universe: 0,
             max_drawdown_usd: 0.0,
+            samples: Default::default(),
+            term_start: Default::default(),
             valuation: "mark",
             flow: None,
             competitor: None,

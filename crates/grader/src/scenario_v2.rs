@@ -1246,6 +1246,29 @@ impl ScenarioV2 {
     /// only those, so a wider universe would go unenforced. It has no term
     /// (the session sets it); a perp mandate has a drawdown limit.
     fn mandate_covers_the_market(&self) -> Result<(), String> {
+        // A session prices only its own market at each measurement, so no
+        // session can enforce a rule across instruments until sessions
+        // trade several markets.
+        if self.mandate.universe.iter().any(|a| a.hedge.is_some()) {
+            return Err(
+                "mandate: a hedge needs its two instruments priced together, and no session \
+                 prices more than its own market yet"
+                    .into(),
+            );
+        }
+        if self
+            .mandate
+            .limits
+            .exposures
+            .iter()
+            .any(|e| e.weights.len() > 1)
+        {
+            return Err(
+                "mandate: an exposure across several instruments needs them priced together, \
+                 and no session prices more than its own market yet"
+                    .into(),
+            );
+        }
         if let Some(lending) = &self.venues.lending {
             let mut wanted = lending.instruments();
             let mut universe: Vec<InstrumentRef> = self
@@ -1317,6 +1340,38 @@ impl ScenarioV2 {
         }
         if self.venues.perp.is_some() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
+        }
+        // No session tells the bot's taker fills from its maker fills yet.
+        if self.mandate.universe.iter().any(|a| a.taking.is_some()) {
+            return Err(
+                "mandate: no session records taker fills yet, so none can enforce taking".into(),
+            );
+        }
+        // Every session starts flat, so an exposure bounded by a fraction of
+        // its start would be bounded at zero. Lifted once sessions can start
+        // with positions.
+        if self
+            .mandate
+            .limits
+            .exposures
+            .iter()
+            .any(|e| e.max_abs_fraction_of_start.is_some())
+        {
+            return Err(
+                "mandate: max_abs_fraction_of_start needs a session that starts with positions; \
+                 every session starts flat"
+                    .into(),
+            );
+        }
+        // Only a perp session prices the account at each measurement.
+        if (self.venues.spot.is_some() || self.venues.lending.is_some())
+            && self.mandate.checks_samples()
+        {
+            return Err(
+                "mandate: notional limits and hedges are for perp scenarios; \
+                 a spot or lending session doesn't check them"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -1921,6 +1976,8 @@ pub enum ParseError {
 
 #[cfg(test)]
 mod tests {
+    use mtx_core::mandate::{Exposure, Hedge};
+
     use super::*;
     use crate::{making::MakingFamily, scenario::ShockFamily, weekend::WeekendFamily};
 
@@ -2146,6 +2203,61 @@ mod tests {
         let mut s = shock();
         s.mandate.limits.max_drawdown_usd = None;
         assert!(s.validate().unwrap_err().contains("drawdown"));
+
+        // A perp session checks notional limits; a spot session doesn't yet.
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert!(s.validate().unwrap_err().contains("notional"));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate
+            .limits
+            .exposures
+            .push(Exposure::max_abs_fraction_of_start(
+                "net",
+                [(s.perp_instrument(), 1.0)].into(),
+                0.5,
+            ));
+        assert!(s.validate().unwrap_err().contains("starts flat"));
+        s.mandate.limits.exposures[0].max_abs_fraction_of_start = None;
+        s.mandate.limits.exposures[0].max_abs_usd = Some(1_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        assert!(s.validate().unwrap_err().contains("taking"));
+        // Review probe: hedges and exposures across instruments validated,
+        // and no session could enforce them. They're refused, and say why.
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        let both: Vec<_> = s
+            .mandate
+            .universe
+            .iter()
+            .map(|a| (a.instrument.clone(), 1.0))
+            .collect();
+        assert_eq!(both.len(), 2);
+        s.mandate
+            .limits
+            .exposures
+            .push(Exposure::max_abs_usd("net", both, 1_000.0));
+        assert_eq!(s.mandate.validate(), Ok(()));
+        assert!(
+            s.validate()
+                .unwrap_err()
+                .contains("an exposure across several instruments")
+        );
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        let against = s.mandate.universe[0].instrument.clone();
+        s.mandate.universe[1].hedge = Some(Hedge::new(against, 1.0));
+        assert_eq!(s.mandate.validate(), Ok(()));
+        assert!(s.validate().unwrap_err().contains("a hedge needs"));
 
         let mut s = shock();
         s.scoring.bound_usd = Some(f64::NAN);

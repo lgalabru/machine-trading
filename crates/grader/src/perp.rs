@@ -21,7 +21,7 @@ use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use mtx_core::{
     AccountMeter, FillId, InstrumentId, Measurement, MeterError, Side as CoreSide,
-    mandate::{InstrumentRef, Mandate, Observed, PositionRange, Term},
+    mandate::{InstrumentRef, Mandate, Observed, PositionRange, PricedPosition, Sample},
     turns::Step,
 };
 use mtx_kit::{
@@ -602,12 +602,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
-    let mandate = Mandate {
-        term: Some(Term {
-            until_slot: end_slot,
-        }),
-        ..scenario.mandate.clone()
-    };
+    let mandate = scenario.mandate.clone().with_term(base_slot, end_slot);
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
         keypair_path: workdir.keypair_path(),
@@ -647,6 +642,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         primary,
         start_value_usd,
         base_slot,
+        mandate: mandate.clone(),
         observed,
         fills: reads_fills.then(|| PerpFills {
             last_scan: base_slot,
@@ -681,6 +677,22 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         account.start_value_usd += start.base_usd();
         account.peak_value_usd = account.start_value_usd;
         account.desk_start = Some(start);
+    }
+    // What an exposure bounded by a fraction of its start is a fraction
+    // of: the account as the term starts.
+    if mandate.needs_term_start() {
+        let now = account.measure().await?;
+        let (position, price) = account.priced(&now, base_slot);
+        let holdings = [PricedPosition {
+            instrument: &account.instrument,
+            position,
+            price,
+        }];
+        let sample = Sample::new(base_slot, &holdings).map_err(MeterError::Unsupported)?;
+        account
+            .observed
+            .record_term_start(&sample)
+            .map_err(MeterError::Unsupported)?;
     }
     Ok(Prepared {
         world: World::Offline(Box::new(world)),
@@ -1009,6 +1021,8 @@ struct PerpAccount {
     oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     start_value_usd: f64,
     base_slot: u64,
+    /// The grader's copy of the mandate, with its term.
+    mandate: Mandate,
     /// Sampled every step: a fill persists until the bot trades out of it,
     /// so a position over the cap is caught. With a starting position, the
     /// range starts there.
@@ -1411,6 +1425,42 @@ impl PerpAccount {
         Ok(market.start_mark_usd * (1.0 + level / 100.0))
     }
 
+    /// The price the mandate's notional rules value `market` at, in USD:
+    /// the scenario's level, or its book level where the session values the
+    /// account at the book. Never Phoenix's mark, which a bot's own trading
+    /// moves.
+    fn notional_price_usd(market: &MarketState, slot: u64, base_slot: u64) -> f64 {
+        let at = slot.saturating_sub(base_slot);
+        let level = match market.valuation {
+            "book" => book_at(&market.scenario.path, at),
+            _ => level_at(&market.scenario.path, at),
+        };
+        market.start_mark_usd * (1.0 + level / 100.0)
+    }
+
+    /// Keeps `measurement`, each market's position priced, for the
+    /// mandate's notional rules, if it has any: the audit judges the
+    /// samples against its own mandate. A market the account holds nothing
+    /// in is flat.
+    fn record_notional(&mut self, measurement: &Measurement, slot: u64) -> Result<()> {
+        if self.mandate.checks_samples() {
+            let holdings: Vec<PricedPosition> = self
+                .markets
+                .iter()
+                .map(|market| PricedPosition {
+                    instrument: &market.instrument,
+                    position: position_in(measurement, &market.id),
+                    price: Self::notional_price_usd(market, slot, self.base_slot),
+                })
+                .collect();
+            let sample = Sample::new(slot, &holdings).map_err(MeterError::Unsupported)?;
+            self.observed
+                .record_sample(&sample)
+                .map_err(MeterError::Unsupported)?;
+        }
+        Ok(())
+    }
+
     /// [`PerpAccount::value`], and the RFQ desk's wallet.
     async fn value_with_desk(&self, value_usd: f64, units: &[f64], slot: u64) -> Result<f64> {
         Ok(self.value(value_usd, units, slot).await? + self.desk_usd().await?)
@@ -1465,6 +1515,7 @@ impl Account for PerpAccount {
         self.scan(slot).await?;
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
+        self.record_notional(&now, slot)?;
         let positions = self.positions(&now);
         let position = positions[self.primary];
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
@@ -1706,6 +1757,7 @@ impl Account for PerpAccount {
         self.mark_forced(&done.forced_closes).await?;
         let end = self.measure().await?;
         record(&mut self.observed, &end)?;
+        self.record_notional(&end, done.end_slot)?;
         let end_positions = self.positions(&end);
         let end_desk = self.desk_holdings().await?;
         let end_value_usd = self
@@ -1816,6 +1868,8 @@ impl Account for PerpAccount {
             max_drawdown_usd: self
                 .max_drawdown_usd
                 .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            samples: observed.samples,
+            term_start: observed.term_start,
             valuation: own.valuation,
             flow: actors.flow,
             competitor: actors.competitor,
