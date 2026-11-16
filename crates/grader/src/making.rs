@@ -1108,6 +1108,7 @@ mod tests {
             },
             takers: Vec::new(),
             makers_bps,
+            roles: Default::default(),
         };
         assert_eq!(making(None).makers_bps(), 10.0);
         assert_eq!(making(Some(20.0)).makers_bps(), 20.0);

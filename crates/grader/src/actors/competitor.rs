@@ -563,7 +563,6 @@ mod tests {
             takers: Vec::new(),
             makers_bps: None,
             roles: Default::default(),
-            roles: Default::default(),
         }
     }
 

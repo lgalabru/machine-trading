@@ -385,6 +385,7 @@ impl AccumulateFamily {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: Some(record),
             raw_sends: None,
             start_positions: Default::default(),
