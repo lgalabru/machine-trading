@@ -2394,7 +2394,7 @@ async function trialAgent(n, trial) {
     // empty): Hermes's own transcript of the run, as it printed it.
     const host = div(`<div class="loading">Loading the transcript…</div>`);
     const tx = await api(`/api/transcript/${n}`);
-    host.innerHTML = `<div class="empty" style="text-align:left">No step-by-step trajectory for this run: its harness's session export came out empty. Below is ${esc(tx.harness || "the agent")}'s own transcript of the run, ${int(tx.chars)} characters: its tool calls, edits and final report.</div>
+    host.innerHTML = `<div class="empty" style="text-align:left">No step-by-step trajectory for this run: its harness's session export came out empty. Below is ${esc((tx.harness || "the agent").replace(/^./, (c) => c.toUpperCase()))}'s own transcript of the run, ${int(tx.chars)} characters: its tool calls, edits and final report.</div>
       <pre class="transcript">${esc(ansi(tx.text || ""))}</pre>`;
     return;
   }

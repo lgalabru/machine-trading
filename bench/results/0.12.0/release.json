@@ -444,12 +444,12 @@
   ],
   "source": "20261115-162554-x1",
   "store": {
-    "bytes": 253498368,
-    "files": 20342,
+    "bytes": 254241792,
+    "files": 20462,
     "path": "0.12.0/release.tar",
     "repo": "solana-foundation/machine-trading-results",
-    "revision": "ed2b4e44a39a077a3e8873b964a10e8e6bbc4db6",
-    "sha256": "10be70c517b940a2abe8c85e6144c5bfe5dd31d3ff858b0d9294f06438b3cfaf"
+    "revision": "0d130b09815383874003c33d98f7bd5ef71f5d0f",
+    "sha256": "df650bd1ece26efc763fa7a79f961480867c969267d99652cb3b06faaa6ee41c"
   },
   "tasks": {
     "flash-crash-spcx": {
