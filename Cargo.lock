@@ -5173,6 +5173,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
+ "borsh 1.8.1",
  "bs58",
  "chrono",
  "mtx-core",
@@ -5769,6 +5770,7 @@ dependencies = [
  "bytemuck",
  "phoenix-rise-accounts",
  "phoenix-rise-api",
+ "phoenix-rise-events",
  "phoenix-rise-ix",
  "phoenix-rise-math",
  "solana-compute-budget-interface",

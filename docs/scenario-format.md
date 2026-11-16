@@ -24,7 +24,7 @@ docs together.
 | Section | Holds |
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
-| `assets` | `symbol`; a spot session's starting `wallet` |
+| `assets` | `symbol`; a spot session's starting `wallet`; a perp session's `start_positions`, signed base units by market symbol |
 | `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
@@ -32,8 +32,8 @@ docs together.
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
-| `order` | A quantity the bot has to trade by the end |
-| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `stop_out` |
+| `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
 
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
@@ -59,7 +59,29 @@ each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
 having no path or competitor (their takers are a tape), lending scenarios
 moving prices through their Scope feeds only (no path, actors, order or spot
 scoring; clock jumps inside the session and without faults), the mandate
-covering exactly the scenario's markets, a sell order fitting the wallet.
+covering exactly the scenario's markets, a sell order fitting the wallet, and,
+on a perp (`positions_fit_the_market`):
+
+- `start_positions` and `close_out` are perp-only and name the scenario's
+  market; a start position is not 0 and lies inside the mandate's range for
+  it;
+- an order is in the scenario's market and ends inside the range; a
+  reduce-only order is no bigger than the starting position it reduces (a
+  reduce-only buy closes a short, so it needs one; on spot it is refused);
+- the order's market has no `close_out`: the order's broker already takes
+  what is left of it.
+
+A perp order and close-outs price the close at the scenario's own level at
+the last slot (the index, not Phoenix's mark, which quotes can push), and
+the session values the account there too (`valuation` `oracle`). A start
+position is a real Phoenix fill in setup, against a grader counterparty at
+the start mark, before the start value is measured; a position Phoenix
+won't margin fails the session's setup. Scoring v2 takes a start position only with
+an order, which scores the session against doing nothing, and only on a
+market without the scenario's `funding`: otherwise doing nothing moves with
+the price, or earns or pays the funding, and v2 refuses the grade. A v1
+grade takes a funded start position as it is: the funding the start earns
+or pays is in the session's PnL, order or not.
 
 ## The risk desk: `scoring.stop_out`
 
@@ -86,7 +108,14 @@ The PnL is the account's value then, so the close pays the book's impact
 and the taker fee. The report lists each close in `forced_closes` (reason,
 step, the value before and after, the orders, whether it ended flat), and
 the audit then reads the drawdown as at most the limit: every other rule
-still disqualifies. A component sees `MTX_STOP_OUT=1` in its session vars.
+still disqualifies. Each close order records its transaction's
+`signature`. The desk trades in the bot's account but is not the bot: in
+a session that reads fills, the fills of those transactions are marked
+`forced` in `perp_fills`, and the sides and price rules (and an order's
+"traded the other way" and "grew the position") leave them out; they still
+count toward the position and the PnL. Because the desk closes to flat, a
+scenario with `stop_out` must allow flat in every instrument's range: a
+`min_position` above 0 is refused. A component sees `MTX_STOP_OUT=1` in its session vars.
 The code is `crates/grader/src/risk.rs` and the session loop.
 
 ## The liquidation keeper: `venues.perp.liquidator`
@@ -121,8 +150,11 @@ with the same draw.
 The bot keeps running with what the liquidation leaves it. Each stretch of
 liquidations is one entry of `forced_closes` with reason
 `{"kind": "liquidation", "by": "keeper"}`: the first step it fired at, the
-account's value before and after, and the keeper's orders (apart from the
-bot's, so a `sides` rule never sees them). `liquidator` reports the draw,
+account's value before and after, and the keeper's orders, each with its
+transaction's `signature`. They are made in the bot's account but are not
+the bot's: in a session that reads fills, their fills are marked `forced` in
+`perp_fills`, as the risk desk's are, and the sides and price rules leave
+them out. `liquidator` reports the draw,
 the number of liquidations that landed and `cost_usd`, the sum over stretches
 of the value before less the value after: Phoenix's penalty and the fill's
 impact, which are inside the account's value and score. After the last step,

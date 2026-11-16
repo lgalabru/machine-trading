@@ -47,6 +47,45 @@ cross-margin account.
   summed over the traders, plus the authority's wallet USDC. Unsettled funding is not counted. USDC
   withdrawn from Phoenix to the wallet keeps its value, so withdrawing can't
   hide a drawdown.
+- **Fills.** Each instruction that trades a market logs, through Phoenix's
+  `Log` and `LogEventLengths` self-invocations, a `Header` event (the
+  market's sequence number, its `asset_id` and the acting trader account),
+  then an `OrderFilled` event for each resting order it took from and a
+  `SplineFilled` event for each spline, each naming the maker's trader
+  account, the maker's side, the price in ticks, `base_lots_filled` and
+  `quote_lots_filled`. Each run of fills is closed by a `TradeSummary` event
+  whose `trader` is the run's taker, on the side opposite the makers', and
+  which carries the fee the taker paid (`fee_in_quote_lots`). The taker need
+  not be the header's trader: an instruction can match two other parties (a
+  spline that re-centres crosses a stale resting order) and logs that under
+  the same header. The header's trader is the taker only for a run no
+  summary closes. The summary's fee is split across its run of fills by
+  `quote_lots_filled`, each share rounded down and the last fill taking the
+  remainder, so the shares add up to it exactly. A maker's fee is its
+  `maker_fee_rate` applied to the fill's `quote_lots_filled` as Phoenix
+  applies it, in whole quote lots: a fee rounds up, a rebate rounds toward
+  zero.
+  Positions live in Phoenix's market-wide state, so a maker's trader account
+  is in none of the transactions that fill it: an enforcer reads every
+  transaction that names the market's order book (its `marketPubkey` in the
+  `/exchange` metadata) and counts each fill where one of the account's
+  traders is the taker or the maker. It MUST NOT infer fills from the
+  position. A fill between two of the account's traders counts once on each
+  side. A fill's identity is its market, the header's sequence number and
+  the event's place after it, and the side, so a fill read twice counts
+  once. An event that doesn't decode is an error, never skipped: a skipped
+  `Header` would put the fills after it on the market before it.
+- **Position changes without a fill.** `LiquidationTransfer` (a keeper
+  takes part of a liquidatee's position, `base_lots_transferred`, into its
+  own trader account) and `CloseMatchedPositions` (auto-deleveraging closes
+  `base_lots_closed` of a long against a short) move positions with no
+  fill, and name the trader accounts rather than the order book, so an
+  enforcer also reads the transactions of the account's traders. Phoenix
+  logs them under no `Header`: each event names its own `asset_id`. The
+  fills and these changes together sum to the change in position.
+- **Resting orders.** An `OrderPlaced` event after a trader's `Header` is an
+  order it placed to rest on the book, its side the sign of its
+  `quantity`; it may since have filled or been cancelled.
 
 ### Liquidation
 

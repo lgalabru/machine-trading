@@ -205,6 +205,7 @@ pub fn publish(
     force: bool,
     artifacts: Option<&Path>,
     local: bool,
+    allow_missing_trajectories: bool,
 ) -> Result<Value> {
     if version.is_empty()
         || version.starts_with('.')
@@ -232,6 +233,28 @@ pub fn publish(
             pending.len(),
             if pending.len() == 1 { " is" } else { "s are" },
             pending.join(", ")
+        );
+    }
+    // Every run's agent trajectory, unless asked to publish without: a run
+    // without one can't be reviewed step by step (0.12.0 lost 67 of 120 to
+    // an empty session export).
+    let untraced: Vec<String> = trials
+        .iter()
+        .filter(|t| !t.join("agent/trajectory.json").is_file())
+        .map(|t| t.strip_prefix(&batch).unwrap_or(t).display().to_string())
+        .collect();
+    if !untraced.is_empty() && !allow_missing_trajectories {
+        bail!(
+            "{} of {} trials have no agent trajectory (agent/trajectory.json), as {}; \
+             pass --allow-missing-trajectories to publish them without",
+            untraced.len(),
+            trials.len(),
+            untraced
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
     let out = results.join(version);
@@ -437,6 +460,13 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
             &dest.join("artifacts/app/bot"),
             &mut skipped,
         )?;
+        // Hermes's own transcript of the run (its tool calls, edits and final
+        // report), gzipped: what's left of a run whose session export came
+        // out empty, and readable beside the trajectory otherwise.
+        let transcript = trial.join("agent/hermes.txt");
+        if transcript.is_file() {
+            gzip_small(&transcript, &dest.join("agent/hermes.txt.gz"), &mut skipped)?;
+        }
         let trajectory = trial.join("agent/trajectory.json");
         if trajectory.is_file() {
             gzip(&trajectory, &dest.join("agent/trajectory.json.gz"))?;
@@ -486,6 +516,13 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
         &mut skipped,
     )?;
     started.sort();
+    // Skipped files by their path in the batch: an absolute path names the
+    // machine and its user, and the release is public.
+    let prefix = format!("{}/", batch.display());
+    let skipped: Vec<String> = skipped
+        .iter()
+        .map(|s| s.strip_prefix(&prefix).unwrap_or(s).to_string())
+        .collect();
     let release = json!({
         "version": version,
         "source": batch.file_name().map(|n| n.to_string_lossy().to_string()),
@@ -804,8 +841,11 @@ pub fn split_range(range: &str) -> Result<(String, String)> {
     Ok((a.to_string(), b.to_string()))
 }
 
-/// Each task's models on both sides: mean skill, and the change from `b`
-/// to `a`.
+/// Each task's models on both sides: the mean of the task's one score (v2's
+/// reward for a task headlined by v2, else skill), and the change from `b`
+/// to `a`. A task whose score differs between the sides (it moved to v2)
+/// has no change: the two aren't on one scale. `skill_delta` is only ever
+/// a v1 task's.
 pub fn compare(a: &Root, b: &Root) -> Value {
     let (sa, sb) = (review::scores_of(a), review::scores_of(b));
     let mut tasks: Vec<String> = Vec::new();
@@ -820,6 +860,10 @@ pub fn compare(a: &Root, b: &Root) -> Value {
         .iter()
         .map(|task| {
             let (ta, tb) = (&sa["tasks"][task], &sb["tasks"][task]);
+            let headline = |t: &Value| t["headline"].as_str().unwrap_or("v1").to_string();
+            let (ha, hb) = (headline(ta), headline(tb));
+            let one = (ta.is_null() || tb.is_null() || ha == hb)
+                .then(|| if ta.is_null() { hb.clone() } else { ha.clone() });
             let mut models: Vec<String> = Vec::new();
             for t in [ta, tb] {
                 if let Some(m) = t["models"].as_object() {
@@ -832,16 +876,22 @@ pub fn compare(a: &Root, b: &Root) -> Value {
                 .iter()
                 .map(|model| {
                     let (ma, mb) = (&ta["models"][model], &tb["models"][model]);
-                    let delta = match (ma["skill"].as_f64(), mb["skill"].as_f64()) {
-                        (Some(x), Some(y)) => json!(x - y),
+                    let score = |m: &Value| m["score"].as_f64().or(m["skill"].as_f64());
+                    let delta = match (&one, score(ma), score(mb)) {
+                        (Some(_), Some(x), Some(y)) => json!(x - y),
                         _ => Value::Null,
                     };
-                    json!({ "model": model, "a": ma, "b": mb, "skill_delta": delta })
+                    let mut row = json!({ "model": model, "a": ma, "b": mb, "score_delta": delta });
+                    if one.as_deref() == Some("v1") {
+                        row["skill_delta"] = delta;
+                    }
+                    row
                 })
                 .collect();
             json!({
                 "task": task,
                 "versions": { "a": ta["version"], "b": tb["version"] },
+                "headline": { "a": ha, "b": hb },
                 "models": models,
             })
         })
@@ -851,9 +901,17 @@ pub fn compare(a: &Root, b: &Root) -> Value {
 
 /// The comparison as a table on stderr.
 pub fn print_compare(cmp: &Value) {
-    let skill = |v: &Value| {
+    // Skill is a multiple of the reference (1×); v2 is a score (0.5 the
+    // reference).
+    let show = |v: &Value, v2: bool| {
         v.as_f64()
-            .map(|x| format!("{x:.2}×"))
+            .map(|x| {
+                if v2 {
+                    format!("{x:.2}")
+                } else {
+                    format!("{x:.2}×")
+                }
+            })
             .unwrap_or_else(|| "–".to_string())
     };
     let (a, b) = (
@@ -861,21 +919,31 @@ pub fn print_compare(cmp: &Value) {
         cmp["b"].as_str().unwrap_or("b"),
     );
     for task in cmp["tasks"].as_array().into_iter().flatten() {
+        let (va, vb) = (task["headline"]["a"] == "v2", task["headline"]["b"] == "v2");
         eprintln!(
             "\n{}  {}",
             crate::ui::bold(task["task"].as_str().unwrap_or("?")),
             crate::ui::dim(format!(
-                "task {} vs {}",
+                "task {} vs {}{}",
                 task["versions"]["a"].as_str().unwrap_or("–"),
-                task["versions"]["b"].as_str().unwrap_or("–")
+                task["versions"]["b"].as_str().unwrap_or("–"),
+                match (va, vb) {
+                    (true, true) => " · scoring v2",
+                    (false, false) => "",
+                    _ => " · scored differently: no change shown",
+                }
             ))
         );
         eprintln!("  {:<22} {:>10} {:>10} {:>9}", "model", a, b, "change");
         for m in task["models"].as_array().into_iter().flatten() {
-            let delta = m["skill_delta"]
+            let delta = m["score_delta"]
                 .as_f64()
                 .map(|d| {
-                    let text = format!("{d:+.2}×");
+                    let text = if va {
+                        format!("{d:+.2}")
+                    } else {
+                        format!("{d:+.2}×")
+                    };
                     if d >= 0.0 {
                         crate::ui::accent(text)
                     } else {
@@ -883,14 +951,21 @@ pub fn print_compare(cmp: &Value) {
                     }
                 })
                 .unwrap_or_else(|| "–".to_string());
+            let score = |side: &Value| {
+                if side["score"].is_null() {
+                    side["skill"].clone()
+                } else {
+                    side["score"].clone()
+                }
+            };
             eprintln!(
                 "  {:<22} {:>10} {:>10} {:>9}",
                 m["model"]
                     .as_str()
                     .unwrap_or("?")
                     .trim_start_matches("claude-"),
-                skill(&m["a"]["skill"]),
-                skill(&m["b"]["skill"]),
+                show(&score(&m["a"]), va),
+                show(&score(&m["b"]), vb),
                 delta
             );
         }
@@ -901,6 +976,54 @@ pub fn print_compare(cmp: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A root with one finished trial of `task` by `model`, its report given.
+    fn root_with(report: &str) -> Root {
+        let dir = std::env::temp_dir().join(format!("mtx-cmp-{}", uuid::Uuid::new_v4().simple()));
+        let trial = dir.join("job/t-1");
+        std::fs::create_dir_all(trial.join("verifier")).unwrap();
+        std::fs::write(
+            trial.join("result.json"),
+            r#"{"trial_name": "t-1", "task_name": "solana-foundation/new-thing-spcx", "finished_at": "x", "agent_info": {"model_info": {"name": "m"}}}"#,
+        )
+        .unwrap();
+        std::fs::write(trial.join("verifier/report.json"), report).unwrap();
+        Root {
+            label: dir.file_name().unwrap().to_string_lossy().into_owned(),
+            path: dir,
+            published: false,
+        }
+    }
+
+    #[test]
+    fn a_v2_task_is_compared_on_its_reward_never_on_skill() {
+        let a = root_with(r#"{"headline": "v2", "reward": 0.6, "scenarios": []}"#);
+        let b = root_with(r#"{"headline": "v2", "reward": 0.4, "scenarios": []}"#);
+        let v1 = root_with(r#"{"reward": 0.1, "skill": 1.2, "scenarios": []}"#);
+        let cmp = compare(&a, &b);
+        let row = &cmp["tasks"][0]["models"][0];
+        assert!(
+            (row["score_delta"].as_f64().unwrap() - 0.2).abs() < 1e-12,
+            "{row}"
+        );
+        assert!(row.get("skill_delta").is_none());
+        assert_eq!(cmp["tasks"][0]["headline"]["a"], "v2");
+        // A task that moved to v2 isn't compared across the switch.
+        let moved = compare(&a, &v1);
+        assert!(moved["tasks"][0]["models"][0]["score_delta"].is_null());
+        // A v1 task keeps its skill comparison.
+        let both_v1 = compare(&v1, &v1);
+        assert_eq!(both_v1["tasks"][0]["models"][0]["skill_delta"], 0.0);
+        // The leaderboard's scores rank a v2 task on reward.
+        let scores = review::scores_of(&a);
+        let task = &scores["tasks"]["new-thing"];
+        assert_eq!(task["headline"], "v2");
+        assert_eq!(task["models"]["m"]["score"], 0.6);
+        assert!(task["models"]["m"]["skill"].is_null());
+        for r in [a, b, v1] {
+            std::fs::remove_dir_all(&r.path).unwrap();
+        }
+    }
 
     #[test]
     fn versions_sort_numerically() {
@@ -945,18 +1068,26 @@ mod tests {
         std::fs::write(trial.join("artifacts/app/bot/.env"), "KEY=1").unwrap();
         std::fs::write(trial.join("artifacts/app/bot/target/big"), "built").unwrap();
         std::fs::write(trial.join("agent/trajectory.json"), r#"{"steps":[]}"#).unwrap();
+        std::fs::write(trial.join("agent/hermes.txt"), "the agent's transcript").unwrap();
         std::fs::write(trial.join("agent/claude-code.txt"), "raw").unwrap();
+        // Over the size cap: left out, and named by its path in the batch.
+        std::fs::write(
+            trial.join("artifacts/app/bot/model.bin"),
+            vec![7u8; 2 << 20],
+        )
+        .unwrap();
         std::fs::create_dir_all(trial.join("verifier/bot/reference")).unwrap();
         std::fs::write(trial.join("verifier/bot/hidden-1.log"), "bot log").unwrap();
         std::fs::write(trial.join("verifier/bot/reference/hidden-1.log"), "ref log").unwrap();
         let results = tmp.join("results");
         std::fs::create_dir_all(&results).unwrap();
 
-        publish(&batch, "1.0.0", &results, false, None, true).unwrap();
+        publish(&batch, "1.0.0", &results, false, None, true, false).unwrap();
         let out = results.join("1.0.0/job/task__a");
         assert!(out.join("artifacts/app/bot/src/main.rs").is_file());
         assert!(out.join("verifier/sessions/bot/hidden-1.json.gz").is_file());
         assert!(out.join("agent/trajectory.json.gz").is_file());
+        assert!(out.join("agent/hermes.txt.gz").is_file());
         assert!(!out.join("agent/trajectory.json").exists());
         assert!(!out.join("agent/claude-code.txt").exists());
         assert!(out.join("verifier/bot/hidden-1.log.gz").is_file());
@@ -965,9 +1096,24 @@ mod tests {
         assert!(!out.join("artifacts/app/bot/.env").exists());
         assert!(!out.join("artifacts/app/bot/target").exists());
         assert!(!results.join("1.0.0/.seed").exists());
+        assert!(!out.join("artifacts/app/bot/model.bin").exists());
+        let release: Value = serde_json::from_str(
+            &std::fs::read_to_string(results.join("1.0.0/release.json")).unwrap(),
+        )
+        .unwrap();
+        let skipped: Vec<&str> = release["skipped"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|s| s.as_str())
+            .collect();
+        assert_eq!(
+            skipped,
+            ["job/task__a/artifacts/app/bot/model.bin (2097152 bytes)"]
+        );
         assert_eq!(releases(&results).len(), 1);
         assert!(
-            publish(&batch, "1.0.0", &results, false, None, true).is_err(),
+            publish(&batch, "1.0.0", &results, false, None, true, false).is_err(),
             "exists"
         );
 
@@ -977,7 +1123,7 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
         )
         .unwrap();
-        let error = publish(&batch, "1.0.1", &results, false, None, true).unwrap_err();
+        let error = publish(&batch, "1.0.1", &results, false, None, true, false).unwrap_err();
         assert!(error.to_string().contains("seed"), "{error}");
         assert!(!results.join("1.0.1").exists());
         assert!(!results.join(".1.0.1.staging").exists());
@@ -985,7 +1131,16 @@ mod tests {
         // With --artifacts: the full release outside, the slim one here.
         std::fs::remove_file(trial.join("artifacts/app/bot/src/seed.rs")).unwrap();
         let artifacts = tmp.join("artifacts");
-        publish(&batch, "1.0.2", &results, false, Some(&artifacts), false).unwrap();
+        publish(
+            &batch,
+            "1.0.2",
+            &results,
+            false,
+            Some(&artifacts),
+            false,
+            false,
+        )
+        .unwrap();
         let full = artifacts.join("1.0.2/job/task__a");
         let slim = results.join("1.0.2/job/task__a");
         assert!(
@@ -999,11 +1154,32 @@ mod tests {
         assert!(slim.join("verifier/report.json").is_file());
         assert!(slim.join("artifacts/app/bot/src/main.rs").is_file());
         let release = review::read_json(&results.join("1.0.2/release.json")).unwrap();
-        assert_eq!(release["artifacts"]["files"], 3);
+        assert_eq!(release["artifacts"]["files"], 4);
         assert!(!results.join(".1.0.2.slim").exists());
         assert!(
-            publish(&batch, "1.0.2", &results, false, Some(&artifacts), false).is_err(),
+            publish(
+                &batch,
+                "1.0.2",
+                &results,
+                false,
+                Some(&artifacts),
+                false,
+                false
+            )
+            .is_err(),
             "exists"
+        );
+
+        // A run without its agent's trajectory: refused, unless allowed.
+        std::fs::remove_file(trial.join("agent/trajectory.json")).unwrap();
+        let error = publish(&batch, "1.0.3", &results, false, None, true, false).unwrap_err();
+        assert!(error.to_string().contains("no agent trajectory"), "{error}");
+        assert!(!results.join("1.0.3").exists());
+        publish(&batch, "1.0.3", &results, false, None, true, true).unwrap();
+        assert!(
+            results
+                .join("1.0.3/job/task__a/agent/hermes.txt.gz")
+                .is_file()
         );
         std::fs::remove_dir_all(&tmp).unwrap();
     }

@@ -168,6 +168,21 @@ pub fn rescore(
     .with_context(|| report.display().to_string())?;
     let verdict: Verdict = serde_json::from_value(original.clone())
         .with_context(|| format!("{}: not a grade's report", report.display()))?;
+    // A grade headlined by v2 is scored again as one: its own settings when
+    // no scoring is asked for, never v1 or v2 beside v1.
+    let kept;
+    let v2 = match (original["headline"].as_str(), v2) {
+        (Some("v2"), None) => {
+            kept = headline_params(&original)
+                .with_context(|| format!("{}: its v2 settings", report.display()))?;
+            Some(&kept)
+        }
+        (Some("v2"), Some(params)) if !params.headline => bail!(
+            "{}: the grade's one score is v2: rescore it with `--scoring v2-headline`, or with no --scoring to keep its settings",
+            report.display()
+        ),
+        (_, v2) => v2,
+    };
     let sessions = original["scenarios"]
         .as_array()
         .into_iter()
@@ -249,6 +264,28 @@ pub fn rescore(
     Ok(Rescored {
         report,
         differences,
+    })
+}
+
+/// A v2-headline grade's own scoring settings, from its `v2` block: `k`,
+/// `φ`, `λ`, the hindsight cost and the resamples, the 1 its informed bot.
+fn headline_params(original: &Value) -> Result<Params> {
+    let v2 = &original["v2"];
+    let number = |value: &Value, name: &str| {
+        value
+            .as_f64()
+            .with_context(|| format!("no `v2.{name}` in the report"))
+    };
+    Ok(Params {
+        loss_weight: number(&v2["loss_weight"], "loss_weight")?,
+        anchor_floor: Some(number(&v2["anchor_floor"], "anchor_floor")?),
+        risk_weight: number(&v2["risk"]["weight"], "risk.weight")?,
+        hindsight_cost: number(&v2["hindsight_cost"], "hindsight_cost")?,
+        resamples: v2["resamples"]
+            .as_u64()
+            .context("no `v2.resamples` in the report")? as usize,
+        headline: true,
+        ..Params::new(Ceiling::Informed { eta_override: None })
     })
 }
 
@@ -600,6 +637,48 @@ mod tests {
         let counted = &summary["v2_comparison"]["flash-crash-spcx"]["not_rescored"];
         assert_eq!(counted["gpt-6-astra"], json!({ "skipped": 1, "failed": 1 }));
         assert_eq!(counted["gpt-6.1-sol"], json!({ "failed": 1 }));
+    }
+
+    #[test]
+    fn a_v2_headline_grade_is_rescored_as_one() {
+        let original = json!({
+            "headline": "v2",
+            "reward": 0.5,
+            "scenarios": [],
+            "v2": {
+                "loss_weight": 2.0, "anchor_floor": 0.1, "hindsight_cost": 8.5e-4,
+                "resamples": 500, "risk": { "weight": 0.5 }
+            }
+        });
+        let kept = headline_params(&original).unwrap();
+        assert!(kept.headline);
+        assert_eq!(
+            (
+                kept.loss_weight,
+                kept.anchor_floor,
+                kept.risk_weight,
+                kept.resamples
+            ),
+            (2.0, Some(0.1), 0.5, 500)
+        );
+        assert_eq!(kept.ceiling, Ceiling::Informed { eta_override: None });
+        // Asked to score it beside v1 instead: refused before anything is read.
+        let dir =
+            std::env::temp_dir().join(format!("mtx-rescore-hl-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let report = dir.join("report.json");
+        std::fs::write(&report, original.to_string()).unwrap();
+        let beside = args(Scoring::V2, &[]).params(None).unwrap().unwrap();
+        let refused = rescore(&report, &dir, None, Some(&beside)).err().unwrap();
+        assert!(
+            format!("{refused:#}").contains("v2-headline"),
+            "{refused:#}"
+        );
+        // `--ceiling` can't stand in for the informed bot under the headline.
+        let mut handed = args(Scoring::V2Headline, &[]);
+        handed.ceiling = Some(dir.join("ceiling.json"));
+        assert!(handed.params(None).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
