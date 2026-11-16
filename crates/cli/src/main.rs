@@ -34,6 +34,7 @@ mod publish;
 mod rescore;
 mod review;
 mod run;
+mod scoring_text;
 mod slim;
 mod store;
 mod studio;
@@ -399,8 +400,9 @@ enum TaskCommand {
     /// Where a task stands: each step to publication, done or not, with what
     /// to do next.
     Status { task: String },
-    /// The procedure for one step (design, family, reference, anchor,
-    /// practice, instruction, readme, registry, lint, verify).
+    /// The procedure for one step (design, family, reference, anchors,
+    /// anchor, practice, instruction, scoring, probes, readme, registry,
+    /// lint, verify).
     Guide { step: String },
     /// The repository's tasks.
     List,
@@ -1417,15 +1419,36 @@ async fn run() -> Result<()> {
                 graded.tamper(format!("a bot wrote {}", path.display()));
             }
             // v2 was asked for: a grade it can't score (no reference session
-            // for its ceiling, say) fails, after the report is written with
-            // its v1 scores, and writes no reward.
+            // for its ceiling, say) fails and writes no reward. Beside v1,
+            // the report is written with its v1 scores first; as the one
+            // score, nothing is: a v1 score never stands in for it.
             let v2_failed = v2.as_ref().and_then(|params| graded.score_v2(params).err());
             let json = serde_json::to_string_pretty(&graded)?;
             if let Some(path) = report {
-                std::fs::write(&path, &json).with_context(|| path.display().to_string())?;
+                match report_to_write(v2.as_ref(), v2_failed.is_some(), &json) {
+                    Some(text) => {
+                        std::fs::write(&path, text).with_context(|| path.display().to_string())?
+                    }
+                    None => match std::fs::remove_file(&path) {
+                        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                            return Err(e).with_context(|| path.display().to_string());
+                        }
+                        _ => {}
+                    },
+                }
             }
             if let Some(error) = v2_failed {
                 return Err(anyhow::Error::from(error).context("--scoring v2"));
+            }
+            match (&graded.headline, &graded.v2) {
+                (Some(_), Some(v2)) => {
+                    tracing::info!(reward = graded.reward, raw = v2.raw, "scored by v2")
+                }
+                _ => tracing::info!(
+                    reward = graded.reward,
+                    reference_ratio = graded.reference_ratio,
+                    "scored"
+                ),
             }
             if let Some(check) = graded.replay.as_ref().filter(|check| !check.identical) {
                 let first = check.differences.first().map(ToString::to_string);
@@ -1589,11 +1612,42 @@ fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {
     }
 }
 
+/// What `mtx grade` writes as its report: the grade, unless v2 is its one
+/// score and v2 couldn't score it. Then nothing: the grade's only scores
+/// would be v1's, and a reader would take the trial for graded.
+fn report_to_write<'a>(
+    v2: Option<&mtx_grader::scoring_v2::Params>,
+    v2_failed: bool,
+    json: &'a str,
+) -> Option<&'a str> {
+    (!(v2_failed && v2.is_some_and(|p| p.headline))).then_some(json)
+}
+
 #[cfg(test)]
 mod tests {
     use clap::Parser;
 
     use super::Cli;
+
+    #[test]
+    fn a_failed_v2_headline_grade_writes_no_v1_report() {
+        use mtx_grader::scoring_v2::{Ceiling, Params};
+        let beside = Params::new(Ceiling::Informed { eta_override: None });
+        let one = Params {
+            headline: true,
+            ..beside.clone()
+        };
+        let json = r#"{"reward": 0.13, "skill": 1.0}"#;
+        // Beside v1, a failed v2 leaves the v1 report, as before.
+        assert_eq!(
+            super::report_to_write(Some(&beside), true, json),
+            Some(json)
+        );
+        assert_eq!(super::report_to_write(None, false, json), Some(json));
+        // As the one score, a failed v2 writes nothing; a scored one, the report.
+        assert_eq!(super::report_to_write(Some(&one), true, json), None);
+        assert_eq!(super::report_to_write(Some(&one), false, json), Some(json));
+    }
 
     #[test]
     fn check_joint_takes_the_calibration_flag_repeated_or_with_several_files() {
