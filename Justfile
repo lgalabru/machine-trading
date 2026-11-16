@@ -741,6 +741,24 @@ leak-audit:
     for bot in $(docker run --rm --entrypoint ls "$image" /opt/mtx/sdk/bots); do
       if [ "$bot" != starter ]; then echo "LEAK: $image holds /opt/mtx/sdk/bots/$bot"; found=1; fi
     done
+    # The agent's mtx draws nothing: not `scenario generate`, not `grade --draw`,
+    # and no generator is registered in it (the image builds mtx with
+    # `--no-default-features`; the verifier's mtx keeps the feature).
+    if docker run --rm --entrypoint mtx "$image" scenario generate --help > /dev/null 2>&1; then
+      echo "LEAK: $image's mtx offers scenario generate"; found=1
+    fi
+    if docker run --rm --entrypoint mtx "$image" grade --help 2>&1 | grep -q -e '--draw'; then
+      echo "LEAK: $image's mtx offers grade --draw"; found=1
+    fi
+    # Generator source and family parameters: none ships with the agent.
+    gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target \) -prune -o \
+      \( -name generators.rs -o -name making.rs -o -name carry.rs -o -name weekend.rs -o -name 'calibration' -o -name 'mtx-grader*' -o -path '*/crates/grader*' \) -print 2>/dev/null || true)"
+    if [ -n "$gen_hits" ]; then
+      echo "LEAK: generator source in $image:"; echo "$gen_hits" | sed 's/^/  /'; found=1
+    fi
+    if docker run --rm --entrypoint grep "$image" -qaF -e 'market-making-v2' -e 'funding-carry' /usr/local/bin/mtx; then
+      echo "LEAK: $image's mtx registers a scenario generator"; found=1
+    fi
     for needle in "${needles[@]}"; do
       hits="$(docker run --rm --entrypoint grep "$image" -rlsF --exclude-dir=proc --exclude-dir=sys \
         --exclude-dir=target --exclude-dir=.cargo --exclude-dir=registry -e "$needle" / || true)"
