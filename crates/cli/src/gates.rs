@@ -1436,7 +1436,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             true,
         )?;
         checks.extend(harbor_checks(&jobs, ran, &detail, headline));
-        let (ok, d) = run_in(root, "just", &["leak-audit"], false)?;
+        let (ok, d) = run_in(root, "just", &["leak-audit", task], false)?;
         checks.push(Check::from(
             GRADED,
             "leak-audit",

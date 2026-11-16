@@ -730,63 +730,94 @@ harbor-checks task="flash-crash-spcx" surfpool="" jobs="jobs": (image surfpool) 
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o {{jobs}}/cheater
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o {{jobs}}/sneaky
 
-# Fail if the agent's image holds anything that answers its task: the
-# anchors (reference bots), their source or the tasks' solutions, the
-# checks' bots, or a scored scenario. Runs on the dev image `image` built.
-leak-audit:
+# The commands a guarded agent's `mtx` offers, and no others: the grader's
+# files-in side (practice, snapshots, bots), none of what draws from a task's
+# family or authors a task. A new command is a leak until it is listed here.
+agent_commands := "bench bot calibrate grade help rescore scenario snapshot studio"
+agent_scenario_commands := "check help new play"
+
+# Fail if an agent's image holds anything that answers its task: the anchors
+# (reference bots), their source or the tasks' solutions, the checks' bots, or
+# a scored scenario. A guarded image (a task whose environment starts from the
+# base's `-agent` image) also fails if its `mtx` can draw scenarios, offers a
+# command outside the allowlist above, or holds a scenario family's code.
+# With a task, audits that task's image (`<tag>-<task>`); with none, the base
+# dev image, the base agent image, and the image of every guarded task. Runs
+# on the images `image` built.
+leak-audit task="":
     #!/usr/bin/env bash
     set -euo pipefail
-        IFS='|' read -ra needles <<< "{{leak_needles}}|mtx-ladder-rungs"
-    image="{{registry}}/{{image}}:{{tag}}"
-    # Without the image every probe below fails, which reads as no leak.
-    docker image inspect "$image" > /dev/null 2>&1 \
-      || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
-    found=0
-    paths=(/opt/mtx/anchors /tests /solution)
-    for path in "${paths[@]}"; do
-      if docker run --rm --entrypoint test "$image" -e "$path"; then
-        echo "LEAK: $image holds $path"; found=1
+    IFS='|' read -ra needles <<< "{{leak_needles}}|mtx-ladder-rungs"
+    base="{{registry}}/{{image}}:{{tag}}"
+    guarded() { grep -q -E '^FROM [^ ]*:[^@ ]*-agent(@| |$)' "{{tasks}}/$1/environment/Dockerfile"; }
+    # The command names `mtx <args> --help` lists, one a line.
+    listed() {
+      docker run --rm --entrypoint mtx "$image" "$@" --help 2>&1 \
+        | awk '/^Commands:/ { f = 1; next } f && /^[^ ]/ { f = 0 } f && /^  [a-z]/ { print $1 }' | sort -u
+    }
+    audit() {
+      image="$1"; local guard="$2" found=0
+      # Without the image every probe below fails, which reads as no leak.
+      docker image inspect "$image" > /dev/null 2>&1 \
+        || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
+      local path
+      for path in /opt/mtx/anchors /tests /solution; do
+        if docker run --rm --entrypoint test "$image" -e "$path"; then
+          echo "LEAK: $image holds $path"; found=1
+        fi
+      done
+      # The SDK holds the starter and nothing of any task's.
+      local bot
+      for bot in $(docker run --rm --entrypoint ls "$image" /opt/mtx/sdk/bots); do
+        if [ "$bot" != starter ]; then echo "LEAK: $image holds /opt/mtx/sdk/bots/$bot"; found=1; fi
+      done
+      if [ "$guard" = guarded ]; then
+        # The agent's mtx offers the allowlisted commands only: no scenario
+        # generation, no task authoring, gates, MCP or market calibration.
+        local extra
+        extra="$(comm -13 <(printf '%s\n' {{agent_commands}} | sort -u) <(listed))"
+        if [ -n "$extra" ]; then echo "LEAK: $image's mtx offers $(echo $extra)"; found=1; fi
+        extra="$(comm -13 <(printf '%s\n' {{agent_scenario_commands}} | sort -u) <(listed scenario))"
+        if [ -n "$extra" ]; then echo "LEAK: $image's mtx scenario offers $(echo $extra)"; found=1; fi
+        if docker run --rm --entrypoint mtx "$image" grade --help 2>&1 | grep -q -e '--draw'; then
+          echo "LEAK: $image's mtx offers grade --draw"; found=1
+        fi
+        # Generator source and family parameters: none ships with the agent.
+        local gen_hits
+        gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target \) -prune -o \
+          \( -name generators.rs -o -name making.rs -o -name carry.rs -o -name weekend.rs -o -name 'calibration' -o -name 'mtx-grader*' -o -path '*/crates/grader*' \) -print 2>/dev/null || true)"
+        if [ -n "$gen_hits" ]; then
+          echo "LEAK: generator source in $image:"; echo "$gen_hits" | sed 's/^/  /'; found=1
+        fi
+        # The families' code, by its mangled type names, is not in the binary.
+        if docker run --rm --entrypoint grep "$image" -qaE '[0-9](Shock|Making|Carry|Weekend)Family' /usr/local/bin/mtx; then
+          echo "LEAK: $image's mtx holds a scenario family's code"; found=1
+        fi
       fi
-    done
-    # The SDK holds the starter and nothing of any task's.
-    for bot in $(docker run --rm --entrypoint ls "$image" /opt/mtx/sdk/bots); do
-      if [ "$bot" != starter ]; then echo "LEAK: $image holds /opt/mtx/sdk/bots/$bot"; found=1; fi
-    done
-    # The agent's mtx draws nothing: not `scenario generate`, not `grade --draw`,
-    # and no generator is registered in it (the image builds mtx with
-    # `--no-default-features`; the verifier's mtx keeps the feature).
-    if docker run --rm --entrypoint mtx "$image" scenario generate --help > /dev/null 2>&1; then
-      echo "LEAK: $image's mtx offers scenario generate"; found=1
+      local needle hits
+      for needle in "${needles[@]}"; do
+        hits="$(docker run --rm --entrypoint grep "$image" -rlsF --exclude-dir=proc --exclude-dir=sys \
+          --exclude-dir=target --exclude-dir=.cargo --exclude-dir=registry -e "$needle" / || true)"
+        if [ -n "$hits" ]; then
+          echo "LEAK: \"$needle\" in:"; echo "$hits" | sed 's/^/  /'; found=1
+        fi
+      done
+      [ "$found" = 0 ] && echo "no leaks in $image ($guard)"
+      return "$found"
+    }
+    status=0
+    if [ -n "{{task}}" ]; then
+      if guarded "{{task}}"; then mode=guarded; else mode=unguarded; fi
+      audit "$base-{{task}}" "$mode" || status=1
+    else
+      audit "$base" unguarded || status=1
+      audit "$base-agent" guarded || status=1
+      for dir in {{tasks}}/*/; do
+        task="$(basename "$dir")"
+        if guarded "$task"; then audit "$base-$task" guarded || status=1; fi
+      done
     fi
-    if docker run --rm --entrypoint mtx "$image" grade --help 2>&1 | grep -q -e '--draw'; then
-      echo "LEAK: $image's mtx offers grade --draw"; found=1
-    fi
-    # Host-only commands (task authoring, gates, market calibration and its
-    # sampler) are not in the agent's mtx either.
-    for cmd in market-cal task gates mcp; do
-      if docker run --rm --entrypoint mtx "$image" "$cmd" --help > /dev/null 2>&1; then
-        echo "LEAK: $image's mtx offers $cmd"; found=1
-      fi
-    done
-    # Generator source and family parameters: none ships with the agent.
-    gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target \) -prune -o \
-      \( -name generators.rs -o -name making.rs -o -name carry.rs -o -name weekend.rs -o -name 'calibration' -o -name 'mtx-grader*' -o -path '*/crates/grader*' \) -print 2>/dev/null || true)"
-    if [ -n "$gen_hits" ]; then
-      echo "LEAK: generator source in $image:"; echo "$gen_hits" | sed 's/^/  /'; found=1
-    fi
-    # The families' code, by its mangled type names, is not in the binary.
-    if docker run --rm --entrypoint grep "$image" -qaE '[0-9](Shock|Making|Carry|Weekend)Family' /usr/local/bin/mtx; then
-      echo "LEAK: $image's mtx holds a scenario family's code"; found=1
-    fi
-    for needle in "${needles[@]}"; do
-      hits="$(docker run --rm --entrypoint grep "$image" -rlsF --exclude-dir=proc --exclude-dir=sys \
-        --exclude-dir=target --exclude-dir=.cargo --exclude-dir=registry -e "$needle" / || true)"
-      if [ -n "$hits" ]; then
-        echo "LEAK: \"$needle\" in:"; echo "$hits" | sed 's/^/  /'; found=1
-      fi
-    done
-    [ "$found" = 0 ] && echo "no leaks in $image"
-    exit "$found"
+    exit "$status"
 
 # Fail if a bot can read the grader's own keypairs (takers', competitor's):
 # one market-making session in the runtime image `image` built, with a probe
