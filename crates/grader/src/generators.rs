@@ -21,7 +21,8 @@ use crate::{
     weekend::{WeekendFamily, WeekendShape},
 };
 
-/// A hidden set as `mtx grade --draw` runs it.
+/// A hidden set as `mtx grade --draw` runs it (and a practice set as
+/// `mtx calibrate --practice` runs the informed bot on it).
 pub struct Hidden {
     pub scenarios: Vec<Scenario>,
     /// What each scenario was drawn as, for its detail file.
@@ -39,6 +40,11 @@ pub struct Generator {
     pub name: &'static str,
     /// `count` practice scenarios named `<prefix>-<n>`.
     pub practice: fn(prefix: &str, count: usize, seed: u64) -> Vec<Scenario>,
+    /// The same practice scenarios as `practice`, drawn with each one's
+    /// latent state, for `mtx calibrate --practice` to run the informed bot
+    /// on them. Host-side only: the latent state is never written to a
+    /// practice file.
+    pub practice_drawn: fn(prefix: &str, count: usize, seed: u64) -> Result<Hidden>,
     /// `count` hidden scenarios named `hidden-<n>`.
     pub hidden: fn(count: usize, seed: u64, tell_regime: bool) -> Result<Hidden>,
 }
@@ -47,6 +53,13 @@ pub const GENERATORS: &[Generator] = &[
     Generator {
         name: "flash-crash",
         practice: |prefix, count, seed| ShockFamily::spcx().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                ShockFamily::spcx().draw_set(prefix, count, seed),
+                false,
+                shock_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 ShockFamily::spcx().draw_set("hidden", count, seed),
@@ -58,16 +71,31 @@ pub const GENERATORS: &[Generator] = &[
     Generator {
         name: "market-making",
         practice: |prefix, count, seed| MakingFamily::spcx().sample_set(prefix, count, seed),
-        hidden: |count, seed, tell| making_hidden(&MakingFamily::spcx(), count, seed, tell),
+        practice_drawn: |prefix, count, seed| {
+            making_drawn(&MakingFamily::spcx(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| {
+            making_drawn(&MakingFamily::spcx(), "hidden", count, seed, tell)
+        },
     },
     Generator {
         name: "market-making-v2",
         practice: |prefix, count, seed| MakingFamily::v2().sample_set(prefix, count, seed),
-        hidden: |count, seed, tell| making_hidden(&MakingFamily::v2(), count, seed, tell),
+        practice_drawn: |prefix, count, seed| {
+            making_drawn(&MakingFamily::v2(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| making_drawn(&MakingFamily::v2(), "hidden", count, seed, tell),
     },
     Generator {
         name: "funding-carry",
         practice: |prefix, count, seed| CarryFamily::practice().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                CarryFamily::practice().draw_set(prefix, count, seed),
+                false,
+                carry_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 CarryFamily::spcx().draw_set("hidden", count, seed),
@@ -79,6 +107,13 @@ pub const GENERATORS: &[Generator] = &[
     Generator {
         name: "weekend-gap",
         practice: |prefix, count, seed| WeekendFamily::spcx().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                WeekendFamily::spcx().draw_set(prefix, count, seed),
+                false,
+                weekend_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
@@ -102,8 +137,14 @@ pub fn names() -> Vec<&'static str> {
 /// A market-making hidden set, each scenario annotated with its informed
 /// orders and, when told, the regime as those orders by slot and side: what a
 /// perfect reader of the tape would know.
-fn making_hidden(family: &MakingFamily, count: usize, seed: u64, tell: bool) -> Result<Hidden> {
-    let drawn = family.sample_set_labeled("hidden", count, seed);
+fn making_drawn(
+    family: &MakingFamily,
+    prefix: &str,
+    count: usize,
+    seed: u64,
+    tell: bool,
+) -> Result<Hidden> {
+    let drawn = family.sample_set_labeled(prefix, count, seed);
     let annotations = drawn
         .iter()
         .map(|(_, informed)| json!({ "informed": informed }))
@@ -204,6 +245,34 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
 
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
 /// one draw that makes it, so all of it is the session's future.
+/// The JSON keys a shipped practice file may never hold: a latent state's
+/// own keys (`latent`, `roster`) and every identity field a family's latent
+/// state names ([`LATENT_FIELDS`]): who is informed, which accounts. Practice
+/// files go into the agent's image; the informed bot's latent state is drawn
+/// host-side and never saved (`mtx calibrate --practice`).
+pub fn reserved_latent_keys() -> Vec<&'static str> {
+    let mut keys = vec!["latent", "roster"];
+    for (_, field, knowable) in LATENT_FIELDS {
+        if *knowable == Knowable::Identity && !keys.contains(field) {
+            keys.push(field);
+        }
+    }
+    keys
+}
+
+/// The reserved keys ([`reserved_latent_keys`]) a practice file's text holds
+/// as a JSON key, anywhere in it.
+pub fn latent_keys_in(text: &str) -> Vec<&'static str> {
+    reserved_latent_keys()
+        .into_iter()
+        .filter(|key| {
+            let quoted = format!("\"{key}\"");
+            text.match_indices(&quoted)
+                .any(|(at, _)| text[at + quoted.len()..].trim_start().starts_with(':'))
+        })
+        .collect()
+}
+
 fn shock_latent(_: &Shape) -> Value {
     json!({})
 }
@@ -281,6 +350,42 @@ mod tests {
             assert_eq!(hidden.latent, untold.latent, "{}", g.name);
             assert_eq!(hidden.latent.len(), 4, "{}", g.name);
         }
+    }
+
+    /// A practice set drawn with its latent state is the practice set
+    /// `mtx scenario generate` writes, scenario for scenario: calibrating it
+    /// with the informed bot anchors the files the agent is shipped.
+    #[test]
+    fn a_practice_set_drawn_with_its_latent_state_is_the_practice_set() {
+        for g in GENERATORS {
+            let files = (g.practice)("practice", 4, 7);
+            let drawn = (g.practice_drawn)("practice", 4, 7).unwrap();
+            assert_eq!(
+                serde_json::to_string(&files).unwrap(),
+                serde_json::to_string(&drawn.scenarios).unwrap(),
+                "{}",
+                g.name
+            );
+            assert_eq!(drawn.latent.len(), 4, "{}", g.name);
+            assert!(drawn.regimes.is_none());
+        }
+    }
+
+    /// A practice file holds the scenario and the anchors' PnL, never a
+    /// latent state: no generator's practice scenario has a reserved key, and
+    /// a file that does is caught.
+    #[test]
+    fn a_practice_file_holds_no_latent_state() {
+        for g in GENERATORS {
+            for scenario in (g.practice)("practice", 4, 7) {
+                let text = serde_json::to_string_pretty(&scenario).unwrap();
+                assert!(latent_keys_in(&text).is_empty(), "{}", g.name);
+            }
+        }
+        assert!(reserved_latent_keys().contains(&"informed_account"));
+        assert_eq!(latent_keys_in(r#"{"roster": ["informed"]}"#), ["roster"]);
+        assert_eq!(latent_keys_in(r#"{"x": {"latent" : {}}}"#), ["latent"]);
+        assert!(latent_keys_in(r#"{"note": "latent"}"#).is_empty());
     }
 
     /// The informed bot is told the session's latent state and nothing of

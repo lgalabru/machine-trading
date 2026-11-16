@@ -557,6 +557,59 @@ pub fn bot_told_nothing(test: &str) -> Check {
     }
 }
 
+/// No practice file in the agent's image holds a latent state: practice is
+/// calibrated with the informed bot host-side (`mtx calibrate --practice`),
+/// which saves only its PnL. A latent or roster key in a shipped file would
+/// hand the agent who is informed.
+pub fn practice_holds_no_latent(root: &Path, task: &str) -> Check {
+    let (id, title) = (
+        "practice-no-latent",
+        "No practice file holds the latent state or a roster",
+    );
+    let dir = root
+        .join("bench/tasks")
+        .join(task)
+        .join("environment/practice");
+    let mut files = 0;
+    let mut problems = Vec::new();
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        files += 1;
+        let keys = mtx_grader::generators::latent_keys_in(&text);
+        if !keys.is_empty() {
+            problems.push(format!(
+                "{} holds {}",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                keys.iter()
+                    .map(|k| format!("`{k}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    if problems.is_empty() {
+        Check::pass(
+            GRADED,
+            id,
+            title,
+            format!("{files} practice files, none with a latent or roster key"),
+        )
+    } else {
+        Check::fail(
+            GRADED,
+            id,
+            title,
+            format!(
+                "{}: the image would show the agent who is informed; calibrate with `mtx calibrate --informed --practice`, which saves only the PnL",
+                problems.join("; ")
+            ),
+        )
+    }
+}
+
 const INFORMED_LIVE: (&str, &str) = (
     "informed-on-hidden-sets",
     "The verifier runs the informed bot on the hidden set",
@@ -1527,6 +1580,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let test = std::fs::read_to_string(root.join("bench/tasks").join(task).join("tests/test.sh"))
         .unwrap_or_default();
     checks.push(bot_told_nothing(&test));
+    checks.push(practice_holds_no_latent(root, task));
     checks.extend(v2_checks(
         root,
         task,
@@ -2194,6 +2248,34 @@ mod tests {
     }
 
     #[test]
+    fn a_latent_or_roster_in_a_practice_file_fails_the_check() {
+        let root = std::env::temp_dir().join(format!("mtx-practice-latent-{}", std::process::id()));
+        let practice = root.join("bench/tasks/t/environment/practice");
+        std::fs::create_dir_all(&practice).unwrap();
+        std::fs::write(
+            practice.join("practice-1.json"),
+            r#"{"name": "practice-1", "informed_pnl_usd": 4.0}"#,
+        )
+        .unwrap();
+        assert_eq!(practice_holds_no_latent(&root, "t").status, Status::Pass);
+        std::fs::write(
+            practice.join("practice-2.json"),
+            r#"{"name": "practice-2", "latent": {"roster": ["informed"]}}"#,
+        )
+        .unwrap();
+        let check = practice_holds_no_latent(&root, "t");
+        assert_eq!(check.status, Status::Fail);
+        assert!(
+            check
+                .detail
+                .contains("practice-2.json holds `latent`, `roster`"),
+            "{}",
+            check.detail
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
     fn no_verifier_tells_the_graded_bot_anything() {
         let root = authoring::repo_root();
         for task in tasks::load(&root).unwrap() {
@@ -2204,6 +2286,8 @@ mod tests {
             )
             .unwrap();
             let check = bot_told_nothing(&test);
+            assert_eq!(check.status, Status::Pass, "{}: {}", task.dir, check.detail);
+            let check = practice_holds_no_latent(&root, &task.dir);
             assert_eq!(check.status, Status::Pass, "{}: {}", task.dir, check.detail);
         }
         let verifier = "mtx grade \\\n  --draw flash-crash \\\n  --bot /app/bot\n";
