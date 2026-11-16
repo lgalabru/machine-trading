@@ -17,9 +17,6 @@ difficulty = "hard"
 category = "trading"
 # Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
 snapshot = "phoenix-perps-2026-11-13"
-# The reference is graded on the hidden sessions only: practice scenarios
-# carry no baseline, and practice grades don't run it.
-practice_reference = false
 
 [metadata.mtx]
 generator = "perp-accumulate"
