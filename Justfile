@@ -260,8 +260,8 @@ calibrate bot +files: bots
 grade bot +files:
     cargo run --release -- grade --snapshot snapshots/{{snapshot}} --bot {{bot}} --logs target/logs/grade {{files}}
 
-# The task images, for this machine only: dev (agents) and runtime
-# (verifiers). Tagged as the registry names, so task Dockerfiles that aren't
+# The task images, for this machine only: dev and agent (the agents'; agent is
+# dev with a guarded `mtx`) and runtime (verifiers). Tagged as the registry names, so task Dockerfiles that aren't
 # pinned yet build against them.
 # `surfpool=DIR` builds against a local Surfpool checkout's committed HEAD
 # (its git archive, so no build artifacts) instead of the git sources.
@@ -279,6 +279,8 @@ image surfpool="":
         -t {{registry}}/{{image}}:{{tag}}-runtime --load .
     docker buildx build -f bench/image/Dockerfile --target dev ${context[@]+"${context[@]}"} \
         -t {{registry}}/{{image}}:{{tag}} --load .
+    docker buildx build -f bench/image/Dockerfile --target agent ${context[@]+"${context[@]}"} \
+        -t {{registry}}/{{image}}:{{tag}}-agent --load .
     just task-images
 
 # Each task's own images, one at a time, from its environment/ and tests/:
@@ -329,8 +331,12 @@ push-image jobs="3":
     docker buildx build -f bench/image/Dockerfile --target dev \
         --build-arg CARGO_BUILD_JOBS={{jobs}} --platform linux/amd64,linux/arm64 \
         -t {{registry}}/{{image}}:{{tag}} --push .
+    docker buildx build -f bench/image/Dockerfile --target agent \
+        --build-arg CARGO_BUILD_JOBS={{jobs}} --platform linux/amd64,linux/arm64 \
+        -t {{registry}}/{{image}}:{{tag}}-agent --push .
 
-# Point every task at the pushed images, by digest: environments at dev,
+# Point every task at the pushed images, by digest: environments at dev (at
+# agent, for a guarded task: one whose environment starts from `-agent`),
 # verifiers at runtime.
 pin-image:
     #!/usr/bin/env bash
@@ -349,7 +355,12 @@ pin-image:
       echo "$ref@$digest"
       sedi -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" "$@"
     }
-    pin {{registry}}/{{image}}:{{tag}} {{tasks}}/*/environment/Dockerfile
+    dev_files=() agent_files=()
+    for f in {{tasks}}/*/environment/Dockerfile; do
+      if grep -q -E '^FROM {{registry}}/{{image}}:[^@ ]*-agent(@| |$)' "$f"; then agent_files+=("$f"); else dev_files+=("$f"); fi
+    done
+    [ "${#dev_files[@]}" = 0 ] || pin {{registry}}/{{image}}:{{tag}} "${dev_files[@]}"
+    [ "${#agent_files[@]}" = 0 ] || pin {{registry}}/{{image}}:{{tag}}-agent "${agent_files[@]}"
     pin {{registry}}/{{image}}:{{tag}}-runtime {{tasks}}/*/tests/Dockerfile
     # The tasks' own images, built on the pins just made, then pinned in
     # each task.toml.
@@ -708,7 +719,7 @@ harbor-checks task="flash-crash-spcx" surfpool="" jobs="jobs": (image surfpool) 
     set -euo pipefail
     # The checks run on the images `image` just built: a task still pinned to
     # a released digest would test the old grader instead.
-    grep -q '^FROM {{registry}}/{{image}}:{{tag}}$' {{tasks}}/{{task}}/environment/Dockerfile \
+    grep -q -E '^FROM {{registry}}/{{image}}:{{tag}}(-agent)?$' {{tasks}}/{{task}}/environment/Dockerfile \
       && grep -q '^FROM {{registry}}/{{image}}:{{tag}}-runtime$' {{tasks}}/{{task}}/tests/Dockerfile \
       || { echo "{{task}} isn't on {{image}}:{{tag}}; unpin its Dockerfiles first"; exit 1; }
     # The verifier draws its hidden set from the batch's secret.

@@ -285,6 +285,13 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     );
     let toml = replace_section(&toml, "[metadata.mtx]", &metadata(spec, &family, base));
     std::fs::write(&toml_path, toml)?;
+    // The agent starts from the base's agent image: its `mtx` can't draw
+    // scenarios from the family (the base's own four tasks keep the dev image).
+    let dockerfile_path = to.join("environment/Dockerfile");
+    std::fs::write(
+        &dockerfile_path,
+        guard_dockerfile(&std::fs::read_to_string(&dockerfile_path)?),
+    )?;
 
     let test_path = to.join("tests/test.sh");
     // The verifier's 0.5 is this task's reference, which the image builds
@@ -426,8 +433,36 @@ fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
 
 /// The instruction's `mtx-practice` line for a v2 task.
 const PRACTICE_LINE: &str = "- `mtx-practice`: grades `/app/bot` on the practice scenarios in `/opt/mtx/practice` by the same rules and settings as the hidden scenarios (scoring v2, each scenario against the reference's and the informed bot's PnL on it), and prints a JSON report: your `reward` (the v2 score), the `v2` block that explains it, and each session's PnL. Bot logs go to `/tmp/mtx-practice-logs/`. It runs three sessions at a time (`MTX_JOBS=1` for one).";
-/// The instruction's `mtx` line for a v2 task.
-const MTX_LINE: &str = "- `mtx`: the grader itself. `mtx scenario generate --out DIR --prefix NAME --count N --seed S` draws more scenarios from the same family. They carry neither anchor's PnL, so `mtx-practice` can't score them by v2 and says so: use them to see your bot run and read its logs.";
+/// The instruction's `mtx` line for a v2 task: its agent's `mtx` holds no
+/// generator (the task is guarded: see [`guard_dockerfile`]).
+const MTX_LINE: &str = "- `mtx`: the grader itself. `mtx grade --bot /app/bot FILE...` plays your bot on scenario files, as `mtx-practice` does for the practice set. There is no way to draw more scenarios from the family: the practice scenarios in `/opt/mtx/practice` are the only ones you have, so the bot has to learn what it can from them.";
+
+/// A task environment's Dockerfile, started from the base's agent image
+/// (`<tag>-agent`) instead of its dev image: the `mtx` in it can't draw
+/// scenarios from the task's family. The digest is dropped; `just pin-image`
+/// pins the agent image's.
+pub fn guard_dockerfile(text: &str) -> String {
+    text.replace(
+        "The dev image (bench/image/Dockerfile, target dev)",
+        "The agent image (bench/image/Dockerfile, target agent)",
+    )
+    .lines()
+    .map(|l| match l.strip_prefix("FROM ") {
+        Some(image) if image.contains("/machine-trading:") => {
+            let image = image.split_whitespace().next().unwrap_or("");
+            let image = image.split('@').next().unwrap_or("");
+            if image.ends_with("-agent") {
+                format!("FROM {image}")
+            } else {
+                format!("FROM {image}-agent")
+            }
+        }
+        _ => l.to_string(),
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n"
+}
 
 /// What marks the informed bot's slot until it is written.
 pub const INFORMED_TODO: &str = "TODO(informed)";
@@ -1589,6 +1624,17 @@ mod tests {
         // Practice is v2's too: the image grades it with the verifier's
         // scoring, and the instruction says so, with no v1 practice line.
         assert!(instruction.contains(PRACTICE_LINE) && instruction.contains(MTX_LINE));
+        assert!(!instruction.contains("scenario generate"));
+
+        // Guarded: the agent starts from the agent image.
+        let dockerfile = read(&task.join("environment/Dockerfile"));
+        assert!(
+            dockerfile.lines().any(|l| l.starts_with("FROM ")
+                && l.contains("/machine-trading:")
+                && l.ends_with("-agent")),
+            "{dockerfile}"
+        );
+        assert!(dockerfile.contains("target agent"));
         assert!(!instruction.contains("the reward needs no reference"));
         assert!(
             read(&task.join("environment/Dockerfile"))
