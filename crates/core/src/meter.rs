@@ -29,7 +29,7 @@ use crate::{Fill, Holding, InstrumentId};
 
 /// A fill as a venue recorded it, with the slot it landed in: enforcers
 /// count in slots.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RecordedFill {
     /// The slot the fill's transaction landed in.
     pub slot: u64,
