@@ -516,6 +516,35 @@ fn harness_label(model: &str, configured: &Value, ran: &Value) -> String {
     }
 }
 
+/// A model of a batch's plan by its trials' label: the label of a trial
+/// that reached it by its route (`gpt-6-1-sol` → `gpt-6.1-sol · hermes`),
+/// else its name as a trial would label it, with the plan's harness.
+fn planned_label(planned: &str, plan: &Value, trials: &[Value]) -> String {
+    let bare = planned
+        .trim_start_matches("hermes:")
+        .trim_start_matches("native:");
+    let route: String = bare
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if let Some(label) = trials
+        .iter()
+        .find(|t| t["route"].as_str() == Some(route.as_str()))
+        .and_then(|t| t["model"].as_str())
+    {
+        return label.to_string();
+    }
+    let agent = &plan["harness"][planned]["agent"];
+    harness_label(bare, agent, &Value::Null)
+}
+
 /// A trial as the review page lists it.
 pub(crate) fn summary_of(root: &Root, n: usize, dir: &FsPath) -> Value {
     summary(root, n, dir)
@@ -614,6 +643,13 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
         "task": task,
         "task_ref": task_config["ref"],
         "task_path": task_config["path"],
+        // The key proxy's route the trial reached its model by, if any: the
+        // name the batch's plan gives the model (`gpt-6-1-sol`).
+        "route": result["config"]["agent"]["base_url"]
+            .as_str()
+            .or(config["agent"]["base_url"].as_str())
+            .and_then(|u| u.trim_end_matches('/').rsplit('/').next())
+            .map(str::to_string),
         "trial": config["trial_name"].as_str().or(result["trial_name"].as_str()),
         "status": status,
         "agent": result["agent_info"]["name"],
@@ -722,7 +758,21 @@ fn index_of(state: &AppState, release: Option<String>) -> Result<Json<Value>, Ap
             batches.push(plan);
         }
     }
-    let batch = batches.first().cloned();
+    // The plan names a model as the batch was started with it
+    // (`gpt-6-1-sol`, `claude-opus-5-5`); its trials carry the label their
+    // agent reported (`gpt-6.1-sol · hermes`). The page reads the plan in
+    // the trials' labels, else each planned name is a model with no runs.
+    let batch = batches.first().cloned().map(|mut plan| {
+        let labels: Vec<Value> = plan["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m.as_str())
+            .map(|planned| json!(planned_label(planned, &plan, &trials)))
+            .collect();
+        plan["models"] = json!(labels);
+        plan
+    });
     // Tasks: every task a trial ran, with its metadata and how its trials
     // stand.
     let mut tasks: Vec<Value> = Vec::new();
@@ -1445,6 +1495,32 @@ mod harness_tests {
         assert_eq!(
             harness_label("claude-opus-5-5", &json!("mtx_hermes:Hermes"), &Value::Null),
             "claude-opus-5-5 · hermes"
+        );
+    }
+
+    #[test]
+    fn a_plan_names_its_models_as_their_trials_do() {
+        let plan = json!({
+            "models": ["gpt-6-1-sol", "claude-opus-5-5", "openai/gpt-6.1-sol"],
+            "harness": {
+                "gpt-6-1-sol": { "agent": "hermes" },
+                "claude-opus-5-5": { "agent": "hermes" },
+                "openai/gpt-6.1-sol": { "agent": "codex" },
+            },
+        });
+        let trials = [json!({ "model": "gpt-6.1-sol · hermes", "route": "gpt-6-1-sol" })];
+        assert_eq!(
+            planned_label("gpt-6-1-sol", &plan, &trials),
+            "gpt-6.1-sol · hermes"
+        );
+        // Not started yet: its name, with the plan's harness.
+        assert_eq!(
+            planned_label("claude-opus-5-5", &plan, &trials),
+            "claude-opus-5-5 · hermes"
+        );
+        assert_eq!(
+            planned_label("openai/gpt-6.1-sol", &plan, &trials),
+            "gpt-6.1-sol"
         );
     }
 }
