@@ -1240,9 +1240,9 @@ impl PerpAccount {
                 fill.forced = forced.contains(id);
             }
         }
+        let primary = self.own().scenario.instrument().to_string();
         if let Some(read) = self.making_fills.as_mut() {
             let bot = read.bot;
-            let primary = self.own().scenario.instrument().to_string();
             let forced: HashSet<(u128, bool)> = records
                 .fills
                 .iter()
@@ -1304,6 +1304,7 @@ impl PerpAccount {
     /// Read the market's fills since the last read, and keep the bot's:
     /// each as the side it traded, with its counterparty and fee.
     async fn scan_making(&mut self, slot: u64) -> Result<()> {
+        let primary = self.own().scenario.instrument().to_string();
         let Some(read) = self.making_fills.as_mut() else {
             return Ok(());
         };
@@ -1311,7 +1312,6 @@ impl PerpAccount {
         let records = patiently("the market's fills", || self.meter.market_records(after)).await?;
         // The record is the primary market's: a market's fill sequence is
         // its own, so another market's fills would collide in `seen`.
-        let primary = self.own().scenario.instrument().to_string();
         for fill in records
             .fills
             .iter()
