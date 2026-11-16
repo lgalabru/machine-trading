@@ -815,56 +815,51 @@ impl ScenarioV2 {
         {
             return Err("turn_data and participation are for spot scenarios".into());
         }
-        // Net scoring's hold baseline and the bound's fair path are one
-        // market's: a session on several markets has each market's own.
-        if self.is_multi_market() {
-            if self.scoring.net.is_some() {
-                return Err(
-                    "net: only sessions on one perp market are net-scored yet".into(),
-                );
-            }
-            if !self.scoring.bound_on.is_default() {
-                return Err(
-                    "scoring: bound_on is one market's; a session on several markets bounds each on its own path"
-                        .into(),
-                );
-            }
-        }
-        if let Some(net) = &self.scoring.net {
-            if net.venue_position.is_some() {
-                return Err("net: venue_position is for spot scenarios".into());
-            }
-            if self
-                .venues
-                .perp
-                .as_ref()
-                .is_some_and(|p| p.funding.is_some())
-                && self.start_position() != 0.0
-            {
-                return Err(
-                    "net: a funded start position needs a measured hold baseline, \
-                     which net scoring doesn't have"
-                        .into(),
-                );
-            }
-        }
-        if let Some(fair) = &self.market_model.fair_path
-            && self.scoring.net.is_some()
+        // Net scoring's rules hold on every market the session trades, and
+        // a market that breaks one refuses the scenario, by name.
+        if let Some(net) = &self.scoring.net
+            && net.venue_position.is_some()
         {
-            let end = self.duration_slots;
-            let gap = (crate::making::level_at(fair, end)
-                - crate::making::level_at(&self.market_model.path, end))
-            .abs();
-            if gap > NET_CLOSE_TOLERANCE_PCT {
-                return Err(format!(
-                    "net: the fair path ends {gap:.4}% from the level at the close; \
-                     a net-scored session needs them equal (within {NET_CLOSE_TOLERANCE_PCT}%), \
-                     or a bot that holds would not score 0"
-                ));
-            }
+            return Err("net: venue_position is for spot scenarios".into());
         }
-        if self.scoring.bound_on == BoundOn::FairPath && self.market_model.fair_path.is_none() {
-            return Err("scoring: bound_on fair_path needs market_model.fair_path".into());
+        let multi = self.is_multi_market();
+        for symbol in self.perp_symbols() {
+            let (path, fair, funded) = self.market_facts(symbol);
+            let named = |what: &str| {
+                if multi {
+                    format!("{what} ({symbol})")
+                } else {
+                    what.to_string()
+                }
+            };
+            if self.scoring.net.is_some() {
+                if funded && self.start_position_in(symbol) != 0.0 {
+                    return Err(named(
+                        "net: a funded start position needs a measured hold baseline, \
+                         which net scoring doesn't have",
+                    ));
+                }
+                if let Some(fair) = fair {
+                    let end = self.duration_slots;
+                    let gap = (crate::making::level_at(fair, end)
+                        - crate::making::level_at(path, end))
+                    .abs();
+                    if gap > NET_CLOSE_TOLERANCE_PCT {
+                        return Err(named(&format!(
+                            "net: the fair path ends {gap:.4}% from the level at the close; \
+                             a net-scored session needs them equal (within \
+                             {NET_CLOSE_TOLERANCE_PCT}%), or a bot that holds would not score 0"
+                        )));
+                    }
+                }
+            }
+            if self.scoring.bound_on == BoundOn::FairPath && fair.is_none() {
+                return Err(named(if multi {
+                    "scoring: bound_on fair_path needs a fair_path on every market"
+                } else {
+                    "scoring: bound_on fair_path needs market_model.fair_path"
+                }));
+            }
         }
         Ok(())
     }
@@ -969,6 +964,28 @@ impl ScenarioV2 {
             .and_then(|o| o.instrument.as_ref())
             .map_or(&self.assets.symbol, |i| &i.symbol);
         self.start_position_in(symbol)
+    }
+
+    /// The market `symbol`'s level path, fair path and whether funding
+    /// accrues on it, from the keyed sections of a session on several
+    /// markets or the flat ones of a session on one.
+    fn market_facts(&self, symbol: &str) -> (&[Waypoint], Option<&[Waypoint]>, bool) {
+        let perp = self.venues.perp.as_ref();
+        if self.is_multi_market() {
+            let path = self.market_model.markets.get(symbol);
+            (
+                path.map_or(&[][..], |m| m.path.as_slice()),
+                path.and_then(|m| m.fair_path.as_deref()),
+                perp.and_then(|p| p.markets.get(symbol))
+                    .is_some_and(|m| m.funding.is_some()),
+            )
+        } else {
+            (
+                &self.market_model.path,
+                self.market_model.fair_path.as_deref(),
+                perp.is_some_and(|p| p.funding.is_some()),
+            )
+        }
     }
 
     /// The starting position in `symbol`, in base units.
@@ -2262,8 +2279,8 @@ mod tests {
         assert_eq!(scenario.validate(), Ok(()));
         // Each market's own cap, start mark and funding make its bound.
         let marks = [("NVDA".to_string(), 180.0), ("SPCX".to_string(), 100.0)].into();
-        let nvda = scenario.markets[0].bound_usd(40.0, 180.0, scenario.duration_slots);
-        let spcx = scenario.markets[1].bound_usd(70.0, 100.0, scenario.duration_slots);
+        let nvda = scenario.markets[0].bound_usd(BoundOn::Path, 40.0, 180.0, scenario.duration_slots);
+        let spcx = scenario.markets[1].bound_usd(BoundOn::Path, 70.0, 100.0, scenario.duration_slots);
         assert!(nvda > 0.0 && spcx > 0.0);
         assert_eq!(scenario.markets_bound_usd(&marks), nvda + spcx);
         assert_eq!(scenario.max_position(), 40.0);
@@ -2331,16 +2348,44 @@ mod tests {
         let mut s = multi();
         s.actors.takers = s.actors.markets["SPCX"].takers.clone();
         assert!(err(s).contains("actors: on several markets"));
-        // Net scoring and a fair-path bound are one market's.
-        let mut s = multi();
-        s.scoring.net = Some(NetScoring {
+        // Net scoring holds on every market, and a market that breaks a
+        // rule is named.
+        let net = || NetScoring {
             inventory_bps: 0.0,
             venue_position: None,
+        };
+        let mut s = multi();
+        s.scoring.net = Some(net());
+        assert_eq!(s.validate(), Ok(()));
+        s.assets.start_positions.insert("SPCX".into(), -5.0);
+        assert_eq!(s.validate(), Ok(()));
+        // NVDA has funding: a start position there needs a measured hold.
+        s.assets.start_positions.insert("NVDA".into(), 5.0);
+        let message = err(s);
+        assert!(message.contains("net: a funded start position") && message.contains("(NVDA)"));
+        let mut s = multi();
+        s.scoring.net = Some(NetScoring {
+            venue_position: Some(crate::orders::VenuePosition {
+                limit: 1.0,
+                price_bps: 1.0,
+            }),
+            ..net()
         });
-        assert!(err(s).contains("net: only sessions on one perp market"));
+        assert!(err(s).contains("venue_position is for spot"));
+        let mut s = multi();
+        s.scoring.net = Some(net());
+        s.market_model.markets.get_mut("SPCX").unwrap().fair_path =
+            Some(vec![Waypoint::at(20, 9.0)]);
+        let message = err(s);
+        assert!(message.contains("the fair path ends") && message.contains("(SPCX)"));
         let mut s = multi();
         s.scoring.bound_on = BoundOn::FairPath;
-        assert!(err(s).contains("bound_on is one market's"));
+        assert!(err(s.clone()).contains("a fair_path on every market"));
+        s.market_model.markets.get_mut("SPCX").unwrap().fair_path =
+            Some(s.market_model.markets["SPCX"].path.clone());
+        s.market_model.markets.get_mut("NVDA").unwrap().fair_path =
+            Some(s.market_model.markets["NVDA"].path.clone());
+        assert_eq!(s.validate(), Ok(()));
         // A Phoenix oracle feed on a market with a path; on one without,
         // it is fine.
         let feed = |symbol: &str| {
@@ -2553,6 +2598,7 @@ mod tests {
                 max_rate: 1,
                 mark: None,
             }),
+            markets: Default::default(),
             liquidator: None,
         });
         assert!(

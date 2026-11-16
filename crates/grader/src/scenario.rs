@@ -576,11 +576,13 @@ impl Scenario {
     /// cost. No bot reaches it (fills cost fees and slippage, and the path is
     /// unknown), so a score against it never saturates.
     pub fn hindsight_bound_usd(&self, start_mark_usd: f64) -> f64 {
-        let variation = match (&self.bound_on, &self.fair_path) {
-            (BoundOn::FairPath, Some(fair)) => fair_variation_pct(fair),
-            _ => self.total_variation_pct(),
-        };
-        self.max_position() * start_mark_usd * variation / 100.0
+        hindsight_bound_usd(
+            &self.path,
+            self.fair_path.as_deref(),
+            self.bound_on,
+            self.max_position(),
+            start_mark_usd,
+        )
     }
 
     /// What the reward divides PnL by: the hindsight bound, plus, for a
@@ -596,8 +598,12 @@ impl Scenario {
         if let Some(lending) = &self.lending {
             return lending.bound_usd.unwrap_or(0.0);
         }
-        self.flat_market()
-            .bound_usd(self.max_position(), start_mark_usd, self.duration_slots)
+        self.flat_market().bound_usd(
+            self.bound_on,
+            self.max_position(),
+            start_mark_usd,
+            self.duration_slots,
+        )
     }
 
     /// The most funding the cap could collect: held against every premium
@@ -622,6 +628,7 @@ impl Scenario {
             .filter_map(|market| {
                 let start = *start_marks_usd.get(&market.symbol)?;
                 Some(market.bound_usd(
+                    self.bound_on,
                     self.max_position_of(&market.symbol),
                     start,
                     self.duration_slots,
@@ -709,12 +716,24 @@ impl MarketRef<'_> {
         }
     }
 
-    fn bound_usd(&self, max_position: f64, start_mark_usd: f64, duration_slots: u64) -> f64 {
+    fn bound_usd(
+        &self,
+        bound_on: BoundOn,
+        max_position: f64,
+        start_mark_usd: f64,
+        duration_slots: u64,
+    ) -> f64 {
         let spread = self.making.map_or(0.0, |making| {
             making.spread_bound_usd(self.path, start_mark_usd)
         });
         spread
-            + hindsight_bound_usd(self.path, max_position, start_mark_usd)
+            + hindsight_bound_usd(
+                self.path,
+                self.fair_path,
+                bound_on,
+                max_position,
+                start_mark_usd,
+            )
             + self.funding_bound_usd(max_position, start_mark_usd, duration_slots)
     }
 
@@ -804,10 +823,17 @@ impl MarketScenario {
         perp_instrument(&self.symbol)
     }
 
-    /// [`Scenario::bound_usd`] for this market, at its cap `max_position`.
-    pub fn bound_usd(&self, max_position: f64, start_mark_usd: f64, duration_slots: u64) -> f64 {
+    /// [`Scenario::bound_usd`] for this market, at its cap `max_position`,
+    /// its hindsight term on the path `bound_on` names (this market's own).
+    pub fn bound_usd(
+        &self,
+        bound_on: BoundOn,
+        max_position: f64,
+        start_mark_usd: f64,
+        duration_slots: u64,
+    ) -> f64 {
         self.as_ref()
-            .bound_usd(max_position, start_mark_usd, duration_slots)
+            .bound_usd(bound_on, max_position, start_mark_usd, duration_slots)
     }
 
     /// [`Scenario::funding_bound_usd`] for this market.
@@ -852,8 +878,18 @@ fn total_variation_pct(path: &[Waypoint]) -> f64 {
     total
 }
 
-fn hindsight_bound_usd(path: &[Waypoint], max_position: f64, start_mark_usd: f64) -> f64 {
-    max_position * start_mark_usd * total_variation_pct(path) / 100.0
+fn hindsight_bound_usd(
+    path: &[Waypoint],
+    fair_path: Option<&[Waypoint]>,
+    bound_on: BoundOn,
+    max_position: f64,
+    start_mark_usd: f64,
+) -> f64 {
+    let variation = match (bound_on, fair_path) {
+        (BoundOn::FairPath, Some(fair)) => fair_variation_pct(fair),
+        _ => total_variation_pct(path),
+    };
+    max_position * start_mark_usd * variation / 100.0
 }
 
 /// The largest premium a waypoint may give the book, in percent: Phoenix
@@ -1723,7 +1759,12 @@ mod tests {
                 let start = 187.25;
                 let bound = scenario.bound_usd(start);
                 assert_eq!(
-                    market.bound_usd(scenario.max_position(), start, scenario.duration_slots),
+                    market.bound_usd(
+                        scenario.bound_on,
+                        scenario.max_position(),
+                        start,
+                        scenario.duration_slots,
+                    ),
                     bound
                 );
                 assert_eq!(

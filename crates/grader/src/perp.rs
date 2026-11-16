@@ -1641,6 +1641,7 @@ impl Account for PerpAccount {
         let observed = std::mem::take(&mut self.observed);
         let fills = self.fills.take().unwrap_or_default();
         let at = done.end_slot.saturating_sub(self.base_slot);
+        let scenario_net = self.scenario.net.is_some();
         let legs: std::collections::BTreeMap<String, Leg> = self
             .markets
             .iter()
@@ -1651,6 +1652,12 @@ impl Account for PerpAccount {
                     end,
                     start_usd: market.start_mark_usd,
                     close_usd: market.moment(at).level_usd,
+                    fair_close_usd: fair_close_usd(
+                        scenario_net,
+                        &market.scenario,
+                        market.start_mark_usd,
+                        at,
+                    ),
                 };
                 (market.scenario.symbol.clone(), leg)
             })
@@ -1659,11 +1666,6 @@ impl Account for PerpAccount {
         let settled = settle(
             scenario,
             &legs,
-            fair_close_usd(
-                scenario,
-                self.markets[0].start_mark_usd,
-                done.end_slot.saturating_sub(self.base_slot),
-            ),
             end_value_usd - self.start_value_usd,
             &fills.fills,
         );
@@ -1781,6 +1783,22 @@ impl Account for PerpAccount {
     }
 }
 
+/// The fair value at the close, in USD, that a net-scored session takes
+/// `market`'s hold baseline at: the market's fair path where it has one.
+/// Only net scoring reads it.
+fn fair_close_usd(
+    net_scored: bool,
+    market: &MarketScenario,
+    start_mark_usd: f64,
+    at: u64,
+) -> Option<f64> {
+    if net_scored {
+        market.fair_value_usd(start_mark_usd, at)
+    } else {
+        None
+    }
+}
+
 /// One market's part of a session's settlement: the position at the start
 /// and the end, in base units, and the start mark and the scenario's level
 /// at the end, in USD.
@@ -1790,13 +1808,10 @@ struct Leg {
     end: f64,
     start_usd: f64,
     close_usd: f64,
-
-/// The fair value at the close, in USD, that a net-scored session takes its
-/// hold baseline at: the scenario's fair path where it has one. Only net
-/// scoring reads it (and only a session on one market has it).
-fn fair_close_usd(scenario: &Scenario, start_mark_usd: f64, at: u64) -> Option<f64> {
-    scenario.net.as_ref()?;
-    scenario.fair_value_usd(start_mark_usd, at)
+    /// The market's fair value at the close, in USD, where the scenario
+    /// is net-scored and the market has a fair path: the hold baseline is
+    /// taken there, not at the level.
+    fair_close_usd: Option<f64>,
 }
 
 /// What a perp session's PnL comes to, with its order and close-outs.
@@ -1812,14 +1827,13 @@ struct Settled {
 /// against its broker on its market's leg, as on spot (`fills`, the bot's
 /// on that market, say whether it traded the other way); a close-out
 /// charges the haircut on what is left in its market. A net-scored session
-/// (one market only) scores the value change less what holding its start
-/// position gained from the price moving, at `fair_close_usd` where the
-/// scenario has a fair value at the close, else at the level, so a bot that
-/// holds scores 0. Without any, the PnL is the value change.
+/// scores the value change less what holding its start positions gained
+/// from the prices moving, each market at its [`Leg::fair_close_usd`] where
+/// it has one, else at its level, so a bot that holds every market scores 0.
+/// Without any, the PnL is the value change.
 fn settle(
     scenario: &Scenario,
     legs: &std::collections::BTreeMap<String, Leg>,
-    fair_close_usd: Option<f64>,
     value_change_usd: f64,
     fills: &[PerpFillRecord],
 ) -> Settled {
@@ -1828,6 +1842,7 @@ fn settle(
         end: 0.0,
         start_usd: 0.0,
         close_usd: 0.0,
+        fair_close_usd: None,
     };
     let leg = |symbol: &str| legs.get(symbol).copied().unwrap_or(flat);
     let order = scenario.order.as_ref().map(|order| {
@@ -1859,16 +1874,30 @@ fn settle(
             close_out.report(symbol, at.end, at.close_usd)
         })
         .collect();
+    // Each market's drift and inventory charge, summed: on one market, the
+    // report of that market alone.
     let net = scenario.net.as_ref().map(|net| {
-        let at = leg(&scenario.symbol);
-        net.report(
-            at.start,
-            at.end,
-            (at.start_usd, fair_close_usd.unwrap_or(at.close_usd)),
-            value_change_usd,
-            &[],
-            &[],
-        )
+        let mut report = None::<NetReport>;
+        for market in scenario.market_scenarios().iter() {
+            let at = leg(&market.symbol);
+            let part = net.report(
+                at.start,
+                at.end,
+                (at.start_usd, at.fair_close_usd.unwrap_or(at.close_usd)),
+                value_change_usd,
+                &[],
+                &[],
+            );
+            report = Some(match report {
+                None => part,
+                Some(mut sum) => {
+                    sum.drift_usd += part.drift_usd;
+                    sum.inventory_charge_usd += part.inventory_charge_usd;
+                    sum
+                }
+            });
+        }
+        report.expect("a perp scenario has a market")
     });
     let pnl_usd = order
         .as_ref()
@@ -2082,11 +2111,11 @@ mod tests {
             end,
             start_usd,
             close_usd,
+            fair_close_usd,
         };
         settle(
             scenario,
             &[(scenario.symbol.clone(), leg)].into(),
-            fair_close_usd,
             value_change_usd,
             fills,
         )
@@ -2114,6 +2143,7 @@ mod tests {
                     end: 6.0,
                     start_usd: 180.0,
                     close_usd: 190.0,
+                    fair_close_usd: None,
                 },
             ),
             (
@@ -2123,6 +2153,7 @@ mod tests {
                     end: -4.0,
                     start_usd: 100.0,
                     close_usd: 200.0,
+                    fair_close_usd: None,
                 },
             ),
         ]
@@ -2141,7 +2172,7 @@ mod tests {
                 ..fill(CoreSide::Sell, 2.0)
             },
         ];
-        let settled = settle(&scenario, &legs, None, 70.0, &fills);
+        let settled = settle(&scenario, &legs, 70.0, &fills);
         let order = settled.order.unwrap();
         assert_eq!(order.breach(), None);
         let alone = crate::orders::ExecutionOrder {
@@ -2267,19 +2298,60 @@ mod tests {
     fn the_hold_baseline_is_taken_at_the_fair_close_only_for_net_scoring() {
         let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
         scenario.fair_path = Some(vec![crate::scenario::Waypoint::at(10, -5.0)]);
+        let market = |s: &Scenario| s.market_scenarios()[0].clone();
         // Not net-scored: the fair path is not read.
-        assert_eq!(fair_close_usd(&scenario, 100.0, 50), None);
+        assert_eq!(fair_close_usd(false, &market(&scenario), 100.0, 50), None);
         scenario.net = Some(crate::orders::NetScoring {
             inventory_bps: 0.0,
             venue_position: None,
         });
-        assert_eq!(fair_close_usd(&scenario, 100.0, 50), Some(95.0));
+        let fair = fair_close_usd(true, &market(&scenario), 100.0, 50);
+        assert_eq!(fair, Some(95.0));
         // The value finish settles with: a hold at the fair close scores 0.
-        let fair = fair_close_usd(&scenario, 100.0, 50);
         let held = settle_fair(&scenario, 10.0, 10.0, (100.0, 95.0), fair, -50.0, &[]);
         assert_eq!(held.pnl_usd, 0.0);
         scenario.fair_path = None;
-        assert_eq!(fair_close_usd(&scenario, 100.0, 50), None);
+        assert_eq!(fair_close_usd(true, &market(&scenario), 100.0, 50), None);
+    }
+
+    #[test]
+    fn net_scoring_on_two_markets_takes_each_markets_hold_off() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        scenario.net = Some(crate::orders::NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        let nvda = MarketScenario {
+            symbol: "NVDA".into(),
+            ..scenario.market_scenarios()[0].clone()
+        };
+        scenario.markets = vec![nvda, scenario.market_scenarios()[0].clone()];
+        let leg = |start: f64, end: f64, start_usd: f64, close_usd: f64| Leg {
+            start,
+            end,
+            start_usd,
+            close_usd,
+            fair_close_usd: None,
+        };
+        // Holding both: NVDA 10 long falls 180 to 170, SPCX 5 short rises
+        // 100 to 120, so the account's value changes by -100 - 100.
+        let held: std::collections::BTreeMap<String, Leg> = [
+            ("NVDA".to_string(), leg(10.0, 10.0, 180.0, 170.0)),
+            ("SPCX".to_string(), leg(-5.0, -5.0, 100.0, 120.0)),
+        ]
+        .into();
+        let hold = settle(&scenario, &held, -200.0, &[]);
+        assert!(hold.pnl_usd.abs() < 1e-9, "{}", hold.pnl_usd);
+        // Cutting NVDA to flat before the fall keeps its 100 of loss off.
+        let cut: std::collections::BTreeMap<String, Leg> = [
+            ("NVDA".to_string(), leg(10.0, 0.0, 180.0, 170.0)),
+            ("SPCX".to_string(), leg(-5.0, -5.0, 100.0, 120.0)),
+        ]
+        .into();
+        let better = settle(&scenario, &cut, -100.0, &[]);
+        assert!((better.pnl_usd - 100.0).abs() < 1e-9, "{}", better.pnl_usd);
+        let net = better.net.unwrap();
+        assert!((net.drift_usd + 200.0).abs() < 1e-9);
     }
 
     #[test]
