@@ -233,7 +233,8 @@ for the cheap checks, `mtx gates <task>` for the full set (see
 ```sh
 just ladder <task>                     # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
-just leak-audit                        # the agent's image holds no answer
+just leak-audit <task>                 # the agent's image holds no answer (a guarded task's mtx can't draw)
+just network-probe <task>              # a guarded task's agent can't reach ghcr.io or github.com
 just keypair-probe                     # a bot can't read the grader's keypairs
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```
