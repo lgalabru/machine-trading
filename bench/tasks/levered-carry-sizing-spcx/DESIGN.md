@@ -313,14 +313,36 @@ count.
 
 ### Numbers
 
-Interim (engine, 48 sessions drawn from a public label, weighted as v2
-weighs losses, USD per session): reference +56 (raw +70, Sharpe 0.37, no
-stop-outs); informed bot before its post-flush change +164 (raw +194, Sharpe
-0.52, no stop-outs): a ratio of 0.34. Two pilot model bots on the same
-sessions: +146 and +142 (one stop-out each). On 48 generated practice
-files the reference made +86 (raw +103, Sharpe 0.50, no stop-outs) against
-the g0 reference's +97 (Sharpe 0.32, one stop-out). Every non-reading rung
-loses on the practice sets. The full ladder's numbers are pending.
+Anchor ladder on the engine (2 fresh sets of 50 sessions, the ladder's own
+secrets, after merging main at f8fd77d7). USD, set 1 / set 2; weighted = losses
+counted 1.5x as v2 does:
+
+| Rung | Raw | Weighted (both sets) | Per-session Sharpe | Stop-outs |
+| --- | ---: | ---: | ---: | ---: |
+| nop | 0 / 0 | 0 | — | 0 |
+| max-lever | 3,167 / -11,516 | -34,018 | -0.08 | 40 |
+| fixed (3x) | -2,134 / -5,264 | -16,226 | -0.22 | 0 |
+| prem-scaled | 4,108 / -2,304 | -9,580 | 0.03 | 13 |
+| reference | 8,486 / 4,443 | 11,475 | 0.38 | 0 |
+| informed | 27,508 / 19,184 | 43,729 | 0.72 | 2 |
+| oracle (told the flush) | 28,033 / (set 2 not kept) | — | 0.82 | 0 |
+
+- **Strength band:** the reference makes 0.26 of the informed bot weighted
+  (0.29 and 0.22 by set), inside [0.2, 0.7], with a per-session Sharpe of
+  0.38 and no stop-outs or disqualifications.
+- **Gate 0:** the informed bot makes 27,508 / 19,184 against the best
+  non-reading rung's 4,108 / 0 (a losing rung counts as 0): 6.7x and
+  unbounded; it doubles the best non-reading rung in 93% and 99.9% of
+  bootstrap resamples of each set.
+- **Order:** every rule holds on both sets; bootstrap odds 0.86
+  (max-lever, fixed < reference), 0.91 (prem-scaled), 1.00 (reference <
+  informed). Told the flush's timing, the oracle gains little over the
+  informed bot (odds 0.79 that it is above), since the informed bot is
+  already flat where flushes are likely; the ladder's rule is
+  `reference < oracle`.
+- On a 48-session public set the pilot's model bots (Sol-2, Astra-2) made
+  146 and 142 a session weighted against the informed bot's 164 (before
+  its post-flush change) and the reference's 56.
 
 ## The practice family
 

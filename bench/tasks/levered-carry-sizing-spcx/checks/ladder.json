@@ -206,7 +206,7 @@
     "max(max-lever, fixed) < reference",
     "prem-scaled < reference",
     "reference < informed",
-    "informed < oracle",
+    "reference < oracle",
     "oracle < hindsight",
     "stop-out < stop-in"
   ],
