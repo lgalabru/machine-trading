@@ -38,6 +38,7 @@ WORKDIR /src/mtx
 COPY Cargo.toml Cargo.lock rust-toolchain ./
 COPY crates crates
 COPY bots bots
+COPY calibration calibration
 # The tasks' reference bots and ladder bots (.dockerignore keeps the rest of
 # bench/tasks out), which are workspace members, and the list of the
 # references the verifier scores against: `<anchor> <package> <binary> <dir>`.
