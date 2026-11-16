@@ -59,6 +59,15 @@ pub enum Error {
     /// A session failed before its bot started.
     #[error(transparent)]
     Setup(Box<Error>),
+    /// A perp scenario's starting position didn't take: Phoenix refused it,
+    /// or the bot doesn't hold it, or holding it is past what the
+    /// collateral margins. The scenario's, not the machine's: not retried.
+    #[error("the starting position: {0}")]
+    StartPosition(String),
+    /// A session variable the scenario can't be written as: a value that
+    /// isn't a finite number. The scenario's, not the machine's.
+    #[error("session variable {0}")]
+    SessionVar(#[from] mtx_kit::SessionVarError),
     /// A session's setup produced more slots than its scenario leaves it: a
     /// setup that changed, not a slow machine (setup runs on no clock).
     #[error("{scenario}'s setup took {used} slots, past the {budget} its scenario leaves it")]

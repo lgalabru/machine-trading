@@ -266,6 +266,9 @@ class Proxy(BaseHTTPRequestHandler):
             if kept:
                 headers["anthropic-beta"] = ",".join(kept)
         headers["Accept-Encoding"] = "identity"
+        # Its own, not the agent's: http.client sends none, and a provider
+        # behind Cloudflare (Nous's inference API) refuses a request without.
+        headers["User-Agent"] = "mtx-bench-key-proxy/1"
         headers["Content-Length"] = str(len(body))
         key = route["key"]
         if route["api"] == "anthropic":

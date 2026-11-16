@@ -2,9 +2,9 @@
 //! accounts on Phoenix Eternal, as the Phoenix venue profile (Perpetual
 //! markets) defines it.
 //!
-//! Everything is read from Phoenix through Hawkeye's views, and the wallet
-//! and the owner's trader accounts from the chain, through the meter's own
-//! clients, never the bot's.
+//! Everything is read from Phoenix through Hawkeye's views, and the wallet,
+//! the owner's trader accounts and the market's fills from the chain,
+//! through the meter's own clients, never the bot's.
 
 use std::sync::Arc;
 
@@ -20,7 +20,10 @@ use rust_decimal::Decimal;
 use solana_pubkey::Pubkey;
 use solana_rpc_client_api::filter::{Memcmp, RpcFilterType};
 
-use super::{PhoenixError, PhoenixExchange, PhoenixMarket};
+use super::{
+    PhoenixError, PhoenixExchange, PhoenixMarket,
+    fills::{PerpMarketRecords, TraderRecords},
+};
 use crate::{
     chain::{ChainClient, token},
     core::{AccountMeter, Holding, InstrumentId, Measurement, MeterError, Position, RecordedFill},
@@ -81,6 +84,79 @@ impl PhoenixEternalMeter {
     /// The instrument this meter measures, as the mandate names it.
     pub fn instrument(&self) -> &InstrumentId {
         &self.market.instrument.id
+    }
+
+    /// Every fill, order placed to rest and position change the market
+    /// recorded in slots after `after_slot`, between any trader accounts,
+    /// oldest first: the events of every landed transaction that named the
+    /// market's order book. A position change names only the trader
+    /// accounts it moves, so this holds those of transactions that also
+    /// named the book; [`PhoenixEternalMeter::records`] reads the owner's
+    /// own.
+    pub async fn market_records(&self, after_slot: u64) -> Result<PerpMarketRecords, MeterError> {
+        let mut records = PerpMarketRecords::default();
+        self.read_records(&mut records, &self.order_book()?, after_slot)
+            .await?;
+        records.sort();
+        Ok(records)
+    }
+
+    /// What the owner's trader accounts did on the market in slots after
+    /// `after_slot`: their fills, as a taker or a maker, the orders they
+    /// placed to rest, and their position changes that were not fills,
+    /// read from the transactions that named the market's order book or one
+    /// of the accounts. The fills and the position changes sum to the
+    /// accounts' change in position.
+    pub async fn records(&self, after_slot: u64) -> Result<TraderRecords, MeterError> {
+        let traders = traders(self.chain.as_ref(), &self.owner, self.trader).await?;
+        let mut records = PerpMarketRecords::default();
+        for address in [self.order_book()?].iter().chain(&traders) {
+            self.read_records(&mut records, address, after_slot).await?;
+        }
+        records.sort();
+        Ok(records.for_traders(&traders))
+    }
+
+    /// The market's order book account, which every trade on it names.
+    fn order_book(&self) -> Result<Pubkey, MeterError> {
+        self.exchange
+            .market_config(self.market.symbol())
+            .map_err(read)?
+            .market_pubkey
+            .parse::<Pubkey>()
+            .map_err(|e| MeterError::Decode {
+                what: "market address",
+                detail: e.to_string(),
+            })
+    }
+
+    /// Adds to `records` the transactions that named `address` in slots
+    /// after `after_slot`, fetching only those it hasn't got.
+    async fn read_records(
+        &self,
+        records: &mut PerpMarketRecords,
+        address: &Pubkey,
+        after_slot: u64,
+    ) -> Result<(), MeterError> {
+        let chain = self.chain.as_ref();
+        for (signature, _) in chain
+            .signatures_for_address(address, after_slot)
+            .await
+            .map_err(read)?
+        {
+            if records.contains(&signature) {
+                continue;
+            }
+            let summary = chain
+                .get_transaction(&signature)
+                .await
+                .map_err(read)?
+                .ok_or_else(|| {
+                    MeterError::Read(format!("transaction {signature} is listed but not found"))
+                })?;
+            records.add_transaction(&summary, &self.market)?;
+        }
+        Ok(())
     }
 
     fn hawkeye(&self) -> PhoenixHawkeyeClient<'_> {
@@ -157,10 +233,12 @@ impl AccountMeter for PhoenixEternalMeter {
         })
     }
 
-    async fn fills(&self, _after_slot: u64) -> Result<Vec<RecordedFill>, MeterError> {
-        Err(MeterError::Unsupported(
-            "Phoenix Eternal fills: no task's mandate has a fill rule yet".into(),
-        ))
+    /// The owner's fills, as a taker or a maker, from Phoenix's fill
+    /// events (see [`PhoenixEternalMeter::records`]). A liquidation
+    /// transfer or auto-deleveraging moves a position without a fill, so
+    /// these alone need not sum to the position: `records` has those too.
+    async fn fills(&self, after_slot: u64) -> Result<Vec<RecordedFill>, MeterError> {
+        Ok(self.records(after_slot).await?.fills)
     }
 
     /// Whether any of the owner's trader accounts is liquidatable.
@@ -285,14 +363,28 @@ fn read(error: impl std::fmt::Display) -> MeterError {
 
 #[cfg(test)]
 mod tests {
-    use phoenix_rise::api::TraderKey;
+    use phoenix_rise::{
+        api::TraderKey,
+        events::market_events::{
+            CloseMatchedPositionsEvent, LiquidationTransferEvent, MarketEvent, MarketEventHeader,
+            OptionalNonZeroU64, OrderFilledEvent, OrderFlags, OrderPlacedEvent, SlotContextEvent,
+            SplineFilledEvent, Symbol, TradeSummaryEvent,
+        },
+        math::{
+            BaseLots, QuoteLots, Side as MathSide, SignedBaseLots, SignedFeeRateMicro,
+            SignedQuoteLots, SignedQuoteLotsPerBaseLot, Ticks,
+        },
+    };
     use rust_decimal_macros::dec;
     use solana_account::Account as ChainAccount;
 
     use super::*;
     use crate::{
-        chain::mock::MockChainClient,
-        core::{Asset, FeeSchedule},
+        chain::{InnerInstruction, TransactionSummary, mock::MockChainClient},
+        core::{Asset, FeeSchedule, Side},
+        protocols::phoenix::eternal::{
+            PerpPositionChange, PositionChangeKind, fills::testing::log_encoded,
+        },
     };
 
     fn sol() -> PhoenixMarket {
@@ -405,5 +497,604 @@ mod tests {
             outside(&sol, &[reading(0, 0, 1, 0, 0), elsewhere], &universe),
             1
         );
+    }
+
+    /// A transaction at `slot` whose instruction logged `events`, already
+    /// encoded.
+    fn logged_encoded(
+        slot: u64,
+        signature: u8,
+        encoded: &[Vec<u8>],
+        failed: bool,
+    ) -> TransactionSummary {
+        let [lengths, log] = log_encoded(0, encoded);
+        TransactionSummary {
+            signature: solana_transaction::Signature::from([signature; 64]),
+            slot,
+            block_time: chrono::DateTime::from_timestamp(1_700_000_000 + slot as i64, 0),
+            fee_lamports: 5_000,
+            error: failed.then_some(solana_transaction::TransactionError::AccountInUse),
+            logs: Vec::new(),
+            account_keys: Vec::new(),
+            pre_balances: Vec::new(),
+            post_balances: Vec::new(),
+            token_balance_changes: Vec::new(),
+            inner_instructions: [lengths, log]
+                .into_iter()
+                .map(|data| InnerInstruction {
+                    outer: 0,
+                    program: *PHOENIX_PROGRAM_ID,
+                    data,
+                })
+                .collect(),
+        }
+    }
+
+    /// A transaction at `slot` whose instruction logged `events`.
+    fn logged(
+        slot: u64,
+        signature: u8,
+        events: &[MarketEvent],
+        failed: bool,
+    ) -> TransactionSummary {
+        let encoded: Vec<Vec<u8>> = events
+            .iter()
+            .map(|e| borsh::to_vec(e).expect("events encode"))
+            .collect();
+        logged_encoded(slot, signature, &encoded, failed)
+    }
+
+    fn header(market: &PhoenixMarket, sequence: u64, trader: Pubkey) -> MarketEvent {
+        MarketEvent::Header(MarketEventHeader {
+            sequence_number: sequence,
+            prev_sequence_number_slot: 0,
+            asset_symbol: Symbol::new(market.symbol()).unwrap(),
+            asset_id: market.asset_id,
+            tick_size: market.tick_size_quote_lots as u32,
+            base_lot_decimals: market.base_lots_decimals,
+            quote_lot_decimals: market.quote_lot_decimals,
+            signer: [0; 32],
+            trader_account: trader.to_bytes(),
+        })
+    }
+
+    /// A resting order of `maker` filled: `maker_side` is the maker's.
+    fn order_filled(maker: Pubkey, maker_side: MathSide, ticks: u64, lots: u64) -> MarketEvent {
+        MarketEvent::OrderFilled(OrderFilledEvent {
+            order_sequence_number: 1,
+            side: maker_side,
+            price: Ticks::new(ticks),
+            base_lots_filled: BaseLots::new(lots),
+            quote_lots_filled: QuoteLots::ZERO,
+            quantity_remaining: BaseLots::ZERO,
+            maker: maker.to_bytes(),
+            maker_fee_rate: SignedFeeRateMicro::ZERO,
+            maker_base_lot_position: SignedBaseLots::ZERO,
+            maker_virtual_quote_lot_position: SignedQuoteLots::ZERO,
+            maker_quote_lot_collateral: SignedQuoteLots::ZERO,
+            maker_cumulative_funding_snapshot: SignedQuoteLotsPerBaseLot::ZERO,
+        })
+    }
+
+    fn spline_filled(maker: Pubkey, maker_side: MathSide, ticks: u64, lots: u64) -> MarketEvent {
+        MarketEvent::SplineFilled(SplineFilledEvent {
+            spline_sequence_number: 1,
+            side: maker_side,
+            price: Ticks::new(ticks),
+            base_lots_filled: BaseLots::new(lots),
+            quote_lots_filled: QuoteLots::ZERO,
+            maker: maker.to_bytes(),
+            maker_fee_rate: SignedFeeRateMicro::ZERO,
+            maker_base_lot_position: SignedBaseLots::ZERO,
+            maker_virtual_quote_lot_position: SignedQuoteLots::ZERO,
+            maker_quote_lot_collateral: SignedQuoteLots::ZERO,
+            maker_cumulative_funding_snapshot: SignedQuoteLotsPerBaseLot::ZERO,
+        })
+    }
+
+    fn placed(ticks: u64, lots: i64) -> MarketEvent {
+        MarketEvent::OrderPlaced(OrderPlacedEvent {
+            order_id: 0,
+            order_flags: OrderFlags::from_bits(0),
+            order_sequence_number: 2,
+            prev_order_sequence_number_slot: 0,
+            client_order_id: [0; 16],
+            price: Ticks::new(ticks),
+            quantity: SignedBaseLots::new(lots),
+            last_valid_slot: OptionalNonZeroU64::null(),
+            initial_slot: 0,
+        })
+    }
+
+    /// The SPCX market's meter for `owner`, on `chain`, and its order book.
+    fn spcx_meter(chain: &Arc<MockChainClient>, owner: Pubkey) -> (PhoenixEternalMeter, Pubkey) {
+        let exchange = Arc::new(
+            PhoenixExchange::load(std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../snapshots/phoenix-spcx-2026-10-29/exchange.json"
+            )))
+            .unwrap(),
+        );
+        let book: Pubkey = exchange
+            .market_config("SPCX")
+            .unwrap()
+            .market_pubkey
+            .parse()
+            .unwrap();
+        let meter =
+            PhoenixEternalMeter::new(exchange, "http://127.0.0.1:1", chain.clone(), owner, "SPCX")
+                .unwrap();
+        (meter, book)
+    }
+
+    /// `market` as another market: its own asset and instrument.
+    fn another(market: &PhoenixMarket) -> PhoenixMarket {
+        let mut other = market.clone();
+        other.asset_id += 1;
+        other.instrument.id = InstrumentId("phoenix:perp:OTHER".into());
+        other
+    }
+
+    #[tokio::test]
+    async fn fills_come_from_the_markets_events_as_taker_and_maker() {
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        let isolated = TraderKey::derive_pda(&owner, 0, 1);
+        for key in [main, isolated] {
+            chain.set_account(key, account(PhoenixAccount::Trader, &owner));
+        }
+        let other = TraderKey::derive_pda(&Pubkey::new_unique(), 0, 0);
+        let (meter, book) = spcx_meter(&chain, owner);
+        let spcx = meter.market.clone();
+        let elsewhere = another(&spcx);
+
+        // The owner buys as the taker, from another trader's resting ask and
+        // a spline, and rests the rest of its bid.
+        let bought = logged(
+            20,
+            1,
+            &[
+                header(&spcx, 10, main),
+                order_filled(other, MathSide::Ask, 15_000, 300),
+                spline_filled(other, MathSide::Ask, 15_010, 200),
+                placed(14_990, 500),
+            ],
+            false,
+        );
+        // Another taker sells into a bid resting for the owner's isolated
+        // account: the owner buys as the maker. Then it rests an ask.
+        let hit = logged(
+            30,
+            2,
+            &[
+                header(&spcx, 11, other),
+                order_filled(isolated, MathSide::Bid, 14_990, 100),
+                header(&spcx, 12, isolated),
+                placed(15_100, -50),
+            ],
+            false,
+        );
+        // A failed transaction's events never happened, and another
+        // market's fills aren't this one's.
+        let failed = logged(
+            31,
+            3,
+            &[
+                header(&spcx, 13, main),
+                order_filled(other, MathSide::Bid, 1, 1),
+            ],
+            true,
+        );
+        let other_market = logged(
+            32,
+            4,
+            &[
+                header(&elsewhere, 14, main),
+                order_filled(other, MathSide::Bid, 1, 1),
+            ],
+            false,
+        );
+        for summary in [hit, bought, failed, other_market] {
+            chain.record_transaction(summary, &[book]);
+        }
+
+        let all = meter.market_records(0).await.unwrap();
+        assert_eq!(all.fills.len(), 3);
+        assert_eq!(all.fills[0].taker_side, Side::Buy);
+        assert_eq!(all.fills[1].price, spcx.ticks_to_price(15_010));
+        assert_eq!(all.fills[2].maker, isolated);
+
+        let mine = meter.records(0).await.unwrap();
+        let fills: Vec<(u64, Side, Decimal, Decimal)> = mine
+            .fills
+            .iter()
+            .map(|f| (f.slot, f.fill.side, f.fill.price, f.fill.quantity))
+            .collect();
+        let price = |ticks: u64| spcx.ticks_to_price(ticks);
+        let lots = |lots: i64| spcx.base_lots_to_quantity(lots);
+        assert_eq!(
+            fills,
+            vec![
+                (20, Side::Buy, price(15_000), lots(300)),
+                (20, Side::Buy, price(15_010), lots(200)),
+                (30, Side::Buy, price(14_990), lots(100)),
+            ]
+        );
+        let placed: Vec<(Side, Decimal)> =
+            mine.placed.iter().map(|p| (p.side, p.quantity)).collect();
+        assert_eq!(placed, vec![(Side::Buy, lots(500)), (Side::Sell, lots(50))]);
+        assert!(mine.position_changes.is_empty());
+        // Re-reading gives the same records, ids and order ids included, and
+        // the trait reads the same fills.
+        assert_eq!(meter.records(0).await.unwrap(), mine);
+        let again = meter.fills(20).await.unwrap();
+        assert_eq!(again, mine.fills[2..].to_vec());
+        // The other trader's side of the same fills.
+        let theirs = all.for_traders(&[other]).fills;
+        let sides: Vec<Side> = theirs.iter().map(|f| f.fill.side).collect();
+        assert_eq!(sides, vec![Side::Sell, Side::Sell, Side::Sell]);
+    }
+
+    #[test]
+    fn the_same_sequence_on_two_markets_is_two_fills() {
+        let chain = Arc::new(MockChainClient::new());
+        let (meter, _) = spcx_meter(&chain, Pubkey::new_unique());
+        let spcx = meter.market.clone();
+        let elsewhere = another(&spcx);
+        let (taker, maker) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let mut ids = Vec::new();
+        for market in [&spcx, &elsewhere] {
+            let mut records = PerpMarketRecords::default();
+            let events = [
+                header(market, 7, taker),
+                order_filled(maker, MathSide::Ask, 15_000, 1),
+            ];
+            records
+                .add_transaction(&logged(5, 1, &events, false), market)
+                .unwrap();
+            let fill = &records.for_traders(&[taker]).fills[0].fill;
+            ids.push((fill.id.clone(), fill.order_id.clone()));
+        }
+        assert_ne!(ids[0].0, ids[1].0);
+        assert_ne!(ids[0].1, ids[1].1);
+    }
+
+    #[test]
+    fn an_event_that_does_not_decode_is_an_error() {
+        let chain = Arc::new(MockChainClient::new());
+        let (meter, _) = spcx_meter(&chain, Pubkey::new_unique());
+        let a = meter.market.clone();
+        let b = another(&a);
+        let (taker, maker) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let encode = |e: &MarketEvent| borsh::to_vec(e).unwrap();
+        let corrupt = |mut bytes: Vec<u8>| {
+            bytes[0] = 0xff;
+            bytes
+        };
+
+        // A corrupted header alone.
+        let lone = logged_encoded(5, 1, &[corrupt(encode(&header(&a, 1, taker)))], false);
+        let mut records = PerpMarketRecords::default();
+        let read = records.add_transaction(&lone, &a);
+        assert!(matches!(read, Err(MeterError::Decode { .. })), "{read:?}");
+        assert_eq!(records, PerpMarketRecords::default());
+
+        // A's header, then B's, corrupted, then B's fill: never A's fill.
+        let mixed = logged_encoded(
+            6,
+            2,
+            &[
+                encode(&header(&a, 2, taker)),
+                corrupt(encode(&header(&b, 3, taker))),
+                encode(&order_filled(maker, MathSide::Ask, 15_000, 4)),
+            ],
+            false,
+        );
+        let read = records.add_transaction(&mixed, &a);
+        assert!(matches!(read, Err(MeterError::Decode { .. })), "{read:?}");
+        assert!(records.fills.is_empty());
+
+        // A fill with no header to name its market, or no time.
+        let headless = logged(7, 3, &[order_filled(maker, MathSide::Ask, 1, 1)], false);
+        assert!(records.add_transaction(&headless, &a).is_err());
+        let mut timeless = logged(
+            8,
+            4,
+            &[
+                header(&a, 4, taker),
+                order_filled(maker, MathSide::Ask, 1, 1),
+            ],
+            false,
+        );
+        timeless.block_time = None;
+        assert!(records.add_transaction(&timeless, &a).is_err());
+        // A slot context gives it one.
+        let mut timed = logged(
+            9,
+            5,
+            &[
+                MarketEvent::SlotContext(SlotContextEvent {
+                    timestamp: 1_700_000_123,
+                    slot: 9,
+                }),
+                header(&a, 5, taker),
+                order_filled(maker, MathSide::Ask, 1, 1),
+            ],
+            false,
+        );
+        timed.block_time = None;
+        records.add_transaction(&timed, &a).unwrap();
+        assert_eq!(records.fills[0].unix_timestamp, 1_700_000_123);
+    }
+
+    #[test]
+    fn a_transaction_added_twice_counts_once() {
+        let chain = Arc::new(MockChainClient::new());
+        let (meter, _) = spcx_meter(&chain, Pubkey::new_unique());
+        let a = meter.market.clone();
+        let (taker, maker) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let tx = logged(
+            5,
+            1,
+            &[
+                header(&a, 1, taker),
+                order_filled(maker, MathSide::Ask, 1, 1),
+            ],
+            false,
+        );
+        let mut records = PerpMarketRecords::default();
+        records.add_transaction(&tx, &a).unwrap();
+        records.add_transaction(&tx, &a).unwrap();
+        assert_eq!(records.fills.len(), 1);
+        assert!(records.contains(&tx.signature));
+    }
+
+    #[tokio::test]
+    async fn liquidation_transfers_and_deleveraging_are_position_changes() {
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        chain.set_account(main, account(PhoenixAccount::Trader, &owner));
+        let (keeper, other, maker) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let (meter, book) = spcx_meter(&chain, owner);
+        let spcx = meter.market.clone();
+        let asset_id = u64::from(spcx.asset_id);
+        let lots = |lots: i64| spcx.base_lots_to_quantity(lots);
+
+        // The owner buys 900 lots.
+        chain.record_transaction(
+            logged(
+                10,
+                1,
+                &[
+                    header(&spcx, 1, main),
+                    order_filled(maker, MathSide::Ask, 15_000, 900),
+                ],
+                false,
+            ),
+            &[book],
+        );
+        // A keeper takes 600 of the long into its own account: the
+        // transaction names the trader accounts, not the order book, and
+        // Phoenix logs it under no header.
+        let transfer = MarketEvent::LiquidationTransfer(LiquidationTransferEvent {
+            liquidatee: main.to_bytes(),
+            liquidator: keeper.to_bytes(),
+            asset_id,
+            base_lots_transferred: SignedBaseLots::new(600),
+            virtual_quote_lots_transferred: SignedQuoteLots::ZERO,
+            haircut_rate: 19,
+            liquidatee_collateral_change: SignedQuoteLots::ZERO,
+            liquidator_collateral_change: SignedQuoteLots::ZERO,
+        });
+        // Auto-deleveraging closes 100 of the rest against a short.
+        let adl = MarketEvent::CloseMatchedPositions(CloseMatchedPositionsEvent {
+            caller: keeper.to_bytes(),
+            closed_short: other.to_bytes(),
+            closed_long: main.to_bytes(),
+            in_profit_account: other.to_bytes(),
+            asset_id,
+            base_lots_closed: SignedBaseLots::new(-100),
+            at_loss_close_value: SignedQuoteLots::ZERO,
+            in_profit_close_value: SignedQuoteLots::ZERO,
+            at_loss_collateral_change: SignedQuoteLots::ZERO,
+            in_profit_collateral_change: SignedQuoteLots::ZERO,
+        });
+        // Another market's transfer isn't this one's.
+        let mut elsewhere = transfer;
+        if let MarketEvent::LiquidationTransfer(t) = &mut elsewhere {
+            t.asset_id += 1;
+        }
+        chain.record_transaction(logged(20, 2, &[transfer, adl, elsewhere], false), &[main]);
+
+        let mine = meter.records(0).await.unwrap();
+        let changes: Vec<(PositionChangeKind, Side, Decimal, Pubkey)> = mine
+            .position_changes
+            .iter()
+            .map(|c| (c.kind, c.side, c.quantity, c.counterparty))
+            .collect();
+        assert_eq!(
+            changes,
+            vec![
+                (
+                    PositionChangeKind::LiquidationTransfer,
+                    Side::Sell,
+                    lots(600),
+                    keeper
+                ),
+                (
+                    PositionChangeKind::AutoDeleverage,
+                    Side::Sell,
+                    lots(100),
+                    other
+                ),
+            ]
+        );
+        // Its fills and its position changes sum to its position.
+        let filled: Decimal = mine
+            .fills
+            .iter()
+            .map(|f| f.fill.side.sign() * f.fill.quantity)
+            .sum();
+        let moved: Decimal = mine
+            .position_changes
+            .iter()
+            .map(PerpPositionChange::signed_quantity)
+            .sum();
+        assert_eq!(filled + moved, lots(200));
+        // The market's own records don't see the transfer: it names no
+        // order book.
+        assert!(
+            meter
+                .market_records(0)
+                .await
+                .unwrap()
+                .position_changes
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_match_between_two_of_the_owners_accounts_is_both_sides() {
+        let chain = Arc::new(MockChainClient::new());
+        let (meter, _) = spcx_meter(&chain, Pubkey::new_unique());
+        let a = meter.market.clone();
+        let (main, isolated) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let mut records = PerpMarketRecords::default();
+        records
+            .add_transaction(
+                &logged(
+                    5,
+                    1,
+                    &[
+                        header(&a, 1, main),
+                        order_filled(isolated, MathSide::Ask, 15_000, 40),
+                    ],
+                    false,
+                ),
+                &a,
+            )
+            .unwrap();
+        let own = records.for_traders(&[main, isolated]).fills;
+        let sides: Vec<Side> = own.iter().map(|f| f.fill.side).collect();
+        assert_eq!(sides, vec![Side::Buy, Side::Sell]);
+        assert_ne!(own[0].fill.id, own[1].fill.id);
+        let net: Decimal = own
+            .iter()
+            .map(|f| f.fill.side.sign() * f.fill.quantity)
+            .sum();
+        assert_eq!(net, Decimal::ZERO);
+    }
+
+    /// The run of fills a trade summary closes was taken by its trader.
+    fn summary_of(taker: Pubkey, taker_side: MathSide, lots: u64, fee_lots: u64) -> MarketEvent {
+        MarketEvent::TradeSummary(TradeSummaryEvent {
+            trader: taker.to_bytes(),
+            trade_sequence_number: 1,
+            prev_trade_sequence_number_slot: 0,
+            side: taker_side,
+            base_lots_filled: BaseLots::new(lots),
+            quote_lots_filled: QuoteLots::ZERO,
+            fee_in_quote_lots: QuoteLots::new(fee_lots),
+            base_lot_position: SignedBaseLots::ZERO,
+            virtual_quote_lot_position: SignedQuoteLots::ZERO,
+            quote_lot_collateral: SignedQuoteLots::ZERO,
+            cumulative_funding_snapshot: SignedQuoteLotsPerBaseLot::ZERO,
+        })
+    }
+
+    /// `event`, a fill, for `quote_lots` at the maker's `rate` (millionths).
+    fn priced(mut event: MarketEvent, quote_lots: u64, rate: i32) -> MarketEvent {
+        match &mut event {
+            MarketEvent::OrderFilled(f) => {
+                f.quote_lots_filled = QuoteLots::new(quote_lots);
+                f.maker_fee_rate = SignedFeeRateMicro::new(rate);
+            }
+            MarketEvent::SplineFilled(f) => {
+                f.quote_lots_filled = QuoteLots::new(quote_lots);
+                f.maker_fee_rate = SignedFeeRateMicro::new(rate);
+            }
+            _ => unreachable!("a fill"),
+        }
+        event
+    }
+
+    #[tokio::test]
+    async fn a_cross_match_inside_the_owners_instruction_is_not_the_owners() {
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        chain.set_account(main, account(PhoenixAccount::Trader, &owner));
+        let (spline, stale, maker) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let (meter, book) = spcx_meter(&chain, owner);
+        let spcx = meter.market.clone();
+        // The owner's instruction (a cancel, then an order): first a
+        // re-centred spline crosses another trader's stale bid, which
+        // Phoenix logs under the owner's header and closes with a summary
+        // naming that trader; then the owner buys from a resting ask (its
+        // maker pays 250 millionths) and a spline (a 50 millionths rebate),
+        // and pays 4,200 quote lots of fee, split by quote lots.
+        let events = [
+            header(&spcx, 20, main),
+            priced(
+                spline_filled(spline, MathSide::Ask, 14_000, 300),
+                4_200_000,
+                0,
+            ),
+            summary_of(stale, MathSide::Bid, 300, 1_000),
+            priced(
+                order_filled(maker, MathSide::Ask, 15_000, 100),
+                1_500_000,
+                250,
+            ),
+            priced(
+                spline_filled(spline, MathSide::Ask, 15_000, 200),
+                3_000_001,
+                -50,
+            ),
+            summary_of(main, MathSide::Bid, 300, 4_200),
+        ];
+        chain.record_transaction(logged(40, 9, &events, false), &[book]);
+
+        let all = meter.market_records(0).await.unwrap();
+        let takers: Vec<Pubkey> = all.fills.iter().map(|f| f.taker).collect();
+        assert_eq!(takers, vec![stale, main, main]);
+        let fee = |lots: i64| Decimal::new(lots, u32::from(spcx.quote_lot_decimals));
+        assert_eq!(all.fills[0].taker_fee, fee(1_000));
+        // 4,200 x 1,500,000 / 4,500,001 rounds down to 1,399; the last
+        // fill takes the remainder.
+        assert_eq!(all.fills[1].taker_fee, fee(1_399));
+        assert_eq!(all.fills[2].taker_fee, fee(2_801));
+        // A maker's fee at its rate, and a rebate rounded toward zero
+        // (-150.00005 lots), as Phoenix charges them.
+        assert_eq!(all.fills[1].maker_fee, fee(375));
+        assert_eq!(all.fills[2].maker_fee, fee(-150));
+        assert_eq!(all.fills[0].maker_fee, Decimal::ZERO);
+        let makers = all.for_traders(&[maker]).fills;
+        assert_eq!(makers.len(), 1);
+        assert_eq!(makers[0].fill.fees, fee(375));
+
+        // The owner's fills are its own buys, with its fees; the cross-match
+        // isn't one, and its position change is what they add up to.
+        let mine = meter.records(0).await.unwrap().fills;
+        let bought: Decimal = mine.iter().map(|f| f.fill.quantity).sum();
+        assert_eq!(mine.len(), 2);
+        assert!(mine.iter().all(|f| f.fill.side == Side::Buy));
+        assert_eq!(bought, spcx.base_lots_to_quantity(300));
+        assert_eq!(mine[0].fill.fees + mine[1].fill.fees, fee(4_200));
+        // The stale order's owner took its side of the cross.
+        let theirs = all.for_traders(&[stale]).fills;
+        assert_eq!(theirs.len(), 1);
+        assert_eq!(theirs[0].fill.side, Side::Buy);
+        assert_eq!(theirs[0].fill.fees, fee(1_000));
     }
 }
