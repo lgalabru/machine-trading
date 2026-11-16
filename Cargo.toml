@@ -12,6 +12,7 @@ license = "MIT"
 mtx-core = { path = "crates/core" }
 mtx-grader = { path = "crates/grader" }
 mtx-kit = { path = "crates/kit" }
+mtx-acp = { path = "crates/acp" }
 
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "ws"] }

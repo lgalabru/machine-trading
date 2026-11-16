@@ -1598,7 +1598,7 @@ async function sendPrompt() {
   if ((!text && !shots.length) || S.busy) return;
   if (!S.pick.agent) {
     const first = S.agents.find((g) => g.available);
-    if (!first) return toast("No coding agent found. Install claude-agent-acp or codex-acp, or Node for npx.");
+    if (!first) return toast("No coding agent found. Install Claude Code (claude) or Codex (codex), and log in once.");
     await selectAgent(first.id, "");
   }
   // The agent reads files from disk: save what's on screen first.

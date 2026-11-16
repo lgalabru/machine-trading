@@ -1,8 +1,9 @@
 //! An ACP client: mtx drives a coding agent (Claude Code, Codex) to author
 //! scenarios. Ported from pay-acp.
 //!
-//! The agent is a child process speaking NDJSON JSON-RPC on stdio: an ACP
-//! adapter such as `claude-agent-acp`. The client owns the stdio pair, answers the
+//! The agent is a child process speaking NDJSON JSON-RPC on stdio: mtx's
+//! own `mtx claude-acp` or `mtx codex-acp` (the `mtx-acp` crate). The
+//! client owns the stdio pair, answers the
 //! agent's own requests (permissions), and hands each prompt turn back as a
 //! stream of [`TurnEvent`]s so a caller can relay text as it arrives.
 //!
@@ -291,6 +292,15 @@ impl AgentClient {
             .and_then(Value::as_str)
             .map(str::to_string)
             .ok_or_else(|| Error::Protocol("session/new returned no sessionId".into()))
+    }
+
+    /// `session/set_model`: the model the session's next turns run on.
+    pub fn set_model(&self, session_id: &str, model: &str) -> Result<(), Error> {
+        self.request(
+            "session/set_model",
+            json!({ "sessionId": session_id, "modelId": model }),
+        )
+        .map(|_| ())
     }
 
     /// `session/prompt` with one text block. Returns immediately; the
@@ -601,6 +611,24 @@ fn text_of(update: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+/// An error's message, with the detail an agent puts in `data`: "Internal
+/// error" alone says nothing of why.
+fn rpc_message(error: &Value) -> String {
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown error");
+    let data = error.get("data");
+    let detail = data
+        .and_then(|data| data.get("details").or_else(|| data.get("message")))
+        .and_then(Value::as_str)
+        .or_else(|| data.and_then(Value::as_str));
+    match detail {
+        Some(detail) if !detail.is_empty() && detail != message => format!("{message}: {detail}"),
+        _ => message.to_string(),
+    }
+}
+
 fn handle_response(shared: &Shared, id: &Value, message: &Value) {
     let Some(id) = id.as_i64() else { return };
     let Some(pending) = shared.pending().remove(&id) else {
@@ -609,11 +637,7 @@ fn handle_response(shared: &Shared, id: &Value, message: &Value) {
     let outcome = match message.get("error") {
         Some(error) => Err(Error::Rpc {
             code: error.get("code").and_then(Value::as_i64).unwrap_or(-32000),
-            message: error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown error")
-                .to_string(),
+            message: rpc_message(error),
         }),
         None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
     };
@@ -884,6 +908,22 @@ mod tests {
             matches!(error, Error::Rpc { code: -32602, ref message } if message.contains("absolute")),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn an_errors_detail_is_part_of_its_message() {
+        let detailed = json!({ "code": -32603, "message": "Internal error",
+            "data": { "details": "Claude native binary not found for darwin-arm64" } });
+        assert_eq!(
+            rpc_message(&detailed),
+            "Internal error: Claude native binary not found for darwin-arm64"
+        );
+        assert_eq!(
+            rpc_message(&json!({ "message": "bad", "data": "why" })),
+            "bad: why"
+        );
+        assert_eq!(rpc_message(&json!({ "message": "bad" })), "bad");
+        assert_eq!(rpc_message(&json!({ "data": { "x": 1 } })), "unknown error");
     }
 
     #[test]

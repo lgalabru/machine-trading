@@ -4898,6 +4898,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-acp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "libc",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "mtx-bot-actors-smoke"
 version = "0.1.0"
 dependencies = [
@@ -5085,6 +5096,7 @@ dependencies = [
  "futures 0.3.34",
  "include_dir",
  "mimalloc",
+ "mtx-acp",
  "mtx-core",
  "mtx-grader",
  "mtx-kit",

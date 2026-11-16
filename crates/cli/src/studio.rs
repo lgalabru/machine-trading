@@ -1498,15 +1498,15 @@ fn agent_pick(studio: &Studio) -> Value {
 
 /// The coding agents this machine can run, and whether each is ready.
 fn discover_agents() -> Vec<Value> {
-    let npx = crate::author::on_path("npx");
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default();
     [Agent::ClaudeCode, Agent::Codex]
         .into_iter()
         .map(|agent| {
-            let (program, package) = agent.adapter();
-            let installed = crate::author::on_path(program);
+            // Each agent is mtx's own (`mtx claude-acp`, `mtx codex-acp`):
+            // it needs the harness's command, not an adapter or Node.
+            let installed = agent.installed();
             let (key, login, cli, models): (&str, PathBuf, &str, &[&str]) = match agent {
                 Agent::ClaudeCode => (
                     "ANTHROPIC_API_KEY",
@@ -1527,10 +1527,11 @@ fn discover_agents() -> Vec<Value> {
                 ),
             };
             let authenticated = std::env::var_os(key).is_some() || login.exists();
-            let available = (installed || npx) && authenticated;
-            let reason = if !(installed || npx) {
+            let available = installed && authenticated;
+            let reason = if !installed {
                 Some(format!(
-                    "install {program}: `npm install -g {package}` (or install Node for npx)"
+                    "install {}: the `{cli}` command isn't on your PATH",
+                    agent.name()
                 ))
             } else if !authenticated {
                 Some(format!("set {key}, or run `{cli}` once to log in"))
@@ -1542,8 +1543,8 @@ fn discover_agents() -> Vec<Value> {
                 "name": agent.name(),
                 "available": available,
                 "reason": reason,
-                "adapter": program,
-                "via": if installed { "path" } else if npx { "npx" } else { "missing" },
+                "adapter": format!("mtx {}", agent.subcommand()),
+                "via": if installed { "builtin" } else { "missing" },
                 "models": std::iter::once(json!({ "id": "", "name": "default" }))
                     .chain(models.iter().map(|m| json!({ "id": m, "name": m })))
                     .collect::<Vec<_>>(),
@@ -1731,15 +1732,17 @@ fn compose(studio: &Studio, text: &str, context: &Value, images: &[Value]) -> Re
                 PermissionPolicy::AllowAll,
                 log.into(),
             )
-            .with_context(|| {
-                let (program, package) = pick.adapter();
-                format!("starting {program}; install it with `npm install -g {package}`")
-            })?;
+            .with_context(|| pick.how_to_install())?;
             let init = client.initialize().context("ACP initialize")?;
             state.images = init.agent_capabilities["promptCapabilities"]["image"] == json!(true);
             let session = client
                 .new_session(&studio.dir, &[])
                 .context("ACP session/new")?;
+            if let Some(model) = pick.session_model(state.model.as_deref()) {
+                client
+                    .set_model(&session, model)
+                    .context("ACP session/set_model")?;
+            }
             state.client = Some((Arc::new(client), session));
         }
         if !images.is_empty() && !state.images {

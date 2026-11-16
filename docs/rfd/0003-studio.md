@@ -67,8 +67,9 @@ stopped at, so "why didn't it buy here?" means the step on screen.
 
 Discovery, at start and on demand (`agents/list`):
 
-- ACP adapters on `PATH` (`claude-agent-acp`, `codex-acp`), or through
-  `npx` when Node is installed;
+- Claude Code and Codex through mtx's own ACP agents (`mtx claude-acp`
+  and `mtx codex-acp`, the `mtx-acp` crate), which need only the
+  harness's own command (`claude`, `codex`), not an adapter or Node;
 - for each, whether it can authenticate (an API key in the environment,
   or the CLI's own login) and the models it offers;
 - the pick is saved in the workspace (`.mtx/studio.json`) and changed

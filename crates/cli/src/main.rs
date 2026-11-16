@@ -99,6 +99,14 @@ enum Command {
     /// Serve the task-authoring tools over MCP (stdio), for Claude Code:
     /// task_new (an interview with forms), task_status, task_guide, task_list.
     Mcp,
+    /// A Claude Code agent speaking ACP on stdio: what mtx itself starts to
+    /// talk to Claude Code (the studio's composer, `scenario new`). It drives
+    /// the `claude` command, with no Node adapter.
+    #[command(hide = true)]
+    ClaudeAcp,
+    /// The same for Codex: it drives `codex app-server`.
+    #[command(hide = true)]
+    CodexAcp,
     /// Bench results: what `just bench` and Harbor runs leave behind.
     #[command(subcommand)]
     Bench(BenchCommand),
@@ -749,6 +757,16 @@ async fn main() -> Result<()> {
 }
 
 async fn run() -> Result<()> {
+    // The ACP agent owns stdout for its protocol, and runs on its own
+    // threads: before anything of mtx's writes there.
+    let serve: Option<fn() -> Result<()>> = match std::env::args_os().nth(1) {
+        Some(arg) if arg == "claude-acp" => Some(mtx_acp::claude::serve_stdio),
+        Some(arg) if arg == "codex-acp" => Some(mtx_acp::codex::serve_stdio),
+        _ => None,
+    };
+    if let Some(serve) = serve {
+        return tokio::task::spawn_blocking(serve).await?;
+    }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => {
@@ -792,6 +810,8 @@ async fn run() -> Result<()> {
             mcp::serve(authoring::repo_root()).await?;
             return Ok(());
         }
+        // Served above, before the arguments were parsed.
+        Command::ClaudeAcp | Command::CodexAcp => return Ok(()),
         Command::Gates {
             task,
             fast,
