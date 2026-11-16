@@ -251,6 +251,7 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
         .route("/api/trial/{n}", get(get_trial))
         .route("/api/session/{n}/{role}/{name}", get(get_session))
         .route("/api/trajectory/{n}", get(get_trajectory))
+        .route("/api/transcript/{n}", get(get_transcript))
         .route("/api/curves/{n}", get(get_curves))
         .route("/api/file/{n}/{*path}", get(get_file))
         .with_state(Arc::clone(&state));
@@ -321,7 +322,7 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
         let title = "Machine Trading benchmark";
         let description = "Frontier models write trading bots, graded on hidden market scenarios replayed on an offline copy of Solana mainnet. Every model, run and scenario, step by step.";
         format!(
-            "\n<meta name=\"description\" content=\"{description}\">\n<meta property=\"og:type\" content=\"website\">\n<meta property=\"og:site_name\" content=\"Machine Trading\">\n<meta property=\"og:title\" content=\"{title}\">\n<meta property=\"og:description\" content=\"{description}\">\n<meta property=\"og:url\" content=\"{site}/bench/\">\n<meta property=\"og:image\" content=\"{site}/social.jpg\">\n<meta property=\"og:image:width\" content=\"1280\">\n<meta property=\"og:image:height\" content=\"640\">\n<meta name=\"twitter:card\" content=\"summary_large_image\">\n<meta name=\"twitter:image\" content=\"{site}/social.jpg\">"
+            "\n<meta name=\"description\" content=\"{description}\">\n<meta property=\"og:type\" content=\"website\">\n<meta property=\"og:site_name\" content=\"Machine Trading\">\n<meta property=\"og:title\" content=\"{title}\">\n<meta property=\"og:description\" content=\"{description}\">\n<meta property=\"og:url\" content=\"{site}/bench/\">\n<meta property=\"og:image\" content=\"{site}/social.jpg\">\n<meta property=\"og:image:width\" content=\"1280\">\n<meta property=\"og:image:height\" content=\"640\">\n<meta name=\"twitter:card\" content=\"summary_large_image\">\n<meta name=\"twitter:image\" content=\"{site}/social.jpg\">\n<link rel=\"apple-touch-icon\" href=\"{site}/apple-touch-icon.png\">\n<meta name=\"apple-mobile-web-app-title\" content=\"mtx\">"
         )
     });
     std::fs::write(
@@ -363,6 +364,12 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
             write(
                 &format!("trajectory/{n}.json"),
                 &json(&trajectory_json(&state, n).map_err(err)?),
+            )?;
+        }
+        if trial["transcript"] == json!(true) {
+            write(
+                &format!("transcript/{n}.json"),
+                &json(&transcript_json(&state, n).map_err(err)?),
             )?;
         }
         for role in ["bot", "reference"] {
@@ -502,10 +509,47 @@ pub(crate) fn read_json(path: &FsPath) -> Option<Value> {
 /// its own row: `gpt-6.1-sol · hermes`. Every model runs in Hermes too, so
 /// a harness's bias shows next to the providers' own.
 fn harness_label(model: &str, configured: &Value, ran: &Value) -> String {
-    match configured.as_str().or(ran.as_str()) {
+    // The model without its route (`openai/gpt-6.1-sol` through a router),
+    // and the harness by the name it gives itself: an agent given by import
+    // path (`mtx_hermes:Hermes`) says `hermes`.
+    let model = model.rsplit('/').next().unwrap_or(model);
+    let agent = ran
+        .as_str()
+        .or(configured.as_str())
+        .map(|a| a.rsplit(':').next().unwrap_or(a).to_lowercase());
+    match agent.as_deref() {
         None | Some("claude-code" | "codex") => model.to_string(),
         Some(agent) => format!("{model} · {agent}"),
     }
+}
+
+/// A model of a batch's plan by its trials' label: the label of a trial
+/// that reached it by its route (`gpt-6-1-sol` → `gpt-6.1-sol · hermes`),
+/// else its name as a trial would label it, with the plan's harness.
+fn planned_label(planned: &str, plan: &Value, trials: &[Value]) -> String {
+    let bare = planned
+        .trim_start_matches("hermes:")
+        .trim_start_matches("native:");
+    let route: String = bare
+        .to_lowercase()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if let Some(label) = trials
+        .iter()
+        .find(|t| t["route"].as_str() == Some(route.as_str()))
+        .and_then(|t| t["model"].as_str())
+    {
+        return label.to_string();
+    }
+    let agent = &plan["harness"][planned]["agent"];
+    harness_label(bare, agent, &Value::Null)
 }
 
 /// A trial as the review page lists it.
@@ -616,6 +660,13 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
         "task": task,
         "task_ref": task_config["ref"],
         "task_path": task_config["path"],
+        // The key proxy's route the trial reached its model by, if any: the
+        // name the batch's plan gives the model (`gpt-6-1-sol`).
+        "route": result["config"]["agent"]["base_url"]
+            .as_str()
+            .or(config["agent"]["base_url"].as_str())
+            .and_then(|u| u.trim_end_matches('/').rsplit('/').next())
+            .map(str::to_string),
         "trial": config["trial_name"].as_str().or(result["trial_name"].as_str()),
         "status": status,
         "agent": result["agent_info"]["name"],
@@ -726,7 +777,21 @@ fn index_of(state: &AppState, release: Option<String>) -> Result<Json<Value>, Ap
             batches.push(plan);
         }
     }
-    let batch = batches.first().cloned();
+    // The plan names a model as the batch was started with it
+    // (`gpt-6-1-sol`, `claude-opus-5-5`); its trials carry the label their
+    // agent reported (`gpt-6.1-sol · hermes`). The page reads the plan in
+    // the trials' labels, else each planned name is a model with no runs.
+    let batch = batches.first().cloned().map(|mut plan| {
+        let labels: Vec<Value> = plan["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|m| m.as_str())
+            .map(|planned| json!(planned_label(planned, &plan, &trials)))
+            .collect();
+        plan["models"] = json!(labels);
+        plan
+    });
     // Tasks: every task a trial ran, with its metadata and how its trials
     // stand.
     let mut tasks: Vec<Value> = Vec::new();
@@ -1008,6 +1073,8 @@ fn trial_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
         "logs": logs,
         "trajectory": dir.join("agent/trajectory.json").is_file()
             || dir.join("agent/trajectory.json.gz").is_file(),
+        "transcript": dir.join("agent/hermes.txt").is_file()
+            || dir.join("agent/hermes.txt.gz").is_file(),
         "exception": result["exception_info"],
         "config": result["config"],
         "timings": {
@@ -1362,6 +1429,47 @@ async fn get_trajectory(
     trajectory_json(&state, n).map(Json)
 }
 
+async fn get_transcript(
+    State(state): State<Arc<AppState>>,
+    Path(n): Path<usize>,
+) -> Result<Json<Value>, ApiError> {
+    transcript_json(&state, n).map(Json)
+}
+
+/// The most of a transcript the page shows: its start and its end.
+const MAX_TRANSCRIPT_CHARS: usize = 400_000;
+
+/// Hermes's own transcript of a run (`agent/hermes.txt`, gzipped in a
+/// release), cut to its start and end past MAX_TRANSCRIPT_CHARS.
+fn transcript_json(state: &AppState, n: usize) -> Result<Value, ApiError> {
+    use std::io::Read as _;
+    let dir = state.trial(n)?;
+    let text = std::fs::read_to_string(dir.join("agent/hermes.txt"))
+        .ok()
+        .or_else(|| {
+            let file = std::fs::File::open(dir.join("agent/hermes.txt.gz")).ok()?;
+            let mut text = String::new();
+            flate2::read::GzDecoder::new(file)
+                .read_to_string(&mut text)
+                .ok()?;
+            Some(text)
+        })
+        .ok_or(ApiError::NotFound)?;
+    let chars = text.chars().count();
+    let text = if chars > MAX_TRANSCRIPT_CHARS {
+        let half = MAX_TRANSCRIPT_CHARS / 2;
+        let head: String = text.chars().take(half).collect();
+        let tail: String = text.chars().skip(chars - half).collect();
+        format!(
+            "{head}\n\n… {} characters left out …\n\n{tail}",
+            chars - MAX_TRANSCRIPT_CHARS
+        )
+    } else {
+        text
+    };
+    Ok(json!({ "harness": "hermes", "text": text, "chars": chars }))
+}
+
 /// A path inside the trial the page may read: a listed file, or one under a
 /// listed directory, with no `..` and nothing hidden on the way.
 fn allowed(path: &str) -> bool {
@@ -1446,6 +1554,44 @@ mod harness_tests {
             "gpt-6.1-sol · hermes"
         );
         assert_eq!(harness_label("x", &Value::Null, &Value::Null), "x");
+        assert_eq!(
+            harness_label(
+                "openai/gpt-6.1-sol",
+                &json!("mtx_hermes:Hermes"),
+                &json!("hermes")
+            ),
+            "gpt-6.1-sol · hermes"
+        );
+        assert_eq!(
+            harness_label("claude-opus-5-5", &json!("mtx_hermes:Hermes"), &Value::Null),
+            "claude-opus-5-5 · hermes"
+        );
+    }
+
+    #[test]
+    fn a_plan_names_its_models_as_their_trials_do() {
+        let plan = json!({
+            "models": ["gpt-6-1-sol", "claude-opus-5-5", "openai/gpt-6.1-sol"],
+            "harness": {
+                "gpt-6-1-sol": { "agent": "hermes" },
+                "claude-opus-5-5": { "agent": "hermes" },
+                "openai/gpt-6.1-sol": { "agent": "codex" },
+            },
+        });
+        let trials = [json!({ "model": "gpt-6.1-sol · hermes", "route": "gpt-6-1-sol" })];
+        assert_eq!(
+            planned_label("gpt-6-1-sol", &plan, &trials),
+            "gpt-6.1-sol · hermes"
+        );
+        // Not started yet: its name, with the plan's harness.
+        assert_eq!(
+            planned_label("claude-opus-5-5", &plan, &trials),
+            "claude-opus-5-5 · hermes"
+        );
+        assert_eq!(
+            planned_label("openai/gpt-6.1-sol", &plan, &trials),
+            "gpt-6.1-sol"
+        );
     }
 }
 
