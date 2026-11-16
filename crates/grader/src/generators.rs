@@ -187,7 +187,12 @@ pub enum Knowable {
 /// Every field a family's latent state holds, and why it is knowable. A
 /// session's realised draws (where a shock goes, which way flow trades, when
 /// an episode or an order comes) are its future, and never here.
+///
+/// A family `"*"` names a field any family may tell (see
+/// [`crate::latent::Latent`]): who is who, resolved to the session's wallets
+/// as it starts.
 pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
+    ("*", crate::latent::ROSTER, Knowable::Identity),
     ("funding-carry", "informed_share", Knowable::Process),
     ("funding-carry", "lag_slots", Knowable::Process),
     ("funding-carry", "hold_slots", Knowable::Process),
@@ -299,7 +304,7 @@ mod tests {
                 .collect();
             let classified: Vec<&str> = LATENT_FIELDS
                 .iter()
-                .filter(|(family, ..)| *family == g.name)
+                .filter(|(family, ..)| *family == g.name || *family == "*")
                 .map(|(_, field, _)| *field)
                 .collect();
             for session in &latent {
@@ -320,7 +325,7 @@ mod tests {
                 .as_ref()
                 .and_then(|r| serde_json::from_str(&r[0]).ok())
                 .unwrap_or_default();
-            for field in &classified {
+            for field in classified.iter().filter(|f| **f != crate::latent::ROSTER) {
                 assert!(latent[0].contains_key(*field), "{}: {field}", g.name);
             }
             for field in regime.keys() {
