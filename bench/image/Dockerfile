@@ -58,6 +58,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     fi \
     && cargo build --release --locked -p mtx-cli $(awk '!/^#/ { printf " -p %s", $2 }' anchors.txt) \
     && cp target/release/mtx /usr/local/bin/mtx \
+    && cargo build --release --locked -p mtx-cli --no-default-features \
+    && cp target/release/mtx /usr/local/bin/mtx-agent \
     && grep -v '^#' anchors.txt | while read -r anchor package bin dir; do \
       mkdir -p "/opt/mtx/anchors/$anchor/bin"; \
       cp "$dir/Justfile" "/opt/mtx/anchors/$anchor/Justfile"; \
@@ -101,7 +103,11 @@ RUN apt-get update \
     && useradd --create-home --shell /bin/bash agent \
     && mkdir -p /app /opt/mtx/target /opt/mtx/practice \
     && chown agent:agent /app /opt/mtx/target
-COPY --from=build /usr/local/bin/mtx /usr/local/bin/mtx
+# The agent's mtx is built without the `generate` feature: it grades the
+# practice files it is given and can't draw scenarios from a task's family
+# (`mtx scenario generate`, `mtx grade --draw`), so it can't train on the
+# distribution the hidden set is drawn from.
+COPY --from=build /usr/local/bin/mtx-agent /usr/local/bin/mtx
 COPY --from=build /opt/just/bin/just /usr/local/bin/just
 COPY bench/image/mtx-practice /usr/local/bin/mtx-practice
 COPY bench/image/time-left /usr/local/bin/time-left

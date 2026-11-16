@@ -61,3 +61,8 @@ solana-system-interface = { version = "3", features = ["wincode"] }
 solana-transaction.workspace = true
 spl-token-2022-interface = "3.1"
 wincode = "0.6"
+
+[features]
+# The task families' generators (`mtx scenario generate`, `mtx grade --draw`).
+# Off in the agent's `mtx`: it holds only the practice files a task ships.
+generators = []

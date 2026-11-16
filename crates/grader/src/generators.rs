@@ -5,15 +5,15 @@
 //! --draw`); to add a generator, write its family and add one [`Generator`]
 //! to [`GENERATORS`].
 
-use serde_json::{Value, json};
+#[cfg(feature = "generators")]
+use serde_json::json;
+use serde_json::Value;
 
-use crate::{
-    carry::CarryFamily,
-    error::Result,
-    making::MakingFamily,
-    scenario::{Scenario, ShockFamily},
-    weekend::WeekendFamily,
-};
+#[cfg(feature = "generators")]
+use crate::{carry::CarryFamily, scenario::ShockFamily, weekend::WeekendFamily};
+use crate::{error::Result, scenario::Scenario};
+#[cfg(feature = "generators")]
+use crate::making::MakingFamily;
 
 /// A hidden set as `mtx grade --draw` runs it.
 pub struct Hidden {
@@ -33,6 +33,12 @@ pub struct Generator {
     pub hidden: fn(count: usize, seed: u64, tell_regime: bool) -> Result<Hidden>,
 }
 
+/// Empty without the `generators` feature: the agent's `mtx` is built that
+/// way, so nothing in it can draw a scenario from a task's family.
+#[cfg(not(feature = "generators"))]
+pub const GENERATORS: &[Generator] = &[];
+
+#[cfg(feature = "generators")]
 pub const GENERATORS: &[Generator] = &[
     Generator {
         name: "flash-crash",
@@ -80,6 +86,7 @@ pub fn names() -> Vec<&'static str> {
 /// A market-making hidden set, each scenario annotated with its informed
 /// orders and, when told, the regime as those orders by slot and side: what a
 /// perfect reader of the tape would know.
+#[cfg(feature = "generators")]
 fn making_hidden(family: &MakingFamily, count: usize, seed: u64, tell: bool) -> Result<Hidden> {
     let drawn = family.sample_set_labeled("hidden", count, seed);
     let annotations = drawn
@@ -115,6 +122,7 @@ fn making_hidden(family: &MakingFamily, count: usize, seed: u64, tell: bool) -> 
 
 /// A hidden set drawn with each scenario's shape: annotated `{"shape": ..}`
 /// and, when told, the shape as the regime.
+#[cfg(feature = "generators")]
 fn shaped<S: serde::Serialize>(drawn: Vec<(Scenario, S)>, tell: bool) -> Result<Hidden> {
     let annotations = drawn
         .iter()
@@ -149,6 +157,11 @@ mod tests {
             assert!(generator(name).is_some());
         }
         assert!(generator("nope").is_none());
+    }
+
+    #[test]
+    fn the_agents_build_holds_no_generator() {
+        assert_eq!(GENERATORS.is_empty(), !cfg!(feature = "generators"));
     }
 
     #[test]

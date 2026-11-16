@@ -2,8 +2,9 @@ use std::{io::IsTerminal, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+#[cfg(feature = "generate")]
+use mtx_grader::generators;
 use mtx_grader::{
-    generators,
     grade::{self, GradeOptions},
     keys::SessionKeys,
     phoenix, recipe, replay,
@@ -61,6 +62,7 @@ struct Cli {
 
 /// The scenario generators' names, for `--family` and `--draw`: each task
 /// names its own in `task.toml` (`[metadata.mtx] generator`).
+#[cfg(feature = "generate")]
 fn generator_names() -> clap::builder::PossibleValuesParser {
     clap::builder::PossibleValuesParser::new(generators::names())
 }
@@ -141,9 +143,11 @@ enum Command {
         /// Draw the scenarios from this generator instead of reading files: a
         /// hidden set, seeded by the secret in `MTX_EVAL_SEED` and never
         /// written anywhere. Reports carry only the secret's SHA-256.
+        #[cfg(feature = "generate")]
         #[arg(long, value_parser = generator_names(), conflicts_with = "scenarios")]
         draw: Option<String>,
         /// How many scenarios to draw, stratified as the family's odds.
+        #[cfg(feature = "generate")]
         #[arg(long, default_value_t = 12, requires = "draw")]
         count: usize,
         /// Run this reference bot on the same scenarios first, and score
@@ -156,6 +160,7 @@ enum Command {
         /// Hand the bot each drawn session's regime as MTX_REGIME: the
         /// shock's shape (flash-crash), or the informed taker orders
         /// (market-making). For the ladder's oracles, never a graded bot.
+        #[cfg(feature = "generate")]
         #[arg(long, requires = "draw", hide = true)]
         tell_regime: bool,
         /// Stop at the bot's first disqualifying session (the grade is 0
@@ -586,6 +591,8 @@ enum ScenarioCommand {
     /// scenario.
     /// Sets are stratified: each kind of session (a shock's direction and
     /// aftermath, a market's regime) appears in proportion to its odds.
+    /// Not in the agent's build (`--no-default-features`).
+    #[cfg(feature = "generate")]
     Generate {
         #[arg(long)]
         out: PathBuf,
@@ -1224,6 +1231,7 @@ async fn run() -> Result<()> {
             }
             String::new()
         }
+        #[cfg(feature = "generate")]
         Command::Scenario(ScenarioCommand::Generate {
             out,
             prefix,
@@ -1310,10 +1318,13 @@ async fn run() -> Result<()> {
         }
         Command::Grade {
             sessions,
+            #[cfg(feature = "generate")]
             draw,
+            #[cfg(feature = "generate")]
             count,
             reference,
             anchor_jobs,
+            #[cfg(feature = "generate")]
             tell_regime,
             stop_on_disqualify,
             v2_sessions,
@@ -1328,12 +1339,16 @@ async fn run() -> Result<()> {
             scoring,
         } => {
             let v2 = scoring.params(None)?;
+            #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut regimes: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.
+            #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut annotations: Option<Vec<serde_json::Value>> = None;
             // A drawn set's session keys come from the batch's secret, so
             // every grade of it signs the same; otherwise from a fresh one.
+            #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut keys = SessionKeys::random();
+            #[cfg(feature = "generate")]
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
                     let (seed, hash, batch_keys) = eval_seed()?;
@@ -1350,6 +1365,16 @@ async fn run() -> Result<()> {
                     anyhow::bail!("give scenario files, or --draw a family")
                 }
                 None => (sessions.load()?.into_iter().map(|(_, s)| s).collect(), None),
+            };
+            // The agent's build draws nothing: only the scenario files it is given.
+            #[cfg(not(feature = "generate"))]
+            let (scenarios, eval_seed_sha256) = {
+                if sessions.scenarios.is_empty() {
+                    anyhow::bail!("give scenario files")
+                }
+                let scenarios: Vec<Scenario> =
+                    sessions.load()?.into_iter().map(|(_, s)| s).collect();
+                (scenarios, None::<String>)
             };
             // Bots run on the same file system, and some mounts (Docker
             // Desktop's) ignore permissions: start from no reward file, and
@@ -1582,6 +1607,7 @@ async fn run() -> Result<()> {
 
 /// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the
 /// secret's SHA-256 (hex), which is all a report may say about it.
+#[cfg(feature = "generate")]
 fn eval_seed() -> anyhow::Result<(u64, String, SessionKeys)> {
     use sha2::{Digest, Sha256};
     let secret = std::env::var("MTX_EVAL_SEED").unwrap_or_default();
