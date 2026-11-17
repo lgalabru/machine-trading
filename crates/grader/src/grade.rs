@@ -1808,6 +1808,7 @@ mod tests {
             position,
             value_usd: value,
             pnl_usd: value - 10_100.0,
+            hold_usd: 0.0,
             turn_ms: None,
             answered: None,
             markets: Vec::new(),

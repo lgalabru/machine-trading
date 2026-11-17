@@ -1493,6 +1493,12 @@ impl PerpAccount {
         Ok(self.value(value_usd, units, slot).await? + self.desk_usd().await?)
     }
 
+    /// What holding the start positions would have gained `at` slots in
+    /// (see [`hold_gain_usd`]).
+    fn hold_usd(&self, at: u64) -> f64 {
+        hold_gain_usd(self.scenario.net.is_some(), &self.markets, at)
+    }
+
     /// Every market at a step, the primary included, in symbol order:
     /// nothing for a session on one market, whose step is its one market's.
     async fn market_steps(&self, at: u64, positions: &[f64]) -> Result<Vec<MarketStep>> {
@@ -1549,8 +1555,11 @@ impl Account for PerpAccount {
         let value_usd = self
             .value_with_desk(grader_f64(now.value_usd), &positions, slot)
             .await?;
-        self.peak_value_usd = self.peak_value_usd.max(value_usd);
-        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        let hold_usd = self.hold_usd(at);
+        self.peak_value_usd = self.peak_value_usd.max(value_usd - hold_usd);
+        self.max_drawdown_usd = self
+            .max_drawdown_usd
+            .max(self.peak_value_usd - (value_usd - hold_usd));
         let own = &self.markets[self.primary];
         let hawkeye = self.phoenix.hawkeye(self.bot);
         let bbo = patiently("the book", || hawkeye.view_bbo(&own.scenario.symbol))
@@ -1573,6 +1582,7 @@ impl Account for PerpAccount {
             position,
             value_usd,
             pnl_usd: value_usd - self.start_value_usd,
+            hold_usd,
             turn_ms: None,
             answered: None,
             markets: self.market_steps(at, &positions).await?,
@@ -1583,16 +1593,10 @@ impl Account for PerpAccount {
         Ok(())
     }
 
-    async fn sample(&mut self, slot: u64) -> Result<()> {
+    async fn sample(&mut self, _slot: u64) -> Result<()> {
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
-        let positions = self.positions(&now);
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
-        let value_usd = self
-            .value_with_desk(grader_f64(now.value_usd), &positions, slot)
-            .await?;
-        self.peak_value_usd = self.peak_value_usd.max(value_usd);
-        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
         Ok(())
     }
 
@@ -1803,6 +1807,7 @@ impl Account for PerpAccount {
         let observed = std::mem::take(&mut self.observed);
         let fills = self.fills.take().unwrap_or_default();
         let at = done.end_slot.saturating_sub(self.base_slot);
+        let end_hold_usd = self.hold_usd(at);
         let scenario_net = self.scenario.net.is_some();
         let legs: std::collections::BTreeMap<String, Leg> = self
             .markets
@@ -1892,9 +1897,10 @@ impl Account for PerpAccount {
             instrument,
             positions: observed.positions,
             positions_outside_universe,
-            max_drawdown_usd: self
-                .max_drawdown_usd
-                .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            max_drawdown_usd: self.max_drawdown_usd.max(
+                self.peak_value_usd.max(end_value_usd - end_hold_usd)
+                    - (end_value_usd - end_hold_usd),
+            ),
             samples: observed.samples,
             term_start: observed.term_start,
             valuation: own.valuation,
@@ -1951,6 +1957,26 @@ impl Account for PerpAccount {
             },
         })
     }
+}
+
+/// What holding every market's start position would have gained by `at`,
+/// each at its market's fair value where it has one, else its level: the
+/// baseline a net-scored session scores against (see [`settle`]), taken off
+/// the drawdown so that a bot that holds draws down nothing. 0 when the
+/// session isn't net-scored.
+fn hold_gain_usd(net_scored: bool, markets: &[MarketState], at: u64) -> f64 {
+    markets
+        .iter()
+        .map(|market| {
+            let close = fair_close_usd(net_scored, &market.scenario, market.start_mark_usd, at)
+                .unwrap_or_else(|| market.moment(at).level_usd);
+            if net_scored {
+                market.start_position * (close - market.start_mark_usd)
+            } else {
+                0.0
+            }
+        })
+        .sum()
 }
 
 /// The fair value at the close, in USD, that a net-scored session takes
