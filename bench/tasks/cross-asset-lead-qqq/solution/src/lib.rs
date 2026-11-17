@@ -139,7 +139,8 @@ impl Params {
                 look_slots: 10,
                 hold_slots: 40,
                 threshold: 0.0,
-                min_score_bps: 20.0,
+                min_score_bps: 40.0,
+                min_weight: 3.0,
                 ..base
             },
             Mode::FollowNvdaFlow => Params {
