@@ -11,6 +11,12 @@
 #            `just`, the wasm32-wasip2 target, the bot SDK at /opt/mtx/sdk with its
 #            dependencies compiled for it, and the starter strategy built at
 #            /app/bot/bot.wasm.
+#   agent    ghcr.io/solana-foundation/machine-trading:<tag>-agent
+#            dev with an `mtx` that can't draw scenarios from a task's family
+#            (no `scenario generate`, no `grade --draw`) and holds none of the
+#            host-side commands. A task opts in by starting its environment
+#            from it (`mtx task new` does); the four tasks from before the
+#            guard stay on dev, which keeps the `mtx` their instructions name.
 #
 # Tasks add what is theirs: the snapshot they trade on (MTX_SNAPSHOT) and
 # their practice scenarios (/opt/mtx/practice) in environment/. Hidden sets
@@ -58,6 +64,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     fi \
     && cargo build --release --locked -p mtx-cli $(awk '!/^#/ { printf " -p %s", $2 }' anchors.txt) \
     && cp target/release/mtx /usr/local/bin/mtx \
+    && cargo build --release --locked -p mtx-cli --no-default-features \
+    && cp target/release/mtx /usr/local/bin/mtx-agent \
     && grep -v '^#' anchors.txt | while read -r anchor package bin dir; do \
       mkdir -p "/opt/mtx/anchors/$anchor/bin"; \
       cp "$dir/Justfile" "/opt/mtx/anchors/$anchor/Justfile"; \
@@ -91,7 +99,7 @@ WORKDIR /app
 # Agents run as `agent` (task.toml sets agent.user) and own everything they
 # build into: the bot, the shared target dir, the crate cache. mtx-practice
 # runs bots as the agent itself, so dev needs no bot users.
-FROM ${RUST_SLIM_IMAGE} AS dev
+FROM ${RUST_SLIM_IMAGE} AS dev-base
 ARG CARGO_BUILD_JOBS=6
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 RUN apt-get update \
@@ -101,7 +109,6 @@ RUN apt-get update \
     && useradd --create-home --shell /bin/bash agent \
     && mkdir -p /app /opt/mtx/target /opt/mtx/practice \
     && chown agent:agent /app /opt/mtx/target
-COPY --from=build /usr/local/bin/mtx /usr/local/bin/mtx
 COPY --from=build /opt/just/bin/just /usr/local/bin/just
 COPY bench/image/mtx-practice /usr/local/bin/mtx-practice
 COPY bench/image/time-left /usr/local/bin/time-left
@@ -131,3 +138,16 @@ RUN cp -r /opt/mtx/sdk/bots/starter /app/bot \
 
 USER root
 WORKDIR /app
+
+# What agents start from, with the grader as the verifier's own (the
+# tasks released before the guard).
+FROM dev-base AS dev
+COPY --from=build /usr/local/bin/mtx /usr/local/bin/mtx
+
+# What agents of a guarded task start from: its `mtx` is built without the
+# `generate` feature. It grades the practice files a task ships and can't
+# draw scenarios from the task's family (`mtx scenario generate`, `mtx grade
+# --draw`), so an agent can't train on the distribution the hidden set is
+# drawn from. `just leak-audit` fails if this image's `mtx` can.
+FROM dev-base AS agent
+COPY --from=build /usr/local/bin/mtx-agent /usr/local/bin/mtx
