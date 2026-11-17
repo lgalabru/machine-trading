@@ -2745,8 +2745,10 @@ mod tests {
         assert_eq!(json["rule"], "taking");
         assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
         // Takes the enforcer couldn't tell are never read as kept.
-        let mut unjudged = Observed::default();
-        unjudged.takes_unjudged = true;
+        let unjudged = Observed {
+            takes_unjudged: true,
+            ..Observed::default()
+        };
         assert_eq!(mandate.audit(&unjudged), Some(Breach::TakesUnjudged));
     }
 }
