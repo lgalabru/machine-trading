@@ -30,7 +30,7 @@ finished ladder) adjust a run.
 | | a v2 task's verifier runs its informed bot on the hidden set: `tests/test.sh` draws its set, grades only a component and passes `--informed /opt/mtx/anchors/<anchor>-informed`, which `bench/image/anchors.txt` builds from the ladder's informed anchor, and that bot is written (v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh`, `anchors.txt` |
 | Graded correctly | the exploit bots stay inside their limits; no rung is refused or disqualified | ladder |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
-| | the agent's image holds no answer; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit`, `keypair-probe`, `clock-probe` |
+| | the agent's image holds no answer, and a guarded task's `mtx` offers only the allowlisted commands; a guarded task's agent can't reach ghcr.io or github.com; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit <task>`, `network-probe <task>`, `keypair-probe`, `clock-probe` |
 | | replays are byte-identical: the reference, graded again on the same fresh hidden set (fast: 2 sessions twice; full: 6 sessions three times on a loaded machine) | `mtx grade --replay`, when the build has it |
 | Realistic | the family's market matches its asset's latest `calibration/market/<asset>.*.toml` (its 300-session draw in both modes) | `mtx market-cal check <family>`, when the build has it |
 

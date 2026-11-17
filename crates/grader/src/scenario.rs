@@ -467,6 +467,19 @@ pub const SLOT_SECONDS: f64 = 0.25;
 pub const VENUE: &str = "phoenix";
 
 impl Scenario {
+    /// Whether a bot that does nothing makes or loses money that no rule
+    /// takes off: an RFQ desk starts with the asset, and its move is the
+    /// desk's PnL unless the session is scored over the idle desk. (A perp
+    /// start position is scored against holding it by `scoring.net` or an
+    /// order.) The 0 of scoring v2's scale is then what doing nothing makes,
+    /// measured (see [`crate::grade::GradeOptions::v2_sessions`]).
+    pub fn nop_may_pay(&self) -> bool {
+        self.actors
+            .as_ref()
+            .and_then(|library| library.rfq_clients.as_ref())
+            .is_some_and(|rfq| rfq.desk_base != 0.0 && !rfq.over_idle_desk)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path).map_err(io_error(path))?;
         let scenario = crate::scenario_v2::parse(&contents).map_err(|e| match e {
@@ -1393,7 +1406,7 @@ impl ShockFamily {
     /// `count` scenarios named `<prefix>-<n>`, stratified: each direction and
     /// aftermath appears in proportion to its odds (largest remainder), so a
     /// small set isn't skewed by luck of the draw. Seeds derive from `seed`;
-    /// scenarios keep their draw order.
+    /// the scenarios are then shuffled (see [`shuffled`]).
     pub fn sample_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<Scenario> {
         self.draw_set(prefix, count, seed)
             .into_iter()
@@ -1431,9 +1444,9 @@ impl ShockFamily {
             quotas[i].1 += 1;
         }
 
-        let mut scenarios = Vec::with_capacity(count);
+        let mut drawn = Vec::with_capacity(count);
         let mut draw = 0u64;
-        while scenarios.len() < count {
+        while drawn.len() < count {
             draw += 1;
             let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(draw);
             let cell = self.kind(draw_seed);
@@ -1442,10 +1455,13 @@ impl ShockFamily {
                 continue;
             }
             quota.1 -= 1;
-            let name = format!("{prefix}-{}", scenarios.len() + 1);
-            scenarios.push(self.draw(&name, draw_seed));
+            drawn.push(draw_seed);
         }
-        scenarios
+        shuffled(drawn, seed)
+            .into_iter()
+            .enumerate()
+            .map(|(i, draw_seed)| self.draw(&format!("{prefix}-{}", i + 1), draw_seed))
+            .collect()
     }
 
     /// The direction and aftermath a seed draws, without building the
@@ -1672,6 +1688,19 @@ impl<'a> PathBuilder<'a> {
         }
         self.waypoints.truncate(keep);
     }
+}
+
+/// `items` in an order of `seed`'s own (Fisher-Yates). A stratified set
+/// fills its quotas in turn, so in draw order the cells left to fill are the
+/// last ones: shuffled, a session's regime is the same chance at every
+/// index, and a session's name says nothing of it.
+pub(crate) fn shuffled<T>(mut items: Vec<T>, seed: u64) -> Vec<T> {
+    let mut rng = SplitMix64(seed ^ 0x5348_5546_464C_4521);
+    for i in (1..items.len()).rev() {
+        let j = ((u128::from(rng.next_u64()) * (i as u128 + 1)) >> 64) as usize;
+        items.swap(i, j);
+    }
+    items
 }
 
 /// Small, dependency-free, and stable across platforms and releases, which a

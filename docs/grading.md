@@ -38,11 +38,13 @@ Doing nothing makes $0 in every session.
 
 The three anchors are measured on the same sessions as the bot, not guessed.
 
-- **0** is the `nop` bot, which makes $0. v2 assumes a flat start with no carry, so doing nothing is $0. A session that starts holding something would need a measured nop run, which v2 does not do yet, and it refuses such a grade.
+- **0** is the `nop` bot, which makes $0. On a flat start with no carry doing nothing is $0. A perp start position is scored against holding it (`scoring.net` or an order), so holding it makes 0, and v2 refuses one that is not. An RFQ desk that starts with the asset, unless it is scored over the idle desk, makes or loses the asset's move without quoting: such a session is also run by a bot that does nothing, under `--v2-sessions`, and that run's PnL is the 0 there (`nop_pnl_usd` in the report).
 - **0.5** is the task's reference bot. Its PnL on every session is stored in the scenario (`reference_pnl_usd`), or measured by running it first on a fresh hidden set.
 - **1** is the informed bot (`informed_pnl_usd` on the scenario). Reaching it is possible by definition: it is a strategy anyone could write who knew the task's model. A gap to it is a skill gap.
 
-**While a task has no informed bot**, the 1 falls back to the cost-aware hindsight bound. This is what a trader with perfect foresight could make after paying the venue's taker fee and half-spread on every trade (8.5 bp together by default). It uses the reference's price marks, never the bot's own, so a bot cannot lower its own ceiling by jittering its marks. It has no free parameter and no model run in it. It cannot be reached, so it is an interim 1, and the report says `ceiling: "hindsight"`. A grade with no reference session cannot use it, and v2 refuses such a grade.
+**While a task has no informed bot**, the 1 falls back to the cost-aware hindsight bound. This is what a trader with perfect foresight could make after paying the venue's taker fee and half-spread on every trade (8.5 bp together by default). It uses the reference's price marks, never the bot's own, so a bot cannot lower its own ceiling by jittering its marks. It has no free parameter and no model run in it. It cannot be reached, so it is an interim 1, and the report says `ceiling: "hindsight"`. A grade with no reference session cannot use it, and v2 refuses such a grade. It reads one market's marks and cap, so a session on several markets needs the informed bot (or a given ceiling), and v2 refuses the hindsight fallback there.
+
+Two things are checked before a score is taken. The reference and the 1 must be at least 5% of the 1 apart, or a cent of PnL moves the score by many points, and v2 refuses a set whose anchors are closer. And every anchor must be a finite number.
 
 The map from dollars to score is two straight lines. With `E` the weighted sum of PnL (next section):
 
@@ -119,7 +121,11 @@ A **breach** is a session that breaks its mandate or its order, ends liquidatabl
 
 The stop-out is how a drawdown breach is priced instead. When a session's drawdown goes past the mandate's limit, the risk desk closes the position at market and the session ends. The close pays the book's impact and the taker fee. The PnL is the account's value after the close. See `scoring.stop_out` in [scenario-format.md](scenario-format.md).
 
-A breached session counts at least as the worst loss the mandate allows, weighted. It counts its real weighted loss when that is worse:
+Drawdown is read at the steps: the values the bot is shown and the risk desk reads, so the audit and the stop-out never see a breach the bot could not. Positions are still audited at every slot under `--v2-sessions`. In a net-scored session the drawdown is on the account's value less what holding the start would have gained, so a bot that holds draws down nothing, as it scores nothing.
+
+A grade that stops at the bot's first breach (`--stop-on-disqualify`) holds only the sessions up to it, so v2 refuses it, and `mtx grade` refuses the two flags together.
+
+A breached session counts at least as the worst loss the mandate allows, weighted (the session's bound, when the limit is 0). It counts its real weighted loss when that is worse:
 
 ```text
 Xw_s = min(−k · L, w(X_s))
