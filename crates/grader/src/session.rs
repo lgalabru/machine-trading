@@ -434,7 +434,8 @@ impl SessionReport {
             .collect();
         observed.samples = self.samples.clone();
         observed.term_start = self.term_start.clone();
-        observed.takes = crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
+        observed.takes =
+            crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
         observed
     }
 }
