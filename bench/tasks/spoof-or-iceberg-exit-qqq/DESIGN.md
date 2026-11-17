@@ -64,31 +64,63 @@ touch, each its own 30 to 90 slots ahead:
 - Neither wall's owner trades on the other side while its wall stands
   (`harvest_mult` 0): a spoofer selling into the bids it props up would
   name itself at its first look.
-- Open for the full build: the book numbers its traders as they register,
-  and the actors register in a fixed order, so a trader's number may
-  repeat its role across sessions (the spoofer was trader 183 in most
-  Gate 0 sessions). The registration order needs drawing per session
-  before practice files ship.
+- The book's resting orders carry a trader number, but Phoenix reuses
+  those numbers as traders come and go (one wall showed three numbers in
+  a session), so a number names no one across sessions or within one. An
+  owner is read from the placing transaction's signer, or, since one owner
+  walls each side, by side. Still to audit for the full build: whether
+  the order the actors' wallets register in shows anywhere a bot can read.
 
 ## Detectability
 
-<!-- TODO: how early a good bot can tell the regime, measured on generated sets. -->
+The reference names a wall's owner only when the book tests the wall
+before the jump: the touch reaching a spoof wall (pulled) or an iceberg's
+slice (filled, reloaded). The walls' distance behind the touch sets how
+often that happens. Measured with the fixed prototypes (side and slot
+attribution): walls 6 to 28 ticks out give the reference 0.71 of the
+informed bot; 14 to 48 ticks gave about 0.2.
+
+## Gate 0
+
+Engine runs on runner-4 (`hidden/gate0/gate0.py`, untracked): four fresh
+hidden sets of 36 sessions, pooled (144), every rung a component,
+bootstrapped 72-session sets. Walls 6 to 28 ticks out.
+
+| Rung | Total | Mean | v2-weighted share of informed |
+| --- | --- | --- | --- |
+| trust-depth | -101 | -0.70 | -0.33 |
+| late | 160 | 1.11 | 0.06 |
+| fade-walls | 240 | 1.67 | -0.11 |
+| twap | 251 | 1.74 | -0.10 |
+| reference | 1430 | 9.93 | 0.71 |
+| informed | 1999 | 13.88 | 1.00 |
+
+- Signal gate: informed / best non-reading (twap) = 7.98 (need 2); holds
+  on 0.997 of bootstrapped sets.
+- Order `max(twap, late, trust-depth, fade-walls) < reference < informed`
+  holds on 1.000 of bootstrapped sets (need 0.85).
+- Strength band: reference 0.71 of informed, v2-weighted (band 0.2 to
+  0.7; by set 0.54, 0.83, 0.76, 0.69); per-session Sharpe 0.72.
+- Verdict: the signal gate and the order pass; the band sits just over
+  its top. Moving the walls back out (8 to 36 ticks) lowers the reference;
+  to settle on the actor-library changes of infra/56.
 
 ## The anchors (Gate 0 prototypes)
 
 - **The reference (0.5)** reads Phoenix's orderbook account every step and
-  keeps the walls (orders of 0.5 QQQ or more within 150 ticks of the
-  touch) by owner. A wall gone unfilled with the touch within 10 ticks was
-  pulled: a spoofer. A wall that shrank, or came back at its price, was
-  reloaded: an iceberg. One of each stands in a session, so one named
-  names the other. It sells the rest at once on a known fall signal, and
-  otherwise sells late while the bid beats the broker.
+  follows the walls (orders of 0.5 QQQ or more within 150 ticks of the
+  touch) by side and price. A wall gone unfilled with the touch within 10
+  ticks was pulled: that side's owner is the spoofer. A wall that shrank,
+  or came back at its price, reloaded: that side's owner is the iceberg.
+  One owner walls each side, so one named names the other. It sells the
+  rest at once on a known fall signal, and otherwise sells late while the
+  bid beats the broker.
 - **The informed bot (1)** is told the session's roster: the spoofer's
   wallet and the iceberg's (identity, `{"roster": ["spoofer", "iceberg"]}`).
   Not the jump's direction, onset or size, nor where or when either wall
-  goes up. It learns each told wallet's trader number when that wallet
-  first walls (the order placed in the slot of the wallet's transaction,
-  from `getSignaturesForAddress`), and acts on the first wall it can name.
+  goes up. It names a wall's owner by the slot the wall was placed in (the
+  told wallet whose transaction landed in that slot, from
+  `getSignaturesForAddress`), and acts on the first wall it can name.
 
 ## Failure modes, priced
 
@@ -100,4 +132,22 @@ touch, each its own 30 to 90 slots ahead:
 
 ## Generations
 
-<!-- TODO: what each version learned. -->
+- **Gate 0 prototypes.** Learned: Phoenix's resting orders carry a reused
+  trader slot, not an owner, so owner tracking by that number misreads
+  walls; the iceberg on main loops forever on a remainder under one lot
+  (zero-lot orders), which the grader then reports as an overloaded
+  machine, so its slices and parent are drawn in whole lots; noise taking
+  20 bp deep fills icebergs constantly and names them at once (4 bp now).
+
+## Departures from the card
+
+| Card | Built | Why |
+| --- | --- | --- |
+| Bid iceberg: sell into it (liquidity) | the iceberg is a genuine parent trading with the jump: a bid ahead of a rise (hold), an ask ahead of a fall (sell) | mirrored against the spoofer, so trust-the-depth and fade-the-walls net about zero |
+| Spoofer's side drawn per wall, `ahead_slots` | one spoofer and one iceberg wallet a session, sides set by the jump, walls up from a lead drawn per wall (`active` windows) | one jump a session; every other wall would be noise the generator can't place honestly |
+| Spoof walls 4 to 10 trade sizes, iceberg 1 to 3 | one range for both, 1 to 4 QQQ in whole lots | size is no label |
+| `harvest_mult` 0 to 1 | 0 | a spoofer selling from its wall's own wallet names itself at its first look |
+| Haircut 10 to 25 bp | 5 to 15 bp | the snapshot makers' half-spread is about 9 bp; with the fee, selling costs about the haircut already |
+| Path: QQQ calibration | plus one laid jump, 2 to 4 times the median jump, over a slot or two | the walls need a move to precede; a ramp would let a price follower catch it |
+| Noise, refill, competitor | noise and refill; no grader maker | an actor-library session; selling 6 to 14 QQQ into the snapshot makers costs about the half-spread |
+| Informed told the wallets and `ahead_slots` | the wallets only | the lead is a per-wall draw; the bot doesn't need it |
