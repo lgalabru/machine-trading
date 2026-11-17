@@ -96,6 +96,7 @@ impl Drive<'_> {
                         log: log.clone(),
                         position,
                         name: role.to_string(),
+                        lot: 0.0,
                     }),
                 }
             })

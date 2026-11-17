@@ -136,14 +136,28 @@ impl IcebergActor {
         }
     }
 
+    /// The next slice, in whole lots of the market (a seat rounds an order
+    /// down to its lots, and an order under one is nothing): one lot at
+    /// least, and no more than the parent has left in whole lots.
     fn slice(&mut self) -> f64 {
-        sized(
+        let drawn = sized(
             &self.scale,
             &mut self.rng,
             self.spec.display_mult,
             self.spec.size_sigma,
-        )
-        .min(self.left)
+        );
+        let lot = self.wallet.seat().lot();
+        if lot <= 0.0 {
+            return drawn.min(self.left);
+        }
+        let lots = |size: f64| (size / lot + 1e-9).floor();
+        lots(drawn).max(1.0).min(lots(self.left)) * lot
+    }
+
+    /// Whether the parent is done: nothing left, or less than one lot.
+    fn finished(&self) -> bool {
+        let lot = self.wallet.seat().lot();
+        self.left <= self.scale.trade_size * 1e-9 || self.left < lot * (1.0 - 1e-9)
     }
 
     async fn show(&mut self, at: u64, side: Side, price: f64) {
@@ -172,7 +186,7 @@ impl IcebergActor {
         if filled > 0.0 {
             self.left = (self.left - filled).max(0.0);
         }
-        let done = self.left <= self.scale.trade_size * 1e-9;
+        let done = self.finished();
         if done || !Window::holds(&self.spec.active, now.at) {
             if self.standing.take().is_some() {
                 self.wallet.cancel_all(now.at).await;
@@ -263,6 +277,7 @@ mod tests {
             log: book.log.clone(),
             position: book.position.clone(),
             name: book.name.clone(),
+            lot: book.lot,
         };
         let (wallet, _) = wallet(book);
         (
@@ -395,5 +410,37 @@ mod tests {
         assert!(bad(|s| s.parent_mult = f64::NAN));
         assert!(bad(|s| s.parent_mult = 0.5));
         assert!(bad(|s| s.max_away_ticks = 1));
+    }
+
+    #[tokio::test]
+    async fn a_remainder_under_one_lot_ends_the_parent_and_slices_are_whole_lots() {
+        let (mut book, log) = Book::new("i", 100.00, 100.10);
+        book.lot = 0.1;
+        let position = book.position.clone();
+        let (wallet, _) = wallet(book);
+        let spec = Iceberg {
+            display_mult: 1.0,
+            parent_mult: 1.25,
+            ..fixed()
+        };
+        let mut iceberg = IcebergActor::new(spec, scale(), wallet, Rng::new([2; 32]));
+        iceberg.after_blocks(&at(2, 100.0)).await;
+        // The slice trades: 0.25 is left, which is two lots and a half.
+        *position.lock().unwrap() = 1.0;
+        iceberg.after_blocks(&at(4, 100.0)).await;
+        // Its 0.2 trades: 0.05 is left, under one lot.
+        *position.lock().unwrap() = 1.2;
+        for slot in (6..40).step_by(2) {
+            iceberg.after_blocks(&at(slot, 100.0)).await;
+        }
+        assert_eq!(
+            *log.lock().unwrap(),
+            [
+                "i rest Bid 1.000 at 99.99",
+                "i cancel",
+                "i rest Bid 0.200 at 99.99",
+                "i cancel",
+            ]
+        );
     }
 }

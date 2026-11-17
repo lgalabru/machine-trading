@@ -1134,6 +1134,8 @@ pub(crate) mod tests {
         pub log: Arc<Mutex<Vec<String>>>,
         pub position: Arc<Mutex<f64>>,
         pub name: String,
+        /// The pretend market's lot; 0 for none.
+        pub lot: f64,
     }
 
     impl Book {
@@ -1145,6 +1147,7 @@ pub(crate) mod tests {
                     log: log.clone(),
                     position: Arc::new(Mutex::new(0.0)),
                     name: name.into(),
+                    lot: 0.0,
                 },
                 log,
             )
@@ -1195,6 +1198,9 @@ pub(crate) mod tests {
         }
         fn tick(&self) -> f64 {
             0.01
+        }
+        fn lot(&self) -> f64 {
+            self.lot
         }
     }
 
