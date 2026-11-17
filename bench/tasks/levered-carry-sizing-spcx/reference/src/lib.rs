@@ -125,6 +125,20 @@ const SLOTS_PER_MINUTE: u64 = 240;
 const DISCOUNT_TAU: f64 = 60.0;
 const DISCOUNT_NOISE: [f64; 2] = [0.02, 0.05];
 const STRESSED_WIDENING: f64 = 1.5;
+/// The informed bot's flush: a fall of the book over this many steps, with
+/// the discount closing under this share of its level, starts it; it then
+/// sells in these orders, waits at least the stated shortest rebuild (30 s)
+/// and until the discount has stopped widening for 10 s (or the longest,
+/// 90 s, has passed twice over).
+const FLUSH_FALL: f64 = 0.004;
+const FLUSH_FALL_STEPS: usize = 6;
+const FLUSH_CLOSED: f64 = 0.5;
+const INFORMED_ESCAPE_SLICES: usize = 4;
+const INFORMED_ESCAPE_SLICE: f64 = 100.0;
+const REBUILD_MIN_STEPS: u64 = 60;
+const REBUILD_STILL_STEPS: usize = 20;
+const REBUILD_STILL: f64 = 0.0002;
+const REBUILD_MAX_STEPS: u64 = 360;
 /// The Student-t's degrees of freedom for the discount's changes.
 const FILTER_NU: f64 = 8.0;
 /// SPCX's calibrated median session: 1.55e-4 a second.
@@ -451,17 +465,20 @@ impl Strategy for LevCarry {
                     .as_mut()
                     .ok_or("the informed bot needs MTX_REGIME")?;
                 let p = filter.update(discount, at, step.k);
+                let flush = filter.flush(r.book, discount, step.k, self.steps > WARMUP_STEPS);
                 let sigma = MEDIAN_SIGMA * (p * filter.levels[1] + (1.0 - p) * filter.levels[0]);
                 let stop = room / (full * STOP_SIGMAS * sigma * STOP_HORIZON_SECONDS.sqrt());
                 let sized = (K * yield_per_second / (sigma * sigma)).min(1.0).min(stop);
-                if rebuilding {
-                    0.0
-                } else if flushed {
-                    sized
-                } else {
-                    sized
-                        * ((INFORMED_STRESSED - p) / (INFORMED_STRESSED - INFORMED_CALM))
-                            .clamp(0.0, 1.0)
+                match flush {
+                    FlushState::Rebuilding => 0.0,
+                    // No second flush can come: the cap, inside the stop
+                    // distance, in either state.
+                    FlushState::Past => stop.min(1.0),
+                    FlushState::None => {
+                        sized
+                            * ((INFORMED_STRESSED - p) / (INFORMED_STRESSED - INFORMED_CALM))
+                                .clamp(0.0, 1.0)
+                    }
                 }
             }
             Rung::Oracle => {
@@ -521,8 +538,14 @@ impl Strategy for LevCarry {
         }
         let mut pos = held;
         // The stop-in twin closes as fast as the desk would.
+        let escaping = self
+            .filter
+            .as_ref()
+            .is_some_and(|f| f.flush_at.is_some() && !f.past);
         let (slices, slice) = if self.done {
             (8, 100.0)
+        } else if escaping && target < held {
+            (INFORMED_ESCAPE_SLICES, INFORMED_ESCAPE_SLICE)
         } else {
             (SLICES_PER_TURN, SLICE)
         };
@@ -612,6 +635,18 @@ struct Filter {
     p: f64,
     minute: u64,
     last: Option<(f64, u64)>,
+    /// The flush, as the informed bot sees it: the recent book levels and
+    /// discounts, the step it started, and whether the rebuild is over.
+    books: std::collections::VecDeque<(f64, f64)>,
+    flush_at: Option<u64>,
+    past: bool,
+}
+
+/// Where the session is against its one flush, as the informed bot reads it.
+enum FlushState {
+    None,
+    Rebuilding,
+    Past,
 }
 
 impl Filter {
@@ -628,7 +663,46 @@ impl Filter {
             p: STRESS_PRIOR,
             minute: 0,
             last: None,
+            books: std::collections::VecDeque::new(),
+            flush_at: None,
+            past: false,
         })
+    }
+
+    /// The flush: started by a fast fall of the book while the discount
+    /// closes (or the discount all but gone), over once the rebuild has
+    /// stopped widening the discount.
+    fn flush(&mut self, book: f64, discount: f64, k: u64, warm: bool) -> FlushState {
+        self.books.push_back((book, discount));
+        if self.books.len() > REBUILD_STILL_STEPS + 1 {
+            self.books.pop_front();
+        }
+        if self.flush_at.is_none() && warm {
+            let n = self.books.len();
+            let recent = self
+                .books
+                .iter()
+                .skip(n.saturating_sub(FLUSH_FALL_STEPS + 1));
+            let high = recent.map(|b| b.0).fold(book, f64::max);
+            let fell = 1.0 - book / high > FLUSH_FALL && discount < FLUSH_CLOSED * self.level;
+            if fell || discount < FLUSH_DISCOUNT {
+                self.flush_at = Some(k);
+            }
+        }
+        let Some(at) = self.flush_at else {
+            return FlushState::None;
+        };
+        if !self.past {
+            let since = k.saturating_sub(at);
+            let widened = discount - self.books.front().map_or(discount, |b| b.1);
+            let still = self.books.len() > REBUILD_STILL_STEPS && widened < REBUILD_STILL;
+            self.past = (since >= REBUILD_MIN_STEPS && still) || since >= REBUILD_MAX_STEPS;
+        }
+        if self.past {
+            FlushState::Past
+        } else {
+            FlushState::Rebuilding
+        }
     }
 
     /// The probability of stress after this step's discount, at `at` slots

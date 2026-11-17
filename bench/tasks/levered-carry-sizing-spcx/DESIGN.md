@@ -291,29 +291,42 @@ the instruction alone:
 - **Slow, steady execution.** 50 shares a turn, and the stress reading held
   for 30 seconds after the churn settles, so it doesn't flip in and out.
 
-### The informed bot (1)
+### The informed bot (1), under the told-only-the-process boundary
 
-`checks/bots/informed` runs the same desk told the session's latent state
-through the ladder's `tell_regime` (the state at each slot, each state's
-level, the flush), and uses only the present and the past of it:
+The verifier tells the informed bot only identity and process facts (#104:
+`LATENT_FIELDS`), never a session's draws. For this family the latent state
+is the process: the discount's level, each state's volatility level, and
+funding's settings and cap. The state path (calm or stressed, and when it
+switches) and the flush (whether, when, how far) are the session's draws and
+are not told; only the diagnostic `oracle` rung (`tell_regime`) sees them.
 
-- before the flush: the cap in calm (inside two sigmas of a minute at the
-  state's told level), flat in stress, where the flush is 120 times likelier;
-- the flush: it acts only once the book has fallen (the told end), then
-  waits the rebuild's stated longest, 90 seconds;
-- after it: the cap in either state (no gap can come).
+`checks/bots/informed` reads the state with a two-state filter on the
+discount's changes, using the told levels and the stated dynamics (targets
+L and 1.5L, jitter 2% and 5% of L a root-second, a 60 s pull, switches only
+at minute marks with the stated odds). It holds the full size under a 15%
+chance of stress and nothing over 40%, with no gap distance; it detects the
+flush (a fast fall of the book while the discount closes), sells it in
+100-share orders, waits at least 30 s and until the rebuild stops widening
+the discount, then holds the cap in either state.
 
-It waits the same 15 seconds as the reference for the book to reach its
-discount, trades 50 shares a turn, and has the same costs, mandate and
-turns. It doesn't know when the state will switch or when the flush will
-come, so it is stopped out when a calm-state flush hits at the cap (about
-3% of sessions on the practice sets). That is the risk the 1 takes for the
-calm carry: on the scale it maximises v2's weighted PnL, not its breach
-count.
+The g1 anchors below were measured with an earlier informed bot that was told
+the state path and the flush; that bot broke the boundary, so its Gate 0 and
+band don't count. They are kept as the record of what the state path is worth.
 
 ### Numbers
 
-Anchor ladder on the engine (2 fresh sets of 50 sessions, the ladder's own
+**Process-only informed bot, prototype (engine, the same 48-session public
+set, weighted per session):** reference +56, informed +85 to +88 (Sharpe
+0.34, no stop-outs), ratio 0.64-0.66, inside the band. But the pilot's model
+bots made +146 and +142 on that set: they read the state from the same
+observables at least as well, and handle the flush better, so this informed
+bot is no credible 1, and against the anchor ladder's best non-reading rung
+(prem-scaled, +4,108 on a set of 50) it would make about 1.1x, short of Gate 0's
+2x. A variant sized to survive the largest flush before it came lost money
+(-128 weighted). The told-path bot below made +164.
+
+Superseded (the informed bot told the state path):
+anchor ladder on the engine (2 fresh sets of 50 sessions, the ladder's own
 secrets, after merging main at f8fd77d7). USD, set 1 / set 2; weighted = losses
 counted 1.5x as v2 does:
 
