@@ -869,7 +869,7 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
         (Ok(i), Ok(b)) => (i, b),
         (Err(e), _) | (_, Err(e)) => return Check::fail(SOLVABLE, id, title, e),
     };
-    // The best non-reading rung's actual PnL, held to a small positive floor
+    // The best non-reading rung's graded total, held to a small positive floor
     // so that rungs that all lose don't make the ratio infinite trivially.
     let floor = baseline.1.max(MIN_BASELINE_USD);
     let ok = informed.1 > 0.0 && informed.1 >= ratio * floor;
@@ -896,8 +896,9 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
 const THIN_SAMPLE: &str = "The reference lost money on this small sample, but not by enough to say its edge is gone; the full ladder decides";
 
 /// Whether `xs` (a reference's per-session PnL) lose money with confidence: a
-/// one-sided test, P(total > 0) under 5% (t under -1.645). A short set's loss
-/// within its noise is no evidence against a thin edge.
+/// one-sided Student-t test at 5% (t under minus the critical value for n - 1
+/// degrees of freedom: 1.796 at 12 sessions). A short set's loss within its
+/// noise is no evidence against a thin edge.
 pub fn loses_confidently(xs: &[f64]) -> bool {
     let n = xs.len() as f64;
     if xs.len() < 2 {
@@ -908,7 +909,27 @@ pub fn loses_confidently(xs: &[f64]) -> bool {
     if var <= 0.0 {
         return mean < 0.0;
     }
-    mean / (var / n).sqrt() < -1.645
+    mean / (var / n).sqrt() < -t_critical(xs.len() - 1)
+}
+
+/// The one-sided 5% critical value of Student's t at `df` degrees of freedom.
+fn t_critical(df: usize) -> f64 {
+    const TABLE: [f64; 30] = [
+        6.314, 2.920, 2.353, 2.132, 2.015, 1.943, 1.895, 1.860, 1.833, 1.812, 1.796, 1.782, 1.771,
+        1.761, 1.753, 1.746, 1.740, 1.734, 1.729, 1.725, 1.721, 1.717, 1.714, 1.711, 1.708, 1.706,
+        1.703, 1.701, 1.699, 1.697,
+    ];
+    match df {
+        0 => f64::INFINITY,
+        1..=30 => TABLE[df - 1],
+        _ => 1.645 + 1.56 / df as f64,
+    }
+}
+
+/// Whether a rule names the `reference` rung among its terms.
+fn rule_names_reference(rule: &str) -> bool {
+    rule.split(|c: char| c.is_whitespace() || "<>=(),".contains(c))
+        .any(|t| t == "reference")
 }
 
 /// The checks the ladder answers: the reference and nop anchors, the order,
@@ -978,6 +999,8 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .filter(|r| !r.ok)
         .map(|r| r.rule.as_str())
         .collect();
+    // A noisy reference loss makes inconclusive only the rules that name it.
+    let broken_other = broken.iter().any(|r| !rule_names_reference(r));
     let order_detail = if broken.is_empty() {
         format!(
             "{} rule{} hold on {sets} set{} of {} sessions",
@@ -1000,7 +1023,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
             .collect::<Vec<_>>()
             .join("; ")
     };
-    checks.push(if thin && !broken.is_empty() {
+    checks.push(if thin && !broken.is_empty() && !broken_other {
         Check::new(
             SOLVABLE,
             "ladder-order",
@@ -2541,6 +2564,14 @@ mod tests {
         let fast = ladder_checks(&s, &g, true);
         assert_eq!(status(&fast, "reference-scores-1"), Status::Fail);
         assert_eq!(status(&fast, "ladder-order"), Status::Fail);
+    }
+
+    #[test]
+    fn a_rule_names_the_reference_only_as_a_term() {
+        assert!(rule_names_reference("reference < informed < hindsight"));
+        assert!(rule_names_reference("min(reference, fade) < informed"));
+        assert!(!rule_names_reference("fade < momentum"));
+        assert!(!rule_names_reference("fade < reference_like"));
     }
 
     #[test]

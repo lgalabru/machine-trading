@@ -158,6 +158,15 @@ def probe_grading(task, config, root=ROOT):
     return grading
 
 
+def rung_grading(task, config, probes, root=ROOT):
+    """How the rungs are graded: with the probe gate's settings when the task
+    has one; a v2-headline task's rungs are graded with its v2 settings even
+    when the probes are exempt, never silently as v1."""
+    if probes or GRADE_BASIS != "v2":
+        return probes
+    return probe_grading(task, config, root)
+
+
 def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users, v2=None):
     report = os.path.join(out, f"{rung['name']}.json")
     if os.path.exists(report):
@@ -244,7 +253,8 @@ def breach_sessions(report):
 
 # What a rung is compared on: "v1" is the grade a v1 task gives (a run with a
 # disqualified session scores 0, whatever it earned), "v2" the v2 headline's
-# per-session value (loss-weighted PnL over nop's, a breach floored).
+# per-session value (loss-weighted PnL over nop's, a breach floored), totalled
+# before the near-breach charge and the breach-rate penalty.
 GRADE_BASIS = "v1"
 
 
@@ -259,8 +269,11 @@ def totals(reports, sessions=None):
     if GRADE_BASIS == "v2" and all(r.get("v2") for r in reports.values()):
         out = {name: sum(report["v2"]["sessions"][i]["bot_usd"] for i in sessions)
                for name, report in reports.items()}
-        ceil = reports["reference"]["v2"]["sessions"]
-        out["hindsight"] = sum(ceil[i]["ceiling_usd"] for i in sessions)
+        # The hindsight bound is the reference's, as under v1: the v2 ceiling
+        # is the informed rung's own value, the 1.0 anchor, not a bound above it.
+        bound = [s["bound_pnl_usd"] - s.get("nop_pnl_usd", 0.0)
+                 for s in reports["reference"]["scenarios"]]
+        out["hindsight"] = sum(bound[i] for i in sessions)
         return out
     out = {
         name: 0.0 if disqualified(report) else sum(pnls(report)[i] for i in sessions)
@@ -947,6 +960,7 @@ def main():
             if problems:
                 raise SystemExit("probe gate: " + "; ".join(problems))
             probes = probe_grading(args.task, config)
+    grading = rung_grading(args.task, config, probes)
     sets = []
     set_dirs = []
     for k in range(args.sets):
@@ -969,7 +983,7 @@ def main():
             futures = {
                 rung["name"]: pool.submit(
                     grade, args.mtx, args.snapshot, config["family"], count, args.jobs,
-                    rung, secret, set_dir, users, probes,
+                    rung, secret, set_dir, users, grading,
                 )
                 for rung in config["rungs"]
             }

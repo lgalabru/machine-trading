@@ -76,6 +76,7 @@ class BreachingRungs(unittest.TestCase):
     def test_a_v2_task_compares_the_v2_value_with_the_breach_floored(self):
         def v2(values):
             return {"sessions": [{"bot_usd": b, "ceiling_usd": 500.0} for b in values]}
+        # The ceiling is the informed rung's own value: hindsight must not use it.
         reports = {
             "nop": dict(report([0.0] * 3), v2=v2([0.0] * 3)),
             "reference": dict(report([100.0, 50.0, -20.0]), v2=v2([100.0, 50.0, -30.0])),
@@ -89,7 +90,32 @@ class BreachingRungs(unittest.TestCase):
             ladder.GRADE_BASIS = "v1"
         self.assertEqual(t["momentum"], -200.0)
         self.assertEqual(t["reference"], 120.0)
-        self.assertEqual(t["hindsight"], 1500.0)
+        self.assertEqual(t["hindsight"], 6000.0)
+        informed = dict(report([500.0] * 3), v2=v2([500.0] * 3))
+        ladder.GRADE_BASIS = "v2"
+        try:
+            t = ladder.totals(dict(reports, informed=informed))
+        finally:
+            ladder.GRADE_BASIS = "v1"
+        self.assertTrue(ladder.holds("reference < informed < hindsight", t))
+
+    def test_a_v2_task_with_exempt_probes_is_still_graded_with_v2(self):
+        with tempfile.TemporaryDirectory() as root:
+            tests = os.path.join(root, "bench/tasks/t-v2/tests")
+            os.makedirs(tests)
+            with open(os.path.join(tests, "test.sh"), "w") as f:
+                f.write("mtx grade --scoring v2-headline --loss-weight 1.5 --informed x\n")
+            config = {"rungs": [{"name": "informed", "dir": "bench/checks/ladder/rungs/x"}],
+                      "anchors": {"informed": "informed"}, "probes": {"exempt": "why"}}
+            ladder.GRADE_BASIS = "v2"
+            try:
+                grading = ladder.rung_grading("t-v2", config, None, root)
+                ladder.GRADE_BASIS = "v1"
+                self.assertIsNone(ladder.rung_grading("t-v2", config, None, root))
+            finally:
+                ladder.GRADE_BASIS = "v1"
+            self.assertIn("reference", grading)
+            self.assertTrue(grading["informed"].endswith("bench/checks/ladder/rungs/x"))
 
 
 class ExploitRatio(unittest.TestCase):

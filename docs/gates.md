@@ -23,7 +23,7 @@ finished ladder) adjust a run.
 | | a v2 task: both anchors named in its ladder file, the informed bot written; the verifier grades with `--scoring v2-headline` (v2 as the one score) and the instruction's scoring rules are current; it opts into the probe gate | `mtx task status` |
 | Solvable and fair | the reference makes money on every set (it is the 1.0 line); doing nothing scores 0 | ladder |
 | | the skill ladder keeps its order, on every set and in the bootstrap | ladder |
-| | the best informed policy makes at least 2x the best non-reading one's actual PnL, or a $25 floor when every non-reading rung does worse | ladder rungs |
+| | the best informed policy makes at least 2x the best non-reading one's graded total, or a $25 floor when every non-reading rung does worse | ladder rungs |
 | | the oracle (the reference) scores skill 1.0, or under scoring v2 0.5 before the near-breach charge and any breach penalty (`score_v2_raw_before_charge`), with `reward` v2's score and no `skill` beside it; the charge, anchored on the informed bot's drawdowns, can take a reference that draws down deeper under 0.5 by design, and is reported beside it, not checked; nop scores 0 under Harbor | full: `just harbor-checks` |
 | | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive, unless the reference loses money with confidence, which fails) | ladder, per-session PnL |
 | | no task's verifier tells the graded bot anything (`--tell-latent`, `--tell-regime`) | `tests/test.sh` |
@@ -44,14 +44,20 @@ It is never a hidden set: hidden sets come from fresh 256-bit secrets, and
 `MTX_EVAL_SEED` is never used here.
 
 A reference that loses money on a fast set fails only when the loss is
-confident (a one-sided test: P(total > 0) under 5%, t under -1.645 over the
-sessions); a loss within a short set's noise (market-making's -$38 over twelve
+confident (a one-sided Student-t test at 5%: t under minus the critical value at
+n - 1 degrees of freedom, 1.796 for twelve sessions); a loss within a short set's noise (market-making's -$38 over twelve
 sessions, t = -0.9) is `inconclusive`. The full ladder fails any set where it
-loses. The strength band follows the same rule.
+loses. The strength band follows the same rule. A noisy reference loss makes
+inconclusive only the order rules that name `reference`; other broken rules
+still fail. A reference whose edge is a few large winning sessions can fail
+fast mode on its fixed public seed while passing the full ladder, because the
+12 sessions may miss the big wins; the full ladder's verdict is the remedy.
 
 Rungs are compared on the grade the task gives them: under v1 a rung with a
 disqualified (breached) session totals 0, under a v2 task the sum of its v2
-session values, a breach floored. The raw PnL (`raw_totals`) and the breach
+session values (loss-weighted, a breach floored; before the near-breach charge
+and the breach-rate penalty), with the hindsight bound as the sum of the
+reference's per-session bounds. The raw PnL (`raw_totals`) and the breach
 counts (`breaches`) are in the summary as information. An exploit bot's multiple
 of the reference is tested only when the ladder file sets `exploits.max_ratio`;
 otherwise exploits are bounded by the `below` oracle.
