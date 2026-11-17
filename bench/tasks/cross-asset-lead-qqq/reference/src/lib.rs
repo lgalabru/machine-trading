@@ -105,6 +105,8 @@ pub struct Params {
     pub beta_prior_weight: f64,
     pub move_bps: f64,
     pub cost_bps: f64,
+    /// The position taken on a signal, as a share of the cap.
+    pub size: f64,
 }
 
 impl Params {
@@ -124,6 +126,7 @@ impl Params {
             beta_prior_weight: 400.0,
             move_bps: 40.0,
             cost_bps: 0.0,
+            size: 1.0,
         };
         match mode {
             Mode::Informed => Params {
@@ -510,14 +513,14 @@ impl Strategy for Flow {
         if now > self.hold_until {
             self.dir = 0.0;
         }
-        let mut target = self.dir * cap;
+        let mut target = self.dir * cap * self.params.size;
         if self.mode == Mode::Twap {
             target = (cap * now as f64 / length as f64 / 0.9).min(cap);
         }
         if market.last || market.slots_left <= 4 {
             target = 0.0;
         }
-        if (target - market.position.size).abs() >= 0.5 {
+        if (target - market.position.size).abs() >= 0.05 * cap {
             orders.target_position_with(
                 target,
                 Execution {
@@ -725,6 +728,7 @@ pub fn main_with(mode: Option<Mode>) -> BotResult {
     set(&mut p.momentum_bps, "MOMENTUM");
     set(&mut p.cost_bps, "COST");
     set(&mut p.move_bps, "MOVE");
+    set(&mut p.size, "SIZE");
     if let Some(v) = knob("LOOK").and_then(|v| v.parse().ok()) {
         p.look_slots = v;
     }
