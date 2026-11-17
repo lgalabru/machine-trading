@@ -73,8 +73,9 @@ pub struct ModelSpec {
     /// come from measured real event days, with its source cited.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jump_rate_per_hour: Option<f64>,
-    /// Stated jump sizes in place of the calibration's, kept apart from
-    /// `vol_mult` (which still scales them, as before). Needs `jumps`.
+    /// Stated jump sizes in place of the calibration's. Drawn as stated:
+    /// `vol_mult` scales the calibration's jump sizes only, never these.
+    /// Needs `jumps`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jump_size: Option<JumpSize>,
     /// Scheduled releases: one move each at a stated slot, with a fair-coin
@@ -450,8 +451,23 @@ impl MarketModel {
         name: &str,
         seed: u64,
     ) -> std::result::Result<Scenario, String> {
+        self.check_events(template.duration_slots)?;
         let drawn = self.draw(seed, template.duration_slots);
         self.fill(template, name, drawn)
+    }
+
+    /// Refuses a scheduled event the session would never reach: a slot at
+    /// or past the session's end.
+    fn check_events(&self, duration_slots: u64) -> std::result::Result<(), String> {
+        for (i, e) in self.spec.events.iter().enumerate() {
+            if e.slot >= duration_slots {
+                return Err(format!(
+                    "events[{i}]: slot {} is at or past the session's end ({duration_slots} slots)",
+                    e.slot
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn fill(
@@ -669,7 +685,12 @@ impl<'a> Walker<'a> {
                 && per_hour > 0.0
                 && rng.next_f64() < per_hour * self.slot_seconds / 3600.0
             {
-                let pct = signed_lognormal(rng, median, p90) * model.spec.vol_mult;
+                let scale = if model.spec.jump_size.is_some() {
+                    1.0
+                } else {
+                    model.spec.vol_mult
+                };
+                let pct = signed_lognormal(rng, median, p90) * scale;
                 step += pct / 100.0;
                 self.events.push(Event {
                     slot,
@@ -770,6 +791,15 @@ pub fn draw_joint(
         .collect();
     if blocks.iter().any(|b| *b != blocks[0]) {
         return Err(format!("the assets' block_seconds differ: {blocks:?}"));
+    }
+    for model in models {
+        model.check_events(duration_slots)?;
+        if !model.spec.events.is_empty() {
+            return Err(
+                "scheduled events aren't supported in a joint draw: each market would draw its own sign, so a common release can't be stated (joint events are a follow-up)"
+                    .into(),
+            );
+        }
     }
     let lower = cholesky(correlation)?;
     let mut rng = SplitMix64(seed ^ 0x6a6f_696e_7476_3200);
@@ -1553,16 +1583,89 @@ mod tests {
         let (a, _) = jump_events(sized(0.4, 0.8), 40, 14_400);
         let (b, _) = jump_events(jumpy(Some(6.0)), 40, 14_400);
         assert_eq!(a, b);
-        // vol_mult is a separate knob: it still scales sizes as before.
+        // Stated sizes are drawn as stated: vol_mult does not scale them.
         let scaled = ModelSpec {
             vol_mult: 2.0,
             ..sized(0.4, 0.8)
         };
-        let (_, big) = jump_events(scaled, 100, 14_400);
+        let (_, same) = jump_events(scaled, 300, 14_400);
+        let mut w = same.clone();
+        w.sort_by(|a, b| a.partial_cmp(b).unwrap());
         assert!(
-            big.iter().sum::<f64>() / big.len() as f64
-                > 1.5 * sizes.iter().sum::<f64>() / sizes.len() as f64
+            (w[w.len() / 2] / 0.4 - 1.0).abs() < 0.08,
+            "{}",
+            w[w.len() / 2]
         );
+        // The calibration's own sizes are still scaled by vol_mult.
+        let (_, own) = jump_events(jumpy(Some(6.0)), 100, 14_400);
+        let (_, own2) = jump_events(
+            ModelSpec {
+                vol_mult: 2.0,
+                ..jumpy(Some(6.0))
+            },
+            100,
+            14_400,
+        );
+        assert!(
+            own2.iter().sum::<f64>() / own2.len() as f64
+                > 1.5 * own.iter().sum::<f64>() / own.len() as f64
+        );
+    }
+
+    #[test]
+    fn a_large_vol_mult_leaves_stated_jump_sizes_inside_the_cap() {
+        let (_, sizes) = jump_events(
+            ModelSpec {
+                vol_mult: 5.0,
+                ..sized(9.0, 10.0)
+            },
+            200,
+            14_400,
+        );
+        let mut v = sizes.clone();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            (v[v.len() / 2] / 9.0 - 1.0).abs() < 0.08,
+            "{}",
+            v[v.len() / 2]
+        );
+        assert!((v[v.len() * 9 / 10] / 10.0 - 1.0).abs() < 0.12);
+        // Lognormal with p90 = 10: the 99.9th percentile is far below 5x.
+        assert!(*v.last().unwrap() < 20.0, "{}", v.last().unwrap());
+    }
+
+    #[test]
+    fn events_at_or_past_the_session_end_and_joint_events_are_refused() {
+        let at = |slot| ModelSpec {
+            events: vec![ScheduledEvent {
+                slot,
+                abs_median_pct: 0.4,
+                abs_p90_pct: 0.8,
+                source: "test".into(),
+            }],
+            ..ModelSpec::default()
+        };
+        let template = crate::market::tests::template();
+        let d = template.duration_slots;
+        let ok = MarketModel::new(sol(), at(d - 1)).unwrap();
+        assert!(ok.scenario(&template, "x", 1).is_ok());
+        for slot in [d, d + 1] {
+            let model = MarketModel::new(sol(), at(slot)).unwrap();
+            let err = model.scenario(&template, "x", 1).unwrap_err();
+            assert!(
+                err.contains("events[0]") && err.contains("past the session's end"),
+                "{err}"
+            );
+            let corr = vec![vec![1.0, 0.5], vec![0.5, 1.0]];
+            let err = draw_joint(&[&model, &model], &corr, 1, d).unwrap_err();
+            assert!(err.contains("past the session's end"), "{err}");
+        }
+        // A valid event is still refused in a joint draw.
+        let corr = vec![vec![1.0, 0.5], vec![0.5, 1.0]];
+        let err = draw_joint(&[&ok, &ok], &corr, 1, d).unwrap_err();
+        assert!(err.contains("joint") && err.contains("follow-up"), "{err}");
+        let plain = MarketModel::new(sol(), ModelSpec::default()).unwrap();
+        assert!(draw_joint(&[&plain, &plain], &corr, 1, d).is_ok());
     }
 
     #[test]
@@ -1591,15 +1694,6 @@ mod tests {
             up += usize::from(hits[0].pct > 0.0);
             sizes.push(hits[0].pct.abs());
             assert_eq!(path.record.scheduled.len(), 1);
-            // A shorter session never reaches it.
-            assert!(
-                model
-                    .draw(seed, 700)
-                    .record
-                    .events
-                    .iter()
-                    .all(|e| e.kind != EventKind::Scheduled)
-            );
         }
         assert!((140..260).contains(&up), "{up}");
         sizes.sort_by(|a, b| a.partial_cmp(b).unwrap());

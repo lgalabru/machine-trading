@@ -177,15 +177,18 @@ serialises the same record as before.
 - `[jump_size]` (`abs_median_pct`, `abs_p90_pct`, `source`) replaces the
   calibration's jump sizes (lognormal, as the calibration's). Needs
   `jumps = true`; median positive, p90 at least the median and at most
-  10 percent; `source` says where the numbers were measured. It is kept
-  apart from `vol_mult`, which still multiplies jump sizes as before, so
-  set `vol_mult` for diffusive stress and `[jump_size]` for the jumps.
+  10 percent; `source` says where the numbers were measured. Stated sizes are
+  drawn as stated: `vol_mult` scales only the calibration's jump sizes (when
+  `[jump_size]` is absent), so set `vol_mult` for diffusive stress and
+  `[jump_size]` for the jumps.
 - `[[events]]` (`slot`, `abs_median_pct`, `abs_p90_pct`, `source`; at most
   16) are scheduled releases: at `slot` one move is added with a lognormal
   absolute size and a fair-coin sign, recorded in the path's `events` as
   `scheduled`, whether or not `jumps` is on. The slot is known to whoever
   states it; the sign and size are not. An event at or past the session's
-  end is not drawn. Realism checks mask scheduled events like gaps.
+  end (`slot >= duration_slots`) is refused when the scenario is built, and
+  events are refused in a joint draw (each market would draw its own sign,
+  so a common release can't be stated; joint events are a follow-up). Realism checks mask scheduled events like gaps.
 
 The record keeps `jump_rate_per_hour`, `jump_size` and `scheduled`, and
 leaves each out when absent. Each is refused with the allowed range when
@@ -221,16 +224,16 @@ Never set 4 to 6 an hour for a whole session: the largest all-session rate
 on any event category with five or more days was 0.83 an hour.
 
 Scheduled releases are single moves, 5 minutes from the release minute
-(absolute, bp, median / p90; n of 3 to 5 each, so treat as ranges, and cap
-at the largest observed):
+(absolute, percent as the fields take them, median / p90; n of 3 to 5 each,
+so treat as ranges, and cap at the largest observed):
 
 | Instrument | CPI 08:30 | NFP 08:30 | FOMC 14:00 | Same clock, ordinary days |
 |---|---|---|---|---|
-| NVDA | 63 / 84 | 31 / 44 (max) | 33 / 61 (max) | 7 / 22 |
-| TSLA | 43 / 81 | 39 / 56 (max) | not distinguishable | 7 / 21 |
-| SPY | 47 / 58 | 18 / 34 (max) | not distinguishable | 4 / 10 |
-| QQQ | 69 / 73 | 23 / 36 (max) | not distinguishable | 5 / 15 |
-| SPCX | 84 / 123 | 52 / 92 (max) | 52 / 167 (max) | 13 / 36 |
+| NVDA | 0.63 / 0.84 | 0.31 / 0.44 (max) | 0.33 / 0.61 (max) | 0.07 / 0.22 |
+| TSLA | 0.43 / 0.81 | 0.39 / 0.56 (max) | not distinguishable | 0.07 / 0.21 |
+| SPY | 0.47 / 0.58 | 0.18 / 0.34 (max) | not distinguishable | 0.04 / 0.1 |
+| QQQ | 0.69 / 0.73 | 0.23 / 0.36 (max) | not distinguishable | 0.05 / 0.15 |
+| SPCX | 0.84 / 1.23 | 0.52 / 0.92 (max) | 0.52 / 1.67 (max) | 0.13 / 0.36 |
 
 Earnings gaps are 3 to 10 times an ordinary overnight gap (n of 1 to 2 per
 name): use the calendar's gap field, not an event.

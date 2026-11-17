@@ -55,7 +55,7 @@ pub const MIN_GAPS: usize = 20;
 pub struct SessionPath {
     /// Log price relative to the start at each slot.
     pub log_levels: Vec<f64>,
-    /// Slots of events left out of the return checks (gaps).
+    /// Slots of events left out of the return checks (gaps and scheduled events).
     pub masked_slots: Vec<u64>,
     /// Gap sizes, in percent.
     pub gaps_pct: Vec<f64>,
@@ -63,7 +63,7 @@ pub struct SessionPath {
 
 impl SessionPath {
     /// A scenario's oracle level at every slot. A scenario drawn from a
-    /// market model has its gaps masked.
+    /// market model has its gaps and scheduled events masked.
     pub fn from_scenario(scenario: &Scenario) -> Self {
         let log_levels = (0..=scenario.duration_slots)
             .map(|slot| (1.0 + level_at(&scenario.path, slot) / 100.0).ln())
