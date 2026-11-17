@@ -455,8 +455,8 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
             );
         }
         // The anchor digest stays as committed while its inputs are the
-        // ones it was played from; otherwise it is pending, and stale until
-        // `mtx task sync` plays the anchors (it can't, here: no sessions).
+        // ones it was played from; otherwise it is pending until `mtx task
+        // sync --anchors` plays them (it doesn't, here: no sessions).
         let (inputs, informed) = crate::anchors::inputs(root, &task.dir, &|path| {
             files
                 .get(path)
@@ -631,23 +631,25 @@ fn dataset_with(text: &str, tasks: &[Task]) -> Result<String> {
     Ok(out)
 }
 
-/// Play the anchors of every task whose digest was written for other inputs
-/// (or of all of them, with `force`) and write the digests. Slow, and Linux
-/// only: [`crate::anchors::compute`].
-pub fn sync_anchor_digests(root: &Path, force: bool) -> Result<()> {
+/// Build and play the anchors of every task and write the digests. Slow,
+/// and Linux only: [`crate::anchors::compute`].
+pub fn play_anchor_digests(root: &Path) -> Result<()> {
     for task in load(root)? {
-        let read = |p: &Path| std::fs::read(root.join(p)).ok();
-        let (inputs, informed) = crate::anchors::inputs(root, &task.dir, &read)?;
-        let current = crate::anchors::committed(root, &task.dir).is_some_and(|d| {
-            d.inputs == inputs && d.informed == informed && !d.digest.starts_with("pending")
-        });
-        if force || !current {
-            eprintln!("{}: playing the anchors for tests/anchor.digest", task.dir);
-            let digest = crate::anchors::compute(root, &task.dir)?;
-            crate::anchors::write(root, &task.dir, &digest)?;
-        }
+        eprintln!("{}: playing the anchors for tests/anchor.digest", task.dir);
+        let digest = crate::anchors::compute(root, &task.dir)?;
+        crate::anchors::write(root, &task.dir, &digest)?;
     }
     Ok(())
+}
+
+/// The tasks whose `tests/anchor.digest` isn't played yet (missing or
+/// `pending`).
+pub fn pending_digests(root: &Path) -> Result<Vec<String>> {
+    Ok(load(root)?
+        .into_iter()
+        .filter(|t| crate::anchors::committed(root, &t.dir).is_none_or(|d| d.is_pending()))
+        .map(|t| t.dir)
+        .collect())
 }
 
 /// Write every generated file. Returns the ones that changed.
@@ -709,6 +711,11 @@ mod tests {
         let root = crate::authoring::repo_root();
         let stale = stale(&root).unwrap();
         assert!(stale.is_empty(), "run `mtx task sync`: stale {stale:?}");
+        let pending = pending_digests(&root).unwrap();
+        assert!(
+            pending.is_empty(),
+            "run `mtx task sync --anchors` on Linux: pending digests {pending:?}"
+        );
     }
 
     #[test]

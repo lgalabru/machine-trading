@@ -51,7 +51,7 @@ trading-specific.
 - [ ] Image pinned by digest in both Dockerfiles (`just pin-image`); `harbor lint --select ALL` clean.
 - [ ] Re-running the oracle gives the same PnL, or the README says why it can't (a grader-run counterparty that reacts in real time) and by how much it moves.
 - [ ] SDK and bot dependencies pinned (lockfile shipped in the image).
-- [ ] `tests/task.fingerprint` and `tests/anchor.digest` current (`mtx task check`). An engine, kit or dependency change that makes an anchor digest differ (CI's `anchor-digests` job) or any identity proof differ bumps `GRADER_VERSION` and runs `mtx task sync --anchors`: scores before and after are not on one scale.
+- [ ] `tests/task.fingerprint` and `tests/anchor.digest` current (`mtx task check`). No digest is `pending`. A change that makes an anchor digest differ (CI's `anchor-digests` job) runs `mtx task sync --anchors`, which moves that task's fingerprint. Bump `GRADER_VERSION` only for an engine change the digests can't see (a guard's rule, a disqualification): scores before and after are not on one scale.
 
 ## Checks
 

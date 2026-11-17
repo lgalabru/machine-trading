@@ -9,11 +9,12 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// The grader's own version: bump it when a session's meaning changes in a
-/// way the anchors' digest (`tests/anchor.digest`) doesn't show (a guard's
-/// rule, a disqualification, a cost only a bot meets), and whenever an anchor
-/// digest differs: CI's `anchor-digests` job says so. Every task's
-/// fingerprint moves with it.
+/// The grader's own version: bump it only when a session's meaning changes in
+/// a way the anchors' digest (`tests/anchor.digest`) doesn't show (a guard's
+/// rule, a disqualification, a cost only a bot meets). Not when a digest
+/// differs: the digest is in that task's fingerprint, so `mtx task sync
+/// --anchors` moves that task's fingerprint alone, and this moves every
+/// task's.
 pub const GRADER_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,11 +25,6 @@ pub struct Versions {
     /// [`crate::scoring_v2::spec_hash`] of the settings that scored it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scoring_hash: Option<String>,
-    /// The commit the grading `mtx` was built from (`+dirty` if its engine
-    /// source had edits): shown, never compared, since most engine changes
-    /// leave every score where it was.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub engine: Option<String>,
 }
 
 impl Versions {

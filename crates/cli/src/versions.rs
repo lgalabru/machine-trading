@@ -21,41 +21,6 @@ use serde_json::{Value, json};
 pub const VERIFIER_FINGERPRINT: &str = "/tests/task.fingerprint";
 /// The file `mtx task sync` writes, under a task's folder.
 pub const FINGERPRINT_FILE: &str = "tests/task.fingerprint";
-/// Refuse to write a fingerprint with a binary built from other engine
-/// source than the checkout's: the family's parameters and the grader's
-/// version in it come from the binary, so a stale installed `mtx` would
-/// write a wrong value. A binary built outside git, or a checkout that
-/// isn't one, can't be compared: it goes on.
-pub fn require_fresh_binary(root: &Path, allow: bool) -> Result<()> {
-    let built = option_env!("MTX_SOURCE_STAMP");
-    let here = crate::source_stamp::of(root).map(|(stamp, _)| stamp);
-    match (built, here) {
-        (Some(built), Some(here)) if built != here => {
-            let message = format!(
-                "this mtx was built from other engine source than the checkout's (built from {}, \
-                 checkout at {}): the family parameters and the grader's version in a fingerprint \
-                 come from the binary. Rebuild it (`cargo build --release -p mtx-cli`) and run that one",
-                option_env!("MTX_ENGINE_STAMP").unwrap_or("an unknown commit"),
-                crate::source_stamp::engine_label(root).unwrap_or_default(),
-            );
-            if allow {
-                eprintln!("warning: {message}");
-                Ok(())
-            } else {
-                bail!("{message}\n(--allow-stale-binary goes on anyway)")
-            }
-        }
-        _ => Ok(()),
-    }
-}
-
-/// `mtx task check`: say so, loudly, when the binary is stale, but go on.
-pub fn warn_stale_binary(root: &Path) {
-    if let Err(e) = require_fresh_binary(root, false) {
-        eprintln!("warning: {e}");
-    }
-}
-
 /// What a missing stamp reads as.
 pub const UNVERSIONED: &str = "unversioned";
 
@@ -199,12 +164,13 @@ fn strip(value: &mut toml::Value) {
     }
 }
 
-/// The files under `dir` (relative to `root`), sorted: those git tracks
-/// (in the index), without any directory named in `skip` (build output).
-/// Untracked files (an editor's swap file, a scratch note) and ignored ones
-/// (a snapshot's 175 MB `surfnet.json`) never count, so two checkouts of one
-/// commit agree. A root that isn't a git checkout of its own (a scratch copy)
-/// reads the disk instead.
+/// The files under `dir` (relative to `root`), sorted: those git tracks or
+/// that aren't added yet (`--cached --others --exclude-standard`), without
+/// any directory named in `skip` (build output). Ignored files (a
+/// snapshot's 175 MB `surfnet.json`) never count, and a new task's files
+/// count before they are `git add`ed, so the fingerprint doesn't depend on
+/// that. A root that isn't a git checkout of its own (a scratch copy) reads
+/// the disk instead.
 pub(crate) fn tracked_files(root: &Path, dir: &Path, skip: &[&str]) -> Vec<PathBuf> {
     let mut out = match git_files(root, dir) {
         Some(files) => files,
@@ -238,7 +204,15 @@ fn git_files(root: &Path, dir: &Path) -> Option<Vec<PathBuf>> {
     if top.canonicalize().ok()? != root.canonicalize().ok()? {
         return None;
     }
-    let listed = git(&["ls-files", "-z", "--", &dir.to_string_lossy()])?;
+    let listed = git(&[
+        "ls-files",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+        &dir.to_string_lossy(),
+    ])?;
     Some(
         listed
             .stdout
@@ -276,8 +250,6 @@ pub struct Stamp {
     pub task: String,
     pub fingerprint: Option<String>,
     pub scoring: Option<String>,
-    /// The commit the grading `mtx` was built from: shown, not compared.
-    pub engine: Option<String>,
 }
 
 impl Stamp {
@@ -289,7 +261,6 @@ impl Stamp {
             task: task.to_string(),
             fingerprint: get("task_fingerprint"),
             scoring: get("scoring_hash"),
-            engine: get("engine"),
         }
     }
 }
@@ -435,7 +406,6 @@ pub fn by_task(stamps: &[Stamp]) -> Value {
             json!({
                 "task_fingerprint": one(|s| &s.fingerprint),
                 "scoring_hash": one(|s| &s.scoring),
-                "engine": one(|s| &s.engine),
             }),
         );
     }
@@ -452,7 +422,6 @@ pub(crate) mod tests {
             task: task.into(),
             fingerprint: fp.map(Into::into),
             scoring: sc.map(Into::into),
-            engine: None,
         }
     }
 
@@ -684,17 +653,17 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn files_git_doesnt_track_never_count() {
+    fn a_new_task_counts_before_it_is_added_and_ignored_files_never_do() {
         let task = "flash-crash-spcx";
         let root = scratch(task);
+        std::fs::write(root.join(".gitignore"), "*.orig\nsurfnet.json\n").unwrap();
+        track(&root);
         let base = fingerprint(&root, task, &disk(&root)).unwrap();
         let folder = root.join("bench/tasks").join(task);
-        // An editor's swap file and a stray note, in the anchors' and the
-        // practice folders; build output.
+        // Ignored files and build output.
         for rel in [
-            "reference/src/.main.rs.swp",
-            "reference/NOTES",
             "environment/practice/practice-1.json.orig",
+            "reference/notes.orig",
             "reference/target/x",
         ] {
             let path = folder.join(rel);
@@ -702,9 +671,13 @@ pub(crate) mod tests {
             std::fs::write(&path, "x").unwrap();
         }
         assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
-        // Added to the index, a file counts.
+        // A file `mtx task new` just wrote counts without `git add`, and the
+        // same after it: one sync is enough.
+        std::fs::write(folder.join("reference/src/new.rs"), "fn x() {}\n").unwrap();
+        let untracked = fingerprint(&root, task, &disk(&root)).unwrap();
+        assert_ne!(base, untracked);
         track(&root);
-        assert_ne!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+        assert_eq!(untracked, fingerprint(&root, task, &disk(&root)).unwrap());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

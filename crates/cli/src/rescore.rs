@@ -847,7 +847,6 @@ mod tests {
         let versions = Versions {
             task_fingerprint: Some("ff".into()),
             scoring_hash: Some("old".into()),
-            engine: None,
         };
         let verdict: Verdict = serde_json::from_value(json!({
             "versions": {"task_fingerprint": "ff", "scoring_hash": "old"}

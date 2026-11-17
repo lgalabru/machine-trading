@@ -41,7 +41,6 @@ mod review;
 mod run;
 mod scoring_text;
 mod slim;
-mod source_stamp;
 mod store;
 mod studio;
 mod tables;
@@ -489,27 +488,17 @@ enum TaskCommand {
     /// spec, scenario family, practice files, anchors, mandate and grader
     /// version, and what the engine does to its anchors), as every grade of
     /// it records.
-    Fingerprint {
-        task: String,
-        /// Go on although this mtx was built from other engine source than
-        /// the checkout's.
-        #[arg(long)]
-        allow_stale_binary: bool,
-    },
+    Fingerprint { task: String },
     /// Write the lists kept from the task folders' `[metadata.mtx]`: the
     /// Justfile's and the image's task lists, the dataset's and the READMEs'
-    /// tables, each task's anchor digest when its anchors' inputs changed,
-    /// and its fingerprint.
+    /// tables, each task's `solution/` and its fingerprint. A task whose
+    /// anchors' inputs changed gets a `pending` anchor digest (a warning
+    /// says so; `check` and CI refuse it) unless `--anchors` plays them.
     Sync {
-        /// Play every task's anchors again and rewrite its anchor digest,
-        /// as after an engine change CI's `anchor-digests` job flagged
-        /// (Linux, the references built: see `anchor-digest`).
+        /// Build and play every task's anchors and write their digests
+        /// (Linux, `just` and Surfpool installed: see `anchor-digest`).
         #[arg(long)]
         anchors: bool,
-        /// Go on although this mtx was built from other engine source than
-        /// the checkout's.
-        #[arg(long)]
-        allow_stale_binary: bool,
     },
     /// Fail if `mtx task sync` would change a file.
     Check,
@@ -517,8 +506,7 @@ enum TaskCommand {
     /// the informed bot) on a fixed public draw and hash the sessions. With
     /// `--check`, fail when the digest differs from the committed
     /// `tests/anchor.digest`: an engine change altered what the task does.
-    /// Needs Linux, `just`, Surfpool and the references built (`just
-    /// --justfile bench/tasks/<task>/reference/Justfile build`).
+    /// Builds the anchors; needs Linux, `just` and Surfpool.
     AnchorDigest {
         /// The tasks (default: every task).
         tasks: Vec<String>,
@@ -999,14 +987,19 @@ async fn run() -> Result<()> {
                 anyhow::anyhow!("no step `{step}`; steps: {}", authoring::STEPS.join(", "))
             })?
         }
-        Command::Task(TaskCommand::Sync {
-            anchors,
-            allow_stale_binary,
-        }) => {
+        Command::Task(TaskCommand::Sync { anchors }) => {
             let root = authoring::repo_root();
-            versions::require_fresh_binary(&root, allow_stale_binary)?;
-            tasks::sync_anchor_digests(&root, anchors)?;
+            if anchors {
+                tasks::play_anchor_digests(&root)?;
+            }
             let changed = tasks::sync(&root)?;
+            let pending = tasks::pending_digests(&root)?;
+            if !pending.is_empty() {
+                eprintln!(
+                    "warning: tests/anchor.digest is pending for {}: CI refuses it. Run `mtx task sync --anchors` on Linux, or commit the digest CI prints",
+                    pending.join(", ")
+                );
+            }
             serde_json::to_string_pretty(&changed)?
         }
         Command::Task(TaskCommand::AnchorDigest { tasks, check }) => {
@@ -1040,7 +1033,6 @@ async fn run() -> Result<()> {
             serde_json::to_string_pretty(&out)?
         }
         Command::Task(TaskCommand::Check) => {
-            versions::warn_stale_binary(&authoring::repo_root());
             let stale = tasks::stale(&authoring::repo_root())?;
             if !stale.is_empty() {
                 anyhow::bail!(
@@ -1052,14 +1044,17 @@ async fn run() -> Result<()> {
                         .join(", ")
                 );
             }
+            let pending = tasks::pending_digests(&authoring::repo_root())?;
+            if !pending.is_empty() {
+                anyhow::bail!(
+                    "tests/anchor.digest is pending for {}: run `mtx task sync --anchors` on Linux",
+                    pending.join(", ")
+                );
+            }
             serde_json::to_string_pretty(&stale)?
         }
-        Command::Task(TaskCommand::Fingerprint {
-            task,
-            allow_stale_binary,
-        }) => {
+        Command::Task(TaskCommand::Fingerprint { task }) => {
             let root = authoring::repo_root();
-            versions::require_fresh_binary(&root, allow_stale_binary)?;
             let fingerprint =
                 versions::fingerprint(&root, &task, &|p| std::fs::read(root.join(p)).ok())?;
             serde_json::to_string_pretty(
@@ -1539,7 +1534,6 @@ async fn run() -> Result<()> {
                     Some(params) => mtx_grader::scoring_v2::spec_hash(params),
                     None => mtx_grader::grade::v1_spec_hash(),
                 }),
-                engine: option_env!("MTX_ENGINE_STAMP").map(str::to_string),
             };
             let mut regimes: Option<Vec<String>> = None;
             let mut latent: Option<Vec<String>> = None;

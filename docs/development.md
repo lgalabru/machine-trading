@@ -246,13 +246,12 @@ time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
 **Versions.** Every grade report carries `versions`: the task's fingerprint
 (`mtx task fingerprint <task>`), a hash of the scoring spec (v1's, or v2's
-with its settings) and, for information only, the commit `mtx` was built from
-(`engine`, never compared). The fingerprint hashes what changes what a task
+with its settings). The fingerprint hashes what changes what a task
 measures: `task.toml` without its cosmetic keys, `instruction.md`,
 `tests/test.sh`, the practice scenarios, the anchors' sources, the
 generator's parameters and a draw as large as the verifier's, every file of
-the snapshot (the files git tracks: an untracked swap file or a gitignored
-`surfnet.json` never counts), `GRADER_VERSION` and `tests/anchor.digest`.
+the snapshot (the files git lists, added or not: a gitignored `surfnet.json`
+never counts), `GRADER_VERSION` and `tests/anchor.digest`.
 
 It hashes the engine's behaviour, not its source. Most engine PRs (a new
 venue, a test, a comment, a refactor) leave every task as it was, and a
@@ -263,27 +262,31 @@ fixed public draw, without wall times, compute units and signatures: exactly
 the fields the identity proof below ignores. An engine, kit or dependency
 change that alters what the anchors do moves it, and so the fingerprint.
 
-- CI's `anchor-digests` job runs on every change under `crates/`,
-  `Cargo.lock` or `rust-toolchain`, plays the anchors again and fails if a
-  digest differs from the committed one. That is the signal that the change
-  altered a task's behaviour: **bump `GRADER_VERSION`**
-  (`crates/grader/src/versions.rs`) and run `mtx task sync --anchors`.
-  The rule: `GRADER_VERSION` is bumped whenever an identity proof differs, and
-  for engine changes only bots meet (a guard's rule, a disqualification) that
-  the anchors don't show.
-- `mtx task sync` writes the digest when the anchors' inputs (their sources,
-  the snapshot, the family's parameters, the draw's settings) changed since it
-  was written, and with `--anchors` always. It plays sessions: Linux, as root,
-  `just` and Surfpool installed, the references built (`just --justfile
-  bench/tasks/<task>/reference/Justfile build`). `mtx task anchor-digest
-  [task] [--check]` plays them without writing.
+- CI's `anchor-digests` job builds the anchors and plays them again for every
+  task, on a change under `crates/` or `snapshots/`, to `Cargo.lock` or
+  `rust-toolchain`, and for a task whose own folder changed. It fails if a
+  digest differs from the committed one, or is `pending` (the log then shows
+  the file to commit). That is the signal that the change altered a task's
+  behaviour: run `mtx task sync --anchors`. The digest is in that task's
+  fingerprint, so only that task's fingerprint moves.
+- **`GRADER_VERSION`** (`crates/grader/src/versions.rs`) is bumped only for an
+  engine change the digests can't see (a guard's rule, a disqualification, a
+  cost only a bot meets), never because a digest differs: it moves every
+  task's fingerprint.
+- `mtx task sync` keeps a digest whose inputs (the anchors' sources, the
+  snapshot, the family's parameters, the draw's settings) are unchanged and
+  otherwise writes `pending` with a warning, so it works on a Mac and before
+  the references are built; the READMEs' tables, `solution/` and the
+  fingerprint are written either way. `mtx task sync --anchors` builds the
+  anchors (`just --justfile bench/tasks/<task>/reference/Justfile build`) and
+  plays the sessions, always: Linux, as root, `just` and Surfpool installed.
+  `mtx task anchor-digest [task] [--check]` plays them without writing.
 - `mtx task sync` also writes the fingerprint to `tests/task.fingerprint` (the
-  verifier reads it from `/tests`); `mtx task check` and CI fail when either
-  file is stale. After editing anything above, run `mtx task sync` and commit
-  both files. `mtx task fingerprint` and `sync` refuse when the running `mtx`
-  was built from other engine source than the checkout's (the family
-  parameters and `GRADER_VERSION` come from the binary): rebuild, or pass
-  `--allow-stale-binary`.
+  verifier reads it from `/tests`); `mtx task check` fails when either file is
+  stale or a digest is `pending`, and the "lists are current" test does too.
+  After editing anything above, run `mtx task sync` (`--anchors` on Linux) and
+  commit both files. The family parameters and `GRADER_VERSION` come from the
+  running `mtx`, so use one built from the checkout.
 
 When a scoring constant changes, bump `CODE_VERSION` (v2) or `V1_CODE_VERSION`
 and re-pin the spec hash test. `bench publish`, `review`, `compare` and

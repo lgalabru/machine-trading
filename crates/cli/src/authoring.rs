@@ -1839,6 +1839,15 @@ mod tests {
         assert_eq!(scoring, "todo");
         assert!(detail.contains("stale"), "{detail}");
         tasks::sync(&root).unwrap();
+        // A sync that can't play the anchors leaves the digest pending, and
+        // says so; `mtx task check` and CI refuse it.
+        assert!(
+            tasks::pending_digests(&root)
+                .unwrap()
+                .contains(&name.to_string())
+        );
+        assert!(read(&task.join("tests/anchor.digest")).contains("digest: pending"));
+        assert!(read(&task.join("tests/task.fingerprint")).trim().len() == 64);
         assert!(read(&task.join("instruction.md")).contains("**Losses count 2 times.**"));
         assert!(read(&task.join("environment/Dockerfile")).contains(
             "ENV MTX_PRACTICE_SCORING=\"--scoring v2-headline --loss-weight 2 --v2-sessions\""

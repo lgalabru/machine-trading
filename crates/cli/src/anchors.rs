@@ -12,15 +12,19 @@
 //! inputs: an engine, kit or dependency change that alters what the anchors
 //! do moves it, and so moves the fingerprint; one that doesn't, doesn't.
 //!
-//! - `mtx task sync` writes it when the anchors' inputs changed, and with
-//!   `--anchors` always (it plays the sessions: Linux, the references built,
-//!   `just` and Surfpool installed, as the verifier has them);
+//! - `mtx task sync --anchors` builds the anchors and plays the sessions
+//!   (Linux, `just` and Surfpool installed, as the verifier has them) and
+//!   writes it. Plain `mtx task sync` keeps a digest whose inputs are
+//!   unchanged and otherwise writes `pending`;
 //! - `mtx task check` fails when the anchors' inputs changed since it was
-//!   written (the `inputs` line);
+//!   written (the `inputs` line) and on a `pending` digest;
 //! - `mtx task anchor-digest --check`, which CI runs on every change to
-//!   `crates/`, `Cargo.lock` or `rust-toolchain`, plays the sessions again
-//!   and fails if the digest differs: the engine changed what the task does.
-//!   Then bump `GRADER_VERSION` and run `mtx task sync --anchors`.
+//!   `crates/`, `Cargo.lock`, `rust-toolchain` or `snapshots/`, and on a
+//!   task's own changes, plays the sessions again. It fails on a `pending`
+//!   digest (printing the one to commit) and when the digest differs: the
+//!   engine changed what the task does. Then run `mtx task sync --anchors`
+//!   (its fingerprint moves with it; bump `GRADER_VERSION` only for changes
+//!   the digests can't see).
 
 use std::{
     io::Read,
@@ -66,8 +70,8 @@ impl Digest {
              # ({SESSIONS} sessions of the task's family): the SHA-256 of their results,\n\
              # without wall times, compute units and signatures. CI recomputes it when\n\
              # the engine changes (`mtx task anchor-digest --check`); a difference\n\
-             # means the engine changed what this task does: bump GRADER_VERSION and\n\
-             # run `mtx task sync --anchors`.\n\
+             # means the engine changed what this task does: run\n\
+             # `mtx task sync --anchors` and commit the result.\n\
              format: {FORMAT}\n\
              anchors: {}\n\
              inputs: {}\n\
@@ -93,6 +97,11 @@ impl Digest {
             digest: field("digest")?,
             informed: field("anchors")?.starts_with(REFERENCE_AND_INFORMED),
         })
+    }
+
+    /// Not played yet: the file says so instead of a digest.
+    pub fn is_pending(&self) -> bool {
+        self.digest.starts_with("pending")
     }
 
     /// What the file holds for a task whose digest hasn't been played yet.
@@ -184,15 +193,24 @@ impl Meta {
     }
 }
 
-/// Play the sessions and digest them. Needs what the verifier has: the
-/// references built (`just --justfile bench/tasks/<task>/reference/Justfile
-/// build`), `just`, Surfpool, and Linux (a process bot runs as its own user).
-/// The graded bot is the reference itself: only the anchors' sessions count.
+/// Build the anchors and play the sessions, then digest them. Needs what the
+/// verifier has: `just`, the wasm target, Surfpool, and Linux (a process bot
+/// runs as its own user). The graded bot is the reference itself: only the
+/// anchors' sessions count. The anchors are built here, never taken from a
+/// `bin/bot` already on disk, which may be older than its sources.
 pub fn compute(root: &Path, task: &str) -> Result<Digest> {
     let read = |p: &Path| std::fs::read(root.join(p)).ok();
     let (inputs, informed) = inputs(root, task, &read)?;
     let meta = Meta::of(root, task, &read)?;
     let folder = root.join("bench/tasks").join(task);
+
+    let mut built = vec![folder.join("reference")];
+    if let Some(informed) = &meta.informed {
+        built.push(root.join(informed));
+    }
+    for dir in &built {
+        build_anchor(dir)?;
+    }
 
     let work = std::env::temp_dir().join(format!("mtx-anchors-{}", uuid::Uuid::new_v4().simple()));
     let result = play(root, &folder, &meta, &work);
@@ -203,6 +221,21 @@ pub fn compute(root: &Path, task: &str) -> Result<Digest> {
         digest: digest.with_context(|| format!("{task}: anchor digest"))?,
         informed,
     })
+}
+
+/// `just build` in an anchor's folder: its `bot.wasm` and `bin/bot`.
+fn build_anchor(dir: &Path) -> Result<()> {
+    let status = Command::new("just")
+        .arg("--justfile")
+        .arg(dir.join("Justfile"))
+        .arg("build")
+        .stdout(std::process::Stdio::null())
+        .status()
+        .context("running `just build` (is `just` installed?)")?;
+    if !status.success() {
+        bail!("`just build` failed in {} ({status})", dir.display());
+    }
+    Ok(())
 }
 
 /// An anchor as the image ships it: the Justfile and the built process.
@@ -316,26 +349,51 @@ pub fn write(root: &Path, task: &str, digest: &Digest) -> Result<()> {
 }
 
 /// `mtx task anchor-digest --check`: play the sessions and compare with the
-/// committed digest. Returns the tasks whose digest differs, with why.
+/// committed digest. Returns why the task fails, if it does.
 pub fn check(root: &Path, task: &str) -> Result<Option<String>> {
     let read = |p: &Path| std::fs::read(root.join(p)).ok();
     let (now, _) = inputs(root, task, &read)?;
-    let Some(committed) = committed(root, task) else {
+    judge(task, committed(root, task), &now, || compute(root, task))
+}
+
+/// The verdict on a committed digest, given the inputs now and a way to play
+/// the sessions (only asked for when the file isn't already out of date).
+fn judge(
+    task: &str,
+    committed: Option<Digest>,
+    now: &str,
+    play: impl FnOnce() -> Result<Digest>,
+) -> Result<Option<String>> {
+    let Some(committed) = committed else {
         return Ok(Some(format!(
             "{task}: no {DIGEST_FILE}: run `mtx task sync --anchors`"
         )));
     };
-    if committed.inputs != now {
+    if committed.is_pending() {
+        // Say what to commit, so nobody needs a Linux box of their own.
+        let played = play()?;
         return Ok(Some(format!(
-            "{task}: {DIGEST_FILE} was written for other anchors, snapshot or draw settings: run `mtx task sync`"
+            "{task}: {DIGEST_FILE} is pending: its anchors were never played. Run `mtx task \
+             sync --anchors` on Linux, or commit this as bench/tasks/{task}/{DIGEST_FILE} (then \
+             `mtx task sync` for the fingerprint):\n{}",
+            Digest {
+                inputs: now.to_string(),
+                ..played
+            }
+            .text()
         )));
     }
-    let played = compute(root, task)?;
+    if committed.inputs != now {
+        return Ok(Some(format!(
+            "{task}: {DIGEST_FILE} was written for other anchors, snapshot or draw settings: run `mtx task sync --anchors`"
+        )));
+    }
+    let played = play()?;
     if played.digest != committed.digest {
         return Ok(Some(format!(
             "{task}: the anchors play differently: digest {} was {}. An engine, kit or dependency \
-             change altered what this task does. Bump GRADER_VERSION (crates/grader/src/versions.rs) \
-             and run `mtx task sync --anchors`",
+             change altered what this task does. Run `mtx task sync --anchors` and commit the \
+             digest (it moves this task's fingerprint only)",
             short(&played.digest),
             short(&committed.digest)
         )));
@@ -371,7 +429,71 @@ mod tests {
     #[test]
     fn a_pending_file_never_matches_a_played_digest() {
         let pending = Digest::pending("aa", false);
-        assert!(pending.digest.starts_with("pending"));
+        assert!(pending.is_pending());
         assert_ne!(pending.digest.len(), 64);
+        let parsed = Digest::parse(&pending.text()).unwrap();
+        assert!(parsed.is_pending());
+        let played = Digest {
+            digest: "ab".repeat(32),
+            ..pending
+        };
+        assert!(!Digest::parse(&played.text()).unwrap().is_pending());
+    }
+
+    fn played(digest: &str) -> Result<Digest> {
+        Ok(Digest {
+            inputs: "ignored".into(),
+            digest: digest.into(),
+            informed: false,
+        })
+    }
+
+    #[test]
+    fn the_check_refuses_a_pending_digest_and_prints_the_one_to_commit() {
+        let pending = Digest::pending("aa", false);
+        let why = judge("t", Some(pending), "aa", || played("cc")).unwrap();
+        let why = why.expect("a pending digest fails");
+        assert!(why.contains("pending"), "{why}");
+        assert!(!why.contains("GRADER_VERSION"), "{why}");
+        let printed = Digest::parse(why.split_once(":\n").unwrap().1).unwrap();
+        assert_eq!(
+            printed,
+            Digest {
+                inputs: "aa".into(),
+                digest: "cc".into(),
+                informed: false
+            }
+        );
+        assert!(
+            judge("t", None, "aa", || played("cc"))
+                .unwrap()
+                .unwrap()
+                .contains("no tests/anchor.digest")
+        );
+    }
+
+    #[test]
+    fn the_check_plays_only_a_digest_that_is_current() {
+        let file = |inputs: &str, digest: &str| Digest {
+            inputs: inputs.into(),
+            digest: digest.into(),
+            informed: false,
+        };
+        let never = || -> Result<Digest> { panic!("played a digest written for other inputs") };
+        assert!(
+            judge("t", Some(file("old", "cc")), "aa", never)
+                .unwrap()
+                .unwrap()
+                .contains("other anchors")
+        );
+        assert_eq!(
+            judge("t", Some(file("aa", "cc")), "aa", || played("cc")).unwrap(),
+            None
+        );
+        let why = judge("t", Some(file("aa", "cc")), "aa", || played("dd"))
+            .unwrap()
+            .unwrap();
+        assert!(why.contains("play differently"), "{why}");
+        assert!(!why.contains("GRADER_VERSION"), "{why}");
     }
 }
