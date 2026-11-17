@@ -16,7 +16,10 @@
 //! [`CloseOut`](crate::orders::CloseOut) any position left in its market;
 //! both price the close at the scenario's own level, which no bot can push.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashSet},
+    sync::Arc,
+};
 
 use async_trait::async_trait;
 use mtx_core::{
@@ -28,7 +31,9 @@ use mtx_kit::{
     BotEnv, Side,
     chain::RpcChainClient,
     phoenix_rise::{ix::PhoenixInstruction, types::exchange::ExchangeMarketConfig},
-    protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixExchange},
+    protocols::phoenix::eternal::{
+        PerpOrderPlaced, PhoenixEternalMeter, PhoenixExchange, PhoenixMarket,
+    },
 };
 use serde::{Deserialize, Serialize};
 use solana_keypair::Keypair;
@@ -48,6 +53,7 @@ use crate::{
     guard::Guard,
     keeper::{KeeperSetup, LiquidationKeeper},
     making::{MakingFill, Parties, TAKER_ACCOUNTS, book_at, level_at},
+    obligations::{ObligationReport, Obligations, Quoting},
     orders::{CloseOutReport, NetReport, OrderReport},
     phoenix::{self, Phoenix},
     risk::{CloseOrder, Closing, MAX_CLOSE_ORDERS_PER_STEP, is_flat},
@@ -648,9 +654,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let mut account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
+        exchange: world.exchange.clone(),
         bot: bot.pubkey(),
         meter,
         rpc_url: internal.url().to_string(),
+        http: reqwest::Client::new(),
         universe,
         markets,
         primary,
@@ -664,12 +672,22 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }),
         making_fills: making_session.then(|| MakingFills {
             bot: bot_trader,
+            traders: vec![bot_trader],
             parties,
             last_scan: base_slot,
             seen: HashSet::new(),
             fills: Vec::new(),
             keys: Vec::new(),
         }),
+        quotes: match scenario.making.as_ref().and_then(|m| m.obligations) {
+            Some(obligations) => Some(QuoteSampler::new(
+                obligations,
+                &world.exchange,
+                &scenario.symbol,
+                internal.url(),
+            )?),
+            None => None,
+        },
         oracle_starts,
         peak_value_usd: start_value_usd,
         max_drawdown_usd: 0.0,
@@ -1037,7 +1055,13 @@ struct PerpFills {
 
 /// A market-making session's record of the bot's fills.
 struct MakingFills {
+    /// The bot's cross-margin trader account, whose orders the quoting
+    /// samples follow.
     bot: Pubkey,
+    /// Every trader account the bot's authority holds (its cross-margin one
+    /// first, then any subaccount it registered): a fill of any is the
+    /// bot's, so a position opened in a subaccount is judged like any other.
+    traders: Vec<Pubkey>,
     parties: Parties,
     /// The slot fills were last read at, read the way [`PerpFills`] reads.
     last_scan: u64,
@@ -1047,15 +1071,177 @@ struct MakingFills {
     keys: Vec<(u128, bool)>,
 }
 
+/// A market-making session's samples of what the bot quotes, for its
+/// obligations (see [`crate::obligations`]), read from Phoenix's order
+/// book after each of its turns.
+///
+/// The book names each order's trader by Phoenix's trader id, not its
+/// account, so the sampler keeps what every trader on the book quoted until
+/// it finds the bot's id: the trader of an order resting where only the
+/// bot's market events say it placed one (the same side, price and slot).
+/// The id never changes, so a sample taken before it is found reads the
+/// same once it is.
+struct QuoteSampler {
+    obligations: Obligations,
+    orderbook: Pubkey,
+    market: PhoenixMarket,
+    chain: RpcChainClient,
+    /// Each sample: what each trader id on the book quoted (only the bot's,
+    /// once its id is known).
+    samples: Vec<BTreeMap<u32, Quoting>>,
+    bot_id: Option<u32>,
+    /// Until then: the trader ids seen resting each order, by its side
+    /// (bid or not), price in ticks and the slot it was placed in.
+    resting: BTreeMap<(bool, u64, u64), BTreeSet<u32>>,
+}
+
+impl QuoteSampler {
+    fn new(
+        obligations: Obligations,
+        exchange: &mtx_kit::phoenix_rise::types::exchange::ExchangeResponse,
+        symbol: &str,
+        rpc_url: &str,
+    ) -> Result<Self> {
+        let exchange = PhoenixExchange::new(exchange.clone());
+        let config = exchange
+            .market_config(symbol)
+            .map_err(mtx_kit::Error::from)?;
+        let orderbook = config
+            .market_pubkey
+            .parse()
+            .map_err(|_| Error::InvalidExchangeKey(config.market_pubkey.clone()))?;
+        Ok(Self {
+            obligations,
+            orderbook,
+            market: exchange.market(symbol).map_err(mtx_kit::Error::from)?,
+            chain: RpcChainClient::with_timeout(rpc_url, INTERNAL_RPC_TIMEOUT),
+            samples: Vec::new(),
+            bot_id: None,
+            resting: BTreeMap::new(),
+        })
+    }
+
+    /// Reads the book at `slot` and samples what each trader quotes,
+    /// against fair value `fair_usd`. Orders past their last valid slot
+    /// don't count: nothing can fill them.
+    async fn sample(&mut self, slot: u64, fair_usd: f64) -> Result<()> {
+        let failed = |reason: String| Error::Transaction {
+            label: "the order book".into(),
+            reason,
+        };
+        let account = patiently("the order book", || {
+            mtx_kit::chain::ChainClient::get_account(&self.chain, &self.orderbook)
+        })
+        .await
+        .map_err(|e| failed(e.to_string()))?
+        .ok_or_else(|| failed("the orderbook account is missing".into()))?;
+        let book = mtx_kit::phoenix_rise::accounts::owned::Orderbook::try_from_account_bytes(
+            &account.data,
+        )
+        .map_err(|e| failed(e.to_string()))?;
+        let mut quotes: BTreeMap<u32, (Quotes, Quotes)> = BTreeMap::new();
+        for (bid, entries) in [(true, &book.bids), (false, &book.asks)] {
+            for entry in entries {
+                let order = &entry.order;
+                let Some(id) = order.trader_position_id.trader_id else {
+                    continue;
+                };
+                if order.last_valid_slot.is_some_and(|last| last < slot)
+                    || self.bot_id.is_some_and(|bot| bot != id)
+                {
+                    continue;
+                }
+                let ticks = entry.order_id.price_in_ticks.as_inner();
+                if self.bot_id.is_none() {
+                    self.resting
+                        .entry((bid, ticks, order.initial_slot))
+                        .or_default()
+                        .insert(id);
+                }
+                let price = grader_f64(self.market.ticks_to_price(ticks));
+                let size = grader_f64(
+                    self.market
+                        .base_lots_to_quantity(order.num_base_lots_remaining as i64),
+                );
+                let (bids, asks) = quotes.entry(id).or_default();
+                if bid { bids } else { asks }.push((price, size));
+            }
+        }
+        self.samples.push(
+            quotes
+                .into_iter()
+                .map(|(id, (bids, asks))| (id, self.obligations.check(fair_usd, &bids, &asks)))
+                .collect(),
+        );
+        Ok(())
+    }
+
+    /// Learns the bot's trader id from the orders the market's events say
+    /// were placed (`placed`, every trader's), where one of the bot's
+    /// (`bot`) was seen resting and no other trader placed one at the same
+    /// side, price and slot.
+    fn learn(&mut self, placed: &[PerpOrderPlaced], bot: &Pubkey) {
+        if self.bot_id.is_some() {
+            return;
+        }
+        let key = |order: &PerpOrderPlaced| {
+            self.market
+                .price_to_ticks(order.price)
+                .ok()
+                .map(|ticks| (order.side == CoreSide::Buy, ticks, order.slot))
+        };
+        let others: HashSet<_> = placed
+            .iter()
+            .filter(|order| &order.trader != bot)
+            .filter_map(key)
+            .collect();
+        let found = placed
+            .iter()
+            .filter(|order| &order.trader == bot)
+            .filter_map(key)
+            .filter(|k| !others.contains(k))
+            .filter_map(|k| self.resting.get(&k))
+            .find(|ids| ids.len() == 1)
+            .and_then(|ids| ids.first().copied());
+        if let Some(id) = found {
+            self.bot_id = Some(id);
+            self.resting.clear();
+            for sample in &mut self.samples {
+                sample.retain(|trader, _| *trader == id);
+            }
+        }
+    }
+
+    /// The report for a session of `steps` steps.
+    fn report(&self, steps: u64) -> ObligationReport {
+        let samples: Vec<Quoting> = self
+            .samples
+            .iter()
+            .map(|sample| {
+                self.bot_id
+                    .and_then(|id| sample.get(&id).copied())
+                    .unwrap_or(Quoting::OneSided)
+            })
+            .collect();
+        ObligationReport::of(self.obligations, steps, &samples)
+    }
+}
+
+/// One side's resting orders: `(price, size)` in USD and base units.
+type Quotes = Vec<(f64, f64)>;
+
 /// A perp session's account: the bot's Phoenix trader account, metered on
 /// every market of the session.
 struct PerpAccount {
     scenario: Scenario,
     phoenix: Phoenix,
+    /// The exchange the account trades on, for the process bots' take gate.
+    exchange: mtx_kit::phoenix_rise::types::exchange::ExchangeResponse,
     bot: Pubkey,
     meter: PhoenixEternalMeter,
     /// The grader's own endpoint, for the risk desk's transactions.
     rpc_url: String,
+    http: reqwest::Client,
     universe: Vec<InstrumentId>,
     /// The session's markets, in symbol order, and which is the primary:
     /// the scenario's `symbol`, the one the report's one-market fields and
@@ -1075,6 +1261,8 @@ struct PerpAccount {
     fills: Option<PerpFills>,
     /// Its fills in a market-making session, with who traded against it.
     making_fills: Option<MakingFills>,
+    /// What it quotes, where the session has quoting obligations.
+    quotes: Option<QuoteSampler>,
     /// The account's value, sampled at the same cadence: its running peak,
     /// and the deepest it has fallen below it.
     peak_value_usd: f64,
@@ -1309,15 +1497,19 @@ impl PerpAccount {
         }
         let primary = self.own().scenario.instrument().to_string();
         if let Some(read) = self.making_fills.as_mut() {
-            let bot = read.bot;
+            let traders = &read.traders;
             let forced: HashSet<(u128, bool)> = records
                 .fills
                 .iter()
                 .filter(|fill| fill.instrument.to_string() == primary)
                 .flat_map(|fill| {
                     [
-                        (fill.taker == bot).then_some((fill.sequence, true)),
-                        (fill.maker == bot).then_some((fill.sequence, false)),
+                        traders
+                            .contains(&fill.taker)
+                            .then_some((fill.sequence, true)),
+                        traders
+                            .contains(&fill.maker)
+                            .then_some((fill.sequence, false)),
                     ]
                 })
                 .flatten()
@@ -1377,6 +1569,7 @@ impl PerpAccount {
         };
         let after = read.last_scan.saturating_sub(1);
         let records = patiently("the market's fills", || self.meter.market_records(after)).await?;
+        read.traders = patiently("the trader accounts", || self.meter.trader_accounts()).await?;
         // The record is the primary market's: a market's fill sequence is
         // its own, so another market's fills would collide in `seen`.
         for fill in records
@@ -1384,7 +1577,7 @@ impl PerpAccount {
             .iter()
             .filter(|f| f.instrument.to_string() == primary)
         {
-            for record in MakingFill::of(fill, &read.bot, &read.parties, self.base_slot) {
+            for record in MakingFill::of(fill, &read.traders, &read.parties, self.base_slot) {
                 // A trade between the bot's own accounts is two records.
                 let key = (fill.sequence, record.role == "taker");
                 if read.seen.insert(key) {
@@ -1392,6 +1585,9 @@ impl PerpAccount {
                     read.keys.push(key);
                 }
             }
+        }
+        if let Some(quotes) = self.quotes.as_mut() {
+            quotes.learn(&records.placed, &read.bot);
         }
         read.last_scan = slot;
         Ok(())
@@ -1578,6 +1774,45 @@ impl Account for PerpAccount {
 
     fn reads_fills(&self) -> bool {
         self.fills.is_some() || self.making_fills.is_some()
+    }
+
+    fn take_gate(&self) -> Option<Arc<crate::taking::TakeGate>> {
+        let allowance = self.mandate.allowance(&self.scenario.instrument())?;
+        crate::taking::TakeGate::new(
+            allowance,
+            self.exchange.clone(),
+            &self.scenario.symbol,
+            self.bot,
+            &self.rpc_url,
+        )
+        .map(Arc::new)
+    }
+
+    async fn net_touch(&self, _slot: u64) -> Result<Option<crate::taking::Touch>> {
+        let Some(allowance) = self.mandate.allowance(&self.scenario.instrument()) else {
+            return Ok(None);
+        };
+        if allowance.taking.is_none() {
+            return Ok(None);
+        }
+        Ok(crate::raw::touch_without(
+            &self.http,
+            &self.rpc_url,
+            &self.phoenix,
+            &self.scenario.symbol,
+            &self.bot,
+        )
+        .await
+        .inspect_err(|e| tracing::warn!("couldn't read the touch without the bot's orders: {e}"))
+        .unwrap_or(None))
+    }
+
+    async fn sample_quotes(&mut self, slot: u64) -> Result<()> {
+        let fair_usd = self.moment(slot.saturating_sub(self.base_slot)).level_usd;
+        match self.quotes.as_mut() {
+            Some(quotes) => quotes.sample(slot, fair_usd).await,
+            None => Ok(()),
+        }
     }
 
     fn moment(&self, at: u64) -> Moment {
@@ -1876,6 +2111,13 @@ impl Account for PerpAccount {
             .take()
             .map(|read| read.fills)
             .unwrap_or_default();
+        let obligations = self.quotes.as_ref().map(|quotes| {
+            quotes.report(
+                scenario
+                    .duration_slots
+                    .div_ceil(crate::session::SLOTS_PER_STEP),
+            )
+        });
         let settled = settle(
             scenario,
             &legs,
@@ -1975,6 +2217,7 @@ impl Account for PerpAccount {
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
             making_fills,
+            obligations,
             tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,

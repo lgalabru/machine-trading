@@ -112,6 +112,11 @@ impl PhoenixEternalMeter {
         self.trader
     }
 
+    /// Every trader account the owner holds now, the cross-margin one first.
+    pub async fn trader_accounts(&self) -> Result<Vec<Pubkey>, MeterError> {
+        traders(self.chain.as_ref(), &self.owner, self.trader).await
+    }
+
     /// The first market this meter measures, as the mandate names it.
     #[deprecated(note = "a meter may measure several markets: use `instruments`")]
     pub fn instrument(&self) -> &InstrumentId {
