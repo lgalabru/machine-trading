@@ -8,8 +8,8 @@
 //! - **The headline** prints at a slot drawn in a stated window: the level
 //!   jumps 1-4%, up or down with equal odds, in a few uneven steps a few
 //!   slots apart.
-//! - **The verdict** comes a drawn while after the jump, in one to three
-//!   quick steps: a follow-through carries the level on the jump's way by a
+//! - **The verdict** comes a drawn while after the jump, in one step: a
+//!   follow-through carries the level on the jump's way by a
 //!   share of the jump, a fade takes the same share back. The two are
 //!   equally likely and draw their share, delay and steps alike, so a
 //!   policy that rides (or fades) every headline nets its costs.
@@ -126,11 +126,11 @@ impl HeadlineFamily {
             step_gap_slots: (3, 8),
             verdict_delay_slots: (20, 260),
             verdict_share: (0.3, 0.8),
-            verdict_steps: (1, 3),
+            verdict_steps: (1, 1),
             fund_wallets: (2, 3),
             horizon_slots: (30, 90),
-            fund_edge_bps: 4.0,
-            fund_intensity: 15.0,
+            fund_edge_bps: 2.0,
+            fund_intensity: 30.0,
             fund_size: 40.0,
             noise_wallets: 4,
             noise_flow: 15.0,

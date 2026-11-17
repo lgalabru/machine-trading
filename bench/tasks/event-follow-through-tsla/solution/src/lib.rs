@@ -11,8 +11,8 @@
 //!   jump done.
 //! - **The record.** From then on, each account's change in position at a
 //!   step is a take, marked out against the oracle 30 slots later, in basis
-//!   points, the take's way. An account with five or more takes whose mean
-//!   markout is 2.5 standard errors above zero leads the price; one 2.5
+//!   points, the take's way. An account with six or more takes whose mean
+//!   markout is two standard errors above zero leads the price; one two
 //!   below lags it.
 //! - **The trade.** The leaders' net buying over the last 30 slots, less
 //!   the laggards', past 1.2 TSLA either way sets the side, with the cap.
@@ -49,8 +49,8 @@ pub const AFTER_VERDICT_SLOTS: u64 = 6;
 /// Slots a take is marked out over, the takes an account needs, and the
 /// standard errors its mean markout must clear.
 const MARKOUT_SLOTS: u64 = 30;
-const MIN_TAKES: u32 = 5;
-const MIN_T: f64 = 2.5;
+const MIN_TAKES: u32 = 6;
+const MIN_T: f64 = 2.0;
 
 /// The mid of the book, if it has both sides.
 pub fn mid(market: &Market) -> Option<f64> {
@@ -215,6 +215,14 @@ impl Headline {
             .iter()
             .find(|(s, _)| s + back >= at)
             .map_or(now, |(_, o)| *o)
+    }
+
+    /// The slots a flow is summed over at `at`: [`FLOW_SLOTS`], or fewer
+    /// since the jump was done (none before), so the jump's own flow never
+    /// counts.
+    pub fn flow_slots(&self, at: u64) -> u64 {
+        self.settled
+            .map_or(0, |(settled, _)| FLOW_SLOTS.min(at.saturating_sub(settled)))
     }
 
     pub fn update(&mut self, at: u64, oracle: f64) {
@@ -403,7 +411,7 @@ impl Strategy for Reference {
             if known > 0 {
                 let net: f64 = self
                     .watch
-                    .changes(FLOW_SLOTS)
+                    .changes(self.headline.flow_slots(at))
                     .iter()
                     .zip(&weights)
                     .map(|(c, w)| c * w)

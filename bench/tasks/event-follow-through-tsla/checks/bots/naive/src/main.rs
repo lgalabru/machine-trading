@@ -97,7 +97,7 @@ impl Strategy for Naive {
                     let net: f64 = self
                         .watch
                         .as_ref()
-                        .map_or(0.0, |w| w.changes(FLOW_SLOTS).iter().sum());
+                        .map_or(0.0, |w| w.changes(self.headline.flow_slots(at)).iter().sum());
                     if net.abs() >= 2.0 * FLOW_UNITS {
                         self.hold.want(net.signum(), at);
                     }

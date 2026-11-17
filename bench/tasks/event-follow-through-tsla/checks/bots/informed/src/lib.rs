@@ -55,7 +55,11 @@ impl Strategy for Informed {
         self.watch.read(at)?;
         self.headline.update(at, market.oracle);
         if self.headline.settled.is_some() && self.headline.verdict.is_none() {
-            let net: f64 = self.watch.changes(FLOW_SLOTS).iter().sum();
+            let net: f64 = self
+                .watch
+                .changes(self.headline.flow_slots(at))
+                .iter()
+                .sum();
             if let Some(dir) = flow_side(net) {
                 self.hold.want(dir, at);
             }
