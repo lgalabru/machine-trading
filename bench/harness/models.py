@@ -243,6 +243,7 @@ LOCAL_URL = re.compile(
 
 
 def fetch_flags(text: str) -> list[str]:
+    text = re.sub(r"\\[nrt]", " ", text).replace('\\"', '"')
     outside = bool(LOCAL_URL.search(text)) or "/dev/tcp/" in text
     return [
         name
