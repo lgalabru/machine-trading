@@ -691,6 +691,25 @@ mod tests {
         }
     }
 
+    /// The image builds a task's anchors as components exactly when its
+    /// task.toml asks, and anchors.txt says so on each of its lines.
+    #[test]
+    fn component_anchors_are_marked_and_only_theirs() {
+        let root = crate::authoring::repo_root();
+        let listed = std::fs::read_to_string(root.join("bench/image/anchors.txt")).unwrap();
+        let tasks = load(&root).unwrap();
+        assert!(tasks.iter().any(|t| t.mtx.component_anchors));
+        for task in &tasks {
+            let prefix = format!("{} ", task.mtx.anchor());
+            let line = listed.lines().find(|l| l.starts_with(&prefix)).unwrap();
+            assert_eq!(
+                line.ends_with(" component"),
+                task.mtx.component_anchors,
+                "{line}"
+            );
+        }
+    }
+
     #[test]
     fn a_shared_generator_needs_its_own_anchor() {
         let dir = std::env::temp_dir().join(format!("mtx-tasks-{}", uuid::Uuid::new_v4().simple()));
