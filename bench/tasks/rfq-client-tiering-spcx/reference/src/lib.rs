@@ -2,39 +2,39 @@
 //! and declines the clients it has found informed.
 //!
 //! A client takes a quote no worse than its value by its reach:
-//! `tolerance_bps` for one trade size (0.021 SPCX), times the square root
-//! of the size in trade sizes. An uninformed client values SPCX at the
+//! `tolerance_bps` for one lot (0.25 SPCX), times the square root of the
+//! size in lots. An uninformed client values SPCX at the
 //! level, which Phoenix's index shows to the cent; an informed one at where
 //! the level is going, and asks the way it is going.
 //!
-//! - **Reach.** The family's tolerance is 0.2 to 0.5 bp; the desk narrows
+//! - **Reach.** The family's tolerance is 0.8 to 1.6 bp; the desk narrows
 //!   it from its own answers: a declined quote was past the reach, a taken
 //!   one (from a client not flagged) within it.
 //! - **Hit ratio on wide quotes.** Each client's first request is answered
-//!   for one trade size, just past the widest reach the family allows. No uninformed client takes that; an informed one does when its
+//!   for a fifth of a lot, just past the widest reach the family allows. No uninformed client takes that; an informed one does when its
 //!   view is worth more than the gap. A client that takes one is flagged.
 //! - **Markouts.** Every request of a client, answered or not, is marked
-//!   against the index a minute later, signed by its side; a client whose
+//!   against the index 80 slots later, signed by its side; a client whose
 //!   record says informed is flagged too.
 //! - **Flow.** A flagged client's request says which way SPCX is going: for
-//!   a minute after it, the desk doesn't sell to a buyer (or buy from a
+//!   60 slots after it, the desk doesn't sell to a buyer (or buy from a
 //!   seller) on its side.
-//! - **Inventory.** No answer takes the desk's SPCX more than 1 SPCX from
+//! - **Inventory.** No answer takes the desk's SPCX more than 16 SPCX from
 //!   where it started.
 
 use std::collections::{HashMap, HashSet};
 
 use mtx_kit::{LineOptions, Rfq, prelude::*};
 
-/// One trade size, in SPCX: a request's size over it is its size in trade
-/// sizes.
-pub const TRADE_SIZE: f64 = 0.021;
-/// The family's tolerance, bp for one trade size.
-pub const TOLERANCE: (f64, f64) = (0.2, 0.5);
-/// How far inside the reach a quote sits: the index is the level to a cent.
-pub const EPS_BP: f64 = 0.4;
+/// One lot, in SPCX: a request's size over it is its size in lots.
+pub const TRADE_SIZE: f64 = 0.25;
+/// The family's tolerance, bp for one lot.
+pub const TOLERANCE: (f64, f64) = (0.8, 1.6);
+/// How far inside the reach a quote sits: the index is the level to a cent,
+/// and about half a bp off it besides.
+pub const EPS_BP: f64 = 1.0;
 /// The most the desk's SPCX may move from its start, in SPCX.
-pub const SOFT: f64 = 1.0;
+pub const SOFT: f64 = 16.0;
 
 /// A request as the desk saw it.
 #[derive(Debug, Clone)]
@@ -43,7 +43,7 @@ pub struct Ask {
     pub client: String,
     /// +1: the client buys.
     pub sign: f64,
-    /// Its size, in trade sizes.
+    /// Its size, in lots.
     pub n: f64,
     pub index: f64,
 }
@@ -123,7 +123,7 @@ pub fn client_of(id: &str) -> String {
     id.split('-').next().unwrap_or(id).to_string()
 }
 
-/// A reach, in bp, for `n` trade sizes at `tolerance`.
+/// A reach, in bp, for `n` lots at `tolerance`.
 pub fn reach_bp(tolerance: f64, n: f64) -> f64 {
     tolerance * n.max(0.0).sqrt()
 }
@@ -282,11 +282,13 @@ pub struct Reference {
 /// The reference's settings.
 const PROBES: u32 = 1;
 const PROBE_BP: f64 = 0.5;
-const MARKOUT_SLOTS: u64 = 60;
+/// The probe's size, in lots.
+const PROBE_LOTS: f64 = 0.2;
+const MARKOUT_SLOTS: u64 = 80;
 const PRIOR: f64 = 0.3;
 const FLAG: f64 = 0.7;
 const INFORMED_MARKOUT: f64 = 0.8;
-const SMALL_N: f64 = 4.0;
+const SMALL_N: f64 = 1.0;
 const NEED: usize = 2;
 const FOLLOW_SLOTS: u64 = 60;
 
@@ -357,8 +359,8 @@ impl Policy for Reference {
         if *probes < PROBES {
             *probes += 1;
             return Answer::Quote {
-                bp: TOLERANCE.1 + PROBE_BP,
-                size: Some(TRADE_SIZE),
+                bp: reach_bp(TOLERANCE.1, PROBE_LOTS) + PROBE_BP,
+                size: Some(PROBE_LOTS * TRADE_SIZE),
                 tag: Tag::Probe,
             };
         }

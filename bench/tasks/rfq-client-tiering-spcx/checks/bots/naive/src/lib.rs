@@ -7,7 +7,7 @@
 //! - `quote-all`: every request just inside its reach;
 //! - `quote-wide`: every request 3 bp past its reach;
 //! - `fixed-width`: every request at `MTX_WIDTH` bp, whatever its size;
-//! - `size-tier`: requests of at least `MTX_TIER_N` trade sizes inside their
+//! - `size-tier`: requests of at least `MTX_TIER_N` lots inside their
 //!   reach, smaller ones declined;
 //! - `side-skew`: every request inside its reach, unless the requests of the
 //!   last `MTX_WINDOW` slots lean `MTX_LEAN` or more to its side.
@@ -33,8 +33,8 @@ impl Policy for Naive {
     fn start(&mut self, session: &Session) {
         self.told = Told::read(session);
         self.rule = option_env!("MTX_NAIVE").unwrap_or("quote-all").to_string();
-        self.width = setting(option_env!("MTX_WIDTH"), 1.5);
-        self.tier_n = setting(option_env!("MTX_TIER_N"), 20.0);
+        self.width = setting(option_env!("MTX_WIDTH"), 2.0);
+        self.tier_n = setting(option_env!("MTX_TIER_N"), 5.0);
         self.window = setting(option_env!("MTX_WINDOW"), 80.0) as u64;
         self.lean = setting(option_env!("MTX_LEAN"), 0.1);
     }

@@ -43,23 +43,28 @@ BASE = dict(
     jump_log_sd=0.512,
     clients=(10, 16),
     share=(0.15, 0.45),
-    lead=(30, 90),
+    lead=(45, 120),
     corr=(0.6, 0.95),
     asks=(3, 10),
-    trade_size=0.021,
-    size_mult=20.0,  # median request, in trade sizes
+    trade_size=0.25,
+    size_mult=3.0,  # median request, in trade sizes
     size_sigma=0.5,
-    tol=(0.2, 0.5),  # bp for one trade size
+    tol=(0.8, 1.6),  # bp for one trade size
     cap=40.0,  # inventory bound, SPCX
-    soft=1.0,  # the skew: decline what takes |inventory| past this, SPCX
-    markout=60,  # slots, the reference's markout
+    soft=16.0,  # the skew: decline what takes |inventory| past this, SPCX
+    markout=80,  # slots, the reference's markout
     ref_prior=0.3,
     ref_flag=0.7,
+    ref_small=1.0,  # trade sizes the reference fills a client for until it has two requests on record
     ref_mu=0.8,  # an informed request's mean markout, in markout-horizon sds
     k=1.5,
-    eps=0.4,  # bp inside the reach: the index is the level to a cent (0.7 bp)
+    eps=1.0,  # bp inside the reach: the index is the level to a cent (0.7 bp)
+    # The index's offset from the level the clients value at, beyond rounding (FEASIBILITY_BATCH3 rank 1
+    # measured 0.48 bp sd same-step, rounding included).
+    index_noise_bp=0.45,
     probe_delta=0.5,  # bp past the widest reach the reference probes at
     probes=1,
+    probe_n=0.2,  # the probe's size, in trade sizes
     told_follow=True,
     ref_flow=None,
     ref_follow=60,  # slots: the reference reads its flagged clients' requests as the sign this long  # (window, lean): the reference also declines the side recent requests lean to
@@ -113,7 +118,7 @@ def draw(rng, p):
             n = p["size_mult"] * np.exp(p["size_sigma"] * rng.standard_normal())
             reqs.append((at, c, side, n))
     # Phoenix's index is the level in whole ticks (a cent): what the bot sees and the desk is valued at.
-    I = np.round(L, 2)
+    I = np.round(L * (1 + p["index_noise_bp"] / 1e4 * rng.standard_normal(len(L))), 2)
     return dict(D=D, L=L, I=I, N=N, informed=informed, corr=corr, tol=tol, lead=lead, reqs=reqs, s=k / N)
 
 
@@ -296,7 +301,8 @@ class Prober(Reference):
         if pr["count"].get(c, 0) < self.p["probes"]:
             pr["count"][c] = pr["count"].get(c, 0) + 1
             pr["sent"][(at, c)] = True
-            return (self.p["tol"][1] + self.p["probe_delta"], 1.0)
+            n = self.p["probe_n"]
+            return (self.p["tol"][1] * np.sqrt(n) + self.p["probe_delta"], n)
         quote = Reference.__call__(self, view, r)
         follow = self.p["ref_follow"]
         if quote is not None and follow:
@@ -349,7 +355,7 @@ def main():
         size_tier=st,
         side_skew=sk,
         markouts=Reference(p, prior=p["ref_prior"], flag=p["ref_flag"]),
-        reference=Prober(p, prior=p["ref_prior"], flag=p["ref_flag"]),
+        reference=Prober(p, prior=p["ref_prior"], flag=p["ref_flag"], small=p["ref_small"]),
         told=told,
     )
     careful = ["quote_all", "quote_wide", "fixed_width", "size_tier", "side_skew"]

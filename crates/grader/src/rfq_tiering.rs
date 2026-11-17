@@ -11,8 +11,10 @@
 //!   which ones drawn by the session's own seed) see the level `lead_slots`
 //!   ahead and ask the way it is going; the rest ask either way at random.
 //! - **The reach.** A client takes a quote no worse than its value by
-//!   `tolerance_bps` for one trade size, times the square root of the size in
-//!   trade sizes. Past it, it takes nothing.
+//!   `tolerance_bps` (0.8 to 1.6) for one lot of 0.25 SPCX, times the square
+//!   root of the size in lots: 1.4 to 2.8 bp on the median request, under
+//!   what crossing Phoenix's book costs (a 3.5 bp fee and the half-spread).
+//!   Past it, it takes nothing.
 //! - **The desk** starts with SPCX and USDC so it can sell first, and is
 //!   scored over the idle desk: what its starting SPCX would have made held
 //!   through the session is left out, so a desk that answers nothing scores
@@ -88,17 +90,18 @@ impl RfqTieringFamily {
             waypoint_slots: 4,
             clients: (10, 16),
             informed_share: (0.15, 0.45),
-            lead_slots: (30, 90),
+            lead_slots: (45, 120),
             correlation: (0.6, 0.95),
             asks_per_client: (3.0, 10.0),
-            tolerance_bps: (0.2, 0.5),
-            size_mult: 20.0,
+            tolerance_bps: (0.8, 1.6),
+            size_mult: 3.0,
             size_sigma: 0.5,
-            // SPCX's median Phoenix trade (calibration, 30 days to 2026-11-11).
-            trade_size: 0.021,
+            // The clients' lot: a quarter SPCX, about $36. A request is a few
+            // lots, about $100 at the median.
+            trade_size: 0.25,
             deadline_slots: 8,
             desk_base: 20.0,
-            desk_usdc: 3_000.0,
+            desk_usdc: 5_000.0,
             max_drawdown_usd: 400.0,
         }
     }
@@ -235,7 +238,7 @@ mod tests {
             assert_eq!(rfq.two_way_share, 0.0);
             assert!(rfq.over_idle_desk);
             assert!((10..=16).contains(&shape.clients));
-            assert!((30..=90).contains(&shape.lead_slots));
+            assert!((45..=120).contains(&shape.lead_slots));
         }
     }
 }
