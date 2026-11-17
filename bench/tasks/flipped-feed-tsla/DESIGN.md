@@ -149,9 +149,40 @@ sessions (36 mirrored pairs) drawn from a fresh secret never printed.
   model's. The model put post-move at 0.05 or below on TSLA, with 10 bp a
   call net, so the one rework moves the card there.
 
-### TSLA
+### TSLA (failed: retired)
 
-To come.
+| Rung | Total | Mean | v2-weighted share of informed |
+| --- | --- | --- | --- |
+| fade-all | -535 | -7.43 | -3.88 |
+| follow-all | -489 | -6.79 | -3.50 |
+| follow-first | -455 | -6.32 | -3.56 |
+| twap | -61 | -0.85 | -0.58 |
+| nop | 0 | 0 | 0 |
+| reference | 52 | 0.72 | 0.19 |
+| post-move | 57 | 0.79 | 0.03 |
+| informed | 248 | 3.45 | 1.00 |
+
+- Signal gate: informed / best non-reading (post-move) = 4.35 (need 2);
+  on 0.917 of bootstrapped sets.
+- Order on 0.479 of bootstrapped sets (need 0.85): post-move's raw total
+  still sits at the reference's, though v2 weighs its losses down to 0.03.
+- Strength band: reference 0.19 of informed, v2-weighted (need 0.2);
+  per-session Sharpe 0.23 (need 0.25).
+- Edge vs costs: informed nets 4.0 bp a call (11.0 calls a session,
+  median 9, none in 9 sessions); blind following or fading costs 7 to 9 bp
+  a call. The reference committed in 32 of 72 sessions.
+- Failed on the order, the band and the Sharpe. With the one rework
+  spent, the card retires.
+
+**Why.** On the engine the informed edge is about 12 to 14 bp gross a
+call, against the model's 18 to 19, so the net is 4 bp, not 8 to 10. The
+reference spends most sessions learning which gateway is which (it
+commits in under half), and what it earns after committing is a thin
+edge on the few calls left. Meanwhile a convention-free reader of the
+move after a call earns as much raw PnL, because the engine's moves keep
+going after a call fires. A feed card needs an edge per call several times
+the crossing cost (or maker-side expression) before the sign read can
+pay.
 
 ## Generations
 
@@ -159,3 +190,4 @@ To come.
   as memos; the reference commits in about a third of sessions; post-move
   is the binding rung on NVDA, not follow-all.
 - **Rework: TSLA** (the card's fallback), cap 2 TSLA, 4,800 slots.
+  Failed band, Sharpe and order; retired.
