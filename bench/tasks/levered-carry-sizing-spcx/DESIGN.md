@@ -6,6 +6,31 @@ card 8 of the batch-1 task cards (domain 5: risk, leverage and margin) and
 records its Gate 0. The calibration model and its runs are in
 `hidden/gate0/`.
 
+
+> **RETIRED (2026-11-17).** One rebuild per failed task, and this was its
+> rebuild. Under the informed-bot boundary (#104: told identity and process
+> facts only, never a session's draws), no told fact separates the 1 from a
+> strong reader:
+>
+> - On the engine (48 sessions from a public label, losses weighted 1.5x,
+>   per session), the process-only informed bot made +85 to +88. The pilot's
+>   model bots made +142 (Astra-2) and +146 (Sol-2) on the same sessions,
+>   and the reference made +56.
+> - Gate 0 would fail: about 1.1x the best non-reading rung (prem-scaled,
+>   +4,108 on a set of 50), against the 2x required.
+> - The filter reads the state well (average position before the flush 596
+>   shares in calm and 52 in stress, against 647 and 21 for a bot told the
+>   path). What it can't avoid is acting a few steps after a switch to
+>   stress, and a flush that lands within seconds of the switch. The told
+>   process facts (each state's volatility level, the discount level) add
+>   little over what a reader infers within a session; most of the models'
+>   lead is execution and flush handling, which no told fact supplies.
+>
+> The earlier 6.7x Gate 0 and 0.26 band used an informed bot told the state
+> path and the flush, both session draws, so they don't count. An
+> identity-carried edge (the crowd seated as a known account) would be a new
+> card, seeded fresh if wanted.
+
 ## Thesis
 
 A good bot profits here because it **sizes a funding carry to the index's
