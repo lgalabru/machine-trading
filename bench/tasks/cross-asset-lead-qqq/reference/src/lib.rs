@@ -408,7 +408,7 @@ impl Flow {
     /// Adds the latest pair of returns, `beta_lag` slots long, to the sums.
     fn learn_beta(&mut self, now: u64) {
         let lag = self.params.beta_lag;
-        if now < lag || now % lag != 0 {
+        if now < lag || !now.is_multiple_of(lag) {
             return;
         }
         let pair = |series: &VecDeque<(u64, f64)>| -> Option<f64> {
