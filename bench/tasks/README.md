@@ -11,6 +11,7 @@ copy of Solana mainnet, restored with
 | [`flash-crash-spcx`](flash-crash-spcx) | Phoenix SPCX perp | fades crashes and squeezes that revert, and survives the ones that don't |
 | [`funding-carry-spcx`](funding-carry-spcx) | Phoenix SPCX perp | earns the premium and Phoenix's funding when the crowd's positioning opened the gap, follows when the index follows, and reads the session's own noise |
 | [`market-making-spcx`](market-making-spcx) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |
+| [`smart-money-decay-nvda`](smart-money-decay-nvda) | TODO: venue and instrument (flash-crash-spcx base) | keeps a record of each wallet on the tape, follows the ones the price rewards, notices when a record turns, and tells flow that leads a move from flow that follows it |
 | [`weekend-gap-spcx`](weekend-gap-spcx) | Phoenix SPCX perp | reads which weekend flow knows where SPCX will open, and holds that gap into the reopen |
 <!-- mtx:tasks end -->
 

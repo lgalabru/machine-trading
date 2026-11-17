@@ -3,4 +3,6 @@
 flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
+smart-money-decay mtx-bot-smart-money-decay mtx-smart-money-decay bench/tasks/smart-money-decay-nvda/reference
+smart-money-decay-informed mtx-bot-smart-money-decay-informed mtx-smart-money-decay-informed bench/tasks/smart-money-decay-nvda/checks/bots/informed
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
