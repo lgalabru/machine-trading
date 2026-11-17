@@ -1462,7 +1462,10 @@ async fn run() -> Result<()> {
             // every grade of it signs the same; otherwise from a fresh one.
             #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut keys = SessionKeys::random();
-            let draw_family = draw.clone();
+            #[cfg(feature = "generate")]
+            let drawn_set = draw.is_some();
+            #[cfg(not(feature = "generate"))]
+            let drawn_set = false;
             #[cfg(feature = "generate")]
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
@@ -1502,7 +1505,7 @@ async fn run() -> Result<()> {
             if let Some(path) = &reward {
                 remove_if_present(path)?;
             }
-            keys = grade_keys(keys, draw_family.is_some(), v2_sessions);
+            keys = grade_keys(keys, drawn_set, v2_sessions);
             let options = |jobs: usize, anchor_jobs: usize| GradeOptions {
                 snapshot_dir: &sessions.snapshot,
                 bot_dir: &sessions.bot,
