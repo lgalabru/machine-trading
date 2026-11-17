@@ -138,7 +138,9 @@ impl Chaser {
 /// level `horizon_slots` ahead) until a slot drawn per session in
 /// `informed_for`, and from then on keeps trading one way at the same
 /// pace, on a view it draws at random and holds for `horizon_slots`: a
-/// record that looks informed, and then isn't.
+/// record that looks informed, and then isn't. With `after: contrary` it
+/// trades against what it sees ahead instead: a record that looks
+/// informed, and then loses as steadily as the informed win.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Decoy {
@@ -149,6 +151,9 @@ pub struct Decoy {
     /// The window its wallets stop seeing ahead in, in slots into the
     /// session.
     pub informed_for: Window,
+    /// How it trades once it has stopped seeing ahead.
+    #[serde(default, skip_serializing_if = "DecoyAfter::is_random")]
+    pub after: DecoyAfter,
     #[serde(default = "one")]
     pub intensity_mult: f64,
     #[serde(default = "one")]
@@ -176,6 +181,23 @@ impl Decoy {
         finite_positive("intensity_mult", self.intensity_mult)?;
         finite_positive("size_mult", self.size_mult)?;
         finite_positive("limit_bps", self.limit_bps)
+    }
+}
+
+/// How a decoy trades once it has stopped seeing ahead.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DecoyAfter {
+    /// On views it draws at random, each held `horizon_slots`.
+    #[default]
+    Random,
+    /// Against the move it sees `horizon_slots` ahead, past `edge_bps`.
+    Contrary,
+}
+
+impl DecoyAfter {
+    fn is_random(&self) -> bool {
+        *self == Self::Random
     }
 }
 
@@ -450,9 +472,12 @@ impl DecoyTrader {
     /// its view after.
     fn side(&mut self, wallet: usize, now: &Moment) -> Option<Side> {
         let horizon = self.spec.horizon_slots;
+        let ahead_bps = || ((self.path)(now.at + horizon).book_usd / now.book_usd - 1.0) * 10_000.0;
         if now.at < self.fades[wallet] {
-            let ahead = (self.path)(now.at + horizon).book_usd;
-            return side_of((ahead / now.book_usd - 1.0) * 10_000.0, self.spec.edge_bps);
+            return side_of(ahead_bps(), self.spec.edge_bps);
+        }
+        if self.spec.after == DecoyAfter::Contrary {
+            return side_of(-ahead_bps(), self.spec.edge_bps);
         }
         match self.views[wallet] {
             Some((side, until)) if now.at < until => Some(side),
@@ -616,6 +641,7 @@ mod tests {
                 from: 150,
                 until: Some(200),
             },
+            after: DecoyAfter::Random,
             intensity_mult: 1.0,
             size_mult: 1.0,
             limit_bps: 50.0,
@@ -645,5 +671,65 @@ mod tests {
         // Its view changes at most once a horizon.
         let changes = sides.windows(2).filter(|p| p[0].1 != p[1].1).count();
         assert!(changes <= (2_000 - 210) / 20, "{changes}");
+    }
+
+    #[tokio::test]
+    async fn a_contrary_decoy_trades_ahead_and_then_against_what_it_sees() {
+        let (book, log) = Book::new("c", 99.0, 101.0);
+        let (wallet, _) = wallet(book);
+        // Up 1% at slot 100, and again at slot 300.
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(|s| {
+            at(
+                s,
+                match s {
+                    0..100 => 100.0,
+                    100..300 => 101.0,
+                    _ => 102.0,
+                },
+            )
+        });
+        let spec = Decoy {
+            wallets: 1,
+            horizon_slots: 20,
+            edge_bps: 50.0,
+            informed_for: Window {
+                from: 150,
+                until: Some(151),
+            },
+            after: DecoyAfter::Contrary,
+            intensity_mult: 10.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+        };
+        let mut decoy = DecoyTrader::new(spec, scale(), vec![wallet], path, Rng::new([6; 32]));
+        let sides = |decoy_log: &std::sync::Mutex<Vec<String>>| {
+            let step = std::mem::take(&mut *decoy_log.lock().unwrap());
+            (
+                step.iter().filter(|l| l.contains("Bid")).count(),
+                step.iter().filter(|l| l.contains("Ask")).count(),
+            )
+        };
+        // Ahead of the first rise it buys.
+        decoy.before_blocks(&at(90, 100.0)).await;
+        let (buys, sells) = sides(&log);
+        assert!(buys > 0 && sells == 0);
+        // With nothing ahead it does nothing, then sells ahead of the
+        // second rise.
+        decoy.before_blocks(&at(200, 101.0)).await;
+        assert_eq!(sides(&log), (0, 0));
+        decoy.before_blocks(&at(290, 101.0)).await;
+        let (buys, sells) = sides(&log);
+        assert!(buys == 0 && sells > 0);
+        let spec: Decoy = serde_json::from_str(
+            r#"{"horizon_slots": 20, "edge_bps": 5.0, "informed_for": {"from": 1, "until": 2}, "after": "contrary"}"#,
+        )
+        .unwrap();
+        assert_eq!(spec.after, DecoyAfter::Contrary);
+        let plain: Decoy = serde_json::from_str(
+            r#"{"horizon_slots": 20, "edge_bps": 5.0, "informed_for": {"from": 1, "until": 2}}"#,
+        )
+        .unwrap();
+        assert_eq!(plain.after, DecoyAfter::Random);
+        assert!(!serde_json::to_string(&plain).unwrap().contains("after"));
     }
 }

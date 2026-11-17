@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
     error::Result,
+    headline::{HeadlineFamily, Shape as HeadlineShape},
     making::MakingFamily,
     scenario::{Scenario, Shape, ShockFamily},
     weekend::{WeekendFamily, WeekendShape},
@@ -84,6 +85,17 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "event-follow-through",
+        practice: |prefix, count, seed| HeadlineFamily::tsla().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| {
+            shaped(
+                HeadlineFamily::tsla().draw_set("hidden", count, seed),
+                tell,
+                headline_latent,
             )
         },
     },
@@ -243,6 +255,14 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
     })
 }
 
+/// Who the informed fund is: its wallets, through the roster. Both funds
+/// are seated in every session, at the same pace and sizes, whichever way
+/// the verdict goes. Not when the headline prints, which way it jumps,
+/// when the verdict comes or which way, or how far either fund sees.
+fn headline_latent(_: &HeadlineShape) -> Value {
+    json!({ "roster": ["informed"] })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,6 +372,11 @@ mod tests {
         for name in ["market-making", "market-making-v2"] {
             assert!(latent(name).iter().all(|l| l == "{}"), "{name}");
         }
+        assert!(
+            latent("event-follow-through")
+                .iter()
+                .all(|l| l == r#"{"roster":["informed"]}"#)
+        );
     }
 
     /// The check above would catch a draw handed over: a shock's direction

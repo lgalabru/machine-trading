@@ -70,7 +70,7 @@ pub use self::{
     rfq::{DeskReport, RfqBoard, RfqClients, RfqSeat, Settlement, SwapError, Swaps, Token},
     spoofer::Spoofer,
     stop_hunter::StopHunter,
-    traders::{Chaser, Decoy, Informed, Noise},
+    traders::{Chaser, Decoy, DecoyAfter, Informed, Noise},
 };
 use super::{Actor, ActorsReport, Moment, SendReader};
 use crate::venue::Seat;
