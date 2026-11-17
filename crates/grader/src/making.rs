@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
 
 use crate::{
+    obligations::Obligations,
     scenario::{Scenario, SplitMix64, VENUE, Waypoint, move_slots},
     session::{StaticName, static_name},
 };
@@ -70,6 +71,10 @@ pub struct MakingFill {
     /// the keeper's), which isn't the bot's own trading.
     #[serde(default, skip_serializing_if = "is_false")]
     pub forced: bool,
+    /// Whether the bot was on both sides of the match, which moves nothing
+    /// and takes nothing (both its records say so).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub self_match: bool,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -97,14 +102,15 @@ impl Parties {
 }
 
 impl MakingFill {
-    /// `fill` as the bot's trader account `bot` traded it, if it did: one
-    /// record for each side, so a match between the bot's own accounts is
-    /// two.
-    pub fn of(fill: &MarketFill, bot: &Pubkey, parties: &Parties, base_slot: u64) -> Vec<Self> {
+    /// `fill` as the bot's trader accounts `bots` (its cross-margin account
+    /// and any subaccount) traded it, if they did.
+    pub fn of(fill: &MarketFill, bots: &[Pubkey], parties: &Parties, base_slot: u64) -> Vec<Self> {
+        let (taker_is_bot, maker_is_bot) = (bots.contains(&fill.taker), bots.contains(&fill.maker));
         let price = crate::session::grader_f64(fill.price);
         let base = crate::session::grader_f64(fill.quantity);
         let at = fill.slot.saturating_sub(base_slot);
         let mut out = Vec::new();
+        let self_match = taker_is_bot && maker_is_bot;
         let mut push = |side, role, other: &Pubkey, fee| {
             out.push(Self {
                 at,
@@ -115,9 +121,10 @@ impl MakingFill {
                 base,
                 fee_usd: fee,
                 forced: false,
+                self_match,
             });
         };
-        if fill.taker == *bot {
+        if taker_is_bot {
             push(
                 fill.taker_side,
                 "taker",
@@ -125,7 +132,7 @@ impl MakingFill {
                 crate::session::grader_f64(fill.taker_fee),
             );
         }
-        if fill.maker == *bot {
+        if maker_is_bot {
             let side = match fill.taker_side {
                 Side::Buy => Side::Sell,
                 Side::Sell => Side::Buy,
@@ -151,6 +158,10 @@ pub struct Making {
     pub competition: Competition,
     /// The taker orders the grader sends, in slot order.
     pub takers: Vec<TakerOrder>,
+    /// Opt-in: the bot's quoting obligations, measured and reported (see
+    /// [`crate::obligations`]). Absent, nothing is measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obligations: Option<Obligations>,
     /// Where the snapshot's makers are widened to, in basis points from the
     /// mark, when it isn't `competitor_bps`: a book whose depth near the
     /// touch is the grader's maker alone, with the snapshot's deep curve
@@ -303,6 +314,9 @@ impl Making {
         }
         if let Some(reactive) = &c.reactive {
             reactive.validate()?;
+        }
+        if let Some(obligations) = &self.obligations {
+            obligations.validate()?;
         }
         let mut last = 0;
         for (i, order) in self.takers.iter().enumerate() {
@@ -708,6 +722,7 @@ impl MakingFamily {
                 competitor_bps,
                 competition,
                 takers,
+                obligations: None,
                 makers_bps: None,
             }),
             offhours: None,
@@ -732,6 +747,8 @@ impl MakingFamily {
             bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,
@@ -1071,6 +1088,7 @@ mod tests {
                     account: 1,
                 },
             ],
+            obligations: None,
             makers_bps: None,
         };
         let path = [Waypoint::at(5, 10.0)];
@@ -1091,6 +1109,7 @@ mod tests {
                 reactive: None,
             },
             takers: Vec::new(),
+            obligations: None,
             makers_bps,
         };
         assert_eq!(making(None).makers_bps(), 10.0);
@@ -1199,6 +1218,7 @@ mod tests {
             maker,
             taker_side: side,
             price: "123.45".parse().unwrap(),
+            worst_price: "123.45".parse().unwrap(),
             quantity: "2.5".parse().unwrap(),
             unix_timestamp: 0,
             taker_fee: "0.108".parse().unwrap(),
@@ -1218,7 +1238,12 @@ mod tests {
     fn a_resting_bot_hit_by_a_taker_records_a_maker_fill_with_its_fee() {
         let bot = account(1);
         // A taker buys: the bot, resting, sold.
-        let fills = MakingFill::of(&fill(account(11), bot, Side::Buy), &bot, &parties(), 1_000);
+        let fills = MakingFill::of(
+            &fill(account(11), bot, Side::Buy),
+            &[bot],
+            &parties(),
+            1_000,
+        );
         assert_eq!(
             fills,
             [MakingFill {
@@ -1230,10 +1255,16 @@ mod tests {
                 base: 2.5,
                 fee_usd: -0.01,
                 forced: false,
+                self_match: false,
             }]
         );
         // A taker sells: the bot bought.
-        let fills = MakingFill::of(&fill(account(10), bot, Side::Sell), &bot, &parties(), 1_000);
+        let fills = MakingFill::of(
+            &fill(account(10), bot, Side::Sell),
+            &[bot],
+            &parties(),
+            1_000,
+        );
         assert_eq!(fills[0].side, Side::Buy);
         assert_eq!(fills[0].role, "maker");
     }
@@ -1242,13 +1273,23 @@ mod tests {
     fn a_crossing_bot_records_a_taker_fill_with_its_share_of_the_trade_fee() {
         let bot = account(1);
         // Against the competitor's quote, then Phoenix's own makers.
-        let fills = MakingFill::of(&fill(bot, account(20), Side::Buy), &bot, &parties(), 1_000);
+        let fills = MakingFill::of(
+            &fill(bot, account(20), Side::Buy),
+            &[bot],
+            &parties(),
+            1_000,
+        );
         assert_eq!(fills.len(), 1);
         assert_eq!(fills[0].side, Side::Buy);
         assert_eq!(fills[0].role, "taker");
         assert_eq!(fills[0].counterparty, COMPETITOR);
         assert_eq!(fills[0].fee_usd, 0.108);
-        let fills = MakingFill::of(&fill(bot, account(99), Side::Sell), &bot, &parties(), 1_000);
+        let fills = MakingFill::of(
+            &fill(bot, account(99), Side::Sell),
+            &[bot],
+            &parties(),
+            1_000,
+        );
         assert_eq!(fills[0].side, Side::Sell);
         assert_eq!(fills[0].counterparty, BOOK);
     }
@@ -1257,15 +1298,42 @@ mod tests {
     fn other_accounts_fills_are_not_the_bots() {
         let bot = account(1);
         let others = fill(account(10), account(20), Side::Buy);
-        assert!(MakingFill::of(&others, &bot, &parties(), 0).is_empty());
+        assert!(MakingFill::of(&others, &[bot], &parties(), 0).is_empty());
     }
 
     #[test]
     fn a_fill_between_the_bots_own_accounts_counts_once_each_way() {
         let bot = account(1);
-        let fills = MakingFill::of(&fill(bot, bot, Side::Buy), &bot, &parties(), 0);
+        let fills = MakingFill::of(&fill(bot, bot, Side::Buy), &[bot], &parties(), 0);
         let roles: Vec<_> = fills.iter().map(|f| (f.role, f.side)).collect();
         assert_eq!(roles, [("taker", Side::Buy), ("maker", Side::Sell)]);
+        assert!(fills.iter().all(|f| f.self_match));
+        // A match against anyone else is no self-match.
+        let other = MakingFill::of(&fill(bot, account(20), Side::Buy), &[bot], &parties(), 0);
+        assert!(other.iter().all(|f| !f.self_match));
+    }
+
+    #[test]
+    fn a_subaccounts_fills_are_the_bots() {
+        let (main, sub) = (account(1), account(2));
+        let bots = [main, sub];
+        // The subaccount takes against the competitor: a taker fill.
+        let taken = MakingFill::of(&fill(sub, account(20), Side::Buy), &bots, &parties(), 0);
+        assert_eq!(taken.len(), 1);
+        assert_eq!(taken[0].role, "taker");
+        assert!(!taken[0].self_match);
+        // Resting in it, it is hit: a maker fill.
+        let hit = MakingFill::of(&fill(account(10), sub, Side::Sell), &bots, &parties(), 0);
+        assert_eq!(hit[0].role, "maker");
+        // Seen from the cross-margin account alone, neither is the bot's.
+        assert!(
+            MakingFill::of(&fill(sub, account(20), Side::Buy), &[main], &parties(), 0).is_empty()
+        );
+        // A match between its two accounts moves nothing: both records are
+        // self-matches.
+        let between = MakingFill::of(&fill(main, sub, Side::Buy), &bots, &parties(), 0);
+        assert_eq!(between.len(), 2);
+        assert!(between.iter().all(|f| f.self_match));
     }
 
     #[test]
@@ -1279,6 +1347,7 @@ mod tests {
             base: 1.0,
             fee_usd: 0.0,
             forced: false,
+            self_match: false,
         };
         let json = serde_json::to_string(&record).unwrap();
         assert_eq!(serde_json::from_str::<MakingFill>(&json).unwrap(), record);

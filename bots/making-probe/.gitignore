@@ -1,0 +1,5 @@
+/bot.wasm
+# The other probes `just build <probe>` builds.
+/one-sided/
+/taker/
+/crosser/

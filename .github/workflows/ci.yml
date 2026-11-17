@@ -125,6 +125,18 @@ jobs:
         # bench/checks/probes is outside the workspace: its format, lint and
         # tests, and the calibration's, run here.
         run: just probes-check
+      - name: The agent's mtx
+        # The agent image builds mtx with `--no-default-features` (no
+        # generators, no host-side commands): lint it and test it here, or it
+        # rots until a release image build.
+        run: |
+          cargo clippy -p mtx-cli --no-default-features --all-targets -- -D warnings
+          cargo test -p mtx-cli --no-default-features
+      - name: The informed bot's boundary
+        run: cargo test -p mtx-grader --features generators --test informed_boundary
+      - name: Bench harness
+        # `just bench` refuses a native harness on a guarded task.
+        run: python3 -I bench/harness/test_native_guard.py
       - name: mtx-kit, every feature
         # The workspace builds mtx-kit with the features its users ask for;
         # the rest (adapters no bot uses yet, test-util) only build here.
@@ -141,7 +153,7 @@ jobs:
         # sends land as its fee spike lets them.
         run: |
           rustup target add wasm32-wasip2
-          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-kamino-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust mtx-bot-keeper-race $(just --evaluate reference_packages); do
+          for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-kamino-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust mtx-bot-keeper-race mtx-bot-making-probe $(just --evaluate reference_packages); do
             cargo clippy -p "$package" --lib --target wasm32-wasip2 -- -D warnings
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
