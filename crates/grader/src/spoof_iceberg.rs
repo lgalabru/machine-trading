@@ -102,8 +102,6 @@ pub struct SpoofIcebergFamily {
     pub trades_per_minute: f64,
     pub trade_size: f64,
     pub trade_size_sigma: f64,
-    /// The market's base lot, in base units.
-    pub lot: f64,
     pub noise_wallets: (u64, u64),
     pub noise_mult: f64,
     pub noise_limit_bps: f64,
@@ -129,7 +127,7 @@ impl SpoofIcebergFamily {
             ramp_slots: (1, 2),
             waypoint_slots: 2,
             lead_slots: (30, 90),
-            distance_ticks: (6, 28),
+            distance_ticks: (8, 36),
             size_mult: (20.0, 80.0),
             cancel_ticks: (1, 3),
             parent_slices: (3.0, 8.0),
@@ -137,7 +135,6 @@ impl SpoofIcebergFamily {
             trades_per_minute: 1.408,
             trade_size: 0.05,
             trade_size_sigma: 0.705,
-            lot: 0.001,
             noise_wallets: (3, 5),
             noise_mult: 3.0,
             noise_limit_bps: 4.0,
@@ -200,15 +197,12 @@ impl SpoofIcebergFamily {
         let iceberg_lead = rng.range_u64(self.lead_slots);
         let spoofer_ticks = rng.range_u64(self.distance_ticks);
         let iceberg_ticks = rng.range_u64(self.distance_ticks);
-        // Whole lots, and a parent of whole slices: a remainder under a lot
-        // can't be shown, and the iceberg would try forever.
-        let lots = |mult: f64| (mult * self.trade_size / self.lot).round() * self.lot / self.trade_size;
-        let wall_mult = round3(lots(rng.range_f64(self.size_mult)));
-        let display_mult = round3(lots(rng.range_f64(self.size_mult)));
+        let wall_mult = round2(rng.range_f64(self.size_mult));
+        let display_mult = round2(rng.range_f64(self.size_mult));
         let cancel_ticks = rng
             .range_u64(self.cancel_ticks)
             .min(spoofer_ticks.saturating_sub(1));
-        let parent_mult = round3(display_mult * rng.range_f64(self.parent_slices).round());
+        let parent_mult = round2(display_mult * rng.range_f64(self.parent_slices));
         let tail = rng.range_u64(self.iceberg_tail);
         let (with, against) = if sign > 0.0 {
             ("bid", "ask")
@@ -408,11 +402,6 @@ mod tests {
             let spoof = serde_json::to_value(&actors.spoofers[0]).unwrap();
             let ice = serde_json::to_value(&actors.icebergs[0]).unwrap();
             let up = shape.move_pct > 0.0;
-            let slice = ice["display_mult"].as_f64().unwrap() * family.trade_size;
-            let parent = ice["parent_mult"].as_f64().unwrap() * family.trade_size;
-            let whole = |x: f64| (x / family.lot - (x / family.lot).round()).abs() < 1e-6;
-            let slices = parent / slice;
-            assert!(whole(slice) && (slices - slices.round()).abs() < 1e-6, "{slice} {parent}");
             assert_eq!(spoof["side"], if up { "ask" } else { "bid" });
             assert_eq!(ice["side"], if up { "bid" } else { "ask" });
             let at = |slot: u64| crate::making::level_at(&scenario.path, slot);

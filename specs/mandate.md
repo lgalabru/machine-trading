@@ -304,15 +304,17 @@ refuse a mandate that sets a v0.1 rule their session can't enforce:
 | 8. Exposure across several instruments | refused | refused | refused |
 | 8. Exposure as a fraction of its start | refused | refused | refused |
 | 9. Hedge | refused | refused | refused |
-| 10. Taking | refused | refused | refused |
+| 10. Taking | market making without a keeper; refused otherwise | refused | refused |
 
 A perp session prices its one market at the scenario's level (its book
 level where the session values the account at the book), not at Phoenix's
 mark. No session prices more than its own market at one measurement yet,
 so none can enforce a hedge or an exposure across instruments. Every
 session starts flat, so an exposure bounded by a fraction of its start
-would be bounded at zero. No session tells taker fills from maker fills
-yet. The grader's pre-trade gate on raw sends refuses a send that would
+would be bounded at zero. Only a market-making perp session without a liquidation keeper tells
+taker fills from maker fills, so only it may use `taking`; it also refuses,
+before they are sent, a strategy component's orders it can tell would break
+the rule (see `docs/scenario-format.md`). The grader's pre-trade gate on raw sends refuses a send that would
 break a position cap or the drawdown limit, but does not check rules 7 to
 9: a raw send that takes the account over a notional limit is let through,
 and the session is disqualified by the audit.

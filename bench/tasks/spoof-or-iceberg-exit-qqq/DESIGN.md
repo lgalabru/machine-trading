@@ -50,14 +50,14 @@ touch, each its own 30 to 90 slots ahead:
 | --- | --- | --- | --- |
 | Who owns a wall | the book's resting orders name their trader; the spoofer and the iceberg are fresh wallets every session | keeps each wall by owner | Phoenix's orderbook account (`getAccountInfo`), read every step |
 | Pulled on approach | the spoofer cancels once the touch is within 1 to 3 ticks of its wall | names that owner the spoofer; the other wall is then the iceberg | a wall gone, unfilled, with the touch a few ticks away |
-| Reloaded on a fill | the iceberg puts the same size back at the same price after any fill | names that owner the iceberg | a wall that shrank, or came back at its price at full size |
-| How often the book tests a wall | the walls stand 6 to 28 ticks behind the touch; the touch moves with the price and the makers' quotes | watches through the lead; acts when a test comes | the gap between each wall and the touch, step by step |
+| Reloaded on a fill | the iceberg puts a new slice back at the same price after any fill | names that owner the iceberg | a wall that shrank, or came back at its price |
+| How often the book tests a wall | the walls stand 8 to 36 ticks behind the touch; the touch moves with the price and the makers' quotes | watches through the lead; acts when a test comes | the gap between each wall and the touch, step by step |
 | The broker | sells what is left at the close's index less 5 to 15 bp | sells late only while the bid, less the fee, beats it | the session's vars |
 
 ## No tells
 
 - Both walls draw their lead (30 to 90 slots), their distance behind the
-  touch (6 to 28 ticks) and their size (1 to 4 QQQ, in whole lots) from one
+  touch (8 to 36 ticks) and their size (around 1 to 4 QQQ) from one
   range each; only the side differs, and the side is the jump's.
 - Up and down are mirrored with equal odds (stratified in a set), so every
   policy that ignores who owns a wall nets about the haircut less its costs.
@@ -108,7 +108,7 @@ bootstrapped 72-session sets. Walls 6 to 28 ticks out.
 ## The anchors (Gate 0 prototypes)
 
 - **The reference (0.5)** reads Phoenix's orderbook account every step and
-  follows the walls (orders of 0.5 QQQ or more within 150 ticks of the
+  follows the walls (orders of 0.25 QQQ or more within 150 ticks of the
   touch) by side and price. A wall gone unfilled with the touch within 10
   ticks was pulled: that side's owner is the spoofer. A wall that shrank,
   or came back at its price, reloaded: that side's owner is the iceberg.

@@ -9,8 +9,9 @@
 //!   price: one owner walls each side.
 //! - **Pulled or reloaded.** A wall that leaves the book unfilled while the
 //!   touch is within a few ticks of it was pulled on approach: its owner is
-//!   a spoofer. A wall that trades, or comes back at the same price at full
-//!   size after it went, reloaded: its owner is an iceberg. One of each
+//!   a spoofer. A wall that trades, or comes back at the same price after
+//!   it went, reloaded: its owner is an iceberg. A wall gone with the touch
+//!   far off says nothing: walls also expire and go up again. One of each
 //!   walls a session, one a side, so knowing one names the other.
 //! - **Acting on a known wall.** A spoofer's bid or an iceberg's ask says
 //!   the price is about to fall: it sells the rest at once. A spoofer's ask
@@ -29,8 +30,9 @@ use mtx_kit::{log, prelude::*, rpc_account, venue::PhoenixVenue};
 /// The taker fee, in basis points.
 pub const TAKER_FEE_BPS: f64 = 3.5;
 /// An order this large, in QQQ, and this near the touch, in ticks, is a
-/// wall: the book also holds old orders far from the price.
-pub const WALL_MIN: f64 = 0.5;
+/// wall: walls and slices are drawn around 1 to 4 QQQ, the refill's orders
+/// stay under 0.2, and the book also holds old orders far from the price.
+pub const WALL_MIN: f64 = 0.25;
 pub const WALL_TICKS: f64 = 150.0;
 /// A wall that leaves with the touch this many ticks from it or nearer
 /// was pulled on approach.
