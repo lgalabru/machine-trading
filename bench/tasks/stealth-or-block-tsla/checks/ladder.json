@@ -9,22 +9,25 @@
     "bots": [],
     "max_profitable": 0.75
   },
-  "family": "flash-crash",
+  "family": "stealth-or-block",
   "gates": {
     "informed": [
       "informed"
     ],
     "non_reading": [
       "nop",
-      "blind-long",
-      "blind-short"
+      "small-follow-all",
+      "follow-small",
+      "follow-large",
+      "follow-all",
+      "momentum"
     ]
   },
   "min_rule_odds": 0.85,
   "probes": {},
   "rules": [
-    "max(blind-long, blind-short) < reference",
-    "reference < informed < hindsight"
+    "max(nop, small-follow-all, follow-small, follow-large, follow-all, momentum) < reference",
+    "reference < informed"
   ],
   "rungs": [
     {
@@ -32,14 +35,39 @@
       "name": "nop"
     },
     {
-      "dir": "bench/checks/ladder/blind-long",
-      "may_breach": true,
-      "name": "blind-long"
+      "dir": "bench/tasks/stealth-or-block-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "small-follow-all"
+      },
+      "name": "small-follow-all"
     },
     {
-      "dir": "bench/checks/ladder/blind-short",
-      "may_breach": true,
-      "name": "blind-short"
+      "dir": "bench/tasks/stealth-or-block-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "follow-small"
+      },
+      "name": "follow-small"
+    },
+    {
+      "dir": "bench/tasks/stealth-or-block-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "follow-large"
+      },
+      "name": "follow-large"
+    },
+    {
+      "dir": "bench/tasks/stealth-or-block-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "follow-all"
+      },
+      "name": "follow-all"
+    },
+    {
+      "dir": "bench/tasks/stealth-or-block-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "momentum"
+      },
+      "name": "momentum"
     },
     {
       "dir": "bench/tasks/stealth-or-block-tsla/reference",

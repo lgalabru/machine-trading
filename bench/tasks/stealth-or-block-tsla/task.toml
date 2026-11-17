@@ -16,13 +16,13 @@ email = "ludo.galabru@solana.org"
 difficulty = "hard"
 category = "trading"
 # Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
-snapshot = "phoenix-spcx-2026-10-29"
+snapshot = "phoenix-perps-2026-11-13"
 
 [metadata.mtx]
-generator = "flash-crash"
+generator = "stealth-or-block"
 anchor = "stealth-or-block"
 emoji = "🆕"
-market = "TODO: venue and instrument (flash-crash-spcx base)"
+market = "Phoenix TSLA perp"
 summary = "tests the tape by trade size, finds the class whose flow the price follows, and follows only that class"
 skill = "tests the tape by trade size, finds the class whose flow the price follows, and follows only that class"
 leak_needles = []

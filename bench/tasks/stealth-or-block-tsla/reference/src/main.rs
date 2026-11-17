@@ -1,9 +1,17 @@
-//! The flash-crash reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
-//! run loop. The anchor hidden sets are scored against runs this way.
+//! The reference as a process bot, and the ladder's rungs: `MTX_NAIVE`
+//! picks the rung (the reference by default), and `MTX_FLOW_*` override its
+//! knobs for calibration.
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> mtx_kit::BotResult {
-    mtx_kit::run(mtx_bot_stealth_or_block::Reference::default())
+    use mtx_bot_stealth_or_block::{Flow, Mode};
+    let mode = std::env::var("MTX_NAIVE")
+        .ok()
+        .and_then(|m| Mode::parse(&m))
+        .unwrap_or(Mode::Reference);
+    let mut flow = Flow::new(mode);
+    flow.params.knobs(|name| std::env::var(format!("MTX_FLOW_{name}")).ok());
+    mtx_kit::run(flow)
 }
 
 // The component is the library: a wasm build has no process to run.

@@ -1,11 +1,9 @@
-//! The flash-crash reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
-//! run loop. The anchor hidden sets are scored against runs this way.
+//! The informed bot, scoring v2's 1: the reference's machinery, told the
+//! session's informed size class (`MTX_REGIME`'s `informed_class`) and
+//! nothing of its draws. It follows that class's net flow from the first
+//! take.
 
-#[cfg(not(target_arch = "wasm32"))]
 fn main() -> mtx_kit::BotResult {
-    mtx_kit::run(mtx_bot_stealth_or_block_informed::Reference::default())
+    use mtx_bot_stealth_or_block::{Flow, Mode};
+    mtx_kit::run(Flow::new(Mode::Informed))
 }
-
-// The component is the library: a wasm build has no process to run.
-#[cfg(target_arch = "wasm32")]
-fn main() {}

@@ -1,0 +1,16 @@
+# The ladder's rungs that don't read wallets, and the naive reader, one
+# process picked by MTX_NAIVE (the ladder sets it per rung).
+[package]
+name = "mtx-bot-stealth-or-block-naive"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-stealth-or-block-naive"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-stealth-or-block = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }

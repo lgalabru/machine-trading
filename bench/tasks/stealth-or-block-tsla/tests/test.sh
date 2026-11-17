@@ -6,9 +6,6 @@
 # and writes the reward.
 set -euo pipefail
 
-# TODO(family): until the `stealth-or-block` family exists, this grades on the
-# flash-crash-spcx's family. See `mtx task status stealth-or-block-tsla`.
-
 # Hidden from the bot, readable by the bot's own user.
 chmod -R go-rwx /tests
 chmod -R a+rX /app/bot
@@ -20,8 +17,8 @@ trap 'rm -f /logs/verifier/reward.json' ERR
 
 # This script and the image it runs in must be the same task's: a build that
 # mixed two tasks' files would grade the bot on the wrong market.
-if [ "${MTX_TASK:-}" != "flash-crash-spcx" ]; then
-  echo "test.sh: this is flash-crash-spcx's verifier, in an image built for" \
+if [ "${MTX_TASK:-}" != "stealth-or-block-tsla" ]; then
+  echo "test.sh: this is stealth-or-block-tsla's verifier, in an image built for" \
     "'${MTX_TASK:-}': its tests were mixed up at build time. Rebuild it." >&2
   exit 3
 fi
@@ -44,7 +41,7 @@ fi
 # nothing.
 mtx grade \
   --informed /opt/mtx/anchors/stealth-or-block-informed \
-  --draw flash-crash \
+  --draw stealth-or-block \
   --count 72 \
   --reference /opt/mtx/anchors/stealth-or-block \
   --anchor-jobs 4 \
