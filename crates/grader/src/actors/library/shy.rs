@@ -3,14 +3,15 @@
 //! account's flow keeps following it, it hides its trading for a while.
 //!
 //! Over its last `fills` fills, it adds up each other account's flow that
-//! came within `detect_slots` after one of them, on that fill's side. An
-//! account whose following flow comes to `copy_share` of what those fills
-//! traded is copying it: flow at random seldom lands in those windows, a
-//! copier's does every time. It then trades
-//! `throttle` of its usual size and looks only `throttle` of its horizon
-//! ahead, so it trades later, closer to the move, until `cooldown_slots`
-//! after the last time it found itself copied. Each finding starts its
-//! count of fills afresh.
+//! came within `detect_slots` after one of them, on that fill's side, less
+//! its flow on that side within `detect_slots` before one: a copier trades
+//! right after it, while a trader on the same news as likely trades before
+//! as after. An account whose net following flow comes to `copy_share` of
+//! what those fills traded is copying it. It then trades `throttle` of its
+//! usual size, `throttle` as often, and looks only `throttle` of its
+//! horizon ahead, so it trades later, closer to the move, until
+//! `cooldown_slots` after the last time it found itself copied. Each finding
+//! starts its count of fills afresh.
 //!
 //! The accounts are the library's other wallets, through the takes they
 //! land, and the bot, through its position from step to step (the session's
@@ -169,13 +170,20 @@ impl ShyWatch {
 
     /// One of its own takes landed: `size` on `side` at `at`.
     pub fn filled(&mut self, at: u64, side: Side, size: f64) {
+        // Takes of one step, one way, are one fill: what anyone reading the
+        // chain step by step sees.
+        if let Some(last) = self.fills.back_mut()
+            && last.0 == at
+            && last.1 == side
+        {
+            last.2 += size;
+            return;
+        }
         self.fills.push_back((at, side, size));
         while self.fills.len() > self.spec.fills as usize {
             self.fills.pop_front();
         }
-        if let Some((first, ..)) = self.fills.front() {
-            self.others.retain(|t| t.at > *first);
-        }
+        self.prune();
     }
 
     /// Whether it is throttled at `at`.
@@ -194,36 +202,41 @@ impl ShyWatch {
     }
 
     fn push(&mut self, traded: Traded) {
-        // Nothing before its first kept fill can follow it.
-        if self
-            .fills
-            .front()
-            .is_some_and(|(first, ..)| traded.at > *first)
-        {
-            self.others.push(traded);
-        }
+        self.others.push(traded);
+        self.prune();
     }
 
-    /// The account whose flow came to `copy_share` of its last `fills`
-    /// fills, each within `detect_slots` after one of them and on its side,
-    /// if one did (the bot first).
+    /// Forget trading too old to fall near any fill it judges by, or that
+    /// may come.
+    fn prune(&mut self) {
+        let from = self.fills.front().map_or(self.step, |(first, ..)| *first);
+        let detect = self.spec.detect_slots;
+        self.others.retain(|t| t.at + detect >= from);
+    }
+
+    /// The account whose flow right after its last `fills` fills, less its
+    /// flow right before them, came to `copy_share` of what they traded, if
+    /// one did (the bot first).
     fn copier(&self) -> Option<Who> {
         if self.fills.len() < self.spec.fills as usize {
             return None;
         }
         let own: f64 = self.fills.iter().map(|(.., size)| size).sum();
         let detect = self.spec.detect_slots;
+        let near = |traded: &Traded, after: bool| {
+            self.fills.iter().any(|(at, side, _)| {
+                *side == traded.side
+                    && if after {
+                        *at < traded.at && traded.at <= at + detect
+                    } else {
+                        traded.at < *at && traded.at + detect >= *at
+                    }
+            })
+        };
         let mut followed = BTreeMap::<Who, f64>::new();
         for traded in &self.others {
-            let follows = self
-                .fills
-                .iter()
-                .rev()
-                .find(|(at, ..)| *at < traded.at && traded.at <= at + detect)
-                .is_some_and(|(_, side, _)| *side == traded.side);
-            if follows {
-                *followed.entry(traded.who).or_default() += traded.size;
-            }
+            let lead = f64::from(u8::from(near(traded, true))) - f64::from(u8::from(near(traded, false)));
+            *followed.entry(traded.who).or_default() += lead * traded.size;
         }
         followed
             .into_iter()
@@ -258,17 +271,17 @@ mod tests {
         }
     }
 
-    /// Three own fills of 1 at slots 10, 12 and 14, each followed by the bot
-    /// buying `copy` two slots later.
+    /// Three own fills of 1 at slots 10, 20 and 30, each followed by the
+    /// bot buying `copy` two slots later.
     fn followed_by_bot(copy: f64) -> (ShyWatch, bool) {
         let mut watch = ShyWatch::new(spec(), HashSet::new(), Ledger::with_takes());
         let mut found = false;
-        for at in (10..=20).step_by(2) {
+        for at in (10..=40).step_by(2) {
             found |= watch.begin(at).is_some();
-            if at > 10 && at <= 16 {
+            if [12, 22, 32].contains(&at) {
                 watch.bot(&bot_bought(copy));
             }
-            if at <= 14 {
+            if [10, 20, 30].contains(&at) {
                 watch.filled(at, Side::Bid, 1.0);
             }
         }
@@ -279,42 +292,49 @@ mod tests {
     fn a_follower_past_the_share_throttles_it_and_one_under_does_not() {
         let (watch, found) = followed_by_bot(0.6);
         assert!(found);
-        assert!(watch.throttled(20) && watch.keep(20) == 0.2);
-        assert!(watch.throttled(117) && !watch.throttled(118));
+        assert!(watch.throttled(40) && watch.keep(40) == 0.2);
+        assert!(watch.throttled(133) && !watch.throttled(134));
         let (watch, found) = followed_by_bot(0.4);
-        assert!(!found && !watch.throttled(20) && watch.keep(20) == 1.0);
+        assert!(!found && !watch.throttled(40) && watch.keep(40) == 1.0);
     }
 
     #[test]
-    fn only_one_account_s_flow_its_way_after_its_fills_counts() {
+    fn only_one_account_s_flow_right_after_its_fills_counts() {
         let ledger = Ledger::with_takes();
-        let (a, b) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let (a, b, c) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
         let own = Pubkey::new_unique();
         let mut watch = ShyWatch::new(spec(), HashSet::from([own]), ledger.clone());
-        watch.begin(10);
-        for at in [10, 12, 14] {
+        watch.begin(8);
+        for at in [10, 20, 30] {
             watch.filled(at, Side::Ask, 1.0);
         }
-        // Each other wallet sells 0.9 in all: under half of 3 each. Its own
-        // wallets, the other side, the slot of its first fill and anything
-        // after the detection window don't count.
+        // `a` and `b` each sell 0.9 right after its fills: under half of 3
+        // each. `c` sells as much right before them as right after: on the
+        // same news, not following. Its own wallets, the other side, the
+        // slot of a fill and anything past the window don't count.
         for (at, who, side, size) in [
             (12, a, Side::Ask, 0.5),
             (14, b, Side::Ask, 0.5),
-            (16, a, Side::Ask, 0.4),
-            (16, b, Side::Ask, 0.4),
-            (16, own, Side::Ask, 5.0),
-            (16, a, Side::Bid, 5.0),
-            (10, b, Side::Ask, 5.0),
-            (20, a, Side::Ask, 5.0),
+            (22, a, Side::Ask, 0.4),
+            (24, b, Side::Ask, 0.4),
+            (18, c, Side::Ask, 2.0),
+            (22, c, Side::Ask, 2.0),
+            (22, own, Side::Ask, 5.0),
+            (22, a, Side::Bid, 5.0),
+            (20, b, Side::Ask, 5.0),
+            (36, a, Side::Ask, 5.0),
         ] {
             ledger.took(at, who, side, size);
         }
-        assert_eq!(watch.begin(20), None);
-        // One more sale in the window makes a copier of `a`.
-        ledger.took(18, a, Side::Ask, 0.7);
-        assert_eq!(watch.begin(22), Some(Copier::Wallet));
-        assert!(watch.throttled(22) && watch.throttled(121) && !watch.throttled(122));
+        assert_eq!(watch.begin(38), None);
+        // One more sale right after a fill makes a copier of `a`.
+        ledger.took(32, a, Side::Ask, 0.7);
+        assert_eq!(watch.begin(40), Some(Copier::Wallet));
+        assert!(watch.throttled(40) && watch.throttled(139) && !watch.throttled(140));
     }
 
     #[test]
@@ -323,14 +343,14 @@ mod tests {
         assert!(found && watch.fills.is_empty());
         // Copied again while throttled: the cooldown runs from the new
         // finding.
-        for at in [30, 32, 34] {
+        for at in [50, 60, 70] {
             watch.begin(at);
             watch.filled(at, Side::Bid, 0.2);
         }
-        watch.begin(36);
+        watch.begin(72);
         watch.bot(&bot_bought(1.0));
-        assert_eq!(watch.begin(38), Some(Copier::Bot));
-        assert!(watch.throttled(137) && !watch.throttled(138));
+        assert_eq!(watch.begin(74), Some(Copier::Bot));
+        assert!(watch.throttled(173) && !watch.throttled(174));
     }
 
     #[test]

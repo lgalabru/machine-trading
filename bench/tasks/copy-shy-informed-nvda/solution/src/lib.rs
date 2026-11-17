@@ -107,10 +107,10 @@ impl Params {
             look_slots: 40,
             hold_slots: 200,
             threshold: 0.0,
-            mark_slots: 120,
+            mark_slots: 200,
             chase_bps: 8.0,
-            min_weight: 2.0,
-            min_score_bps: 20.0,
+            min_weight: 3.0,
+            min_score_bps: 5.0,
             half_life_share: 0.25,
             momentum_bps: 8.0,
             share: 0.24,
@@ -118,7 +118,7 @@ impl Params {
         };
         match mode {
             Mode::Informed => Params {
-                share: 0.85,
+                share: 0.6,
                 ..base
             },
             Mode::FullCopy => Params {

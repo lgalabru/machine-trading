@@ -379,7 +379,7 @@ impl Actor for InformedTrader {
         };
         let n = self
             .rng
-            .poisson(self.scale.per_slot() * self.spec.intensity_mult * slots as f64);
+            .poisson(self.scale.per_slot() * self.spec.intensity_mult * keep * slots as f64);
         for _ in 0..n {
             let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult) * keep;
             let landed = take_one(
@@ -545,7 +545,8 @@ impl Actor for DecoyTrader {
         let slots = last.at - self.last.unwrap_or(0);
         self.last = Some(last.at);
         let keep = begin_shy(&mut self.shy, &self.wallets, last.at);
-        let rate = self.scale.per_slot() * self.spec.intensity_mult / self.wallets.len() as f64;
+        let rate =
+            self.scale.per_slot() * self.spec.intensity_mult * keep / self.wallets.len() as f64;
         for wallet in 0..self.wallets.len() {
             let Some(side) = self.side(wallet, last, keep) else {
                 continue;
@@ -623,53 +624,56 @@ mod tests {
     async fn a_shy_informed_trader_trades_smaller_and_later_once_copied() {
         let (book, log) = Book::new("i", 99.0, 101.0);
         let (wallet, ledger) = wallet(book);
-        // Up 1% from slot 200.
+        // Up 1% from slot 1,000.
         let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> =
-            Arc::new(|s| at(s, if s >= 200 { 101.0 } else { 100.0 }));
+            Arc::new(|s| at(s, if s >= 1_000 { 101.0 } else { 100.0 }));
         let spec = Informed {
             wallets: 1,
-            horizon_slots: 100,
+            horizon_slots: 1_000,
             edge_bps: 50.0,
-            intensity_mult: 1.0,
+            intensity_mult: 0.1,
             size_mult: 1.0,
             limit_bps: 50.0,
             active: None,
             shy: Some(Shy {
-                detect_slots: 4,
+                detect_slots: 2,
                 copy_share: 0.5,
                 fills: 3,
                 throttle: 0.2,
-                cooldown_slots: 1_000,
+                cooldown_slots: 10_000,
             }),
         };
         spec.validate().unwrap();
         let mut informed =
             InformedTrader::new(spec, scale(), vec![wallet], path, Rng::new([8; 32]));
         assert!(informed.wants_flow());
-        // It buys ahead of the rise, and the bot buys more than it right
-        // after, step after step.
+        // It buys ahead of the rise, and the bot buys as much as it the step
+        // after each time it does.
         let copying = StepFlow {
             bot: vec![VenueFlow {
                 market: "test".into(),
-                bought: 10.0,
+                bought: 1.0,
                 sold: 0.0,
             }],
         };
-        for s in (102..=112).step_by(2) {
+        let mut bought = false;
+        for s in (2..=400).step_by(2) {
             informed.before_blocks(&at(s, 100.0)).await;
-            informed.flow(&copying).await;
+            if bought {
+                informed.flow(&copying).await;
+            }
+            let step = std::mem::take(&mut *log.lock().unwrap());
+            bought = !step.is_empty();
+            assert!(step.iter().all(|l| l.starts_with("i take Bid")), "{step:?}");
         }
-        let early = std::mem::take(&mut *log.lock().unwrap());
-        assert!(
-            early.iter().any(|l| l == "i take Bid 1.000 at 100.50"),
-            "{early:?}"
-        );
-        assert!(ledger.report().actors[0].counts["throttles"] >= 1);
-        // Throttled, it looks a fifth of its horizon ahead: from slot 150
-        // the rise is out of sight, and from 180 it buys a fifth the size.
-        informed.before_blocks(&at(150, 100.0)).await;
+        let counts = &ledger.report().actors[0].counts;
+        assert!(counts["throttles_by_bot"] >= 1, "{counts:?}");
+        // Throttled, it trades as often a fifth of the time and looks a fifth
+        // of its horizon ahead: at slot 500 the rise is out of sight, and
+        // from 800 it buys a fifth of the size.
+        informed.before_blocks(&at(500, 100.0)).await;
         assert!(log.lock().unwrap().is_empty());
-        informed.before_blocks(&at(186, 100.0)).await;
+        informed.before_blocks(&at(900, 100.0)).await;
         let late = log.lock().unwrap().clone();
         assert!(!late.is_empty());
         assert!(

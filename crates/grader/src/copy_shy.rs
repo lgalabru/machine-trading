@@ -11,7 +11,8 @@
 //!   one wallet) sees the path `horizon_slots` ahead and takes its way
 //!   while it is more than `edge_bps` off. It is [`Shy`]: once a single
 //!   account's flow its way after its fills comes to `copy_share` of them,
-//!   it trades `throttle` of its size, `throttle` of its horizon ahead,
+//!   it trades `throttle` of its size, as often, `throttle` of its horizon
+//!   ahead,
 //!   until `cooldown_slots` after it last found itself copied.
 //! - **Decoys** trade as the fund does until a slot each draws, then on
 //!   random views of their own; they are as shy as the fund, so a throttle
@@ -130,7 +131,7 @@ impl CopyShyFamily {
             noise: (3, 5),
             horizon_slots: (240, 480),
             edge_bps: (15.0, 20.0),
-            informed_mult: 24.0,
+            informed_mult: 16.0,
             noise_mult: 2.0,
             chaser_mult: 8.0,
             fade_share: (0.2, 0.6),
@@ -142,8 +143,8 @@ impl CopyShyFamily {
             shy_fills: 3,
             throttle: (0.15, 0.3),
             cooldown_slots: (600, 1_200),
-            max_position: 25.0,
-            max_drawdown_usd: 400.0,
+            max_position: 10.0,
+            max_drawdown_usd: 200.0,
             close_haircut_bps: 5.0,
         }
     }
