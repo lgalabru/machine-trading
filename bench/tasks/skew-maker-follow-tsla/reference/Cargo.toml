@@ -19,11 +19,10 @@ path = "src/lib.rs"
 name = "mtx-skew-maker-follow"
 path = "src/main.rs"
 
-# `export`: the crate is the task's component. The informed bot and the
-# ladder's rungs build on its book reading without it.
 [features]
-default = ["export"]
-export = []
+# `embedded`: another crate (the informed bot, the ladder's rungs) builds on
+# this one, and the component it exports is its own.
+embedded = []
 
 [dependencies]
 

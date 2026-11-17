@@ -2650,11 +2650,15 @@ mod tests {
         for task in tasks::load(&root).unwrap() {
             let snapshot = snapshot(&root, &task.dir);
             assert!(root.join(&snapshot).is_dir(), "{snapshot}");
-            assert_eq!(
-                snapshot, "snapshots/phoenix-spcx-2026-10-29",
-                "{}",
-                task.dir
-            );
+            // The snapshot the task's task.toml names, else the SPCX one the
+            // first tasks share.
+            let toml = root.join("bench/tasks").join(&task.dir).join("task.toml");
+            let named = std::fs::read_to_string(toml)
+                .ok()
+                .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
+                .and_then(|t| Some(t.get("metadata")?.get("snapshot")?.as_str()?.to_string()))
+                .unwrap_or_else(|| "phoenix-spcx-2026-10-29".into());
+            assert_eq!(snapshot, format!("snapshots/{named}"), "{}", task.dir);
         }
         // A task on another market: task.toml's `[metadata] snapshot` first,
         // then the verifier image's MTX_SNAPSHOT, then the Justfile's.
