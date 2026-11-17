@@ -641,6 +641,10 @@ impl Seat for BookSeat {
     fn tick(&self) -> f64 {
         self.grid().0.to_string().parse().unwrap_or(f64::NAN)
     }
+
+    fn lot(&self) -> f64 {
+        self.grid().1.to_string().parse().unwrap_or(0.0)
+    }
 }
 
 /// What a spot component's `start` gets as `venue`: every market the
