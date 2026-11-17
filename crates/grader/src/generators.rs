@@ -481,6 +481,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "generators")]
     #[test]
     fn a_family_parameter_a_small_draw_never_reaches_still_shows_in_the_params() {
         let spcx = ShockFamily::spcx();
