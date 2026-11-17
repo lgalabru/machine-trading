@@ -653,6 +653,7 @@ mod tests {
                 skill: String::new(),
                 leak_needles: vec![],
                 headline: Headline::V1,
+                component_anchors: false,
             },
             reference: Reference {
                 package: "mtx-bot-x".into(),
