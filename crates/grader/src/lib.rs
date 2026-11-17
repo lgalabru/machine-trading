@@ -23,6 +23,7 @@ pub mod phoenix;
 pub mod raw;
 pub mod recipe;
 pub mod replay;
+pub mod rfq_tiering;
 pub mod risk;
 pub mod scenario;
 pub mod scenario_v2;

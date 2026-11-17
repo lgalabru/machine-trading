@@ -17,6 +17,7 @@ use crate::{
     carry::{CarryFamily, Shape as CarryShape},
     error::Result,
     making::MakingFamily,
+    rfq_tiering::{RfqTieringFamily, Shape as RfqTieringShape},
     scenario::{Scenario, Shape, ShockFamily},
     weekend::{WeekendFamily, WeekendShape},
 };
@@ -84,6 +85,17 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "rfq-tiering",
+        practice: |prefix, count, seed| RfqTieringFamily::spcx().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| {
+            shaped(
+                RfqTieringFamily::spcx().draw_set("hidden", count, seed),
+                tell,
+                rfq_tiering_latent,
             )
         },
     },
@@ -205,6 +217,9 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
+    ("rfq-tiering", "lead_slots", Knowable::Process),
+    ("rfq-tiering", "correlation", Knowable::Process),
+    ("rfq-tiering", "tolerance_bps", Knowable::Process),
 ];
 
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
@@ -240,6 +255,19 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
         "worker_account": shape.worker_account,
         "impact_pct": shape.impact_pct,
         "half_life_slots": shape.half_life_slots,
+    })
+}
+
+/// Who is who: which clients are informed (their ids, through the roster),
+/// and the clients' process: how far ahead the informed ones see, how much of
+/// it moves their price, and the reach. Not the path, when anyone asks, or
+/// which way.
+fn rfq_tiering_latent(shape: &RfqTieringShape) -> Value {
+    json!({
+        "roster": ["rfq-informed"],
+        "lead_slots": shape.lead_slots,
+        "correlation": shape.correlation,
+        "tolerance_bps": shape.tolerance_bps,
     })
 }
 
