@@ -39,7 +39,7 @@ use std::{
 
 use async_trait::async_trait;
 use mtx_core::{
-    mandate::{InstrumentRef, Kind, Mandate, Observed, PositionRange, Term},
+    mandate::{InstrumentRef, Kind, Mandate, Observed, PositionRange},
     turns::Step,
 };
 use mtx_kit::{
@@ -906,12 +906,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots + warped;
-    let mandate = Mandate {
-        term: Some(Term {
-            until_slot: end_slot,
-        }),
-        ..scenario.mandate.clone()
-    };
+    let mandate = scenario.mandate.clone().with_term(base_slot, end_slot);
     let mut account = LendingAccount {
         scenario: scenario.clone(),
         chain: chain.clone(),
@@ -1609,6 +1604,7 @@ impl Account for LendingAccount {
             turn_ms: None,
             answered: None,
             fair_usd: None,
+            markets: Vec::new(),
         };
         self.last = Some(now);
         Ok(record)
@@ -1698,6 +1694,8 @@ impl Account for LendingAccount {
             liquidatable: end.health.is_some_and(|h| h < 1.0),
             refused_calls: done.refused_calls,
             forced_closes: done.forced_closes,
+            samples: Default::default(),
+            term_start: Default::default(),
             liquidator: done.liquidator,
             bot_exit: done.bot_exit,
             late_slots: done.late_slots,
@@ -1736,6 +1734,7 @@ impl Account for LendingAccount {
             }),
             tx_layer: None,
             crank_refusals: done.crank_refusals,
+            markets: Vec::new(),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1747,6 +1746,7 @@ impl Account for LendingAccount {
                 transactions: done.transactions,
                 calls: done.calls,
                 taker_orders: done.actors.taker_orders,
+                market_taker_orders: Default::default(),
             },
         })
     }

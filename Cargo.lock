@@ -5199,6 +5199,7 @@ dependencies = [
  "borsh 1.8.1",
  "bs58",
  "chrono",
+ "futures 0.3.34",
  "mtx-core",
  "phoenix-rise",
  "rust_decimal",

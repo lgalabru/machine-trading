@@ -37,7 +37,7 @@ use std::{
 use async_trait::async_trait;
 use mtx_core::{
     Decimal,
-    mandate::{InstrumentRef, Mandate, Observed, ObservedFill, PositionRange},
+    mandate::{InstrumentRef, Mandate, Observed, ObservedFill, PositionRange, SampleLog},
     turns::{self, Hello, Message, Step},
 };
 use mtx_kit::BotEnv;
@@ -179,6 +179,14 @@ pub struct SessionReport {
     /// The deepest the account's value fell below its running peak while the
     /// bot ran, in USD.
     pub max_drawdown_usd: f64,
+    /// The account priced at each step, for the mandate's notional rules
+    /// (gross notional, exposures, hedges), and as the term started where
+    /// an exposure is bounded by its start: what [`SessionReport::observed`]
+    /// hands the audit. Empty unless the mandate has such a rule.
+    #[serde(default, skip_serializing_if = "SampleLog::is_empty")]
+    pub samples: SampleLog,
+    #[serde(default, skip_serializing_if = "SampleLog::is_empty")]
+    pub term_start: SampleLog,
     /// The price the account's position was valued at: the `mark`, or for
     /// market making the `oracle` the scenario sets, which a bot's own
     /// quotes can't move.
@@ -256,6 +264,11 @@ pub struct SessionReport {
     /// Each anchored oracle feed's start, against its account's own price.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
+    /// A perp session on several markets: each market, in symbol order, the
+    /// primary included. The fields above that name one market are the
+    /// primary's. Empty for a session on one market.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markets: Vec<MarketReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -265,6 +278,40 @@ pub struct SessionReport {
     /// [`crate::grade::GradeOptions::detail_dir`]).
     #[serde(skip)]
     pub timeline: Timeline,
+}
+
+/// One market of a perp session on several markets (see
+/// [`SessionReport::markets`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MarketReport {
+    pub symbol: String,
+    /// Phoenix's mark at the start and the end, in USD: the start mark is
+    /// what the market's path, its bound and its valuation count from.
+    pub start_mark_usd: f64,
+    pub end_mark_usd: f64,
+    /// The position at the start and the end, in base units.
+    pub start_position: f64,
+    pub end_position: f64,
+    /// The price the market's position was valued at (see
+    /// [`SessionReport::valuation`]).
+    #[serde(deserialize_with = "static_name")]
+    pub valuation: StaticName,
+    /// What the market's takers and competing maker did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow: Option<FlowReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub competitor: Option<CompeteReport>,
+}
+
+impl SessionReport {
+    /// Each market's start mark, by symbol, for a session on several
+    /// markets; empty for one.
+    pub fn start_marks_usd(&self) -> BTreeMap<String, f64> {
+        self.markets
+            .iter()
+            .map(|m| (m.symbol.clone(), m.start_mark_usd))
+            .collect()
+    }
 }
 
 /// A session step by step: the market and the account at every step, what
@@ -286,6 +333,10 @@ pub struct Timeline {
     /// Market making: the grader's taker orders, as sent.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub taker_orders: Vec<TakerRecord>,
+    /// A session on several markets: the taker orders on each market but
+    /// the primary, by symbol.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub market_taker_orders: BTreeMap<String, Vec<TakerRecord>>,
 }
 
 /// The world and the account after a step's blocks landed, before the bot's
@@ -322,6 +373,29 @@ pub struct StepRecord {
     pub turn_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answered: Option<bool>,
+    /// A session on several markets: each market at this step, in symbol
+    /// order. The fields above that name one market are the primary's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markets: Vec<MarketStep>,
+}
+
+/// One market of a session on several markets at a step (see
+/// [`StepRecord`]'s fields of the same names).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MarketStep {
+    pub symbol: String,
+    pub mark_usd: f64,
+    pub index_usd: f64,
+    pub level_usd: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fair_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_bid_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_ask_usd: Option<f64>,
+    pub position: f64,
 }
 
 /// One of the bot's transactions, looked up once the session ended.
@@ -386,36 +460,38 @@ pub struct TurnReport {
 impl SessionReport {
     /// What the session measured, in the terms [`Mandate::audit`] checks.
     pub fn observed(&self) -> Observed {
-        Observed {
-            positions: self.positions.clone(),
-            positions_outside_universe: self.positions_outside_universe,
-            max_drawdown_usd: self.audited_drawdown_usd(),
-            fills: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.observed_fills())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(
-                    self.perp_fills
-                        .iter()
-                        .filter(|fill| !fill.forced)
-                        .map(|fill| ObservedFill {
-                            instrument: fill.instrument.clone(),
-                            side: fill.side,
-                            price: fill.price,
-                        }),
-                )
-                .collect(),
-            open_orders: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.open_orders.clone())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(self.perp_open_orders.iter().cloned())
-                .collect(),
-        }
+        let mut observed = Observed::default();
+        observed.positions = self.positions.clone();
+        observed.positions_outside_universe = self.positions_outside_universe;
+        observed.max_drawdown_usd = self.audited_drawdown_usd();
+        observed.fills = self
+            .spot
+            .as_ref()
+            .map(|spot| spot.observed_fills())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(
+                self.perp_fills
+                    .iter()
+                    .filter(|fill| !fill.forced)
+                    .map(|fill| ObservedFill {
+                        instrument: fill.instrument.clone(),
+                        side: fill.side,
+                        price: fill.price,
+                    }),
+            )
+            .collect();
+        observed.open_orders = self
+            .spot
+            .as_ref()
+            .map(|spot| spot.open_orders.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(self.perp_open_orders.iter().cloned())
+            .collect();
+        observed.samples = self.samples.clone();
+        observed.term_start = self.term_start.clone();
+        observed
     }
 }
 
@@ -958,6 +1034,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 peak_usd,
                 value_after_usd: measured.value_usd,
                 position_before: measured.position,
+                positions_before: measured
+                    .markets
+                    .iter()
+                    .map(|m| (m.symbol.clone(), m.position))
+                    .collect(),
                 orders: Vec::new(),
                 flat: false,
             });
@@ -1028,7 +1109,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     position: now.position,
                     position_change: now.position - before,
                     level_usd: now.level_usd,
-                    valued_at_usd: match scenario.valuation() {
+                    valued_at_usd: match scenario.primary_valuation() {
                         "oracle" => Some(now.level_usd),
                         "book" => now.book_usd,
                         _ => None,
@@ -1160,13 +1241,19 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             );
         }
     }
-    let (end_value_usd, end_position) = (report.end_value_usd, report.end_position);
+    let end_value_usd = report.end_value_usd;
+    // Flat on every market: a session on several lists each in `markets`.
+    let flat = crate::risk::is_flat(report.end_position)
+        && report
+            .markets
+            .iter()
+            .all(|m| crate::risk::is_flat(m.end_position));
     // A stop-out's close settles at the session's end; a liquidation's
     // is the keeper's own account of its stretch.
     for close in &mut report.forced_closes {
         if matches!(close.reason, crate::risk::ForcedCloseReason::StopOut { .. }) {
             close.value_after_usd = end_value_usd;
-            close.flat = crate::risk::is_flat(end_position);
+            close.flat = flat;
         }
     }
     info!(
