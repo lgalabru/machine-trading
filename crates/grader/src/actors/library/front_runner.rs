@@ -15,7 +15,8 @@
 //! With `window_steps`, the pattern is persistent flow however it is
 //! spread out: the bot's net trading one way over the last `window_steps`
 //! steps reaching `min_mult` trade sizes in all, so pauses and uneven
-//! slices don't hide it. It then takes `share` of that net. With
+//! slices don't hide it. It then takes `share` of what that pace says the
+//! bot will trade while it holds (`hold_steps`). With
 //! `persist_steps`, once the pattern has held it stays on the bot that many
 //! steps more, whatever the bot does meanwhile: it has found a seller (or a
 //! buyer) and keeps trading ahead of it.
@@ -83,7 +84,8 @@ pub struct FrontRunner {
     #[serde(default)]
     pub on_send: bool,
     /// The steps whose net trading makes the pattern, in place of
-    /// `pattern_steps` steps running.
+    /// `pattern_steps` steps running; it then takes `share` of the window's
+    /// pace over `hold_steps`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_steps: Option<u64>,
     /// The steps it stays on the bot after the pattern last held.
@@ -129,7 +131,8 @@ struct Inner {
     /// What the bot's sends carry, for `on_send`.
     reader: Option<SendReader>,
     /// The bot's way and how many steps in a row it has traded it, and its
-    /// last step's size (with `window_steps`, the window's net).
+    /// last step's size (with `window_steps`, the window's pace over a
+    /// hold).
     run: Option<(Side, u64, f64)>,
     /// The bot's net trading in each of the last `window_steps` steps.
     recent: VecDeque<f64>,
@@ -181,13 +184,21 @@ impl Inner {
             self.wallet.count("capped", 1);
             return;
         }
+        let before = self.wallet.seat().position().await.ok();
         if self
             .wallet
             .take(at, side, size, self.limit(side, price))
             .await
         {
-            self.held.push((side, size, self.steps));
-            self.wallet.count(what, 1);
+            // What filled: a take inside its limit may fill only part.
+            let filled = match (before, self.wallet.seat().position().await.ok()) {
+                (Some(before), Some(after)) => (after - before).abs().min(size),
+                _ => size,
+            };
+            if filled > 0.0 {
+                self.held.push((side, filled, self.steps));
+                self.wallet.count(what, 1);
+            }
         }
     }
 
@@ -301,8 +312,13 @@ impl Actor for Runner {
             None
         };
         let pattern = inner.spec.pattern_steps;
+        // Over a window, what the bot's pace says it will trade while a
+        // front-run is held.
+        let ahead = inner.spec.window_steps.map_or(0.0, |window| {
+            net.abs() / window as f64 * inner.spec.hold_steps as f64
+        });
         let run = side.map(|side| match inner.run {
-            _ if inner.spec.window_steps.is_some() => (side, pattern, net.abs()),
+            _ if inner.spec.window_steps.is_some() => (side, pattern, ahead),
             Some((before, n, _)) if before == side => (side, n + 1, net.abs()),
             _ => (side, 1, net.abs()),
         });
@@ -466,7 +482,7 @@ mod tests {
             FrontRunner {
                 window_steps: Some(4),
                 min_mult: 5.0,
-                hold_steps: 100,
+                hold_steps: 2,
                 ..FrontRunner::default()
             },
             scale(),
@@ -474,7 +490,8 @@ mod tests {
             None,
         );
         // 2, a pause, 2: 4 in the window, under 5. Then 2 more: 6 over the
-        // last four steps, and it sells half of that ahead.
+        // last four steps, a pace of 1.5 a step: over its 2-step hold, 3,
+        // and it sells half of that ahead.
         for (s, base) in [(2, 2.0), (4, 0.0), (6, 2.0)] {
             runner.flow(&sold(base)).await;
             runner.after_blocks(&at(s, 100.0)).await;
@@ -482,7 +499,7 @@ mod tests {
         assert!(log.lock().unwrap().is_empty());
         runner.flow(&sold(2.0)).await;
         runner.after_blocks(&at(8, 100.0)).await;
-        assert_eq!(*log.lock().unwrap(), ["f take Ask 3.000 at 99.50"]);
+        assert_eq!(*log.lock().unwrap(), ["f take Ask 1.500 at 99.50"]);
         // The first 2 leaves the window and nothing comes: 4, under 5.
         runner.flow(&StepFlow::default()).await;
         runner.after_blocks(&at(10, 100.0)).await;
@@ -500,7 +517,7 @@ mod tests {
                 window_steps: Some(2),
                 min_mult: 1.0,
                 persist_steps: Some(3),
-                hold_steps: 100,
+                hold_steps: 1,
                 max_inventory_mult: 100.0,
                 ..FrontRunner::default()
             },

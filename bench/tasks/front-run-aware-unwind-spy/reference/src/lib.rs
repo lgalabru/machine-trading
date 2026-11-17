@@ -31,7 +31,7 @@ use mtx_kit::prelude::*;
 pub const TAKER_FEE_BPS: f64 = 3.5;
 /// A bid within this of the index is the maker's: one further out is the
 /// backstop's.
-pub const GOOD_BPS: f64 = 9.0;
+pub const GOOD_BPS: f64 = 20.0;
 /// The most it sells a step.
 pub const SLICE: f64 = 0.08;
 /// The reference's first pace, in SPY a step; how often it speeds up, in

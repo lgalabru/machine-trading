@@ -93,6 +93,15 @@ impl FlowWatch {
         }
     }
 
+    /// Count from the positions the bot starts with, one per seat, so the
+    /// start's setup fill isn't read as its trading.
+    pub fn starting_at(mut self, positions: &[f64]) -> Self {
+        for (before, start) in self.positions.iter_mut().zip(positions) {
+            *before = *start;
+        }
+        self
+    }
+
     /// The flow since the last read. A market whose position can't be read
     /// counts as unmoved, and is read again next step.
     pub async fn step(&mut self) -> StepFlow {

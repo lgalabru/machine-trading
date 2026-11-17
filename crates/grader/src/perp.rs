@@ -577,9 +577,12 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let send_reader = (!library.front_runners.is_empty())
             .then(|| send_reader(own.market.clone(), internal.url().to_string()));
         if !library.front_runners.is_empty() {
-            cast.watch(FlowWatch::new(vec![
-                own.perp.seat(bot.insecure_clone(), internal.url()).await?,
-            ]));
+            cast.watch(
+                FlowWatch::new(vec![
+                    own.perp.seat(bot.insecure_clone(), internal.url()).await?,
+                ])
+                .starting_at(&[own.start_position]),
+            );
         }
         let built = library.build(
             seats,

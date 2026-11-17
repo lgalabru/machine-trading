@@ -56,7 +56,8 @@ pub struct Predator {
     /// trade sizes, that makes the bot a seller to it.
     pub window_steps: u64,
     pub min_mult: f64,
-    /// What it sells ahead each turn, as a share of that net; how long it
+    /// What it sells ahead each turn, as a share of what the bot's pace
+    /// over the window says it will sell while a sale is held; how long it
     /// stays on a seller it has found, and holds each sale, in steps.
     pub share: f64,
     pub persist_steps: u64,
@@ -71,7 +72,7 @@ pub const PREDATORS: &[Predator] = &[
         name: "hair-trigger",
         window_steps: 8,
         min_mult: 1.0,
-        share: 0.6,
+        share: 1.2,
         persist_steps: 80,
         hold_steps: 20,
     },
@@ -79,7 +80,7 @@ pub const PREDATORS: &[Predator] = &[
         name: "quick",
         window_steps: 12,
         min_mult: 2.0,
-        share: 0.5,
+        share: 1.2,
         persist_steps: 100,
         hold_steps: 30,
     },
@@ -87,7 +88,7 @@ pub const PREDATORS: &[Predator] = &[
         name: "steady",
         window_steps: 20,
         min_mult: 6.0,
-        share: 0.5,
+        share: 1.2,
         persist_steps: 120,
         hold_steps: 40,
     },
@@ -95,23 +96,15 @@ pub const PREDATORS: &[Predator] = &[
         name: "patient",
         window_steps: 30,
         min_mult: 16.0,
-        share: 0.4,
+        share: 1.2,
         persist_steps: 150,
         hold_steps: 50,
-    },
-    Predator {
-        name: "slow",
-        window_steps: 40,
-        min_mult: 40.0,
-        share: 0.3,
-        persist_steps: 150,
-        hold_steps: 60,
     },
     Predator {
         name: "dormant",
         window_steps: 1,
         min_mult: 1.0e6,
-        share: 0.3,
+        share: 1.2,
         persist_steps: 0,
         hold_steps: 1,
     },
@@ -184,7 +177,7 @@ impl FrontRunFamily {
             trade_size_sigma: 0.6,
             trades_per_minute: 1.235,
             predator_limit_bps: 12.0,
-            predator_cap_mult: 120.0,
+            predator_cap_mult: 300.0,
             noise_rate: (0.04, 0.08),
             size_median: 0.03,
             size_sigma: 0.6,
@@ -449,10 +442,10 @@ mod tests {
     #[test]
     fn sets_are_stratified_and_seat_one_predator() {
         let family = FrontRunFamily::spy();
-        let set = family.draw_set("h", 72, 3);
+        let set = family.draw_set("h", 70, 3);
         for kind in PREDATORS {
             let n = set.iter().filter(|(_, s)| s.predator == kind.name).count();
-            assert_eq!(n, 12, "{}", kind.name);
+            assert_eq!(n, 14, "{}", kind.name);
         }
         for (scenario, _) in &set {
             assert_eq!(scenario.actors.as_ref().unwrap().front_runners.len(), 1);
