@@ -161,6 +161,7 @@ impl SpotReport {
                 instrument: fill.instrument.clone(),
                 side: fill.side,
                 price: fill.price,
+                worst_price: fill.price,
             })
             .collect()
     }

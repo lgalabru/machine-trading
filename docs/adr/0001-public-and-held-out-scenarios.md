@@ -78,6 +78,13 @@ leaderboards (Kaggle, Numerai):
   scenarios, rerun. Nothing changes for them.
 - Published rankings become meaningful, at the cost of a second dataset to
   calibrate and publish per release, and a way to run submissions privately.
+- A task made by `mtx task new` keeps its family's generator out of its
+  agents' reach: the agent image's `mtx` is built without it
+  (`--no-default-features`), the image holds no family code or reference bot,
+  and the agent's network, while it works, is its model and the crates
+  registry (not ghcr.io or github.com, which hold the full grader and the
+  reference bots). The four tasks from before the guard keep the generator
+  in their agent's image.
 - A held-out scenario costs the same to make as a public one:
   `mtx scenario generate` with a private seed, then `mtx calibrate`. The
   extra work is process, not code.
