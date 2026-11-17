@@ -95,39 +95,33 @@ pub struct Params {
 impl Params {
     pub fn of(mode: Mode) -> Self {
         // Each rung's knobs are its best on 72 recorded sessions (gate 0's
-        // replay model, `hidden/gate0/model.py`); the reference takes the
-        // informed bot's.
+        // replay model, `hidden/gate0/model.py`); the reference follows with
+        // the informed bot's, and its class test is tuned the same way.
         let base = Params {
             look_slots: 80,
-            hold_slots: 80,
+            hold_slots: 40,
             threshold: 6.0,
-            size_cut: 0.08,
+            size_cut: 0.04,
             size_share: 1.0,
             momentum_bps: 40.0,
-            block_slots: 75,
+            block_slots: 40,
             min_block_net: 3.0,
-            t_cut: 1.0,
+            t_cut: 1.5,
             t_margin: 0.5,
-            min_blocks: 4,
+            min_blocks: 3,
         };
         match mode {
             Mode::Reference | Mode::Informed => base,
-            Mode::FollowSmall => Params {
-                look_slots: 160,
-                threshold: 12.0,
-                hold_slots: 150,
-                ..base
-            },
-            Mode::FollowLarge => Params {
-                look_slots: 160,
-                threshold: 12.0,
-                hold_slots: 40,
+            Mode::FollowSmall | Mode::FollowLarge => Params {
+                look_slots: 20,
+                threshold: 8.0,
+                hold_slots: 250,
                 ..base
             },
             Mode::FollowAll => Params {
                 look_slots: 80,
                 threshold: 12.0,
-                hold_slots: 80,
+                hold_slots: 250,
                 ..base
             },
             Mode::SmallFollowAll => Params {
@@ -139,7 +133,7 @@ impl Params {
             },
             Mode::Momentum => Params {
                 look_slots: 20,
-                hold_slots: 150,
+                hold_slots: 40,
                 momentum_bps: 40.0,
                 ..base
             },

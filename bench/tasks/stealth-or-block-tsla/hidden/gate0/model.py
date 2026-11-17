@@ -182,7 +182,7 @@ def run(s, policy, p):
                         tests[c][1] += sc * sc
                         tests[c][2] += 1
                 scored += 1
-            if chosen is None and all(t[2] >= p.get("min_blocks", 4) for t in tests.values()):
+            if (chosen is None or p.get("switch")) and all(t[2] >= p.get("min_blocks", 4) for t in tests.values()):
                 ts, tl = tstat(tests["small"]), tstat(tests["large"])
                 if ts > p.get("t_cut", 1.5) and ts - tl > p.get("t_margin", 0.5):
                     chosen = "small"
@@ -274,7 +274,27 @@ def cv(train, test):
         print(f"  ref {k} / informed = {sum(pnl) / inf:.2f}")
 
 
+def tune_ref(sessions, informed_p):
+    grid = dict(block=[40, 75, 150], min_block_net=[2, 3, 5], t_cut=[0.5, 1.0, 1.5, 2.0],
+                t_margin=[0.0, 0.5, 1.0], min_blocks=[3, 4, 6], switch=[False, True])
+    keys = list(grid)
+    rows = []
+    for vals in itertools.product(*(grid[k] for k in keys)):
+        p = dict(informed_p, **dict(zip(keys, vals)))
+        pnl = [run(s, "reference", p) for s in sessions]
+        sd = statistics.pstdev(pnl)
+        rows.append((sum(pnl), statistics.mean(pnl) / sd if sd else 0, dict(zip(keys, vals))))
+    rows.sort(key=lambda r: -r[0])
+    for r in rows[:12]:
+        print(f"  ref total {r[0]:8.1f} sharpe {r[1]:5.2f} {r[2]}")
+    return rows
+
+
 def main():
+    if sys.argv[1] == "tuneref":
+        sessions = load(*sys.argv[2:5])
+        tune_ref(sessions, json.loads(sys.argv[5]))
+        return
     if sys.argv[1] == "cv":
         a = load(*sys.argv[2:5])
         b = load(*sys.argv[5:8])

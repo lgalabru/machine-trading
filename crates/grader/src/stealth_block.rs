@@ -83,6 +83,7 @@ pub struct Shape {
     /// mean length of those runs: what the rebalancers' rhythm is set from.
     pub informed_duty: f64,
     pub informed_run_slots: f64,
+    pub informed_longest_run: u64,
     pub noise_wallets: u32,
     pub trigger_bps: f64,
     pub refill_half_life: f64,
@@ -145,7 +146,7 @@ impl StealthBlockFamily {
             waypoint_slots: 2,
             hour_scale: 1.28,
             size_scale: 5.0,
-            small_size: 0.5,
+            small_size: 0.25,
             large_size: 4.0,
             informed_wallets: 2,
             informed_intensity: 16.0,
@@ -286,7 +287,7 @@ impl StealthBlockFamily {
         let noise_wallets = rng.range_u64(self.noise_wallets) as u32;
         let trigger_bps = round2(rng.range_f64(self.trigger_bps));
         let half_life = round2(rng.range_f64(self.refill_half_life));
-        let (duty, run) = informed_activity(&index, horizon_slots, edge_bps);
+        let (duty, run, longest) = informed_activity(&index, horizon_slots, edge_bps);
 
         let (trades_per_minute, median, sigma) = Self::venue(model);
         let size_of = |c: Class| match c {
@@ -294,7 +295,7 @@ impl StealthBlockFamily {
             Class::Large => self.large_size,
         };
         let hedger = |share: f64, c: Class| {
-            let (length, gap) = rhythm(duty, run, share, horizon_slots);
+            let (length, gap) = rhythm(duty, run, longest, share, horizon_slots);
             json!({
                 "wallets": 1,
                 "horizon_slots": horizon_slots,
@@ -358,6 +359,7 @@ impl StealthBlockFamily {
             edge_bps,
             informed_duty: round4(duty),
             informed_run_slots: round2(run),
+            informed_longest_run: longest,
             noise_wallets,
             trigger_bps,
             refill_half_life: half_life,
@@ -428,40 +430,50 @@ impl StealthBlockFamily {
 }
 
 /// The share of slots the informed see a move past `edge_bps` within
-/// `horizon` slots, and the mean length of those runs.
-fn informed_activity(path: &ModelPath, horizon: u64, edge_bps: f64) -> (f64, f64) {
+/// `horizon` slots, the mean length of those runs, and the longest.
+fn informed_activity(path: &ModelPath, horizon: u64, edge_bps: f64) -> (f64, f64, u64) {
     let levels = &path.log_levels;
     let last = levels.len() - 1;
-    let (mut active, mut runs, mut was) = (0u64, 0u64, false);
+    let (mut active, mut runs, mut run, mut longest) = (0u64, 0u64, 0u64, 0u64);
     for t in 0..last {
         let ahead = levels[(t + horizon as usize).min(last)];
         let on = ((ahead - levels[t]).exp() - 1.0).abs() * 10_000.0 > edge_bps;
         if on {
             active += 1;
-            if !was {
+            if run == 0 {
                 runs += 1;
             }
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 0;
         }
-        was = on;
     }
     let duty = active as f64 / last as f64;
-    let run = if runs == 0 {
+    let mean = if runs == 0 {
         horizon as f64 / 2.0
     } else {
         active as f64 / runs as f64
     };
-    (duty, run)
+    (duty, mean, longest)
 }
 
-/// A rebalancer's bursts: as long as the informed's runs, spaced so it is
-/// active `share` times as often as they are. A session the informed sit
-/// out keeps a floor of activity, a twentieth of the session.
-fn rhythm(duty: f64, run: f64, share: f64, horizon: u64) -> ([u64; 2], [u64; 2]) {
-    let run = run.max(4.0).min(horizon as f64 * 2.0);
+/// A rebalancer's bursts: lengths drawn across the informed's own runs,
+/// from half their mean to their longest (a burst before a jump runs about
+/// a horizon), so a long dense burst says nothing of who sent it; spaced so
+/// it is active `share` times as often as the informed. A session the
+/// informed sit out keeps a floor of activity, a twentieth of the session.
+fn rhythm(duty: f64, run: f64, longest: u64, share: f64, horizon: u64) -> ([u64; 2], [u64; 2]) {
+    let lo = (run * 0.5).round().max(2.0);
+    let hi = (longest as f64).max(horizon as f64 / 2.0).max(lo + 1.0);
+    let mean = (lo + hi) / 2.0;
     let duty = (duty.max(0.05) * share).min(0.6);
-    let gap = run * (1.0 - duty) / duty;
-    let length = [(run * 0.5).round().max(2.0) as u64, (run * 1.5).round() as u64];
-    let gap = [(gap * 0.5).round().max(1.0) as u64, (gap * 1.5).round().max(2.0) as u64];
+    let gap = mean * (1.0 - duty) / duty;
+    let length = [lo as u64, hi.round() as u64];
+    let gap = [
+        (gap * 0.5).round().max(1.0) as u64,
+        (gap * 1.5).round().max(2.0) as u64,
+    ];
     (length, gap)
 }
 
