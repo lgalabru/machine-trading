@@ -14,6 +14,18 @@ A good bot profits here because it keeps a record of each wallet on the tape, fo
 - **Regimes:** every session makes 3 to 6 sharp moves, up or down with equal odds; 1 to 3 informed, 1 to 3 decoy, 2 to 4 chaser and 3 to 6 noise wallets are seated in every session.
 - **Mandate:** NVDA only, 30 NVDA position cap, $500 loss limit, 72 hidden sessions per grade; a position left at the end is closed at the oracle less 5 bp.
 
+## The mandate
+
+The desk runs a flow book in the NVDA perp. Each session it must: trade
+only `phoenix:perp:NVDA`; hold at most 30 NVDA either way; never draw down
+more than $500 from the session's high-water mark (a breach is a stop-out
+that scoring v2 charges); and be flat by the session's last slot, or the
+desk's broker closes what is left at the oracle less 5 bp. The book is
+judged on what it makes over doing nothing (scoring v2: 0 is idle, 0.5 the
+reference, 1 the informed bot). The read of the tape is graded only through
+that book's PnL under those limits: knowing who is informed is worth what
+it earns inside the cap and the loss limit, after costs.
+
 ## Expert research
 
 Reading who trades ahead of the price is the core of a prop desk's flow
