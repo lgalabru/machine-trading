@@ -135,10 +135,7 @@ impl CrossFamily {
         name: &str,
         seed: u64,
     ) -> (Scenario, Shape) {
-        let matrix = vec![
-            vec![1.0, self.correlation],
-            vec![self.correlation, 1.0],
-        ];
+        let matrix = vec![vec![1.0, self.correlation], vec![self.correlation, 1.0]];
         let mut traded: Option<ModelPath> = None;
         let (mut scenario, flow) = self.read.draw_on(read_model, name, seed, |seed, duration| {
             let mut paths = draw_joint(&[read_model, model], &matrix, seed, duration)
@@ -278,8 +275,9 @@ impl CrossFamily {
             if slot < lookback || slot < quiet_until {
                 continue;
             }
-            let moved =
-                (path.log_levels[slot as usize] - path.log_levels[(slot - lookback) as usize]) * 1e4;
+            let moved = (path.log_levels[slot as usize]
+                - path.log_levels[(slot - lookback) as usize])
+                * 1e4;
             if moved.abs() >= trigger_bps {
                 let side = if moved > 0.0 {
                     TakerSide::Buy

@@ -183,7 +183,9 @@ impl FlowFamily {
     }
 
     fn draw_with(&self, model: &MarketModel, name: &str, seed: u64) -> (Scenario, Shape) {
-        self.draw_on(model, name, seed, |seed, duration| model.draw(seed, duration))
+        self.draw_on(model, name, seed, |seed, duration| {
+            model.draw(seed, duration)
+        })
     }
 
     /// [`FlowFamily::draw`], with the calibration's own path drawn by `path`

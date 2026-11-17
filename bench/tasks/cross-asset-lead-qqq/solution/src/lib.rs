@@ -70,7 +70,10 @@ impl Mode {
     }
 
     fn reads_nvda_tape(self) -> bool {
-        matches!(self, Self::Reference | Self::Informed | Self::FollowNvdaFlow)
+        matches!(
+            self,
+            Self::Reference | Self::Informed | Self::FollowNvdaFlow
+        )
     }
 }
 
@@ -636,11 +639,7 @@ fn new_orders(
 
 /// The takes in one transaction (`getTransaction`, json): its first signer,
 /// and side times size.
-fn takes_in(
-    tx: &Value,
-    venue: &PhoenixVenue,
-    market: &ExchangeMarketConfig,
-) -> Vec<(String, f64)> {
+fn takes_in(tx: &Value, venue: &PhoenixVenue, market: &ExchangeMarketConfig) -> Vec<(String, f64)> {
     let mut out = Vec::new();
     if !tx["meta"]["err"].is_null() {
         return out;
@@ -713,7 +712,11 @@ fn takes_in(
 pub fn main_with(mode: Option<Mode>) -> BotResult {
     trade("QQQ")?;
     let mode = mode
-        .or_else(|| std::env::var("MTX_NAIVE").ok().and_then(|m| Mode::parse(&m)))
+        .or_else(|| {
+            std::env::var("MTX_NAIVE")
+                .ok()
+                .and_then(|m| Mode::parse(&m))
+        })
         .unwrap_or(Mode::Reference);
     let mut flow = Flow::new(mode);
     let knob = |name: &str| std::env::var(format!("MTX_FLOW_{name}")).ok();
