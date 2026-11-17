@@ -37,6 +37,10 @@ median trade size (and that size's lognormal sigma), from the calibration's
   "rfq_clients": { "clients": 6, "informed_share": 0.34, "lead_slots": 40, "desk_base": 5.0, "desk_usdc": 2000.0 },
   "liquidator": {},
   "refill": { "half_life_slots": [4, 40], "levels": 5 },
+  "skewers": [
+    { "view": { "kind": "informed", "horizon_slots": 100, "edge_bps": 25.0 }, "half_bps": 6.0, "skew_bps": 4.0 },
+    { "view": { "kind": "decoy", "hold_slots": [150, 400], "gap_slots": [300, 900] }, "half_bps": 6.0, "skew_bps": 4.0 }
+  ],
   "pool": { "wallets": 6, "roles": ["noise", "stop_hunters"] }
 }
 ```
@@ -55,6 +59,7 @@ median trade size (and that size's lognormal sigma), from the calibration's
 | `rfq_clients` | Ask the bot for quotes on `rfq:<symbol>`; take a quote no worse than their value by their reach: `tolerance_bps` for one trade size, `sqrt(n)` times that for `n`. Informed clients value the asset at the level `lead_slots` ahead, by `correlation`, and are mistaken with chance `1 - hit_rate` (default 0.85): that request asks and values the other way. Fills settle as swaps against the bot's wallet, which starts with `desk_base` of the asset and `desk_usdc` more USDC. | `clients`, `informed_share`, `lead_slots`, `correlation`, `hit_rate`, `per_100_slots`, `size_mult`, `deadline_slots`, `tolerance_bps`, `two_way_share`, `desk_base`, `desk_usdc`, `over_idle_desk` |
 | `liquidator` | Races the bot for liquidations on a lending venue, best bonus first. Idle until a session has one. | `latency_slots`, `min_bonus_bps` |
 | `refill` | Puts back the depth takers consume. The snapshot's makers are splines that only come back when a path move re-centres them (measured 0% in 60 slots on every market); this rests post-only orders from the old touch back toward the makers' own touch, so a gap halves every half-life, drawn once per session from `half_life_slots`. Never crosses the spread or goes past the makers' touch, stops adding to a side at `max_position_mult` trade sizes, and pulls its orders when the book level moves. Opt-in: without it, depth behaves as before. | `half_life_slots` (`[low, high]`), `levels`, `size_mult`, `react_slots`, `max_position_mult`, `min_gap_ticks`, `active` |
+| `skewers` | Rival makers, one wallet each: a two-sided quote `half_bps` either side of the reference (the market's index, a perp's, else the scenario's level), leaned by `skew_bps` times its view (`+1`, `-1` or `0`): leaning up raises the bid toward the reference and steps the ask back. Each side's distance is off by a normal draw of `quote_noise_bps`, never nearer the reference than a tick, and sizes are drawn per quote at `size_sigma` in whole lots. It quotes again every `react_slots` (drawn within `jitter`) and as soon as its view changes; between looks its quote goes stale, and the arbitrageur takes what a move put through the new reference. Its `view`: `informed` sees the level `horizon_slots` ahead and leans its way while the move is over `edge_bps`, erring as the informed traders do (`hit_rate`, `view_noise_bps`); `decoy` leans one way or the other with equal odds for `hold_slots`, then quotes flat for `gap_slots` (each drawn in its `[low, high]`); `none` never leans. Past `max_position_mult` trade sizes held one way, it quotes only the side that trades it back. Roster kinds `skewer-informed`, `skewer-decoy` and `skewer`. | `view` (`kind`, and `horizon_slots`, `edge_bps`, `hit_rate`, `view_noise_bps` or `hold_slots`, `gap_slots`), `half_bps`, `skew_bps`, `quote_noise_bps`, `react_slots`, `jitter`, `size_mult`, `size_sigma`, `max_position_mult`, `active` |
 
 ## Onboarding order
 

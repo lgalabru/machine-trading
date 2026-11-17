@@ -578,3 +578,139 @@ async fn informed_wallets_err_on_their_own_as_decoys_do() {
         "informed pair agree {within:.3}"
     );
 }
+
+/// Each quote of a role's skewers: the slot, the bid and ask it rested
+/// there, and their sizes.
+fn skewer_quotes(acts: &[Act], role: &str) -> Vec<(u64, f64, f64, f64, f64)> {
+    let mut quotes: BTreeMap<(String, u64), (Option<(f64, f64)>, Option<(f64, f64)>)> =
+        BTreeMap::new();
+    for a in acts.iter().filter(|a| a.role == role && a.verb == "rest") {
+        let quote = quotes.entry((a.wallet.clone(), a.slot)).or_default();
+        match a.side {
+            Some(Side::Bid) => quote.0 = Some((a.price, a.size)),
+            _ => quote.1 = Some((a.price, a.size)),
+        }
+    }
+    quotes
+        .into_iter()
+        .filter_map(|((_, slot), q)| {
+            let ((bid, bid_size), (ask, ask_size)) = (q.0?, q.1?);
+            Some((slot, bid, ask, bid_size, ask_size))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_skewers_sizes_offsets_and_quote_times_are_drawn_each_quote() {
+    let mut tells = Vec::new();
+    let session = Drive {
+        library: &serde_json::json!({
+            "scale": scale(),
+            "noise": [{}],
+            "skewers": [{
+                "view": { "kind": "decoy", "hold_slots": [150, 400], "gap_slots": [300, 900] },
+                "half_bps": 6.0,
+                "skew_bps": 4.0,
+                "quote_noise_bps": 1.0,
+                "react_slots": 20,
+            }],
+        }),
+        salt: 5,
+        slots: 60_000,
+        touch: &|_| (99.9, 100.1),
+        level: &steady,
+        fills: &[],
+    }
+    .run()
+    .await;
+    let quotes = skewer_quotes(&session.acts, "skewer-decoy");
+    let sizes: Vec<f64> = quotes.iter().flat_map(|q| [q.3, q.4]).collect();
+    assert_sizes_blend(
+        &mut tells,
+        "a skewer's quote",
+        &sizes,
+        &genuine(&session.acts),
+    );
+    let waits: Vec<f64> = quotes
+        .windows(2)
+        .map(|q| (q[1].0 - q[0].0) as f64)
+        .collect();
+    assert_varies(&mut tells, "its time between quotes", &waits, 0.3, 6);
+    let offsets: Vec<f64> = quotes
+        .iter()
+        .map(|q| ((100.0 - q.1) * 100.0).round())
+        .collect();
+    assert_varies(&mut tells, "its bid's distance", &offsets, 0.5, 3);
+    assert!(tells.is_empty(), "{tells:#?}");
+}
+
+/// Each quote's lean against the scenario's level at its slot: `1` up,
+/// `-1` down, `0` none (its mid within the ticks' rounding), and its
+/// width, in tenths of a basis point.
+fn leans(quotes: &[(u64, f64, f64, f64, f64)], level: &dyn Fn(u64) -> f64) -> Vec<(i8, i64)> {
+    quotes
+        .iter()
+        .map(|(slot, bid, ask, _, _)| {
+            let level = level(*slot);
+            let off = (bid + ask) / 2.0 - level;
+            let lean = if off.abs() < 0.02 {
+                0
+            } else if off > 0.0 {
+                1
+            } else {
+                -1
+            };
+            (lean, ((ask - bid) / level * 100_000.0).round() as i64)
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn an_informed_skewer_leans_right_on_average_and_a_decoy_either_way_as_wide() {
+    let rising = |s: u64| ((100.0 * (1.0 + 0.0004 * s as f64)) * 100.0).round() / 100.0;
+    let session = Drive {
+        library: &serde_json::json!({
+            "scale": scale(),
+            "skewers": [
+                {
+                    "view": { "kind": "informed", "horizon_slots": 20, "edge_bps": 30.0 },
+                    "half_bps": 6.0,
+                    "skew_bps": 4.0,
+                },
+                {
+                    "view": { "kind": "decoy", "hold_slots": [100, 300], "gap_slots": [100, 300] },
+                    "half_bps": 6.0,
+                    "skew_bps": 4.0,
+                },
+            ],
+        }),
+        salt: 9,
+        slots: 20_000,
+        touch: &|_| (99.0, 101.0),
+        level: &rising,
+        fills: &[],
+    }
+    .run()
+    .await;
+    let informed = leans(&skewer_quotes(&session.acts, "skewer-informed"), &rising);
+    let decoy = leans(&skewer_quotes(&session.acts, "skewer-decoy"), &rising);
+    assert!(informed.len() > 500 && decoy.len() > 500);
+    let leaning: Vec<i8> = informed.iter().map(|q| q.0).filter(|l| *l != 0).collect();
+    let wrong = leaning.iter().filter(|l| **l < 0).count() as f64 / leaning.len() as f64;
+    assert!((0.05..=0.35).contains(&wrong), "informed wrong {wrong:.3}");
+    let decoy_leaning: Vec<i8> = decoy.iter().map(|q| q.0).filter(|l| *l != 0).collect();
+    let up = decoy_leaning.iter().filter(|l| **l > 0).count() as f64 / decoy_leaning.len() as f64;
+    assert!((0.35..=0.65).contains(&up), "decoy up {up:.3}");
+    // A lean moves the quote, not its width: leaning or flat, informed or
+    // not, the same spread.
+    let median = |mut w: Vec<i64>| {
+        w.sort();
+        w[w.len() / 2]
+    };
+    let leaning_width = median(informed.iter().filter(|q| q.0 != 0).map(|q| q.1).collect());
+    let flat_width = median(decoy.iter().filter(|q| q.0 == 0).map(|q| q.1).collect());
+    assert!(
+        (leaning_width - flat_width).abs() <= 5,
+        "{leaning_width} against {flat_width} tenths of a bp"
+    );
+}

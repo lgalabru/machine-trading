@@ -24,6 +24,9 @@
 //!   liquidations on a lending venue.
 //! - **A refill** ([`Refill`]) puts back the depth takers consume, at a
 //!   half-life the session draws.
+//! - **Skewers** ([`Skewer`]) are rival makers that rest a two-sided
+//!   quote around the reference and lean it the way they expect the price
+//!   to go: on a view of the path ahead, on random views, or never.
 //!
 //! Every one of them trades from wallets of its own, through a
 //! [`Seat`](crate::venue::Seat) on the session's market, with ordinary
@@ -48,6 +51,7 @@ mod liquidator;
 mod pool;
 mod refill;
 pub mod rfq;
+mod skewers;
 mod spoofer;
 mod stop_hunter;
 #[cfg(test)]
@@ -70,6 +74,7 @@ pub use self::{
     pool::{Pool, PoolRole},
     refill::Refill,
     rfq::{DeskReport, RfqBoard, RfqClients, RfqSeat, Settlement, SwapError, Swaps, Token},
+    skewers::{SkewView, Skewer},
     spoofer::Spoofer,
     stop_hunter::StopHunter,
     traders::{Chaser, Decoy, Informed, Noise},
@@ -115,6 +120,10 @@ pub struct Library {
     /// The book's makers refilling after takes (see [`Refill`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refill: Option<Refill>,
+    /// Rival makers that lean their quotes (see [`Skewer`]), each from a
+    /// wallet of its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skewers: Vec<Skewer>,
     /// Wallets several of the actors above trade from (see [`Pool`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<Pool>,
@@ -321,6 +330,10 @@ impl Library {
                 .validate()
                 .map_err(|e| format!("actors.refill: {e}"))?;
         }
+        each(
+            "skewers",
+            self.skewers.iter().map(Skewer::validate).collect(),
+        )?;
         Ok(())
     }
 
@@ -375,6 +388,9 @@ impl Library {
         }
         if self.refill.is_some() {
             add("refill", 1);
+        }
+        for skewer in &self.skewers {
+            add(skewer.kind(), 1);
         }
         wallets
     }
@@ -562,6 +578,17 @@ impl Library {
                 scale,
                 wallet,
                 rng("refill"),
+            )));
+        }
+        for spec in &self.skewers {
+            let kind = spec.kind();
+            let wallet = ledger.add(kind, seats_for(None, 1), false).remove(0);
+            built.actors.push(Box::new(skewers::SkewerActor::new(
+                spec.clone(),
+                scale,
+                wallet,
+                setting.path.clone(),
+                rng(kind),
             )));
         }
         built.roster = roster(&ledger, &built.actors);

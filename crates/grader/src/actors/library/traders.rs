@@ -205,7 +205,7 @@ impl Decoy {
 /// sees the wrong way, as a trader whose read of the market is mistaken
 /// does, and not a step at a time. Right on average, then, and not always.
 #[derive(Debug, Clone, Copy)]
-struct View {
+pub(super) struct View {
     horizon: u64,
     edge_bps: f64,
     hit_rate: f64,
@@ -216,7 +216,7 @@ struct View {
 }
 
 impl View {
-    fn new(horizon: u64, edge_bps: f64, hit_rate: f64, noise_bps: f64) -> Self {
+    pub(super) fn new(horizon: u64, edge_bps: f64, hit_rate: f64, noise_bps: f64) -> Self {
         Self {
             horizon,
             edge_bps,
@@ -228,7 +228,7 @@ impl View {
     }
 
     /// The side it trades at `at`, given the move ahead in bps.
-    fn side(&mut self, rng: &mut Rng, at: u64, ahead_bps: f64) -> Option<Side> {
+    pub(super) fn side(&mut self, rng: &mut Rng, at: u64, ahead_bps: f64) -> Option<Side> {
         if at >= self.until {
             self.wrong = self.hit_rate < 1.0 && !rng.chance(self.hit_rate);
             self.until = at + self.horizon;
