@@ -579,11 +579,13 @@ async fn informed_wallets_err_on_their_own_as_decoys_do() {
     );
 }
 
+/// One side of a quote: its price and size.
+type Rested = Option<(f64, f64)>;
+
 /// Each quote of a role's skewers: the slot, the bid and ask it rested
 /// there, and their sizes.
 fn skewer_quotes(acts: &[Act], role: &str) -> Vec<(u64, f64, f64, f64, f64)> {
-    let mut quotes: BTreeMap<(String, u64), (Option<(f64, f64)>, Option<(f64, f64)>)> =
-        BTreeMap::new();
+    let mut quotes: BTreeMap<(String, u64), (Rested, Rested)> = BTreeMap::new();
     for a in acts.iter().filter(|a| a.role == role && a.verb == "rest") {
         let quote = quotes.entry((a.wallet.clone(), a.slot)).or_default();
         match a.side {
