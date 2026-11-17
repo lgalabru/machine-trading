@@ -1,8 +1,9 @@
 //! The cross-asset family: the flow-reading family's NVDA tape, read, and a
 //! QQQ perp beside it on the same cross-margin account, traded.
 //!
-//! - **NVDA** is [`FlowFamily::nvda`]'s session as it stands: its sharp
-//!   moves, and its informed, decoy, chaser and noise wallets (the actor
+//! - **NVDA** is [`FlowFamily::nvda`]'s session, its sharp moves its larger
+//!   ones (1.5 to 3 median jumps), with its informed, decoy, chaser and
+//!   noise wallets (the actor
 //!   library trades the primary market, NVDA). The mandate lets the account
 //!   hold next to none of it: the desk reads NVDA and trades QQQ.
 //! - **QQQ**'s own path is drawn jointly with NVDA's
@@ -87,7 +88,12 @@ impl CrossFamily {
     /// QQQ traded on NVDA's flow, `cross-asset-lead-qqq`.
     pub fn qqq() -> Self {
         Self {
-            read: FlowFamily::nvda(),
+            // NVDA's moves are its larger ones, news that reaches the index:
+            // at and above its calibration's 90th-percentile jump.
+            read: FlowFamily {
+                move_mult: (1.5, 3.0),
+                ..FlowFamily::nvda()
+            },
             symbol: "QQQ".into(),
             calibration: QQQ_CALIBRATION,
             correlation: correlation("nvda", "qqq"),
