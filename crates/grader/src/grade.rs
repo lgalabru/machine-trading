@@ -1621,6 +1621,7 @@ mod tests {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            obligations: None,
             tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),

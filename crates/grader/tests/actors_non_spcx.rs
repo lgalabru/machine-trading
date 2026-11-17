@@ -679,6 +679,7 @@ async fn competitor_run(symbol: &str) {
             reactive: None,
         },
         takers: Vec::new(),
+        obligations: None,
         makers_bps: None,
     };
     let mut maker = Competitor::new(rig.seat(0).await, &making, [0; 32]);
@@ -838,6 +839,7 @@ async fn competitor_rounding_run(symbol: &str) {
             reactive: None,
         },
         takers: Vec::new(),
+        obligations: None,
         makers_bps: None,
     };
     let mut maker = Competitor::new(rig.seat(0).await, &making, [0; 32]);
@@ -1310,6 +1312,7 @@ async fn fair_run(symbol: &str) {
             reactive: None,
         },
         takers: Vec::new(),
+        obligations: None,
         makers_bps: None,
     };
     // 10 buys and 10 sells of 0.1 unit, 6 bp from the price they're
@@ -1695,6 +1698,7 @@ fn reactive_making(bps: f64, floor: f64, react: u64, size: f64) -> Making {
             }),
         },
         takers: Vec::new(),
+        obligations: None,
         makers_bps: None,
     }
 }
