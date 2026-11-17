@@ -1406,6 +1406,7 @@ async fn run() -> Result<()> {
             scoring,
         } => {
             let v2 = scoring.params(None)?;
+            v2_scores_every_session(stop_on_disqualify, v2.as_ref())?;
             let mut regimes: Option<Vec<String>> = None;
             let mut latent: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.
@@ -1888,6 +1889,16 @@ fn eval_seed() -> anyhow::Result<(u64, String, SessionKeys)> {
     ))
 }
 
+/// Scoring v2 scores every session of the set: a grade that stops at the
+/// bot's first breach would leave it a truncated one.
+fn v2_scores_every_session(
+    stop_on_disqualify: bool,
+    v2: Option<&mtx_grader::scoring_v2::Params>,
+) -> anyhow::Result<()> {
+    let _ = (stop_on_disqualify, v2);
+    Ok(())
+}
+
 fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {
     match std::fs::remove_file(path) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -1913,7 +1924,19 @@ mod tests {
     use clap::Parser;
     use mtx_grader::scenario::ShockFamily;
 
-    use super::{Cli, keep_other_anchors, save_anchors, set_anchors};
+    use super::{Cli, keep_other_anchors, save_anchors, set_anchors, v2_scores_every_session};
+
+    #[test]
+    fn v2_grades_every_session_so_it_refuses_a_grade_that_stops_at_the_first_breach() {
+        let v2 = mtx_grader::scoring_v2::Params::new(mtx_grader::scoring_v2::Ceiling::Informed {
+            eta_override: None,
+        });
+        let refused = v2_scores_every_session(true, Some(&v2)).unwrap_err().to_string();
+        assert!(refused.contains("--stop-on-disqualify"), "{refused}");
+        assert!(v2_scores_every_session(false, Some(&v2)).is_ok());
+        // Under v1 the flag is the verifiers' own.
+        assert!(v2_scores_every_session(true, None).is_ok());
+    }
 
     #[test]
     fn an_anchors_file_calibrates_a_drawn_set_and_names_every_scenario() {

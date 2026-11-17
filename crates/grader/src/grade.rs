@@ -2207,6 +2207,25 @@ mod tests {
         );
     }
 
+    /// A grade that stopped at its first breach (`--stop-on-disqualify`)
+    /// holds only the sessions up to it: v2 would score a truncated set, so
+    /// it refuses one, whatever the report's own scores say.
+    #[test]
+    fn v2_refuses_a_set_that_stopped_at_its_first_breach() {
+        let s = scenario(Some(100.0));
+        let verdict: Verdict =
+            serde_json::from_value(serde_json::json!({ "truncated": { "graded": 1, "of": 4 } }))
+                .unwrap();
+        let mut report = rescore(vec![(session(30.0), s.clone())], verdict);
+        let refused = report.score_v2(&v2()).unwrap_err().to_string();
+        assert!(refused.contains("stopped at its first breach"), "{refused}");
+        assert!(report.v2.is_none());
+        // The same sessions, graded whole, are scored.
+        let mut whole = rescore(vec![(session(30.0), s)], Verdict::default());
+        whole.score_v2(&v2()).unwrap();
+        assert!(whole.v2.is_some());
+    }
+
     /// A session the risk desk stopped out (infra/22's `stop_out`): it lost
     /// `pnl_usd`, the close included, past the 1,000 limit.
     fn stopped_out(pnl_usd: f64) -> SessionReport {
