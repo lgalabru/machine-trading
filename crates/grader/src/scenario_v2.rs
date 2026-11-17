@@ -281,6 +281,10 @@ pub struct Competitor {
     pub competitor_bps: f64,
     /// How the grader's own maker competes.
     pub competition: Competition,
+    /// Where the snapshot's makers are widened to, when it isn't
+    /// `competitor_bps` (see [`Making::makers_bps`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub makers_bps: Option<f64>,
 }
 
 /// The transaction layer.
@@ -563,6 +567,7 @@ impl Actors {
                 competitor_bps: competitor.competitor_bps,
                 competition: competitor.competition,
                 takers: self.takers.clone(),
+                makers_bps: competitor.makers_bps,
             }
             .validate(duration_slots)
             .map_err(|reason| format!("making: {reason}"));
@@ -689,6 +694,7 @@ impl ScenarioV2 {
         self.markets_agree()?;
         self.flows_do_not_mix()?;
         self.library_is_for_perps()?;
+        self.one_score_over_holding()?;
         self.takers_pricing_is_valid()?;
         if self.venues.spot.is_some() {
             self.spot_is_alone()?;
@@ -1514,6 +1520,25 @@ impl ScenarioV2 {
         Ok(())
     }
 
+    /// `scoring.net` and an RFQ desk's `over_idle_desk` both score over
+    /// holding the start, with different price references and drawdown
+    /// series: a scenario picks one.
+    fn one_score_over_holding(&self) -> Result<(), String> {
+        let over_idle = self
+            .actors
+            .library
+            .as_ref()
+            .and_then(|l| l.rfq_clients.as_ref())
+            .is_some_and(|rfq| rfq.over_idle_desk);
+        if over_idle && self.scoring.net.is_some() {
+            return Err(
+                "actors.rfq_clients.over_idle_desk and scoring.net both score over holding the start: use one"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
     /// The actor library trades a perp's book: a spot or lending session has none.
     fn library_is_for_perps(&self) -> Result<(), String> {
         if (self.venues.spot.is_some() || self.venues.lending.is_some())
@@ -1658,6 +1683,7 @@ impl ScenarioV2 {
                     competitor_bps: c.competitor_bps,
                     competition: c.competition,
                     takers,
+                    makers_bps: c.makers_bps,
                 }),
                 None,
                 Vec::new(),
@@ -1794,6 +1820,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 Some(Competitor {
                     competitor_bps: making.competitor_bps,
                     competition: making.competition,
+                    makers_bps: making.makers_bps,
                 }),
                 None,
                 making.takers.clone(),
@@ -2670,6 +2697,25 @@ mod tests {
             s.validate()
                 .unwrap_err()
                 .contains("markets.NVDA: its draw is recorded both")
+        );
+    }
+
+    #[test]
+    fn an_rfq_desk_over_the_idle_desk_is_not_also_net_scored() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let mut library = parse(everyone).unwrap().actors.unwrap();
+        library.rfq_clients.as_mut().unwrap().over_idle_desk = true;
+        let mut s = shock();
+        s.actors.library = Some(library);
+        s.validate().unwrap();
+        s.scoring.net = Some(NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        let refused = s.validate().unwrap_err();
+        assert!(
+            refused.contains("over_idle_desk") && refused.contains("use one"),
+            "{refused}"
         );
     }
 
