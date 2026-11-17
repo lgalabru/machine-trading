@@ -393,6 +393,22 @@ The grader clears the environment, then sets exactly:
 An off-hours scenario, whose underlying's market is closed, also sets
 `MTX_REOPEN_SLOT`: the slot that market reopens at.
 
+A session on several perp markets also sets `MTX_MARKETS`: the markets
+the session trades, as the mandate names them, `MTX_SYMBOL`'s first:
+`["phoenix:perp:NVDA", "phoenix:perp:SPCX"]`. One cross-margin account
+trades them all. A bot reads it as `session.perp_markets()?`, which gives
+the full list on one market too (the session's own market alone), and
+refuses a list that names a market twice, a market that isn't a perp, or
+one that doesn't start with the session's own market. `MTX_SYMBOL` and
+`MTX_MAX_POSITION` stay the first market's; the mandate lists every market
+with its own cap. A strategy component gets each market in
+`session.venues`, tradable at its address, and sends a line to one with
+`.at("phoenix:perp:<SYMBOL>")`; each step's `market.venues` carries its
+position and top. The grader's planner (`mtx_kit::plan_sheet_under`) cuts
+each market's lines to that market's own cap in the mandate. A process bot
+on `mtx_kit::run` trades only `MTX_SYMBOL`'s market; to trade the others,
+it reads `MTX_MARKETS` and sends to them itself.
+
 A perp scenario that starts the bot holding a position, or gives it an
 order to work, says so:
 

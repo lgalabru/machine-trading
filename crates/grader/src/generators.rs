@@ -21,7 +21,8 @@ use crate::{
     weekend::{WeekendFamily, WeekendShape},
 };
 
-/// A hidden set as `mtx grade --draw` runs it.
+/// A hidden set as `mtx grade --draw` runs it (and a practice set as
+/// `mtx calibrate --practice` runs the informed bot on it).
 pub struct Hidden {
     pub scenarios: Vec<Scenario>,
     /// What each scenario was drawn as, for its detail file.
@@ -37,8 +38,11 @@ pub struct Hidden {
 
 pub struct Generator {
     pub name: &'static str,
-    /// `count` practice scenarios named `<prefix>-<n>`.
-    pub practice: fn(prefix: &str, count: usize, seed: u64) -> Vec<Scenario>,
+    /// `count` practice scenarios named `<prefix>-<n>`, drawn with each
+    /// one's latent state, for `mtx calibrate --practice` to run the informed
+    /// bot on them. Host-side only: the latent state is never written to a
+    /// practice file. [`Generator::practice`] is its scenarios.
+    pub practice_drawn: fn(prefix: &str, count: usize, seed: u64) -> Result<Hidden>,
     /// `count` hidden scenarios named `hidden-<n>`.
     pub hidden: fn(count: usize, seed: u64, tell_regime: bool) -> Result<Hidden>,
     /// Every parameter of the families this generator draws from, as text
@@ -47,10 +51,36 @@ pub struct Generator {
     pub params: fn() -> String,
 }
 
+impl Generator {
+    /// `count` practice scenarios named `<prefix>-<n>`: the scenarios of
+    /// [`Generator::practice_drawn`], so the two are one draw.
+    pub fn practice(&self, prefix: &str, count: usize, seed: u64) -> Vec<Scenario> {
+        (self.practice_drawn)(prefix, count, seed)
+            .expect("a practice draw is serialisable")
+            .scenarios
+    }
+
+    /// The description a shipped practice file of a v2 or guarded task
+    /// carries: the symbol and nothing the generator knows of the session,
+    /// not even the family's name (`funding-carry` holds a latent field's
+    /// name). A generator's own description states the session's latent
+    /// state in prose (who is informed, from which account, the process's
+    /// parameters), and the file goes into the agent's image.
+    pub fn neutral_description(&self, symbol: &str) -> String {
+        format!("{symbol} practice session")
+    }
+}
+
 pub const GENERATORS: &[Generator] = &[
     Generator {
         name: "flash-crash",
-        practice: |prefix, count, seed| ShockFamily::spcx().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                ShockFamily::spcx().draw_set(prefix, count, seed),
+                false,
+                shock_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 ShockFamily::spcx().draw_set("hidden", count, seed),
@@ -62,19 +92,31 @@ pub const GENERATORS: &[Generator] = &[
     },
     Generator {
         name: "market-making",
-        practice: |prefix, count, seed| MakingFamily::spcx().sample_set(prefix, count, seed),
-        hidden: |count, seed, tell| making_hidden(&MakingFamily::spcx(), count, seed, tell),
+        practice_drawn: |prefix, count, seed| {
+            making_drawn(&MakingFamily::spcx(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| {
+            making_drawn(&MakingFamily::spcx(), "hidden", count, seed, tell)
+        },
         params: || format!("{:?}", MakingFamily::spcx()),
     },
     Generator {
         name: "market-making-v2",
-        practice: |prefix, count, seed| MakingFamily::v2().sample_set(prefix, count, seed),
-        hidden: |count, seed, tell| making_hidden(&MakingFamily::v2(), count, seed, tell),
+        practice_drawn: |prefix, count, seed| {
+            making_drawn(&MakingFamily::v2(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| making_drawn(&MakingFamily::v2(), "hidden", count, seed, tell),
         params: || format!("{:?}", MakingFamily::v2()),
     },
     Generator {
         name: "funding-carry",
-        practice: |prefix, count, seed| CarryFamily::practice().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                CarryFamily::practice().draw_set(prefix, count, seed),
+                false,
+                carry_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 CarryFamily::spcx().draw_set("hidden", count, seed),
@@ -92,7 +134,13 @@ pub const GENERATORS: &[Generator] = &[
     },
     Generator {
         name: "weekend-gap",
-        practice: |prefix, count, seed| WeekendFamily::spcx().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                WeekendFamily::spcx().draw_set(prefix, count, seed),
+                false,
+                weekend_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
@@ -117,8 +165,14 @@ pub fn names() -> Vec<&'static str> {
 /// A market-making hidden set, each scenario annotated with its informed
 /// orders and, when told, the regime as those orders by slot and side: what a
 /// perfect reader of the tape would know.
-fn making_hidden(family: &MakingFamily, count: usize, seed: u64, tell: bool) -> Result<Hidden> {
-    let drawn = family.sample_set_labeled("hidden", count, seed);
+fn making_drawn(
+    family: &MakingFamily,
+    prefix: &str,
+    count: usize,
+    seed: u64,
+    tell: bool,
+) -> Result<Hidden> {
+    let drawn = family.sample_set_labeled(prefix, count, seed);
     let annotations = drawn
         .iter()
         .map(|(_, informed)| json!({ "informed": informed }))
@@ -222,6 +276,111 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "half_life_slots", Knowable::Process),
 ];
 
+/// The members of a latent state itself, which no shipped practice file may
+/// hold outside `actors`: the latent object, the roster and the resolved
+/// wallets. Identity fields such as `informed` and `worker` are not here:
+/// they are also the actor library's own configuration keys
+/// (`actors.informed`).
+pub const RESERVED_OUTSIDE_ACTORS: [&str; 4] = ["latent", "roster", "wallets", "roles"];
+
+/// Remove the per-account role maps (`roles`, as `making.roles` of a family
+/// that names its informed accounts) a scenario holds outside `actors`.
+/// Only a host-side informed run needs them; a practice file saved with one
+/// would name the informed account. `actors.*.roles` (a list of role names)
+/// stays.
+pub fn strip_identity_roles(value: &mut Value) {
+    if let Value::Object(map) = value {
+        map.remove("roles");
+        for (key, member) in map.iter_mut() {
+            if key != "actors" {
+                strip_identity_roles(member);
+            }
+        }
+    } else if let Value::Array(items) = value {
+        items.iter_mut().for_each(strip_identity_roles);
+    }
+}
+
+/// The reserved members ([`RESERVED_OUTSIDE_ACTORS`]) a practice file's JSON
+/// holds as a key anywhere outside its `actors`.
+pub fn latent_keys_in(text: &str) -> Vec<&'static str> {
+    fn walk(value: &Value, found: &mut Vec<&'static str>) {
+        match value {
+            Value::Object(map) => {
+                for (key, member) in map {
+                    if let Some(reserved) = RESERVED_OUTSIDE_ACTORS.iter().find(|r| **r == key)
+                        && !found.contains(reserved)
+                    {
+                        found.push(reserved);
+                    }
+                    if key != "actors" {
+                        walk(member, found);
+                    }
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|i| walk(i, found)),
+            _ => {}
+        }
+    }
+    let mut found = Vec::new();
+    if let Ok(value) = serde_json::from_str::<Value>(text) {
+        walk(&value, &mut found);
+    }
+    found
+}
+
+/// What a practice file's strings state of a latent state: a string value
+/// outside `actors` that names one of the family's latent fields
+/// (`informed_account`, or "informed account") or an account ("account 4").
+/// The generator's own descriptions state the session's latent values this
+/// way, so this finds them in prose.
+pub fn latent_text_in(family: &str, text: &str) -> Vec<String> {
+    fn strings<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
+        match value {
+            Value::String(s) => out.push(s),
+            Value::Object(map) => {
+                for (key, member) in map {
+                    if key != "actors" {
+                        strings(member, out);
+                    }
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|i| strings(i, out)),
+            _ => {}
+        }
+    }
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    strings(&value, &mut found);
+    let fields: Vec<&str> = LATENT_FIELDS
+        .iter()
+        .filter(|(f, ..)| *f == family)
+        .map(|(_, field, _)| *field)
+        .collect();
+    let mut hits: Vec<String> = Vec::new();
+    for string in found {
+        let lower = string.to_lowercase();
+        for field in &fields {
+            let named = lower.contains(field) || lower.contains(&field.replace('_', " "));
+            if named && !hits.iter().any(|h| h == field) {
+                hits.push(field.to_string());
+            }
+        }
+        let mut rest = lower.as_str();
+        while let Some(at) = rest.find("account ") {
+            rest = &rest[at + 8..];
+            if rest.starts_with(|c: char| c.is_ascii_digit())
+                && !hits.iter().any(|h| h == "an account")
+            {
+                hits.push("an account".to_string());
+            }
+        }
+    }
+    hits
+}
+
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
 /// one draw that makes it, so all of it is the session's future.
 fn shock_latent(_: &Shape) -> Value {
@@ -275,8 +434,8 @@ mod tests {
     #[test]
     fn every_generator_draws_both_sets_the_same_way_twice() {
         for g in GENERATORS {
-            let a = (g.practice)("practice", 4, 7);
-            let b = (g.practice)("practice", 4, 7);
+            let a = g.practice("practice", 4, 7);
+            let b = g.practice("practice", 4, 7);
             assert_eq!(a.len(), 4, "{}", g.name);
             assert_eq!(
                 serde_json::to_string(&a).unwrap(),
@@ -328,6 +487,82 @@ mod tests {
         for g in GENERATORS {
             assert!(!(g.params)().is_empty(), "{}", g.name);
             assert_eq!((g.params)(), (g.params)(), "{}", g.name);
+        }
+    }
+
+    /// A practice set has each scenario's latent state beside it for the
+    /// informed bot, and the practice set `mtx scenario generate` writes is
+    /// its scenarios (`practice` is derived from `practice_drawn`).
+    #[test]
+    fn a_practice_set_is_drawn_with_its_latent_state() {
+        for g in GENERATORS {
+            let drawn = (g.practice_drawn)("practice", 4, 7).unwrap();
+            assert_eq!(drawn.latent.len(), 4, "{}", g.name);
+            assert_eq!(drawn.scenarios.len(), 4, "{}", g.name);
+            assert!(drawn.regimes.is_none());
+        }
+    }
+
+    /// A latent state is in a practice file as its members or in prose. The
+    /// reserved members are caught outside `actors` and only there: the actor
+    /// library's own `informed` and `worker` keys are configuration.
+    #[test]
+    fn a_latent_in_a_practice_file_is_caught_and_an_actors_config_is_not() {
+        assert_eq!(latent_keys_in(r#"{"roster": ["informed"]}"#), ["roster"]);
+        assert_eq!(latent_keys_in(r#"{"x": {"latent" : {}}}"#), ["latent"]);
+        assert_eq!(latent_keys_in(r#"{"wallets": {}}"#), ["wallets"]);
+        assert!(latent_keys_in(r#"{"note": "latent"}"#).is_empty());
+        // A per-account role map outside `actors` (a c1-shaped
+        // `making.roles`) names the informed account; `actors.pool.roles`
+        // is a list of role names.
+        let c1 = r#"{"making": {"takers": [], "roles": {"informed": [7]}}}"#;
+        assert_eq!(latent_keys_in(c1), ["roles"]);
+        assert!(
+            latent_keys_in(r#"{"actors": {"pool": {"wallets": 3, "roles": ["informed"]}}}"#)
+                .is_empty()
+        );
+        let mut value: Value = serde_json::from_str(
+            r#"{"making": {"roles": {"informed": [7]}, "x": 1}, "actors": {"pool": {"roles": ["informed"]}}}"#,
+        )
+        .unwrap();
+        strip_identity_roles(&mut value);
+        assert_eq!(
+            value,
+            serde_json::json!({"making": {"x": 1}, "actors": {"pool": {"roles": ["informed"]}}})
+        );
+        let pooled = r#"{"actors": {"informed": {"share": 0.2}, "worker": {"qty": 3},
+            "noise": {"wallets": 2}}, "description": "a pool"}"#;
+        assert!(latent_keys_in(pooled).is_empty());
+        assert!(latent_text_in("weekend-gap", pooled).is_empty());
+        // A renamed identity key is no loophole: the structural check
+        // (`Scenario` refuses unknown members) is what rejects it.
+        let weekend = generator("weekend-gap").unwrap().practice("practice", 6, 5);
+        let told = weekend.iter().any(|s| {
+            let text = serde_json::to_string(s).unwrap();
+            !latent_text_in("weekend-gap", &text).is_empty()
+        });
+        assert!(told, "the generator's description states a latent");
+        assert_eq!(
+            latent_text_in(
+                "weekend-gap",
+                r#"{"description": "closed, informed flow from account 4"}"#
+            ),
+            ["informed", "an account"]
+        );
+        assert!(
+            latent_text_in("funding-carry", r#"{"description": "informed share 0.22"}"#)
+                .contains(&"informed_share".to_string())
+        );
+    }
+
+    /// The neutral description names the symbol and states nothing a latent
+    /// field names.
+    #[test]
+    fn the_neutral_description_states_no_latent() {
+        for g in GENERATORS {
+            let description = g.neutral_description("SPCX");
+            let json = serde_json::json!({ "description": description }).to_string();
+            assert!(latent_text_in(g.name, &json).is_empty(), "{description}");
         }
     }
 
