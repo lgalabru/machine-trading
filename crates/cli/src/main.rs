@@ -491,6 +491,9 @@ enum BenchCommand {
         /// nothing.
         #[arg(long)]
         local: bool,
+        /// Publish trials without an agent trajectory (refused otherwise).
+        #[arg(long)]
+        allow_missing_trajectories: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -1026,6 +1029,7 @@ async fn run() -> Result<()> {
             force,
             artifacts,
             local,
+            allow_missing_trajectories,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
@@ -1037,6 +1041,7 @@ async fn run() -> Result<()> {
                 force,
                 artifacts.as_deref(),
                 local,
+                allow_missing_trajectories,
             )?;
             ui::done(format!(
                 "Published {} trial{} to {} ({:.1} MB)",
@@ -1434,6 +1439,16 @@ async fn run() -> Result<()> {
             }
             if let Some(error) = v2_failed {
                 return Err(anyhow::Error::from(error).context("--scoring v2"));
+            }
+            match (&graded.headline, &graded.v2) {
+                (Some(_), Some(v2)) => {
+                    tracing::info!(reward = graded.reward, raw = v2.raw, "scored by v2")
+                }
+                _ => tracing::info!(
+                    reward = graded.reward,
+                    reference_ratio = graded.reference_ratio,
+                    "scored"
+                ),
             }
             if let Some(check) = graded.replay.as_ref().filter(|check| !check.identical) {
                 let first = check.differences.first().map(ToString::to_string);

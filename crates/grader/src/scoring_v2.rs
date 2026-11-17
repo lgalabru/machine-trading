@@ -237,6 +237,14 @@ pub struct ScoreV2 {
     /// What the sessions alone score, floored at −1, fatal or not: reported,
     /// not scored.
     pub measured_raw: f64,
+    /// `raw` before the near-breach charge and any breach's penalty (each
+    /// session weighed as its PnL alone, no breach floor),
+    /// floored at −1; −1 for a fatal grade. The reference graded against
+    /// itself scores 0.5 here exactly, whatever its drawdowns: what an
+    /// oracle check reads. Reported, not scored. Absent in reports from
+    /// before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_before_charge: Option<f64>,
     /// `raw − 0.5`: the edge over the reference.
     pub edge: f64,
     /// The 95% interval of `raw` over a paired bootstrap of this grade's
@@ -531,6 +539,14 @@ pub fn score(
     }
     let scored = sums.score(phi, k, params.risk_weight, risk_anchor);
     let measured_raw = scored.raw;
+    let uncharged: f64 = sessions
+        .iter()
+        .map(|s| weigh(s.pnl_usd - s.nop_pnl_usd))
+        .sum();
+    let raw_before_charge = match fatal {
+        Some(_) => RAW_FLOOR,
+        None => sums.raw(phi, uncharged),
+    };
     let measured_unfloored = scored.raw_unfloored;
     let seed = seed(eval_seed_sha256);
     // A fatal grade is the floor, with no interval: its sessions don't count.
@@ -558,6 +574,7 @@ pub fn score(
         raw,
         raw_unfloored,
         measured_raw,
+        raw_before_charge: Some(raw_before_charge),
         edge: raw - 0.5,
         ci_lo,
         ci_hi,
@@ -790,6 +807,7 @@ impl ScoreV2 {
         self.score = 0.0;
         self.raw = -1.0;
         self.raw_unfloored = self.raw_unfloored.min(-1.0);
+        self.raw_before_charge = Some(RAW_FLOOR);
         self.edge = -1.5;
         self.ci_lo = -1.0;
         self.ci_hi = -1.0;
@@ -852,6 +870,7 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         raw: -1.0,
         raw_unfloored: -1.0,
         measured_raw: 0.0,
+        raw_before_charge: Some(RAW_FLOOR),
         edge: -1.5,
         ci_lo: -1.0,
         ci_hi: -1.0,
@@ -2035,6 +2054,36 @@ mod tests {
         assert_eq!(nop.raw, 0.0);
     }
 
+    /// The reference against a calmer informed bot: the charge, anchored on
+    /// the informed bot's drawdowns, takes it under 0.5, by design; before
+    /// the charge it is 0.5 exactly, which is what an oracle check reads.
+    #[test]
+    fn the_reference_is_one_half_before_a_calmer_informed_bots_charge() {
+        let mut sessions = risked(&REFERENCE, &REFERENCE_DD, &REFERENCE, &REFERENCE_DD);
+        for s in &mut sessions {
+            s.informed_max_drawdown_usd = Some(1.0);
+        }
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.risk.anchor, "informed");
+        assert!(v2.risk.charge_usd > 0.0);
+        assert!(v2.raw < 0.5, "{}", v2.raw);
+        assert_eq!(v2.raw_before_charge, Some(0.5));
+        // A breach's penalty is left out of it too: the session as it made.
+        let mut breached = set(&REFERENCE, &REFERENCE);
+        breached[1].breach = Some("over the cap".into());
+        let v2 = score(&breached, &informed(), None, None).unwrap();
+        assert!(v2.raw < 0.5);
+        assert_eq!(v2.raw_before_charge, Some(0.5));
+        let fatal = score(
+            &set(&REFERENCE, &REFERENCE),
+            &informed(),
+            Some("refused".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(fatal.raw_before_charge, Some(RAW_FLOOR));
+    }
+
     /// RECKLESS.md's lucky gambler: it drew down to its limit in every
     /// session, the reference barely moving, and came out ahead anyway.
     #[test]
@@ -2239,6 +2288,45 @@ mod tests {
         let g = &once.gap;
         let sum = g.wrong_read + g.missed + g.execution + g.risk + g.unattributed;
         assert!((sum - (1.0 - once.raw)).abs() < 1e-12);
+    }
+
+    /// The probe gate's breach-rate penalty, against the real scorer: a bot
+    /// that gains a little over its twin and breaches in `b` of 24 sessions.
+    /// The same sessions unbreached (the breach sessions at the floor's loss,
+    /// drawn down to the limit) score `free`; the run scores `free` less
+    /// exactly `c * b / n`. Fails if the penalty is removed.
+    #[test]
+    fn the_breach_penalty_holds_a_bot_that_gains_a_little_and_breaches_a_little() {
+        let n = 24usize;
+        let twin = [120.0, -60.0, 75.0, 180.0, 0.0, 45.0];
+        let pnls: Vec<f64> = (0..n).map(|i| twin[i % 6] * 1.25).collect();
+        let references: Vec<f64> = (0..n).map(|i| REFERENCE[i % 6]).collect();
+        for breaches in [1usize, 2, 3] {
+            let mut run = set(&pnls, &references);
+            for s in run.iter_mut().take(breaches) {
+                s.pnl_usd = -100.0;
+                s.breach = Some("drew down past its limit".into());
+            }
+            let got = score(&run, &informed(), None, None).unwrap();
+            let mut unbreached = run.clone();
+            for s in unbreached.iter_mut().take(breaches) {
+                s.breach = None;
+                s.max_drawdown_usd = s.worst_loss_usd;
+            }
+            let free = score(&unbreached, &informed(), None, None).unwrap();
+            let owed = BREACH_RATE_WEIGHT * breaches as f64 / n as f64;
+            assert!((got.breach_penalty - owed).abs() < 1e-15, "b = {breaches}");
+            assert!(
+                (got.raw - (free.raw - owed).max(-1.0)).abs() < 1e-12,
+                "b = {breaches}: {} vs {} less {owed}",
+                got.raw,
+                free.raw
+            );
+            assert!(
+                got.raw < free.raw,
+                "b = {breaches}: the penalty doesn't bind"
+            );
+        }
     }
 
     #[test]

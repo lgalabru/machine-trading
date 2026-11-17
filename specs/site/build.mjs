@@ -314,6 +314,8 @@ function layout({ page, title, head, body }) {
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="${SITE}/social.jpg">
+<link rel="apple-touch-icon" href="${SITE}/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="mtx">
 <link rel="stylesheet" href="${link(page, "style.css")}">
 ${
   isGuide(page) && !index
@@ -431,6 +433,9 @@ for (const asset of ["mt.js", "mt.css", "terms.js"])
   fs.copyFileSync(path.join(here, "guides", asset), path.join(out, "guides", asset));
 // The link preview, the same image as the repository's social preview.
 fs.copyFileSync(path.join(here, "social.jpg"), path.join(out, "social.jpg"));
+// The icon a phone's home screen shows for the site: square and opaque, the
+// phone rounds it.
+fs.copyFileSync(path.join(here, "apple-touch-icon.png"), path.join(out, "apple-touch-icon.png"));
 // Serve files as they are: no Jekyll processing on GitHub Pages.
 fs.writeFileSync(path.join(out, ".nojekyll"), "");
 // Pages that moved: keep their old links working.
