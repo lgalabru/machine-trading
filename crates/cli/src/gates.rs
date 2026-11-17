@@ -577,9 +577,9 @@ pub fn bot_told_nothing(test: &str) -> Check {
 /// Practice goes into the image whole (Docker copies `practice/` with its
 /// subdirectories), and the informed bot is run on it host-side
 /// (`mtx calibrate --practice`), which saves only its PnL. Every file must
-/// parse as a [`Scenario`](mtx_grader::scenario::Scenario), which refuses
+/// parse as a scenario of its schema version (`scenario_v2::parse`), which refuses
 /// members it doesn't know (a `latent` among them), and nothing else may be
-/// there; no `latent`, `roster` or `wallets` member sits outside `actors`
+/// there; no `latent`, `roster`, `roles` or `wallets` member sits outside `actors`
 /// (where `informed` and `worker` are the library's own configuration); and
 /// no string names a latent field of the family or an account. A v2 task's
 /// description is the generator's neutral one: the generator's own describes
@@ -602,6 +602,8 @@ pub fn practice_holds_no_latent(
     let generator = mtx_grader::generators::generator(family);
     let mut files = Vec::new();
     collect_files(&dir, &mut files);
+    // An empty file (the scaffold's `.gitkeep`) holds nothing to state.
+    files.retain(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > 0));
     files.sort();
     let name_of = |p: &Path| {
         p.strip_prefix(&dir)
@@ -616,7 +618,7 @@ pub fn practice_holds_no_latent(
             errors.push(format!("{name} is not text"));
             continue;
         };
-        let scenario = match serde_json::from_str::<mtx_grader::scenario::Scenario>(&text) {
+        let scenario = match mtx_grader::scenario_v2::parse(&text) {
             Ok(s) if path.extension().is_some_and(|e| e == "json") => s,
             Ok(_) => {
                 errors.push(format!("{name} is not a .json scenario file"));
@@ -2399,6 +2401,38 @@ mod tests {
         let sub = check(v2);
         assert_eq!(sub.status, Status::Fail, "{}", sub.detail);
         assert!(sub.detail.contains("sub/practice-9.json"), "{}", sub.detail);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The scaffold's empty `.gitkeep` and a schema-2 file are what a correct
+    /// task ships; a c1-shaped `making.roles` names the informed account.
+    #[test]
+    fn practice_gate_reads_schema_2_and_empty_files_and_refuses_a_role_map() {
+        let root = std::env::temp_dir().join(format!("mtx-practice-v2-{}", std::process::id()));
+        let practice = root.join("bench/tasks/t/environment/practice");
+        std::fs::create_dir_all(&practice).unwrap();
+        let g = mtx_grader::generators::generator("market-making").unwrap();
+        let mut scenario = g.practice("practice", 1, 5).remove(0);
+        scenario.description = g.neutral_description(&scenario.symbol);
+        let check = || practice_holds_no_latent(&root, "t", "market-making", tasks::Headline::V2);
+        std::fs::write(practice.join(".gitkeep"), "").unwrap();
+        scenario.save_v2(&practice.join("practice-1.json")).unwrap();
+        let ok = check();
+        assert_eq!(ok.status, Status::Pass, "{}", ok.detail);
+        scenario.save(&practice.join("practice-1.json")).unwrap();
+        let mut stated: Value =
+            serde_json::from_str(&std::fs::read_to_string(practice.join("practice-1.json")).unwrap())
+                .unwrap();
+        stated["schema"] = 1.into();
+        std::fs::write(practice.join("practice-1.json"), stated.to_string()).unwrap();
+        let ok = check();
+        assert_eq!(ok.status, Status::Pass, "{}", ok.detail);
+        stated["making"]["roles"] = serde_json::json!({"informed": [7]});
+        std::fs::write(practice.join("practice-2.json"), stated.to_string()).unwrap();
+        let failed = check();
+        assert_eq!(failed.status, Status::Fail, "{}", failed.detail);
+        assert!(failed.detail.contains("practice-2.json"), "{}", failed.detail);
+        assert!(failed.detail.contains("roles"), "{}", failed.detail);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

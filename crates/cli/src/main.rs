@@ -1727,7 +1727,7 @@ async fn run() -> Result<()> {
             if let Some(dir) = &practice_dir {
                 std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
                 for (_, scenario) in &scenarios {
-                    scenario.save(&dir.join(format!("{}.json", scenario.name)))?;
+                    save_practice(scenario, &dir.join(format!("{}.json", scenario.name)))?;
                 }
             }
             serde_json::to_string_pretty(&reports)?
@@ -1738,6 +1738,15 @@ async fn run() -> Result<()> {
         println!("{output}");
     }
     Ok(())
+}
+
+/// Save a practice file as v1 without the per-account role maps a family
+/// draws for the host-side informed run: the file goes into the agent's image.
+fn save_practice(scenario: &Scenario, path: &Path) -> Result<()> {
+    let mut value = serde_json::to_value(scenario)?;
+    generators::strip_identity_roles(&mut value);
+    let text = serde_json::to_string_pretty(&value)? + "\n";
+    std::fs::write(path, text).with_context(|| path.display().to_string())
 }
 
 /// A practice file that is already in `--out` keeps its anchors the
@@ -1752,7 +1761,9 @@ fn keep_other_anchors(drawn: &mut Scenario, existing: &Scenario) -> anyhow::Resu
         s.reference_max_drawdown_usd = None;
         s.informed_pnl_usd = None;
         s.informed_max_drawdown_usd = None;
-        serde_json::to_value(s)
+        let mut value = serde_json::to_value(s)?;
+        generators::strip_identity_roles(&mut value);
+        Ok::<_, serde_json::Error>(value)
     };
     if bare(drawn)? != bare(existing)? {
         anyhow::bail!(
@@ -2006,6 +2017,23 @@ mod tests {
         let mut again = ShockFamily::spcx().sample_set("practice", 1, 7).remove(0);
         keep_other_anchors(&mut again, &renamed).unwrap();
         assert_eq!(again.reference_pnl_usd, Some(3.0));
+    }
+
+    #[test]
+    fn a_saved_practice_file_has_no_role_map() {
+        let scenario = ShockFamily::spcx().sample_set("practice", 1, 7).remove(0);
+        let dir = std::env::temp_dir().join(format!("mtx-save-practice-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.json");
+        super::save_practice(&scenario, &path).unwrap();
+        assert_eq!(mtx_grader::scenario::Scenario::load(&path).unwrap(), scenario);
+        // The same data with a c1-shaped role map compares equal once the
+        // maps are stripped, as keep_other_anchors needs.
+        let mut with_roles = serde_json::to_value(&scenario).unwrap();
+        with_roles["making"] = serde_json::json!({"roles": {"informed": [7]}});
+        mtx_grader::generators::strip_identity_roles(&mut with_roles);
+        assert!(with_roles["making"].as_object().unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

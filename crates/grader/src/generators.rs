@@ -266,7 +266,25 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
 /// wallets. Identity fields such as `informed` and `worker` are not here:
 /// they are also the actor library's own configuration keys
 /// (`actors.informed`).
-pub const RESERVED_OUTSIDE_ACTORS: [&str; 3] = ["latent", "roster", "wallets"];
+pub const RESERVED_OUTSIDE_ACTORS: [&str; 4] = ["latent", "roster", "wallets", "roles"];
+
+/// Remove the per-account role maps (`roles`, as `making.roles` of a family
+/// that names its informed accounts) a scenario holds outside `actors`.
+/// Only a host-side informed run needs them; a practice file saved with one
+/// would name the informed account. `actors.*.roles` (a list of role names)
+/// stays.
+pub fn strip_identity_roles(value: &mut Value) {
+    if let Value::Object(map) = value {
+        map.remove("roles");
+        for (key, member) in map.iter_mut() {
+            if key != "actors" {
+                strip_identity_roles(member);
+            }
+        }
+    } else if let Value::Array(items) = value {
+        items.iter_mut().for_each(strip_identity_roles);
+    }
+}
 
 /// The reserved members ([`RESERVED_OUTSIDE_ACTORS`]) a practice file's JSON
 /// holds as a key anywhere outside its `actors`.
@@ -451,6 +469,21 @@ mod tests {
         assert_eq!(latent_keys_in(r#"{"x": {"latent" : {}}}"#), ["latent"]);
         assert_eq!(latent_keys_in(r#"{"wallets": {}}"#), ["wallets"]);
         assert!(latent_keys_in(r#"{"note": "latent"}"#).is_empty());
+        // A per-account role map outside `actors` (a c1-shaped
+        // `making.roles`) names the informed account; `actors.pool.roles`
+        // is a list of role names.
+        let c1 = r#"{"making": {"takers": [], "roles": {"informed": [7]}}}"#;
+        assert_eq!(latent_keys_in(c1), ["roles"]);
+        assert!(latent_keys_in(r#"{"actors": {"pool": {"wallets": 3, "roles": ["informed"]}}}"#).is_empty());
+        let mut value: Value = serde_json::from_str(
+            r#"{"making": {"roles": {"informed": [7]}, "x": 1}, "actors": {"pool": {"roles": ["informed"]}}}"#,
+        )
+        .unwrap();
+        strip_identity_roles(&mut value);
+        assert_eq!(
+            value,
+            serde_json::json!({"making": {"x": 1}, "actors": {"pool": {"roles": ["informed"]}}})
+        );
         let pooled = r#"{"actors": {"informed": {"share": 0.2}, "worker": {"qty": 3},
             "noise": {"wallets": 2}}, "description": "a pool"}"#;
         assert!(latent_keys_in(pooled).is_empty());
