@@ -9,7 +9,8 @@ one's key and name before a batch spends anything.
     python3 -I models.py token <name>              the model's token on the key proxy
     python3 -I models.py scan <dir>                files under <dir> holding a key, in any form
     python3 -I models.py native-guard <tasks> <name>...  refuse native models on a guarded task (MTX_UNGUARDED=1 allows)
-    python3 -I models.py stamp-unguarded <batch>    mark a batch `guarded: false` (a screen, never published)
+    python3 -I models.py stamp-unguarded <batch>    mark a batch `guarded: false`, which publish refuses
+    python3 -I models.py fetch-scan <batch>         flag fetch attempts in a batch's trajectories
 
 MTX_MODELS names another registry (the harness check's). A name that
 isn't in it is `openai/<model>` as given, or
@@ -203,7 +204,8 @@ def native_guard(tasks: Path, names: list[str], unguarded: bool = False) -> str 
 
 def stamp_unguarded(batch: Path) -> None:
     """Mark a batch whose native harnesses ran on guarded tasks: `guarded: false`
-    in batch.json, and an `.unguarded` file."""
+    in batch.json, and a `.unguarded` file `just publish` and `mtx bench
+    publish` refuse."""
     (batch / ".unguarded").write_text("native harnesses ran on guarded tasks; not for publication\n")
     plan = batch / "batch.json"
     data = json.loads(plan.read_text()) if plan.is_file() else {}
@@ -211,8 +213,85 @@ def stamp_unguarded(batch: Path) -> None:
     plan.write_text(json.dumps(data, indent=2))
 
 
+# What an agent's trajectory shows when it tried to fetch from outside: a
+# fetch tool or client, a server-side web tool that ran, the provider's API or
+# the key that opens it, the repository's host.
+FETCH_PATTERNS = {
+    "curl": r"\bcurl\b",
+    "wget": r"\bwget\b",
+    "python requests": r"\b(requests\.(get|post|request)|urllib\.request|httpx\.|aiohttp)\b",
+    "http.client": r"\bhttp\.client\b",
+    "/dev/tcp": r"/dev/tcp/",
+    "node fetch": r"(?<![\w.])fetch\(\s*[\"'`]https?:",
+    "web search/fetch ran": r"\"web_(search|fetch)_requests\":\s*[1-9]|\bweb_search_call\b|\"name\":\s*\"web_(search|fetch)\"|\bweb_fetch\b(?!_requests)",
+    "codex exec": r"(?<!nvm\.sh; fi; )\bcodex\s+exec\b(?!\s+--dangerously)",
+    "provider api": r"api\.openai\.com|api\.anthropic\.com|chatgpt\.com|/v1/(responses|chat/completions|messages)",
+    "key": r"auth\.json|\b(OPENAI|ANTHROPIC|CODEX)_API_KEY\b",
+    "provider sdk": r"\b(from|import)\s+(openai|anthropic)\b|\.responses\.create",
+    "raw.githubusercontent": r"raw\.githubusercontent\.com",
+    "github": r"github\.com|ghcr\.io",
+}
+
+
+# A client or fetch tool is only an attempt when something outside is named:
+# a trajectory that reaches only the sandbox's own chain, or the crates
+# registry, fetched nothing.
+CLIENTS = ("curl", "wget", "python requests", "http.client", "/dev/tcp", "node fetch")
+LOCAL_URL = re.compile(
+    r"https?://(?!(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|[\w.-]*crates\.io|\$|\{|<)\b)[\w-]+(\.[\w-]+)+"
+)
+
+
+def fetch_flags(text: str) -> list[str]:
+    outside = bool(LOCAL_URL.search(text)) or "/dev/tcp/" in text
+    return [
+        name
+        for name, pattern in FETCH_PATTERNS.items()
+        if re.search(pattern, text) and (outside or name not in CLIENTS)
+    ]
+
+
+def trajectory_flags(raw: str) -> list[str]:
+    """A trajectory's fetch flags, from what the agent did: each of its tool
+    calls on its own (a client call counts only with an outside URL in the same
+    call), so the task's text, the files it printed and what came back don't
+    count. The server-side web tools that ran are read from the whole step."""
+    try:
+        steps = json.loads(raw)["steps"]
+    except (ValueError, KeyError, TypeError):
+        return fetch_flags(raw)
+    flags: set[str] = set()
+    for step in steps:
+        if not isinstance(step, dict) or step.get("source") in ("user", "system"):
+            continue
+        if re.search(FETCH_PATTERNS["web search/fetch ran"], json.dumps(step)):
+            flags.add("web search/fetch ran")
+        calls = step.get("tool_calls")
+        units = [json.dumps(c) for c in calls] if calls else [json.dumps({k: v for k, v in step.items() if k != "observation"})]
+        for unit in units:
+            flags.update(fetch_flags(unit))
+    return [name for name in FETCH_PATTERNS if name in flags]
+
+
+def fetch_scan(batch: Path) -> dict[str, list[str]]:
+    """Each trial's trajectory's fetch flags, written to `.fetch-scan.json` and
+    into batch.json's `fetch_flags`, for a run that wasn't guarded."""
+    found = {}
+    for trajectory in sorted(batch.glob("**/agent/trajectory.json")):
+        flags = trajectory_flags(trajectory.read_text(errors="replace"))
+        if flags:
+            found[str(trajectory.relative_to(batch))] = flags
+    (batch / ".fetch-scan.json").write_text(json.dumps(found, indent=2))
+    plan = batch / "batch.json"
+    if plan.is_file():
+        data = json.loads(plan.read_text())
+        data["fetch_flags"] = found
+        plan.write_text(json.dumps(data, indent=2))
+    return found
+
+
 def main():
-    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2, "native-guard": 3, "stamp-unguarded": 2}
+    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2, "native-guard": 3, "stamp-unguarded": 2, "fetch-scan": 2}
     if len(sys.argv) < 2 or sys.argv[1] not in commands or len(sys.argv) < 1 + commands[sys.argv[1]]:
         sys.exit(__doc__)
     command, names = sys.argv[1], sys.argv[2:]
@@ -228,6 +307,9 @@ def main():
         print(route_token(entry(names[0])["route"]))
     elif command == "stamp-unguarded":
         stamp_unguarded(Path(names[0]))
+    elif command == "fetch-scan":
+        for trial, flags in fetch_scan(Path(names[0])).items():
+            print(f"fetch attempt in {trial}: {', '.join(flags)}")
     elif command == "native-guard":
         refusal = native_guard(Path(names[0]), names[1:], bool(os.environ.get("MTX_UNGUARDED")))
         if refusal:
