@@ -1420,13 +1420,13 @@ mod tests {
         // A batch whose native harnesses ran on guarded tasks is refused,
         // by its marker or by its batch.json, whatever else is allowed.
         std::fs::write(batch.join(".unguarded"), "").unwrap();
-        let error = publish(&batch, "1.0.9", &results, false, None, true, true).unwrap_err();
+        let error = publish(&batch, "1.0.9", &results, false, None, true, false, true).unwrap_err();
         assert!(error.to_string().contains("not guarded"), "{error}");
         std::fs::remove_file(batch.join(".unguarded")).unwrap();
         let plan = batch.join("batch.json");
         let kept = std::fs::read_to_string(&plan).ok();
         std::fs::write(&plan, r#"{"guarded": false}"#).unwrap();
-        let error = publish(&batch, "1.0.9", &results, false, None, true, true).unwrap_err();
+        let error = publish(&batch, "1.0.9", &results, false, None, true, false, true).unwrap_err();
         assert!(error.to_string().contains("not guarded"), "{error}");
         match kept {
             Some(text) => std::fs::write(&plan, text).unwrap(),
@@ -1682,7 +1682,7 @@ mod tests {
         refuse_mixed_tasks(&batch, std::slice::from_ref(&a)).unwrap();
         let out = tmp.join("out");
         std::fs::create_dir_all(&out).unwrap();
-        copy_release(&batch, std::slice::from_ref(&a), &out, "9.9.9").unwrap();
+        copy_release(&batch, std::slice::from_ref(&a), &out, "9.9.9", &Value::Null, &[]).unwrap();
         // The release records the file publish judged by, so export reads the
         // same one even once the local task is guarded.
         let recorded = out.join("tasks/local-spcx/task.toml");
