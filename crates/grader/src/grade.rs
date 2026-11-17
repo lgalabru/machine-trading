@@ -2668,6 +2668,7 @@ mod tests {
             side,
             price: 100.0,
             base: 10.0,
+            worst_price: None,
             forced,
         };
         stopped.perp_fills = vec![
