@@ -479,6 +479,17 @@ async fn trader_headers(
                 detail: format!("{address}: {e}"),
             }
         })?;
+        if TraderKey::derive_pda(owner, header.trader_pda_index, header.trader_subaccount_index)
+            != address
+        {
+            return Err(MeterError::Decode {
+                what: "trader account header",
+                detail: format!(
+                    "{address}: indices ({}, {}) do not derive its address",
+                    header.trader_pda_index, header.trader_subaccount_index
+                ),
+            });
+        }
         found.push(TraderAccount {
             address,
             pda_index: header.trader_pda_index,
@@ -776,6 +787,22 @@ mod tests {
         let mut short = account(PhoenixAccount::Trader, &owner);
         short.data.truncate(size_of::<TraderHeader>() - 1);
         chain.set_account(TraderKey::derive_pda(&owner, 0, 1), short);
+        assert!(matches!(
+            trader_headers(&chain, &owner, main).await,
+            Err(MeterError::Decode { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_header_whose_indices_do_not_derive_its_address_is_an_error() {
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        let chain = MockChainClient::new();
+        // Stored at the address of (0, 1), but the header says (0, 2).
+        chain.set_account(
+            TraderKey::derive_pda(&owner, 0, 1),
+            indexed(PhoenixAccount::Trader, &owner, 0, 2),
+        );
         assert!(matches!(
             trader_headers(&chain, &owner, main).await,
             Err(MeterError::Decode { .. })

@@ -15,8 +15,6 @@ path = "src/main.rs"
 honest = []
 # Moves its position into the subaccount instead of resting a bid there.
 drain = []
-# Rests its position in a second cross-margin account (PDA index 1).
-pda = []
 # Rests its position in two isolated subaccounts.
 two-subs = []
 

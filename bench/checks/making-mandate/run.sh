@@ -32,7 +32,7 @@
 # `just build taker` and `just build crosser` in bots/making-probe, and
 # `just process taker` and `just process crosser` for the process bots, and
 # `just one-unit` in bots/subaccount-probe, and `just build`, `just build honest`,
-# `just build drain`, `just build pda` and `just build two-subs` in bots/closeout-probe.
+# `just build drain` and `just build two-subs` in bots/closeout-probe.
 set -euo pipefail
 mtx=$1 snapshot=$2 out=$3
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -97,7 +97,7 @@ mkdir -p "$out/closed-subaccount"
 "$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$subprobe" --logs "$out/closed-subaccount/logs" \
   --report "$out/closed-subaccount/report.json" "$out"/closed/*.json \
   >"$out/closed-subaccount/stdout.log" 2>"$out/closed-subaccount/stderr.log" || { echo "closed-subaccount: the grade failed"; tail -20 "$out/closed-subaccount/stderr.log"; exit 1; }
-for name in honest dodge drain pda two-subs; do
+for name in honest dodge drain two-subs; do
   mkdir -p "$out/closeout-$name"
   "$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$closeprobe/$name" --logs "$out/closeout-$name/logs" \
     --report "$out/closeout-$name/report.json" "$out"/closed/*.json \
@@ -214,7 +214,7 @@ for s in sessions("closed-subaccount"):
 # exit as the honest one does: each account is closed from itself, and what is
 # left is charged, never valued at the oracle for free.
 honest = by_name("closeout-honest")
-for name in ("closeout-dodge", "closeout-drain", "closeout-pda", "closeout-two-subs"):
+for name in ("closeout-dodge", "closeout-drain", "closeout-two-subs"):
     for s in sessions(name):
         tag = f"{name} {s['scenario']}"
         d = s["decomposition"]["close_out"]

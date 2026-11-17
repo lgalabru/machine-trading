@@ -145,8 +145,10 @@ pub struct PhoenixTrader {
     /// The next order's client order id. Without one, two identical orders
     /// on the same blockhash are the same transaction, and the chain runs it
     /// once: a bot slicing a position into equal orders within a slot gets
-    /// one slice. Counting from 1 keeps a replayed session the same.
-    next_order_id: std::sync::atomic::AtomicU64,
+    /// one slice. Counting from 1 keeps a replayed session the same. Shared
+    /// with the traders [`for_account`](Self::for_account) derives, so no two
+    /// of the authority's accounts reuse an id in one slot.
+    next_order_id: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl PhoenixTrader {
@@ -173,7 +175,7 @@ impl PhoenixTrader {
             authority,
             rpc_url,
             options: ExecuteOptions::without_receipts(),
-            next_order_id: std::sync::atomic::AtomicU64::new(1),
+            next_order_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         })
     }
 
@@ -203,7 +205,7 @@ impl PhoenixTrader {
             rpc_url: self.rpc_url.clone(),
             chain: self.chain.clone(),
             options: self.options,
-            next_order_id: std::sync::atomic::AtomicU64::new(1),
+            next_order_id: self.next_order_id.clone(),
         }
     }
 
@@ -961,5 +963,29 @@ mod tests {
                 .is_err()
         );
         assert_eq!(chain.sent().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_derived_trader_shares_the_base_traders_order_ids() {
+        let order = market_order(dec!(1), Some(dec!(140)));
+        let bytes = |plan: ExecutionPlan| -> Vec<Vec<u8>> {
+            plan.steps
+                .iter()
+                .flat_map(|step| step.all_instructions())
+                .map(|ix| ix.data)
+                .collect()
+        };
+        let base = trader();
+        let same = base.for_account(0, 0);
+        let other = base.for_account(0, 1);
+        let mut seen = Vec::new();
+        for t in [&base, &same, &other, &base, &same, &other] {
+            seen.push(bytes(t.plan(&order).await.unwrap()));
+        }
+        for i in 0..seen.len() {
+            for j in i + 1..seen.len() {
+                assert_ne!(seen[i], seen[j], "orders {i} and {j} are identical");
+            }
+        }
     }
 }

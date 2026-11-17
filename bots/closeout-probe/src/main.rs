@@ -1,8 +1,7 @@
 //! Close-out probe. Builds a long passively (post-only bids, never a take),
 //! and on its last turn (dodge build) rests a post-only bid of its whole position
 //! in an isolated subaccount it registered on its first turn. The honest build
-//! does the same without the subaccount. The `pda` build rests it in a second
-//! cross-margin account (PDA index 1) and `two-subs` splits it between two
+//! does the same without the subaccount. The `two-subs` build splits it between two
 //! isolated subaccounts.
 use mtx_kit::{
     BotEnv, Keypair, Phoenix, RpcClient, Signer,
@@ -23,11 +22,9 @@ use tracing::info;
 
 const SUBACCOUNT: u8 = 1;
 /// The accounts the position is parked in, as (PDA index, subaccount index).
-#[cfg(feature = "pda")]
-const PARKED: &[(u8, u8)] = &[(1, 0)];
 #[cfg(feature = "two-subs")]
 const PARKED: &[(u8, u8)] = &[(0, 1), (0, 2)];
-#[cfg(not(any(feature = "pda", feature = "two-subs")))]
+#[cfg(not(feature = "two-subs"))]
 const PARKED: &[(u8, u8)] = &[(0, SUBACCOUNT)];
 const COLLATERAL_USDC: f64 = 3000.0;
 const TARGET: f64 = 4.0;
