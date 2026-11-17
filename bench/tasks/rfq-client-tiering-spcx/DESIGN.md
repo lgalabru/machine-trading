@@ -192,6 +192,28 @@ rung below the reference, below the informed bot, on 2,000 bootstrapped
 v1's fast model (seeds 51 to 53, 1,000 sessions each; in the branch's history) agreed: 3.0 to 3.4x
 the best careful rung, order 0.99, the reference at 0.54 to 0.58.
 
+## Informed clients are sometimes wrong (`hit_rate` 0.85, checklist 16d)
+
+Main's RFQ clients (#114) give an informed client a `hit_rate`: on each
+request it acts on what it sees with that probability, and otherwise has
+the move backwards, asking and valuing SPCX the other way. The card keeps
+the library's default, 0.85 (Michael, 2026-11-17): real informed flow is
+right more often than not, never every time, and a desk that reads a client
+from one trade is reading noise. The instruction states it as a process
+fact.
+
+What it does to the read: a mistaken request is still from an informed
+client, so the identity read (who takes a price past the widest reach)
+is untouched; the requests' sides and markouts carry about 0.7 of the
+signal they did (0.85 − 0.15), so markouts need more requests per client,
+and a single informed request is a weaker sign of the coming move. The
+reference judges a client over its requests (a probe a client takes, or a
+markout record at odds 0.7), never one markout; both anchors read the
+identified clients' latest side as the move, which a mistaken request
+sometimes gets wrong.
+
+Gate 0 on main with `hit_rate` 0.85 (HITRATE_RESULTS).
+
 ## Departures from the card
 
 | Card | Built | Why |
