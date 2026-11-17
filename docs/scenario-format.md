@@ -133,6 +133,8 @@ What a session on several markets doesn't do yet:
 - **Closed periods** stay a one-market scenario's.
 - **The liquidation keeper** (`venues.perp.liquidator`) is refused: it
   liquidates the scenario's market only.
+- **Price impact** (`venues.perp.impact`) is refused: its script plays one
+  market's path.
 - **Process bots** built on `mtx_kit::run` trade the primary market only:
   its run loop holds one trader. A process bot that wants the others reads
   `MTX_MARKETS` (`["phoenix:perp:NVDA", "phoenix:perp:SPCX"]`, the primary
@@ -379,8 +381,9 @@ traded: the bot's fills and the takers', which are transactions.
 Impact is refused with market making or a closed period (their makers are
 placed their own way), with the scenario's own `oracles` (the script writes
 Phoenix's index), with the `refill` actor (the fading part is the depth
-coming back) and with the transaction layer (it lands the bot's sends on
-any slot, and the script reads trades between steps). The code is
+coming back), with the transaction layer (it lands the bot's sends on
+any slot, and the script reads trades between steps) and on a session with
+several markets (the script plays one market's path). The code is
 `crates/grader/src/impact.rs`, and `bench/checks/impact/run.sh` checks it
 end to end.
 
