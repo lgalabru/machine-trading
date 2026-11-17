@@ -730,12 +730,16 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     }
     let mut scenarios = opts.scenarios.to_vec();
     let mut anchored = Vec::new();
+    // The reference plays the bot's world, so its logs say when its flow
+    // arrives: held like the informed bot's, written after the bot has run.
+    let mut reference_logs = None;
     if let Some(reference) = opts.reference_dir {
+        let logs = PrivateDir::create("mtx-reference-logs")?;
         let anchors = run_sessions(
             opts.snapshot_dir,
             reference,
             &scenarios,
-            &opts.log_dir.join("reference"),
+            &logs.0,
             opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
             None,
             false,
@@ -758,6 +762,8 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "reference graded"
         );
         anchored = anchors;
+        reference_logs = Some(read_files(&logs.0)?);
+        drop(logs);
     }
     let mut informed_sessions = Vec::new();
     // The informed bot's logs may say what it was told: written where only
@@ -822,8 +828,11 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     )
     .await?;
     check_timing(&sessions)?;
-    // Every bot has stopped: the informed bot's logs join the others, and
-    // the scenarios can be written out.
+    // Every bot has stopped: the reference's and the informed bot's logs join
+    // the others, and the scenarios can be written out.
+    if let Some(logs) = &reference_logs {
+        write_files(&opts.log_dir.join("reference"), logs)?;
+    }
     if let Some(logs) = &informed_logs {
         write_files(&opts.log_dir.join("informed"), logs)?;
     }
