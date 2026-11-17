@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 
 use mtx_bot_spoof_or_iceberg_exit::{
-    BookReader, Kind, Order, Rest, WALL_MIN, sell_late, sell_now, sign_of,
+    BookReader, Kind, Order, Rest, WALL_MIN, sell_late, sell_now, sign_of, walls_in,
 };
 use mtx_kit::{log, prelude::*};
 
@@ -110,9 +110,8 @@ impl Strategy for Informed {
         if !self.selling {
             let book = self.book.read();
             self.learn(&book);
-            let signal = book
+            let signal = walls_in(&book, self.book.tick_usd, market.best_bid, market.best_ask)
                 .iter()
-                .filter(|r| r.initial >= WALL_MIN)
                 .find_map(|r| self.traders.get(&r.trader).map(|k| sign_of(*k, r.bid)));
             if signal.is_some_and(|s| s < 0.0) {
                 log(&format!("slot {}: a fall is coming; selling", market.slot));

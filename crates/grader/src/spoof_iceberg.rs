@@ -127,7 +127,7 @@ impl SpoofIcebergFamily {
             ramp_slots: (1, 2),
             waypoint_slots: 2,
             lead_slots: (30, 90),
-            distance_ticks: (20, 60),
+            distance_ticks: (8, 36),
             size_mult: (20.0, 80.0),
             cancel_ticks: (1, 3),
             parent_slices: (3.0, 8.0),

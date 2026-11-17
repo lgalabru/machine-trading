@@ -12,7 +12,7 @@
 //! Each sells what is left late, as the reference does.
 
 use mtx_bot_spoof_or_iceberg_exit::{
-    BookReader, Order, WALL_MIN, round_lots, sell_late, sell_now,
+    BookReader, Order, round_lots, sell_late, sell_now, walls_in,
 };
 use mtx_kit::prelude::*;
 
@@ -48,7 +48,10 @@ impl Strategy for Naive {
             }
             "late" => {}
             "trust-depth" | "fade-walls" if !self.decided => {
-                let wall = self.book.read().into_iter().find(|r| r.initial >= WALL_MIN);
+                let book = self.book.read();
+                let wall = walls_in(&book, self.book.tick_usd, market.best_bid, market.best_ask)
+                    .into_iter()
+                    .next();
                 if let Some(wall) = wall {
                     self.decided = true;
                     let fade = self.mode == "fade-walls";
@@ -56,6 +59,36 @@ impl Strategy for Naive {
                 }
             }
             "trust-depth" | "fade-walls" => {}
+            "probe" => {
+                let (bid, ask) = (market.best_bid.unwrap_or(0.0), market.best_ask.unwrap_or(0.0));
+                let tick = self.book.tick_usd;
+                let mut seen: Vec<String> = self
+                    .book
+                    .read()
+                    .into_iter()
+                    .filter(|r| r.initial >= 0.2)
+                    .map(|r| {
+                        let p = self.book.price(r.ticks);
+                        let away = if r.bid { (bid - p) / tick } else { (p - ask) / tick };
+                        format!(
+                            "{}{}@{:.0}t {:.3}/{:.3} s{}",
+                            r.trader,
+                            if r.bid { "b" } else { "a" },
+                            away,
+                            r.size,
+                            r.initial,
+                            r.seq % 100_000
+                        )
+                    })
+                    .collect();
+                seen.sort();
+                mtx_kit::log(&format!(
+                    "slot {} mark {:.2} bid {bid:.2} ask {ask:.2} | {}",
+                    market.slot,
+                    market.mark,
+                    seen.join(" ")
+                ));
+            }
             other => return Err(format!("unknown MTX_NAIVE {other}").into()),
         }
         if self.selling {

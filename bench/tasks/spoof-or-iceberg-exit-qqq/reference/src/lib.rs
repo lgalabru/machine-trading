@@ -28,11 +28,13 @@ use mtx_kit::{log, prelude::*, rpc_account, venue::PhoenixVenue};
 
 /// The taker fee, in basis points.
 pub const TAKER_FEE_BPS: f64 = 3.5;
-/// An order this large, in QQQ, is a wall.
+/// An order this large, in QQQ, and this near the touch, in ticks, is a
+/// wall: the book also holds old orders far from the price.
 pub const WALL_MIN: f64 = 0.5;
+pub const WALL_TICKS: f64 = 150.0;
 /// A wall that leaves with the touch this many ticks from it or nearer
 /// was pulled on approach.
-pub const NEAR_TICKS: u64 = 4;
+pub const NEAR_TICKS: u64 = 10;
 /// The most it sells a step, and how far under the bid it will go.
 pub const SLICE: f64 = 4.0;
 pub const SELL_DEPTH_BPS: f64 = 8.0;
@@ -163,6 +165,22 @@ fn bytes_of_words(words: &mut [u64]) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut(words.as_mut_ptr().cast::<u8>(), len) }
 }
 
+/// The walls in a book: large orders near the touch (`bid` and `ask`, USD).
+pub fn walls_in(book: &[Rest], tick_usd: f64, bid: Option<f64>, ask: Option<f64>) -> Vec<Rest> {
+    book.iter()
+        .copied()
+        .filter(|r| {
+            let p = r.ticks as f64 * tick_usd;
+            let away = if r.bid {
+                bid.map(|b| (b - p) / tick_usd)
+            } else {
+                ask.map(|a| (p - a) / tick_usd)
+            };
+            r.initial >= WALL_MIN && away.is_some_and(|a| a <= WALL_TICKS)
+        })
+        .collect()
+}
+
 /// What a wall's owner is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -199,7 +217,7 @@ impl Walls {
         ask: Option<f64>,
         slot: u64,
     ) {
-        let now: Vec<Rest> = book.iter().copied().filter(|r| r.initial >= WALL_MIN).collect();
+        let now = walls_in(book, tick_usd, bid, ask);
         for r in &now {
             self.owners.entry(r.trader).or_insert(None);
         }
