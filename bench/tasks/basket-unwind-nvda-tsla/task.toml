@@ -16,13 +16,13 @@ email = "ludo.galabru@solana.org"
 difficulty = "hard"
 category = "trading"
 # Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
-snapshot = "phoenix-spcx-2026-10-29"
+snapshot = "phoenix-perps-2026-11-13"
 
 [metadata.mtx]
-generator = "market-making"
+generator = "basket-unwind"
 anchor = "basket-unwind-nvda"
 emoji = "🆕"
-market = "TODO: venue and instrument (market-making-spcx base)"
+market = "Phoenix NVDA and TSLA perps, one cross-margin account"
 summary = "reads which name has informed sellers from who is trading, and spends the shared execution capacity there first"
 skill = "reads which name has informed sellers from who is trading, and spends the shared execution capacity there first"
 leak_needles = []

@@ -1,0 +1,21 @@
+# `just build` builds each rung's component into rungs/<rung>/bot.wasm: the
+# rule is set at build time, since a component has no environment. The
+# grader builds nothing: build before grading.
+
+# Build every rung.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    rung() {
+      local name=$1; shift
+      wasm="$(env "$@" cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+        | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+      mkdir -p "rungs/$name"
+      cp "$wasm" "rungs/$name/bot.wasm"
+      echo "built rungs/$name/bot.wasm"
+    }
+    rung dump MTX_B5_RUNG=dump
+    rung twap-each MTX_B5_RUNG=twap-each
+    rung pro-rata MTX_B5_RUNG=pro-rata
+    rung bigger-first MTX_B5_RUNG=bigger-first
+    rung reference-pro-rata MTX_B5_RUNG=reference MTX_B5_PRO_RATA=1

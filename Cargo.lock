@@ -4905,6 +4905,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-basket-unwind-nvda"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.8.1",
+ "bs58",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-basket-unwind-nvda-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-basket-unwind-nvda",
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-basket-unwind-nvda-naive"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-basket-unwind-nvda",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-carry"
 version = "0.1.0"
 dependencies = [

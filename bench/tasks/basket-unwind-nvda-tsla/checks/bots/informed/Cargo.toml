@@ -7,19 +7,19 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
-# The strategy: a component on wasm32-wasip2 (`bot.wasm`, what the task
-# grades, and its oracle solution), and a library for the process below.
+# The informed bot: a component on wasm32-wasip2 (`bot.wasm`), since a
+# process trades the primary market only; and a library for the process
+# below.
 [lib]
 crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
-# The same strategy as a process (`bin/bot`): the anchor hidden sets are
-# scored against, and the ladder's rungs.
 [[bin]]
 name = "mtx-basket-unwind-nvda-informed"
 path = "src/main.rs"
 
 [dependencies]
+mtx-bot-basket-unwind-nvda = { path = "../../../reference", default-features = false }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 mtx-kit = { path = "../../../../../../crates/kit", default-features = false, features = ["component", "venue"] }

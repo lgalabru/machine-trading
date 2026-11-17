@@ -1,0 +1,23 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mtx-bot-basket-unwind-nvda-naive"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# Each rung a component on wasm32-wasip2: a process trades the primary
+# market only. The rung is set at build time (`just build`).
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[dependencies]
+mtx-bot-basket-unwind-nvda = { path = "../../../reference", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../../../../../crates/kit", default-features = false, features = ["component", "venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mtx-kit = { path = "../../../../../../crates/kit" }

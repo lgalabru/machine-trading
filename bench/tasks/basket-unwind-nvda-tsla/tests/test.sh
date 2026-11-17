@@ -6,9 +6,6 @@
 # and writes the reward.
 set -euo pipefail
 
-# TODO(family): until the `basket-unwind-nvda` family exists, this grades on the
-# market-making-spcx's family. See `mtx task status basket-unwind-nvda-tsla`.
-
 # Hidden from the bot, readable by the bot's own user.
 chmod -R go-rwx /tests
 chmod -R a+rX /app/bot
@@ -44,7 +41,7 @@ fi
 # nothing.
 mtx grade \
   --informed /opt/mtx/anchors/basket-unwind-nvda-informed \
-  --draw market-making \
+  --draw basket-unwind \
   --count 72 \
   --reference /opt/mtx/anchors/basket-unwind-nvda \
   --anchor-jobs 4 \

@@ -1,54 +1,71 @@
 {
-  "anchors": {
-    "informed": "informed",
-    "reference": "reference"
-  },
+  "family": "basket-unwind",
   "count": 72,
-  "exploits": {
-    "below": "informed",
-    "bots": [],
-    "max_profitable": 0.75
+  "min_rule_odds": 0.85,
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
   },
-  "family": "market-making",
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "dump",
+      "dir": "bench/tasks/basket-unwind-nvda-tsla/checks/bots/naive/rungs/dump"
+    },
+    {
+      "name": "twap-each",
+      "dir": "bench/tasks/basket-unwind-nvda-tsla/checks/bots/naive/rungs/twap-each"
+    },
+    {
+      "name": "pro-rata",
+      "dir": "bench/tasks/basket-unwind-nvda-tsla/checks/bots/naive/rungs/pro-rata"
+    },
+    {
+      "name": "bigger-first",
+      "dir": "bench/tasks/basket-unwind-nvda-tsla/checks/bots/naive/rungs/bigger-first"
+    },
+    {
+      "name": "reference-pro-rata",
+      "dir": "bench/tasks/basket-unwind-nvda-tsla/checks/bots/naive/rungs/reference-pro-rata"
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/basket-unwind-nvda-tsla/reference"
+    },
+    {
+      "name": "informed-pro-rata",
+      "dir": "bench/tasks/basket-unwind-nvda-tsla/checks/bots/informed/rungs/pro-rata",
+      "tell_latent": true
+    },
+    {
+      "name": "informed",
+      "dir": "bench/tasks/basket-unwind-nvda-tsla/checks/bots/informed",
+      "tell_latent": true
+    }
+  ],
   "gates": {
     "informed": [
       "informed"
     ],
     "non_reading": [
       "nop",
-      "blind-long",
-      "blind-short"
+      "dump",
+      "twap-each",
+      "pro-rata",
+      "bigger-first"
     ]
   },
-  "min_rule_odds": 0.85,
-  "probes": {},
   "rules": [
-    "max(blind-long, blind-short) < reference",
-    "reference < informed < hindsight"
+    "max(dump, twap-each, pro-rata, bigger-first) < reference",
+    "reference < informed"
   ],
-  "rungs": [
-    {
-      "dir": "bots/starter",
-      "name": "nop"
-    },
-    {
-      "dir": "bench/checks/ladder/blind-long",
-      "may_breach": true,
-      "name": "blind-long"
-    },
-    {
-      "dir": "bench/checks/ladder/blind-short",
-      "may_breach": true,
-      "name": "blind-short"
-    },
-    {
-      "dir": "bench/tasks/basket-unwind-nvda-tsla/reference",
-      "name": "reference"
-    },
-    {
-      "dir": "bench/tasks/basket-unwind-nvda-tsla/checks/bots/informed",
-      "name": "informed",
-      "tell_latent": true
-    }
-  ]
+  "exploits": {
+    "below": "informed",
+    "bots": [],
+    "max_profitable": 0.75
+  },
+  "probes": {}
 }
