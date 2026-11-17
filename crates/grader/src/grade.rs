@@ -112,6 +112,11 @@ pub struct GradeReport {
     /// which it leaves as they are.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub v2: Option<ScoreV2>,
+    /// `"v2"` when scoring v2 is the grade's one score
+    /// ([`scoring_v2::Params::headline`]): `reward` is then v2's clamped
+    /// score, and `skill` and `reference_ratio` are left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headline: Option<String>,
     pub scenarios: Vec<ScenarioResult>,
     /// The reference's sessions, when the grade ran it: kept out of the
     /// report (its PnL is in [`ScenarioResult::reference_pnl_usd`]), for the
@@ -203,8 +208,7 @@ impl GradeReport {
                     .and_then(|s| s.disqualified.clone())
             });
         if let (true, Some(reason)) = (self.scenarios.is_empty(), &fatal) {
-            self.v2 = Some(scoring_v2::unscored(params, reason.clone()));
-            return Ok(());
+            return self.set_v2(scoring_v2::unscored(params, reason.clone()), params);
         }
         let v2 = self
             .scenarios
@@ -246,10 +250,11 @@ impl GradeReport {
                     ));
                 }
                 // A perp start position moves with the price too, unless an
-                // order scores the session against doing nothing; and it
-                // earns or pays the scenario's funding, which the order's
-                // drift doesn't take out.
-                if session.start_position != 0.0 && session.order.is_none() {
+                // order or net scoring scores the session against doing
+                // nothing (holding the start); and it earns or pays the
+                // scenario's funding, which neither's drift takes out.
+                if session.start_position != 0.0 && session.order.is_none() && session.net.is_none()
+                {
                     return Err(format!(
                         "{}: a perp session's starting position can move with the price, \
                          and v2 doesn't run a nop anchor yet",
@@ -327,6 +332,26 @@ impl GradeReport {
             (Err(_), Some(reason)) => scoring_v2::unscored(params, reason),
             (Err(why), None) => return Err(Error::ScoringV2(why)),
         };
+        self.set_v2(v2, params)
+    }
+
+    /// Keep `v2` in the report; when it is the headline, it is the grade's
+    /// one score, on real anchors: its 1 is the task's informed bot (no
+    /// hindsight, proxy or given ceiling), and no v1 score is beside it.
+    fn set_v2(&mut self, v2: ScoreV2, params: &scoring_v2::Params) -> Result<()> {
+        if params.headline {
+            if v2.fatal.is_none() && v2.ceiling != "informed" {
+                return Err(Error::ScoringV2(format!(
+                    "v2 is this grade's headline, but its 1 is `{}`: every session needs the \
+                     task's informed bot's PnL",
+                    v2.ceiling
+                )));
+            }
+            self.reward = v2.score;
+            self.skill = None;
+            self.reference_ratio = None;
+            self.headline = Some("v2".into());
+        }
         self.v2 = Some(v2);
         Ok(())
     }
@@ -384,6 +409,10 @@ impl GradeReport {
                 ("score_v2_raw".to_string(), v2.raw),
                 ("score_v2_raw_unfloored".to_string(), v2.raw_unfloored),
                 ("score_v2_edge".to_string(), v2.edge),
+                (
+                    "score_v2_raw_before_charge".to_string(),
+                    v2.raw_before_charge.unwrap_or(v2.raw),
+                ),
                 ("score_v2_ci_lo".to_string(), v2.ci_lo),
                 ("score_v2_ci_hi".to_string(), v2.ci_hi),
                 (
@@ -419,8 +448,8 @@ impl GradeReport {
                 ("score_v2_risk_allowance".to_string(), v2.risk.allowance),
                 ("score_v2_risk_weight".to_string(), v2.risk.weight),
             ]);
-            if let Some(cap) = v2.breach_cap {
-                rewards.insert("score_v2_breach_cap".to_string(), cap);
+            if v2.breached_sessions > 0 {
+                rewards.insert("score_v2_breach_penalty".to_string(), v2.breach_penalty);
             }
             if let Some(anchor) = v2.risk.dd_rms_anchor {
                 rewards.insert("score_v2_dd_rms_anchor".to_string(), anchor);
@@ -488,6 +517,10 @@ pub struct GradeOptions<'a> {
     /// with `anchor_jobs` sessions at once (it's trusted: it can share the
     /// machine with itself). Its PnL replaces whatever the scenarios carry.
     pub reference_dir: Option<&'a Path>,
+    /// The task's informed bot, to run on the same scenarios after the
+    /// reference, as scoring v2's 1 (see [`Informed`]). Its PnL replaces
+    /// whatever the scenarios carry, as the reference's does.
+    pub informed: Option<Informed<'a>>,
     pub anchor_jobs: usize,
     /// Each scenario's regime, as JSON, handed to the bot (not the
     /// reference): the ladder's regime oracle only.
@@ -520,6 +553,75 @@ pub struct GradeOptions<'a> {
     /// as it always has. (The bot's seeds are salted through `keys`: see
     /// [`SessionKeys::salt_strategy_seeds`].)
     pub v2_sessions: bool,
+}
+
+/// The task's informed bot as a grade runs it (see
+/// [`GradeOptions::informed`]): trusted like the reference, with
+/// `anchor_jobs` sessions at once, on sessions of its own, after the
+/// reference's and before the bot's.
+pub struct Informed<'a> {
+    pub dir: &'a Path,
+    /// Each scenario's latent state ([`crate::generators::Hidden::latent`]),
+    /// handed to the informed bot as `MTX_REGIME`, and to no other bot: what
+    /// the task's data could tell in principle, never the session's future.
+    /// None for scenarios from files, which carry no draw.
+    pub latent: Option<&'a [String]>,
+}
+
+/// A directory only the grader can enter, removed with everything in it
+/// when dropped.
+struct PrivateDir(std::path::PathBuf);
+
+impl PrivateDir {
+    fn create(prefix: &str) -> Result<Self> {
+        let path = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+            .create(&path)
+            .map_err(io_error(&path))?;
+        Ok(Self(path))
+    }
+}
+
+impl Drop for PrivateDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Every file under `dir`, by its path relative to `dir`, read into
+/// memory.
+fn read_files(dir: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
+    let mut files = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in std::fs::read_dir(&at).map_err(io_error(&at))? {
+            let path = entry.map_err(io_error(&at))?.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                let bytes = std::fs::read(&path).map_err(io_error(&path))?;
+                let relative = path.strip_prefix(dir).unwrap_or(&path).to_path_buf();
+                files.push((relative, bytes));
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
+}
+
+/// Write `files` (see [`read_files`]) under `to`, replacing what it held.
+fn write_files(to: &Path, files: &[(std::path::PathBuf, Vec<u8>)]) -> Result<()> {
+    if to.exists() {
+        std::fs::remove_dir_all(to).map_err(io_error(to))?;
+    }
+    for (relative, bytes) in files {
+        let path = to.join(relative);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(io_error(parent))?;
+        }
+        std::fs::write(&path, bytes).map_err(io_error(&path))?;
+    }
+    Ok(())
 }
 
 /// One session's detail file (see [`GradeOptions::detail_dir`]).
@@ -591,7 +693,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         )
         .await?;
         check_timing(&anchors)?;
-        check_anchors(&anchors)?;
+        check_anchors("the reference", &anchors)?;
         for (scenario, anchor) in scenarios.iter_mut().zip(&anchors) {
             scenario.reference_pnl_usd = Some((anchor.pnl_usd * 100.0).round() / 100.0);
         }
@@ -600,6 +702,45 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "reference graded"
         );
         anchored = anchors;
+    }
+    let mut informed_sessions = Vec::new();
+    // The informed bot's logs may say what it was told: written where only
+    // the grader can enter, then held in memory, with nothing of them on
+    // disk, while the bot runs.
+    let mut informed_logs = None;
+    if let Some(informed) = &opts.informed {
+        let logs = PrivateDir::create("mtx-informed-logs")?;
+        let sessions = run_sessions(
+            opts.snapshot_dir,
+            informed.dir,
+            &scenarios,
+            &logs.0,
+            opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
+            informed.latent,
+            false,
+            true,
+            None,
+            opts.keys.role("informed"),
+            session::Rules {
+                every_slot: opts.v2_sessions,
+            },
+        )
+        .await?;
+        check_timing(&sessions)?;
+        check_anchors("the informed bot", &sessions)?;
+        // As `calibrate --informed` saves them in a scenario file.
+        for (scenario, session) in scenarios.iter_mut().zip(&sessions) {
+            scenario.informed_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
+            scenario.informed_max_drawdown_usd =
+                Some((session.max_drawdown_usd * 100.0).round() / 100.0);
+        }
+        info!(
+            informed_pnl_usd = sessions.iter().map(|s| s.pnl_usd).sum::<f64>(),
+            "informed bot graded"
+        );
+        informed_sessions = sessions;
+        informed_logs = Some(read_files(&logs.0)?);
+        drop(logs);
     }
     let sessions = run_sessions(
         opts.snapshot_dir,
@@ -618,7 +759,11 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     )
     .await?;
     check_timing(&sessions)?;
-    // Every bot has stopped: the scenarios can be written out.
+    // Every bot has stopped: the informed bot's logs join the others, and
+    // the scenarios can be written out.
+    if let Some(logs) = &informed_logs {
+        write_files(&opts.log_dir.join("informed"), logs)?;
+    }
     if let Some(dir) = opts.detail_dir {
         // Whatever a bot left there goes first, links included: the
         // grader writes as root.
@@ -628,6 +773,15 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             Err(_) => {}
         }
         write_details(dir, "reference", &anchored, &scenarios, opts.annotations)?;
+        if opts.informed.is_some() {
+            write_details(
+                dir,
+                "informed",
+                &informed_sessions,
+                &scenarios,
+                opts.annotations,
+            )?;
+        }
         write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
     }
     let mut report = score(sessions.into_iter().zip(&scenarios).collect());
@@ -639,11 +793,11 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         }
     }
     report.anchors = anchored;
+    // The scores are the caller's to log: the grade may yet be scored by
+    // v2 alone, and then v1's are never shown.
     info!(
-        reward = report.reward,
         pnl_usd = report.pnl_usd,
         bound_pnl_usd = report.bound_pnl_usd,
-        reference_ratio = report.reference_ratio,
         "graded"
     );
     Ok(report)
@@ -824,6 +978,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         replay: None,
         markout: total_markout(&scenarios),
         v2: None,
+        headline: None,
         scenarios,
         anchors: Vec::new(),
     }
@@ -968,7 +1123,7 @@ fn check_timing(sessions: &[SessionReport]) -> Result<()> {
 /// Void the grade, rather than score the bot against a broken baseline, if
 /// the reference didn't run cleanly: a disqualification, a crash, or turns
 /// it didn't finish.
-fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
+fn check_anchors(role: &str, anchors: &[SessionReport]) -> Result<()> {
     let broken: Vec<String> = anchors
         .iter()
         .filter_map(|a| {
@@ -991,10 +1146,7 @@ fn check_anchors(anchors: &[SessionReport]) -> Result<()> {
     if broken.is_empty() {
         Ok(())
     } else {
-        Err(Error::Degraded(format!(
-            "the reference: {}",
-            broken.join(", ")
-        )))
+        Err(Error::Degraded(format!("{role}: {}", broken.join(", "))))
     }
 }
 
@@ -1036,35 +1188,49 @@ fn disqualification(session: &SessionReport) -> Option<String> {
 /// Run the bot on each scenario and record its PnL as the scenario's
 /// reference, losses included: the reward normalizes by the set's total.
 /// Sessions the reference itself would be disqualified from are reported, not
-/// saved.
+/// saved. A scenario with a path is saved there; a drawn one, which has no
+/// file, keeps its PnL in memory, for the caller to write out (`mtx calibrate
+/// --draw` writes an anchors file).
 ///
 /// With `informed`, the bot is the task's informed bot and its PnL is saved
 /// as the scenario's [`Scenario::informed_pnl_usd`] instead: scoring v2's 1.
-#[allow(clippy::too_many_arguments)]
+/// It is handed `latent`, as a grade hands it to its informed bot (see
+/// [`Informed`]). `keys` are the sessions' keys: a drawn set's, from its
+/// secret, sign as a grade of the same set does.
+pub struct Calibration<'a> {
+    pub snapshot_dir: &'a Path,
+    pub bot_dir: &'a Path,
+    pub log_dir: &'a Path,
+    pub first_bot_user: usize,
+    pub jobs: usize,
+    pub informed: bool,
+    pub latent: Option<&'a [String]>,
+    pub keys: &'a SessionKeys,
+    pub v2_sessions: bool,
+}
+
 pub async fn calibrate(
-    snapshot_dir: &Path,
-    bot_dir: &Path,
-    scenarios: &mut [(std::path::PathBuf, Scenario)],
-    log_dir: &Path,
-    first_bot_user: usize,
-    jobs: usize,
-    informed: bool,
-    v2_sessions: bool,
+    opts: Calibration<'_>,
+    scenarios: &mut [(Option<std::path::PathBuf>, Scenario)],
 ) -> Result<Vec<SessionReport>> {
     let list: Vec<Scenario> = scenarios.iter().map(|(_, s)| s.clone()).collect();
     let sessions = run_sessions(
-        snapshot_dir,
-        bot_dir,
+        opts.snapshot_dir,
+        opts.bot_dir,
         &list,
-        log_dir,
-        first_bot_user..first_bot_user + jobs,
-        None,
+        opts.log_dir,
+        opts.first_bot_user..opts.first_bot_user + opts.jobs,
+        opts.latent,
         false,
         true,
         None,
-        SessionKeys::random().role("reference"),
+        opts.keys.role(if opts.informed {
+            "informed"
+        } else {
+            "reference"
+        }),
         session::Rules {
-            every_slot: v2_sessions,
+            every_slot: opts.v2_sessions,
         },
     )
     .await?;
@@ -1075,19 +1241,21 @@ pub async fn calibrate(
         if disqualification(session).is_none() {
             let pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
             let drawdown_usd = Some((session.max_drawdown_usd * 100.0).round() / 100.0);
-            if informed {
+            if opts.informed {
                 scenario.informed_pnl_usd = pnl_usd;
                 scenario.informed_max_drawdown_usd = drawdown_usd;
             } else {
                 scenario.reference_pnl_usd = pnl_usd;
                 scenario.reference_max_drawdown_usd = drawdown_usd;
             }
-            scenario.save(path)?;
+            if let Some(path) = path {
+                scenario.save(path)?;
+            }
         } else {
             tracing::warn!(
                 scenario = scenario.name,
                 pnl_usd = session.pnl_usd,
-                "reference bot was disqualified; not calibrated"
+                "the anchor was disqualified; not calibrated"
             );
         }
     }
@@ -1366,6 +1534,7 @@ mod tests {
             jobs: 1,
             first_bot_user: 0,
             reference_dir: None,
+            informed: None,
             anchor_jobs: 1,
             regimes: None,
             stop_on_disqualify: false,
@@ -1405,6 +1574,8 @@ mod tests {
             positions: vec![],
             positions_outside_universe: 0,
             max_drawdown_usd: 0.0,
+            samples: Default::default(),
+            term_start: Default::default(),
             valuation: "mark",
             flow: None,
             competitor: None,
@@ -1419,6 +1590,7 @@ mod tests {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            making_fills: Vec::new(),
             tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
@@ -1531,6 +1703,7 @@ mod tests {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
@@ -1843,6 +2016,51 @@ mod tests {
     }
 
     #[test]
+    fn a_v2_headline_is_the_grades_one_score_on_the_informed_bot() {
+        let headline = |ceiling| scoring_v2::Params {
+            headline: true,
+            ..scoring_v2::Params::new(ceiling)
+        };
+        let mut s = scenario(Some(100.0));
+        // No informed bot: no fallback to a proxy or the hindsight ceiling.
+        let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        let refused = proxied
+            .score_v2(&headline(scoring_v2::Ceiling::Informed {
+                eta_override: Some(0.5),
+            }))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("informed bot"), "{refused}");
+        assert!(proxied.v2.is_none() && proxied.skill.is_some());
+        // Nor a ceiling given outright: the 1 is the informed bot's.
+        let given = scoring_v2::Ceiling::Given([("s".to_string(), 400.0)].into_iter().collect());
+        let mut handed = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        let refused = handed.score_v2(&headline(given)).unwrap_err().to_string();
+        assert!(refused.contains("`given`"), "{refused}");
+
+        s.informed_pnl_usd = Some(400.0);
+        let mut graded = score(vec![(session(300.0), &s), (session(50.0), &s)]);
+        graded
+            .score_v2(&headline(scoring_v2::Ceiling::Informed {
+                eta_override: None,
+            }))
+            .unwrap();
+        let v2 = graded.v2.clone().unwrap();
+        assert_eq!(graded.reward, v2.score);
+        assert_eq!(graded.headline.as_deref(), Some("v2"));
+        let rewards = graded.rewards();
+        assert_eq!(rewards["reward"], v2.score);
+        assert!(!rewards.contains_key("skill") && !rewards.contains_key("reference_ratio"));
+        let json = serde_json::to_value(&graded).unwrap();
+        assert!(json.get("skill").is_none() && json["headline"] == "v2");
+
+        // Tampering is the floor: reward 0 under the headline too.
+        graded.tamper("wrote the reward".into());
+        assert_eq!(graded.reward, 0.0);
+        assert_eq!(graded.v2.unwrap().raw, scoring_v2::RAW_FLOOR);
+    }
+
+    #[test]
     fn without_v2_a_report_is_as_before() {
         let s = scenario(Some(200.0));
         let report = score(vec![(session(300.0), &s), (session(-100.0), &s)]);
@@ -1904,7 +2122,7 @@ mod tests {
         assert_eq!(rewards["score_v2_risk_weight"], 1.0);
         assert!((rewards["metric_return_on_capital"] - 150.0 / 10_100.0).abs() < 1e-15);
         assert_eq!(rewards["metric_drawdown_to_limit_max"], 0.95);
-        assert!(!rewards.contains_key("score_v2_breach_cap"));
+        assert!(!rewards.contains_key("score_v2_breach_penalty"));
     }
 
     #[test]
@@ -1963,7 +2181,11 @@ mod tests {
                 .contains("stopped out")
         );
         assert_eq!(graded.breached_sessions, 1);
-        assert_eq!(graded.breach_cap, Some(0.5));
+        assert!((graded.breach_penalty - scoring_v2::BREACH_RATE_WEIGHT / 2.0).abs() < 1e-15);
+        assert_eq!(
+            report.rewards()["score_v2_breach_penalty"],
+            graded.breach_penalty
+        );
         assert_eq!(graded.metrics.stopped_out_sessions, 1);
         // A stop-out that lost less than the limit still counts k·L.
         let mut report = score(vec![(session(300.0), &s), (stopped_out(-900.0), &s)]);
@@ -2015,9 +2237,56 @@ mod tests {
         assert!(traded(&sold));
     }
 
+    /// Net scoring scores a perp start position against holding it, so v2
+    /// takes it without an order: a bot that held scores the hold's 0, the
+    /// nop anchor. Funding on the start is still refused, net or not: the
+    /// hold baseline doesn't take it out.
+    #[test]
+    fn v2_takes_a_start_position_under_net_scoring_with_the_hold_as_nop() {
+        let s = scenario(Some(100.0));
+        let mut held = session(-40.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let refused = score(vec![(held.clone(), &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+
+        let net = crate::orders::NetReport {
+            value_change_usd: -40.0,
+            drift_usd: -40.0,
+            inventory_charge_usd: 0.0,
+            venue_charge_usd: 0.0,
+            venue_net: Vec::new(),
+        };
+        held.pnl_usd = net.pnl_usd();
+        held.net = Some(net);
+        assert_eq!(held.pnl_usd, 0.0);
+        let mut report = score(vec![(held.clone(), &s)]);
+        report.score_v2(&v2()).unwrap();
+        let scored = report.v2.as_ref().unwrap();
+        assert_eq!(scored.sessions[0].nop_usd, 0.0);
+        assert_eq!(scored.sessions[0].bot_usd, 0.0);
+        assert!(scored.raw.abs() < 1e-9, "{}", scored.raw);
+
+        let mut funded = held;
+        funded.start_funded = true;
+        let refused = score(vec![(funded, &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("funding"), "{refused}");
+    }
+
     /// The reference levered past its limit: it earns more where it holds,
-    /// and the risk desk stops it out now and then. Under v2 it never beats
-    /// the same strategy sized to comply.
+    /// and the risk desk stops it out now and then. The breach penalty
+    /// prices breaches by their rate; it doesn't cap the run.
     #[test]
     fn an_occasional_breacher_stopped_out_scores_below_its_compliant_twin() {
         let s = scenario(Some(20.0));
@@ -2030,26 +2299,35 @@ mod tests {
         };
         let mut compliant = score(twin());
         compliant.score_v2(&v2()).unwrap();
-        for stops in [1, 2] {
-            let mut levered: Vec<(SessionReport, &Scenario)> =
-                twin_pnl.iter().map(|p| (session(p * 3.0), &s)).collect();
-            for (session, _) in levered.iter_mut().skip(2).take(stops) {
+        let c = compliant.v2.as_ref().unwrap().clone();
+        let levered = |lever: f64, stops: usize| {
+            let mut sessions: Vec<(SessionReport, &Scenario)> =
+                twin_pnl.iter().map(|p| (session(p * lever), &s)).collect();
+            for (session, _) in sessions.iter_mut().skip(2).take(stops) {
                 *session = stopped_out(-1_050.0);
             }
-            let mut breacher = score(levered);
+            let mut breacher = score(sessions);
             breacher.score_v2(&v2()).unwrap();
-            let (b, c) = (
-                breacher.v2.as_ref().unwrap(),
-                compliant.v2.as_ref().unwrap(),
-            );
+            breacher.v2.unwrap()
+        };
+        for stops in [1, 2] {
+            let b = levered(2.5, stops);
             assert!(b.raw < c.raw, "{stops} stop-outs: {} vs {}", b.raw, c.raw);
-            assert_eq!(b.breach_cap, Some(if stops == 1 { 0.5 } else { 0.0 }));
+            let rate = stops as f64 / 6.0;
+            assert!((b.breach_penalty - scoring_v2::BREACH_RATE_WEIGHT * rate).abs() < 1e-15);
             if stops == 1 {
-                // Levering paid in USD (5,400 − 1,575 against 2,000): the
-                // cap is what keeps it below its twin.
+                // Levering paid in USD (4,500 − 1,575 against 2,000): the
+                // breach penalty is what keeps it below its twin.
                 assert!(b.bot_usd > c.bot_usd);
+                assert!(b.raw + b.breach_penalty > c.raw);
             }
         }
+        // The limit, stated: tripling every session's PnL and breaching in
+        // one session of six earns more than the penalty takes. On the
+        // tasks' own paths, levering that far breaches far more often; the
+        // probe gate checks that the breacher stays below its twin there.
+        let tripled = levered(3.0, 1);
+        assert!(tripled.raw > c.raw);
     }
 
     #[test]

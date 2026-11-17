@@ -28,12 +28,12 @@ docs together.
 | `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
-| `actors` | The `competitor` maker, the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
+| `actors` | The `competitor` maker (with `makers_bps`, where the snapshot's makers are widened to when not `competitor_bps`, at least that: a book whose depth near the touch is the grader's maker alone, the snapshot's deep curve behind it), the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
-| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `bound_on`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at. `net` on a perp scores the PnL over holding `assets.start_positions` (the fair path's move where there is one, else the level's), so a bot that holds scores 0; it takes no `order` or `venue_position`, and no funding with a start position; if the scenario has a `market_model.fair_path`, it must end at the level the path ends at (within 0.01%), or it is refused. `bound_on: "fair_path"` values the hindsight bound on `market_model.fair_path` |
 
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
@@ -77,9 +77,11 @@ the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
 won't margin fails the session's setup. Scoring v2 takes a start position only with
-an order, which scores the session against doing nothing, and only on a
-market without the scenario's `funding`: otherwise doing nothing moves with
-the price, or earns or pays the funding, and v2 refuses the grade. A v1
+an order or `scoring.net`, which score the session against doing nothing
+(for `net`, holding the start, so a bot that holds scores 0, v2's nop),
+and only on a market without the scenario's `funding`: otherwise doing
+nothing moves with the price, or earns or pays the funding, and v2 refuses
+the grade. A v1
 grade takes a funded start position as it is: the funding the start earns
 or pays is in the session's PnL, order or not.
 

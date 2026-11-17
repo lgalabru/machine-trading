@@ -693,6 +693,12 @@ const usd = (x, d = 2) => isNum(x) ? (x < 0 ? "−$" : "$") + fix(Math.abs(x), d
 const susd = (x, d = 2) => isNum(x) ? (x > 0 ? "+" : x < 0 ? "−" : "") + "$" + fix(Math.abs(x), d) : "–";
 const cls = (x) => isNum(x) ? (x > 0 ? "pos" : x < 0 ? "neg" : "") : "";
 const times = (x) => isNum(x) ? fix(x, 2) + "×" : "–";
+// A trial's one score: scoring v2's reward when v2 is its headline (0.5 the
+// reference), else skill (1× the reference). A task is ranked on it.
+const scoreOf = (t) => t.headline === "v2" ? t.reward : t.skill;
+const taskV2 = (name) => !!index?.trials?.some((t) => t.task === name && t.headline === "v2");
+const fmtScore = (x, v2) => v2 ? fix(x, 2) : times(x);
+const atRef = (x, v2) => v2 ? x >= 0.5 : Math.round(x * 100) >= 100;
 const pct = (x, d = 1) => isNum(x) ? fix(x * 100, d) + "%" : "–";
 const int = (x) => isNum(x) ? Math.round(x).toLocaleString("en-US") : "–";
 const compact = (x) => !isNum(x) ? "–" : Math.abs(x) >= 1e9 ? fix(x / 1e9, 1) + "B" : Math.abs(x) >= 1e6 ? fix(x / 1e6, 1) + "M" : Math.abs(x) >= 1e3 ? fix(x / 1e3, 1) + "k" : String(Math.round(x));
@@ -1212,8 +1218,8 @@ function equity(taskName) {
     return {
       model: m, trials: all.length, graded: mine.length,
       running: all.filter((t) => t.status === "pending").length,
-      skill: mean(mine.map((t) => t.skill)),
-      ci: ci90(mine.map((t) => t.skill)),
+      skill: mean(mine.map(scoreOf)),
+      ci: ci90(mine.map(scoreOf)),
       cost: fullCost(all),
       curve: mine.length ? curve(mine, "pnls") : null,
     };
@@ -1237,6 +1243,7 @@ function renderHero() {
   if (!task) { hero.innerHTML = ""; return; }
   const eq = equity(task.name);
   const key = task.name;
+  const v2 = taskV2(task.name);
   // The cards' order: by skill, PnL or cost (cheapest first).
   const by = {
     skill: (m) => m.skill ?? -Infinity,
@@ -1266,7 +1273,7 @@ function renderHero() {
         return `<div class="row ${picked.includes(m.model) ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}" title="Click to show; ⌘-click to add or remove">
           <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · cost ${usd(m.cost, 0)}` : m.running ? `${m.running} running` : "not graded"}</div></div>
           ${sparkline(m.curve)}
-          ${isNum(m.skill) ? `<div class="chip ${Math.round(m.skill * 100) >= 100 ? "up" : "down"}" title="skill: PnL over the reference's, mean of ${m.graded} attempt${m.graded > 1 ? "s" : ""}${m.ci ? `; 90% interval ${ciText(m.ci)}` : ""}">${times(m.skill)}</div>`
+          ${isNum(m.skill) ? `<div class="chip ${atRef(m.skill, v2) ? "up" : "down"}" title="${v2 ? "score (scoring v2): 0 doing nothing, 0.5 the reference, 1 the informed bot" : "skill: PnL over the reference's"}, mean of ${m.graded} attempt${m.graded > 1 ? "s" : ""}${m.ci ? `; 90% interval ${ciText(m.ci)}` : ""}">${fmtScore(m.skill, v2)}</div>`
             : `<div class="chip ${trend(last)}" title="PnL">${isNum(last) ? compactUsd(last) : "–"}</div>`}
         </div>`;
       }).join("") || `<div class="muted">No trials yet.</div>`}
@@ -1463,13 +1470,17 @@ function renderOverview() {
   ].join(""), "ov-stats");
   // The leaderboard: mean skill by model and task.
   section("Leaderboard", "mean skill: PnL over the reference's on the same scenarios, the reference scoring 1×; under it, a 90% interval over attempts");
+  // Each task on its one score (v2's reward for a v2 task, else skill); the
+  // mean only over tasks on one scale.
+  const v2s = index.tasks.map((t) => taskV2(t.name));
+  const oneScale = v2s.every((v) => v === v2s[0]);
   const rows = modelOrder.map((m) => {
-    const skills = index.tasks.map((t) => index.trials.filter((x) => x.task === t.name && x.model === m && x.graded).map((x) => x.skill));
+    const skills = index.tasks.map((t) => index.trials.filter((x) => x.task === t.name && x.model === m && x.graded).map(scoreOf));
     const per = skills.map(mean);
-    return { model: m, per, cis: skills.map(ci90), mean: mean(per) };
+    return { model: m, per, cis: skills.map(ci90), mean: oneScale ? mean(per) : null };
   }).sort((x, y) => (y.mean ?? -Infinity) - (x.mean ?? -Infinity));
-  const chipFor = (v, ci) => isNum(v) ? `<span class="delta ${Math.round(v * 100) >= 100 ? "up" : "down"}">${times(v)}</span>${ci ? `<div class="muted ci">${ciText(ci)}</div>` : ""}` : `<span class="muted">–</span>`;
-  div(`<table class="cmp-table lb"><thead><tr><th>Model</th>${index.tasks.map((t) => `<th class="num">${esc(taskTitle(t.short))}</th>`).join("")}<th class="num">Mean</th></tr></thead><tbody>${rows.map((r) => `<tr><td><span class="sw" style="background:${modelColor(r.model)}"></span>${esc(shortModel(r.model))}</td>${r.per.map((v, i) => `<td class="num cell" data-task="${esc(index.tasks[i].name)}">${chipFor(v, r.cis[i])}</td>`).join("")}<td class="num">${chipFor(r.mean)}</td></tr>`).join("")}</tbody></table>`, "cmp-card");
+  const chipFor = (v, ci, v2) => isNum(v) ? `<span class="delta ${atRef(v, v2) ? "up" : "down"}">${fmtScore(v, v2)}</span>${ci ? `<div class="muted ci">${ciText(ci)}</div>` : ""}` : `<span class="muted">–</span>`;
+  div(`<table class="cmp-table lb"><thead><tr><th>Model</th>${index.tasks.map((t) => `<th class="num">${esc(taskTitle(t.short))}</th>`).join("")}<th class="num">Mean</th></tr></thead><tbody>${rows.map((r) => `<tr><td><span class="sw" style="background:${modelColor(r.model)}"></span>${esc(shortModel(r.model))}</td>${r.per.map((v, i) => `<td class="num cell" data-task="${esc(index.tasks[i].name)}">${chipFor(v, r.cis[i], v2s[i])}</td>`).join("")}<td class="num">${chipFor(r.mean, null, v2s[0])}</td></tr>`).join("")}</tbody></table>`, "cmp-card");
   app.querySelectorAll("td.cell").forEach((td) => td.addEventListener("click", () => { location.hash = taskHref(td.dataset.task); }));
   // Cost against skill, per task: which models are worth what they cost.
   section("Skill for the money", "each model's mean skill against its mean agent cost per run; the line is the frontier: no model is both cheaper and better");
@@ -1890,18 +1901,21 @@ async function renderCompare(a, b) {
     const host = div(`<div class="cmp-head"><h2>${esc(task)}</h2><span class="muted">task ${esc(tb?.version ?? "–")} → ${esc(ta?.version ?? "–")}</span></div>`, "cmp-card");
     const grid = div("", "cmp-grid", host);
     const rows = ms.map((m) => {
-      const sa = ta?.models[m]?.skill, sb = tb?.models[m]?.skill;
-      const d = isNum(sa) && isNum(sb) ? sa - sb : null;
+      // Each side on its own score; a change only when both are on one.
+      const va = ta?.headline === "v2", vb = tb?.headline === "v2";
+      const one = (x) => x?.score ?? x?.skill;
+      const sa = one(ta?.models[m]), sb = one(tb?.models[m]);
+      const d = isNum(sa) && isNum(sb) && va === vb ? sa - sb : null;
       return `<tr><td><span class="sw" style="background:${color(m)}"></span>${esc(shortModel(m))}</td>
-        <td class="num">${times(sb)}</td><td class="num">${times(sa)}</td>
-        <td><span class="delta ${isNum(d) ? (d >= 0 ? "up" : "down") : ""}">${isNum(d) ? (d >= 0 ? "+" : "−") + fix(Math.abs(d)) + "×" : isNum(sa) ? "new" : "–"}</span></td></tr>`;
+        <td class="num">${fmtScore(sb, vb)}</td><td class="num">${fmtScore(sa, va)}</td>
+        <td><span class="delta ${isNum(d) ? (d >= 0 ? "up" : "down") : ""}">${isNum(d) ? (d >= 0 ? "+" : "−") + fix(Math.abs(d)) + (va ? "" : "×") : isNum(sa) ? (va !== vb && isNum(sb) ? "rescored" : "new") : "–"}</span></td></tr>`;
     }).join("");
     div(`<table class="cmp-table"><thead><tr><th>Model</th><th class="num">${esc(b)}</th><th class="num">${esc(a)}</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table>`, "", grid);
     const chartHost = div("", "cmp-chart", grid);
     const cols = ordered.filter((r) => r.tasks[task]);
     skillLines(chartHost, {
       labels: cols.map(label), marked: [a, b],
-      series: ms.map((m) => ({ model: m, color: color(m), ys: cols.map((r) => r.tasks[task].models[m]?.skill ?? null) })),
+      series: ms.map((m) => ({ model: m, color: color(m), ys: cols.map((r) => r.tasks[task].headline === tb?.headline ? (r.tasks[task].models[m]?.score ?? r.tasks[task].models[m]?.skill ?? null) : null) })),
     });
   }
 }

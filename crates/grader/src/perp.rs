@@ -21,7 +21,7 @@ use std::{collections::HashSet, sync::Arc};
 use async_trait::async_trait;
 use mtx_core::{
     AccountMeter, FillId, InstrumentId, Measurement, MeterError, Side as CoreSide,
-    mandate::{InstrumentRef, Mandate, Observed, PositionRange, Term},
+    mandate::{InstrumentRef, Mandate, Observed, PositionRange, PricedPosition, Sample},
     turns::Step,
 };
 use mtx_kit::{
@@ -47,8 +47,8 @@ use crate::{
     chain,
     guard::Guard,
     keeper::{KeeperSetup, LiquidationKeeper},
-    making::{TAKER_ACCOUNTS, book_at, level_at},
-    orders::{CloseOutReport, OrderReport},
+    making::{MakingFill, Parties, TAKER_ACCOUNTS, book_at, level_at},
+    orders::{CloseOutReport, NetReport, OrderReport},
     phoenix::{self, Phoenix},
     risk::{CloseOrder, Closing, MAX_CLOSE_ORDERS_PER_STEP, is_flat},
     scenario::{STOP_OUT_LIMIT_BPS, Scenario},
@@ -195,9 +195,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             (start_mark_ticks as f64 * half_spread_bps / 10_000.0).round() as u64;
         phoenix::widen_makers(surfnet, &phoenix, &scenario.symbol, half_spread_ticks)
     };
+    let mut parties = Parties::default();
     let takers = match (&scenario.making, &scenario.offhours) {
         (Some(making), _) => Some((
-            widen(making.competitor_bps)?,
+            widen(making.makers_bps())?,
             &making.takers,
             scenario.takers_pricing.unwrap_or(Pricing::Level),
         )),
@@ -217,6 +218,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let keypairs: Vec<Keypair> = (0..TAKER_ACCOUNTS)
             .map(|i| opts.keys.keypair("taker", i as u32))
             .collect();
+        parties.takers = keypairs
+            .iter()
+            .map(|k| phoenix.trader_account(&k.pubkey()))
+            .collect();
         let seats = onboard(&world, &phoenix, &perp, &rpc, internal.url(), keypairs).await?;
         tracing::info!(takers = seats.len(), widened_ticks, "takers ready");
         cast.add(Box::new(Takers::new(
@@ -228,6 +233,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
     if let Some(making) = &scenario.making {
         let keypair = opts.keys.keypair("competitor", 0);
+        parties.competitor = Some(phoenix.trader_account(&keypair.pubkey()));
         let seat = onboard(&world, &phoenix, &perp, &rpc, internal.url(), vec![keypair])
             .await?
             .remove(0);
@@ -410,6 +416,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
     let mut rfqs = None;
+    let mut roster = Default::default();
     if let Some((library, seats)) = library {
         let (path, start) = (scenario.path.clone(), start_mark_usd);
         let fair_path = scenario.fair_path.clone();
@@ -449,15 +456,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             cast.add(actor);
         }
         rfqs = built.rfq;
+        roster = built.roster;
     }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
-    let mandate = Mandate {
-        term: Some(Term {
-            until_slot: end_slot,
-        }),
-        ..scenario.mandate.clone()
-    };
+    let mandate = scenario.mandate.clone().with_term(base_slot, end_slot);
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
         keypair_path: workdir.keypair_path(),
@@ -482,6 +485,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         observed.begin(&market_ref, start_position);
     }
     let vars = session_vars(scenario)?;
+    let bot_trader = meter.trader();
     let mut account = PerpAccount {
         scenario: scenario.clone(),
         phoenix,
@@ -492,14 +496,24 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         rpc_url: internal.url().to_string(),
         universe,
         market_id: scenario.instrument().id(),
+        instrument: scenario.instrument(),
         start_mark_usd,
         start_value_usd,
         base_slot,
+        mandate: mandate.clone(),
         observed,
         start_position,
         fills: reads_fills.then(|| PerpFills {
             last_scan: base_slot,
             ..PerpFills::default()
+        }),
+        making_fills: scenario.making.is_some().then(|| MakingFills {
+            bot: bot_trader,
+            parties,
+            last_scan: base_slot,
+            seen: HashSet::new(),
+            fills: Vec::new(),
+            keys: Vec::new(),
         }),
         oracle_starts,
         peak_value_usd: start_value_usd,
@@ -522,6 +536,22 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         account.peak_value_usd = account.start_value_usd;
         account.desk_start = Some(start);
     }
+    // What an exposure bounded by a fraction of its start is a fraction
+    // of: the account as the term starts.
+    if mandate.needs_term_start() {
+        let now = account.measure().await?;
+        let (position, price) = account.priced(&now, base_slot);
+        let holdings = [PricedPosition {
+            instrument: &account.instrument,
+            position,
+            price,
+        }];
+        let sample = Sample::new(base_slot, &holdings).map_err(MeterError::Unsupported)?;
+        account
+            .observed
+            .record_term_start(&sample)
+            .map_err(MeterError::Unsupported)?;
+    }
     Ok(Prepared {
         world: World::Offline(Box::new(world)),
         internal,
@@ -542,6 +572,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .map(|off| base_slot + off.reopen_slot),
         vars,
         cast,
+        roster,
         cranks: keeper
             .map(|keeper| Box::new(keeper) as Box<dyn crate::crank::VenueCrank>)
             .into_iter()
@@ -784,6 +815,18 @@ struct PerpFills {
     open_orders: Vec<(InstrumentRef, CoreSide)>,
 }
 
+/// A market-making session's record of the bot's fills.
+struct MakingFills {
+    bot: Pubkey,
+    parties: Parties,
+    /// The slot fills were last read at, read the way [`PerpFills`] reads.
+    last_scan: u64,
+    seen: HashSet<(u128, bool)>,
+    fills: Vec<MakingFill>,
+    /// Each fill's key in `seen`, to find it again.
+    keys: Vec<(u128, bool)>,
+}
+
 /// A perp session's account: the bot's Phoenix trader account, metered.
 struct PerpAccount {
     scenario: Scenario,
@@ -796,10 +839,14 @@ struct PerpAccount {
     rpc_url: String,
     universe: Vec<InstrumentId>,
     market_id: InstrumentId,
+    /// The scenario's market, as the mandate names it.
+    instrument: InstrumentRef,
     start_mark_usd: f64,
     oracle_starts: std::collections::BTreeMap<String, crate::oracles::OracleStart>,
     start_value_usd: f64,
     base_slot: u64,
+    /// The grader's copy of the mandate, with its term.
+    mandate: Mandate,
     /// Sampled every step: a fill persists until the bot trades out of it,
     /// so a position over the cap is caught. With a starting position, the
     /// range starts there.
@@ -808,6 +855,8 @@ struct PerpAccount {
     start_position: f64,
     /// The bot's fills, where the session reads them.
     fills: Option<PerpFills>,
+    /// Its fills in a market-making session, with who traded against it.
+    making_fills: Option<MakingFills>,
     /// The account's value, sampled at the same cadence: its running peak,
     /// and the deepest it has fallen below it.
     peak_value_usd: f64,
@@ -827,6 +876,8 @@ struct RfqDesk {
     base: Token,
     quote: Token,
     rpc_url: String,
+    /// Score over the idle desk (see [`RfqClients::over_idle_desk`]).
+    over_idle: bool,
 }
 
 /// What the bot's wallet holds for its RFQ desk at one moment: the asset
@@ -841,6 +892,12 @@ struct DeskHoldings {
 impl DeskHoldings {
     fn base_usd(&self) -> f64 {
         self.base * self.index_usd
+    }
+
+    /// The asset's value over an idle desk's: less what the `start`'s
+    /// asset gained since, at the index.
+    fn base_usd_over_idle(&self, start: &DeskHoldings) -> f64 {
+        self.base_usd() - start.base * (self.index_usd - start.index_usd)
     }
 }
 
@@ -942,6 +999,7 @@ fn fund_rfq(
         base,
         quote,
         rpc_url: rpc_url.to_string(),
+        over_idle: setup.rfq.over_idle_desk,
     };
     Ok((Arc::new(swaps), desk))
 }
@@ -972,9 +1030,9 @@ impl PerpAccount {
     /// from the chain and decoded as the meter decodes fills, so the ids
     /// match.
     async fn mark_forced(&mut self, closes: &[crate::risk::ForcedClose]) -> Result<()> {
-        let Some(read) = self.fills.as_mut() else {
+        if self.fills.is_none() && self.making_fills.is_none() {
             return Ok(());
-        };
+        }
         let signatures: Vec<&String> = closes
             .iter()
             .flat_map(|close| &close.orders)
@@ -1006,14 +1064,33 @@ impl PerpAccount {
                 .add_transaction(&summary, &market)
                 .map_err(|e| failed(e.to_string()))?;
         }
-        let forced: HashSet<FillId> = records
-            .for_traders(&[self.meter.trader()])
-            .fills
-            .into_iter()
-            .map(|recorded| recorded.fill.id)
-            .collect();
-        for (fill, id) in read.fills.iter_mut().zip(&read.ids) {
-            fill.forced = forced.contains(id);
+        if let Some(read) = self.fills.as_mut() {
+            let forced: HashSet<FillId> = records
+                .for_traders(&[self.meter.trader()])
+                .fills
+                .into_iter()
+                .map(|recorded| recorded.fill.id)
+                .collect();
+            for (fill, id) in read.fills.iter_mut().zip(&read.ids) {
+                fill.forced = forced.contains(id);
+            }
+        }
+        if let Some(read) = self.making_fills.as_mut() {
+            let bot = read.bot;
+            let forced: HashSet<(u128, bool)> = records
+                .fills
+                .iter()
+                .flat_map(|fill| {
+                    [
+                        (fill.taker == bot).then_some((fill.sequence, true)),
+                        (fill.maker == bot).then_some((fill.sequence, false)),
+                    ]
+                })
+                .flatten()
+                .collect();
+            for (fill, key) in read.fills.iter_mut().zip(&read.keys) {
+                fill.forced = forced.contains(key);
+            }
         }
         Ok(())
     }
@@ -1022,6 +1099,7 @@ impl PerpAccount {
     /// resting, since the last read, at `slot`. Nothing where the session
     /// doesn't read them.
     async fn scan(&mut self, slot: u64) -> Result<()> {
+        self.scan_making(slot).await?;
         let Some(read) = self.fills.as_mut() else {
             return Ok(());
         };
@@ -1045,6 +1123,28 @@ impl PerpAccount {
             let seen = (instrument.clone(), placed.side);
             if !read.open_orders.contains(&seen) {
                 read.open_orders.push(seen);
+            }
+        }
+        read.last_scan = slot;
+        Ok(())
+    }
+
+    /// Read the market's fills since the last read, and keep the bot's:
+    /// each as the side it traded, with its counterparty and fee.
+    async fn scan_making(&mut self, slot: u64) -> Result<()> {
+        let Some(read) = self.making_fills.as_mut() else {
+            return Ok(());
+        };
+        let after = read.last_scan.saturating_sub(1);
+        let records = patiently("the market's fills", || self.meter.market_records(after)).await?;
+        for fill in &records.fills {
+            for record in MakingFill::of(fill, &read.bot, &read.parties, self.base_slot) {
+                // A trade between the bot's own accounts is two records.
+                let key = (fill.sequence, record.role == "taker");
+                if read.seen.insert(key) {
+                    read.fills.push(record);
+                    read.keys.push(key);
+                }
             }
         }
         read.last_scan = slot;
@@ -1082,7 +1182,17 @@ impl PerpAccount {
         Ok(self
             .desk_holdings()
             .await?
-            .map_or(0.0, |held| held.base_usd()))
+            .map_or(0.0, |held| self.desk_value(&held)))
+    }
+
+    /// What `held` adds to the account's value: the asset at the index, and
+    /// with the scenario's `over_idle_desk`, less what the desk's starting
+    /// asset gained since.
+    fn desk_value(&self, held: &DeskHoldings) -> f64 {
+        match (&self.desk, &self.desk_start) {
+            (Some(desk), Some(start)) if desk.over_idle => held.base_usd_over_idle(start),
+            _ => held.base_usd(),
+        }
     }
 
     async fn mark_ticks(&self) -> Result<u64> {
@@ -1113,6 +1223,49 @@ impl PerpAccount {
         Ok(value_usd + units * (price - self.phoenix.ticks_to_usd(&self.market, mark)))
     }
 
+    /// The price the mandate's notional rules value the market at, in USD:
+    /// the scenario's level, or its book level where the session values the
+    /// account at the book. Never Phoenix's mark, which a bot's own trading
+    /// moves.
+    fn notional_price_usd(&self, slot: u64) -> f64 {
+        let scenario = &self.scenario;
+        let at = slot.saturating_sub(self.base_slot);
+        let level = match scenario.valuation() {
+            "book" => book_at(&scenario.path, at),
+            _ => level_at(&scenario.path, at),
+        };
+        self.start_mark_usd * (1.0 + level / 100.0)
+    }
+
+    /// The account's position in the session's market in `measurement`,
+    /// flat if it holds none, and the price the notional rules read it at:
+    /// the market's entry in a sample. The session's only market: holdings
+    /// elsewhere break the universe rule already.
+    fn priced(&self, measurement: &Measurement, slot: u64) -> (f64, f64) {
+        (
+            position_in(measurement, &self.market_id),
+            self.notional_price_usd(slot),
+        )
+    }
+
+    /// Keeps `measurement`, priced, for the mandate's notional rules, if it
+    /// has any: the audit judges the samples against its own mandate.
+    fn record_notional(&mut self, measurement: &Measurement, slot: u64) -> Result<()> {
+        if self.mandate.checks_samples() {
+            let (position, price) = self.priced(measurement, slot);
+            let holdings = [PricedPosition {
+                instrument: &self.instrument,
+                position,
+                price,
+            }];
+            let sample = Sample::new(slot, &holdings).map_err(MeterError::Unsupported)?;
+            self.observed
+                .record_sample(&sample)
+                .map_err(MeterError::Unsupported)?;
+        }
+        Ok(())
+    }
+
     /// [`PerpAccount::value`], and the RFQ desk's wallet.
     async fn value_with_desk(&self, value_usd: f64, units: f64, slot: u64) -> Result<f64> {
         Ok(self.value(value_usd, units, slot).await? + self.desk_usd().await?)
@@ -1126,7 +1279,7 @@ impl Account for PerpAccount {
     }
 
     fn reads_fills(&self) -> bool {
-        self.fills.is_some()
+        self.fills.is_some() || self.making_fills.is_some()
     }
 
     fn moment(&self, at: u64) -> Moment {
@@ -1141,9 +1294,10 @@ impl Account for PerpAccount {
 
     async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord> {
         self.scan(slot).await?;
-        let scenario = &self.scenario;
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
+        self.record_notional(&now, slot)?;
+        let scenario = &self.scenario;
         let position = position_in(&now, &self.market_id);
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
         let value_usd = self
@@ -1309,15 +1463,16 @@ impl Account for PerpAccount {
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
         self.scan(done.end_slot).await?;
         self.mark_forced(&done.forced_closes).await?;
-        let scenario = &self.scenario;
         let end = self.measure().await?;
         record(&mut self.observed, &end)?;
+        self.record_notional(&end, done.end_slot)?;
+        let scenario = &self.scenario;
         let end_position = position_in(&end, &self.market_id);
         let end_desk = self.desk_holdings().await?;
         let end_value_usd = self
             .value(grader_f64(end.value_usd), end_position, done.end_slot)
             .await?
-            + end_desk.map_or(0.0, |held| held.base_usd());
+            + end_desk.map_or(0.0, |held| self.desk_value(&held));
         let positions_outside_universe = self.positions_outside_universe.max(end.outside_universe);
         let liquidatable = self.meter.liquidatable().await?;
         let instrument = scenario.instrument();
@@ -1326,14 +1481,25 @@ impl Account for PerpAccount {
             .ticks_to_usd(&self.market, self.mark_ticks().await?);
         let observed = std::mem::take(&mut self.observed);
         let fills = self.fills.take().unwrap_or_default();
+        let making_fills = self
+            .making_fills
+            .take()
+            .map(|read| read.fills)
+            .unwrap_or_default();
         let close_usd = self
             .moment(done.end_slot.saturating_sub(self.base_slot))
             .level_usd;
+        let fair_close_usd = fair_close_usd(
+            scenario,
+            self.start_mark_usd,
+            done.end_slot.saturating_sub(self.base_slot),
+        );
         let settled = settle(
             scenario,
             self.start_position,
             end_position,
             (self.start_mark_usd, close_usd),
+            fair_close_usd,
             end_value_usd - self.start_value_usd,
             &fills.fills,
         );
@@ -1357,6 +1523,8 @@ impl Account for PerpAccount {
             max_drawdown_usd: self
                 .max_drawdown_usd
                 .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            samples: observed.samples,
+            term_start: observed.term_start,
             valuation: scenario.valuation(),
             flow: done.actors.flow,
             competitor: done.actors.competitor,
@@ -1378,12 +1546,13 @@ impl Account for PerpAccount {
             faults: done.faults,
             order: settled.order,
             participation: None,
-            net: None,
+            net: settled.net,
             start_position: self.start_position,
             start_funded: self.start_position != 0.0 && scenario.funding.is_some(),
             close_outs: settled.close_outs,
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
+            making_fills,
             tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,
@@ -1406,10 +1575,19 @@ impl Account for PerpAccount {
     }
 }
 
+/// The fair value at the close, in USD, that a net-scored session takes its
+/// hold baseline at: the scenario's fair path where it has one. Only net
+/// scoring reads it.
+fn fair_close_usd(scenario: &Scenario, start_mark_usd: f64, at: u64) -> Option<f64> {
+    scenario.net.as_ref()?;
+    scenario.fair_value_usd(start_mark_usd, at)
+}
+
 /// What a perp session's PnL comes to, with its order and close-outs.
 struct Settled {
     pnl_usd: f64,
     order: Option<OrderReport>,
+    net: Option<NetReport>,
     close_outs: Vec<CloseOutReport>,
 }
 
@@ -1418,12 +1596,17 @@ struct Settled {
 /// at the end, with the account's value changing by `value_change_usd`.
 /// An order is scored against its broker, as on spot (`fills`, the bot's,
 /// say whether it traded the other way); a close-out charges the haircut on
-/// what is left. Without either, the PnL is the value change.
+/// what is left. A net-scored session's PnL is the value change less what
+/// holding the start position gained from the price moving, at the fair
+/// value at the close where the scenario has one (`fair_close_usd`), else at
+/// the level, so a bot that holds scores 0. Without any, the PnL is the
+/// value change.
 fn settle(
     scenario: &Scenario,
     start: f64,
     end: f64,
     (start_usd, close_usd): (f64, f64),
+    fair_close_usd: Option<f64>,
     value_change_usd: f64,
     fills: &[PerpFillRecord],
 ) -> Settled {
@@ -1444,12 +1627,25 @@ fn settle(
         .iter()
         .map(|(symbol, close_out)| close_out.report(symbol, end, close_usd))
         .collect();
+    let net = scenario.net.as_ref().map(|net| {
+        net.report(
+            start,
+            end,
+            (start_usd, fair_close_usd.unwrap_or(close_usd)),
+            value_change_usd,
+            &[],
+            &[],
+        )
+    });
     let pnl_usd = order
         .as_ref()
-        .map_or(value_change_usd, OrderReport::pnl_usd)
+        .map(OrderReport::pnl_usd)
+        .or_else(|| net.as_ref().map(NetReport::pnl_usd))
+        .unwrap_or(value_change_usd)
         - close_outs.iter().map(|c| c.charge_usd).sum::<f64>();
     Settled {
         pnl_usd,
+        net,
         order,
         close_outs,
     }
@@ -1639,6 +1835,35 @@ mod tests {
     }
 
     #[test]
+    fn an_idle_desk_over_the_idle_desk_is_worth_what_it_started_with() {
+        let start = DeskHoldings {
+            base: 5.0,
+            usdc: 1_000.0,
+            index_usd: 100.0,
+        };
+        // Idle through a 10% rise: the asset is worth $550 and the idle desk
+        // gained $50 on it, so nothing is left over it.
+        let idle = DeskHoldings {
+            index_usd: 110.0,
+            ..start
+        };
+        assert_eq!(idle.base_usd(), 550.0);
+        assert_eq!(idle.base_usd_over_idle(&start), 500.0);
+        // Sold 2 at 115 with the index at 110: $5 over it each, $10 over what
+        // the idle desk made.
+        let sold = DeskHoldings {
+            base: 3.0,
+            usdc: 1_000.0 + 230.0,
+            index_usd: 110.0,
+        };
+        let net = |held: &DeskHoldings| held.base_usd_over_idle(&start) + held.usdc;
+        assert_eq!(net(&sold) - net(&start), 10.0);
+        assert_eq!(net(&idle) - net(&start), 0.0);
+        // The index is where it started: the same either way.
+        assert_eq!(start.base_usd_over_idle(&start), start.base_usd());
+    }
+
+    #[test]
     fn a_perp_order_settles_as_the_spot_formula_does() {
         let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
         let order = crate::orders::ExecutionOrder {
@@ -1650,13 +1875,21 @@ mod tests {
         };
         scenario.order = Some(order.clone());
         // Doing nothing scores 0 whatever the close.
-        let nop = settle(&scenario, 0.0, 0.0, (100.0, 110.0), 0.0, &[]);
+        let nop = settle(&scenario, 0.0, 0.0, (100.0, 110.0), None, 0.0, &[]);
         assert_eq!(nop.pnl_usd, 0.0);
         // Bought 6 at 101 against a close of 110, 1 of fees: the same PnL
         // as the spot formula, and the order names its market.
         let fills = [fill(CoreSide::Buy, 6.0)];
         let value_change = 6.0 * (110.0 - 101.0) - 1.0;
-        let bought = settle(&scenario, 0.0, 6.0, (100.0, 110.0), value_change, &fills);
+        let bought = settle(
+            &scenario,
+            0.0,
+            6.0,
+            (100.0, 110.0),
+            None,
+            value_change,
+            &fills,
+        );
         let spot = order.report(
             0.0,
             6.0,
@@ -1673,7 +1906,7 @@ mod tests {
         // A sell inside the session is caught from the fills, though the
         // position never went below where it started.
         let both = [fill(CoreSide::Buy, 6.0), fill(CoreSide::Sell, 1.0)];
-        let sold = settle(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &both);
+        let sold = settle(&scenario, 0.0, 5.0, (100.0, 110.0), None, 0.0, &both);
         assert!(
             sold.order
                 .unwrap()
@@ -1689,7 +1922,7 @@ mod tests {
                 ..fill(CoreSide::Sell, 1.0)
             },
         ];
-        let closed = settle(&scenario, 0.0, 5.0, (100.0, 110.0), 0.0, &desk);
+        let closed = settle(&scenario, 0.0, 5.0, (100.0, 110.0), None, 0.0, &desk);
         assert_eq!(closed.order.unwrap().breach(), None);
         // A start long sold down: the drift on what it started with is
         // taken off.
@@ -1698,8 +1931,57 @@ mod tests {
             reduce_only: true,
             ..order
         });
-        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), -100.0, &[]);
+        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), None, -100.0, &[]);
         assert_eq!(held.pnl_usd, 0.0);
+    }
+
+    #[test]
+    fn a_net_scored_perp_scores_what_it_made_over_holding() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        scenario.net = Some(crate::orders::NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        // Holding 10 through a fall from 100 to 90 loses 100: it scores 0.
+        let held = settle(&scenario, 10.0, 10.0, (100.0, 90.0), None, -100.0, &[]);
+        assert_eq!(held.pnl_usd, 0.0);
+        // Cutting to 4 at 100 before the fall keeps 60 of it: +60.
+        let cut = settle(&scenario, 10.0, 4.0, (100.0, 90.0), None, -40.0, &[]);
+        assert_eq!(cut.pnl_usd, 60.0);
+        // Adding 5 at 100 before the fall loses 50 more: -50.
+        let added = settle(&scenario, 10.0, 15.0, (100.0, 90.0), None, -150.0, &[]);
+        assert_eq!(added.pnl_usd, -50.0);
+        // The drift is at the fair close where there is one.
+        let fair = settle(
+            &scenario,
+            10.0,
+            10.0,
+            (100.0, 90.0),
+            Some(95.0),
+            -100.0,
+            &[],
+        );
+        assert_eq!(fair.pnl_usd, -50.0);
+        assert_eq!(fair.net.unwrap().drift_usd, -50.0);
+    }
+
+    #[test]
+    fn the_hold_baseline_is_taken_at_the_fair_close_only_for_net_scoring() {
+        let mut scenario = crate::scenario::ShockFamily::spcx().sample("s", 1);
+        scenario.fair_path = Some(vec![crate::scenario::Waypoint::at(10, -5.0)]);
+        // Not net-scored: the fair path is not read.
+        assert_eq!(fair_close_usd(&scenario, 100.0, 50), None);
+        scenario.net = Some(crate::orders::NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        assert_eq!(fair_close_usd(&scenario, 100.0, 50), Some(95.0));
+        // The value finish settles with: a hold at the fair close scores 0.
+        let fair = fair_close_usd(&scenario, 100.0, 50);
+        let held = settle(&scenario, 10.0, 10.0, (100.0, 95.0), fair, -50.0, &[]);
+        assert_eq!(held.pnl_usd, 0.0);
+        scenario.fair_path = None;
+        assert_eq!(fair_close_usd(&scenario, 100.0, 50), None);
     }
 
     #[test]
@@ -1709,17 +1991,17 @@ mod tests {
             "SPCX".into(),
             crate::orders::CloseOut { haircut_bps: 100.0 },
         );
-        let long = settle(&scenario, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
+        let long = settle(&scenario, 0.0, 4.0, (100.0, 200.0), None, 50.0, &[]);
         assert!((long.pnl_usd - (50.0 - 4.0 * 2.0)).abs() < 1e-9);
         assert!((long.close_outs[0].broker_usd - 198.0).abs() < 1e-9);
-        let short = settle(&scenario, 0.0, -4.0, (100.0, 200.0), 50.0, &[]);
+        let short = settle(&scenario, 0.0, -4.0, (100.0, 200.0), None, 50.0, &[]);
         assert!((short.close_outs[0].broker_usd - 202.0).abs() < 1e-9);
         assert!((short.pnl_usd - (50.0 - 8.0)).abs() < 1e-9);
-        let flat = settle(&scenario, 3.0, 0.0, (100.0, 200.0), 50.0, &[]);
+        let flat = settle(&scenario, 3.0, 0.0, (100.0, 200.0), None, 50.0, &[]);
         assert_eq!(flat.pnl_usd, 50.0);
         // Without an order or a close-out, the PnL is the value change.
         let plain = crate::scenario::ShockFamily::spcx().sample("s", 1);
-        let settled = settle(&plain, 0.0, 4.0, (100.0, 200.0), 50.0, &[]);
+        let settled = settle(&plain, 0.0, 4.0, (100.0, 200.0), None, 50.0, &[]);
         assert_eq!(settled.pnl_usd, 50.0);
         assert!(settled.order.is_none() && settled.close_outs.is_empty());
     }
