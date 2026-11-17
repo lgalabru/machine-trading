@@ -5,7 +5,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 [task]
 name = "solana-foundation/smart-money-decay-nvda"
 version = "0.1.0"
-description = "Write a bot that trades Phoenix NVDA perps off the tape: it follows the wallets that trade ahead of moves, drops the ones whose edge dies, and ignores the ones that chase, on an offline copy of Solana mainnet."
+description = "A bot trades the Phoenix NVDA perp off the tape, following the wallets that trade ahead of moves and dropping the ones whose edge has died."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "surfpool", "rust"]
 
 [[task.authors]]
@@ -22,10 +22,10 @@ snapshot = "phoenix-perps-2026-11-13"
 generator = "smart-money-decay"
 anchor = "smart-money-decay"
 emoji = "🆕"
-market = "TODO: venue and instrument (flash-crash-spcx base)"
+market = "Phoenix NVDA perp"
 summary = "keeps a record of each wallet on the tape, follows the ones the price rewards, notices when a record turns, and tells flow that leads a move from flow that follows it"
 skill = "keeps a record of each wallet on the tape, follows the ones the price rewards, notices when a record turns, and tells flow that leads a move from flow that follows it"
-leak_needles = []
+leak_needles = ["follow the wallets whose takes the price has rewarded lately", "the reference's machinery, told which"]
 headline = "v2"
 
 [verifier]
@@ -55,7 +55,7 @@ user = "agent"
 [verifier.environment]
 # The verifier's image, built by `just image` from tests/: the runtime
 # image with this task's tests in it. The rest as [environment].
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-flash-crash-spcx-verifier@sha256:d5de44dc1faf6014f3b4a61485940ae436e070f20aa3e61e774427b1360d7532"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-smart-money-decay-nvda-verifier"
 network_mode = "public"
 build_timeout_sec = 1800.0
 cpus = 4
@@ -66,7 +66,7 @@ os = "linux"
 # Built by `just image` from environment/ (pinned by `just release`):
 # Harbor builds nothing when a trial starts. Building the tasks' images
 # there, at once, has put one task's files into another's image.
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-flash-crash-spcx@sha256:fcfb6e049f62c3e0ff85cd81417672d9a1dce26515c4892c60c1f7ccb2c2d31b"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-smart-money-decay-nvda"
 # Agents need package registries and their model API. The chain they trade
 # on is a local, offline sandbox either way.
 network_mode = "public"

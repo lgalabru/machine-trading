@@ -138,7 +138,13 @@ pub const GENERATORS: &[Generator] = &[
     },
     Generator {
         name: "smart-money-decay",
-        practice: |prefix, count, seed| FlowFamily::nvda().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                FlowFamily::nvda().draw_set(prefix, count, seed),
+                false,
+                flow_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 FlowFamily::nvda().draw_set("hidden", count, seed),

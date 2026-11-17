@@ -45,6 +45,10 @@ pub enum Mode {
     FadeFlow,
     Momentum,
     MostActive,
+    /// An exploit: takes the cap one way at once, to move the book and set
+    /// off the chasers, and sells into them a little later; the other way
+    /// next time.
+    Igniter,
 }
 
 impl Mode {
@@ -56,10 +60,14 @@ impl Mode {
             "fade-flow" => Self::FadeFlow,
             "momentum" => Self::Momentum,
             "most-active" => Self::MostActive,
+            "igniter" => Self::Igniter,
             _ => return None,
         })
     }
 }
+
+/// How often the igniter pushes, in slots.
+const IGNITE_EVERY: u64 = 150;
 
 /// The rung's knobs.
 #[derive(Debug, Clone, Copy)]
@@ -127,6 +135,11 @@ impl Params {
                 look_slots: 10,
                 hold_slots: 10,
                 threshold: 6.0,
+                ..base
+            },
+            Mode::Igniter => Params {
+                look_slots: IGNITE_EVERY,
+                hold_slots: 30,
                 ..base
             },
             Mode::Momentum => Params {
@@ -236,13 +249,18 @@ impl Flow {
     fn signal(&self, now: u64) -> Option<f64> {
         let p = self.params;
         let setup = self.setup.as_ref()?;
-        let window = self
-            .recent
-            .iter()
-            .filter(|t| t.at + p.look_slots > now);
+        let window = self.recent.iter().filter(|t| t.at + p.look_slots > now);
         let net: f64 = match self.mode {
+            Mode::Igniter => {
+                let round = now / IGNITE_EVERY;
+                return (now % IGNITE_EVERY < 2 && round > 0)
+                    .then(|| if round % 2 == 1 { 1.0 } else { -1.0 });
+            }
             Mode::Momentum => {
-                let (then, mid) = (self.mid_at(now.saturating_sub(p.look_slots))?, self.mid_at(now)?);
+                let (then, mid) = (
+                    self.mid_at(now.saturating_sub(p.look_slots))?,
+                    self.mid_at(now)?,
+                );
                 let moved = (mid / then - 1.0) * 1e4;
                 return (moved.abs() >= p.momentum_bps).then(|| moved.signum());
             }
@@ -278,7 +296,12 @@ impl Flow {
         let Some(setup) = self.setup.as_ref() else {
             return;
         };
-        let orders = new_orders(&setup.venue, &setup.orderbook, &setup.market, &mut self.seen);
+        let orders = new_orders(
+            &setup.venue,
+            &setup.orderbook,
+            &setup.market,
+            &mut self.seen,
+        );
         let start = setup.start_slot;
         let me = setup.me.clone();
         let p = self.params;
@@ -340,7 +363,11 @@ impl Strategy for Flow {
             regime
                 .as_ref()
                 .and_then(|r| r["wallets"][kind].as_array())
-                .map(|a| a.iter().filter_map(|w| w.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|w| w.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         let (informed, decoys) = (told("informed"), told("decoy"));
@@ -382,7 +409,7 @@ impl Strategy for Flow {
         while self.mids.len() > 400 {
             self.mids.pop_front();
         }
-        if self.mode != Mode::Momentum {
+        if !matches!(self.mode, Mode::Momentum | Mode::Igniter) {
             self.read_tape(now, mid);
             self.mark_out(now, mid);
         }
@@ -520,7 +547,8 @@ fn takes_in(tx: &Value, venue: &PhoenixVenue, market: &ExchangeMarketConfig) -> 
         let Ok(value) = serde_json::to_value(&packet) else {
             continue;
         };
-        let Some((variant, fields)) = value["kind"].as_object().and_then(|o| o.iter().next()) else {
+        let Some((variant, fields)) = value["kind"].as_object().and_then(|o| o.iter().next())
+        else {
             continue;
         };
         if variant.to_ascii_lowercase().contains("post") {

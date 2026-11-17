@@ -12,6 +12,16 @@
       "dir": "bots/starter"
     },
     {
+      "dir": "bench/checks/ladder/blind-long",
+      "may_breach": true,
+      "name": "blind-long"
+    },
+    {
+      "dir": "bench/checks/ladder/blind-short",
+      "may_breach": true,
+      "name": "blind-short"
+    },
+    {
       "name": "follow-flow",
       "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/naive",
       "env": {
@@ -47,6 +57,149 @@
       "name": "informed",
       "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/informed",
       "tell_latent": true
+    },
+    {
+      "name": "igniter",
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "igniter"
+      },
+      "may_breach": true
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip",
+        "MTX_PROBE_SIZE": "0.5"
+      },
+      "may_breach": true,
+      "name": "coin-flip-half"
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip"
+      },
+      "may_breach": true,
+      "name": "coin-flip-full"
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "martingale"
+      },
+      "may_breach": true,
+      "name": "martingale"
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "hugger"
+      },
+      "may_breach": true,
+      "name": "limit-hugger"
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "stop-lotto"
+      },
+      "may_breach": true,
+      "name": "stop-lotto"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "1.5"
+      },
+      "may_breach": true,
+      "name": "lever-1.5"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "2"
+      },
+      "may_breach": true,
+      "name": "lever-2"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "3"
+      },
+      "may_breach": true,
+      "name": "lever-3"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_BREACHES": "1000000",
+        "MTX_PROBE_LEVER": "3"
+      },
+      "may_breach": true,
+      "name": "breacher"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.000"
+      },
+      "may_breach": true,
+      "name": "honest-0.1"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.175"
+      },
+      "may_breach": true,
+      "name": "honest-0.2"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.401"
+      },
+      "may_breach": true,
+      "name": "honest-0.3"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.710"
+      },
+      "may_breach": true,
+      "name": "honest-0.5"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.175",
+        "MTX_PROBE_CRASH_BELOW": "0.03"
+      },
+      "may_breach": true,
+      "name": "crash-honest"
+    },
+    {
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.175",
+        "MTX_PROBE_CRASH": "fatal",
+        "MTX_PROBE_CRASH_BELOW": "0.03"
+      },
+      "may_breach": true,
+      "name": "crash-fatal"
     }
   ],
   "gates": {
@@ -55,19 +208,24 @@
     ],
     "non_reading": [
       "nop",
+      "blind-long",
+      "blind-short",
       "follow-flow",
       "fade-flow",
       "momentum"
     ]
   },
   "rules": [
+    "max(blind-long, blind-short) < reference",
     "max(follow-flow, fade-flow, momentum) < reference",
     "most-active < reference",
-    "reference < informed"
+    "reference < informed < hindsight"
   ],
   "exploits": {
     "below": "informed",
-    "bots": [],
+    "bots": [
+      "igniter"
+    ],
     "max_profitable": 0.75
   },
   "probes": {}
