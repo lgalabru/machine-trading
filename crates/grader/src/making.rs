@@ -805,9 +805,9 @@ impl MakingFamily {
         for &i in by_remainder.iter().take(short) {
             quotas[i].1 += 1;
         }
-        let mut scenarios = Vec::with_capacity(count);
+        let mut drawn = Vec::with_capacity(count);
         let mut draw = 0u64;
-        while scenarios.len() < count {
+        while drawn.len() < count {
             draw += 1;
             let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(draw);
             let regime = self.regime(draw_seed);
@@ -819,10 +819,13 @@ impl MakingFamily {
                 continue;
             }
             quota.1 -= 1;
-            let name = format!("{prefix}-{}", scenarios.len() + 1);
-            scenarios.push(self.sample_labeled(&name, draw_seed));
+            drawn.push(draw_seed);
         }
-        scenarios
+        crate::scenario::shuffled(drawn, seed)
+            .into_iter()
+            .enumerate()
+            .map(|(i, draw_seed)| self.sample_labeled(&format!("{prefix}-{}", i + 1), draw_seed))
+            .collect()
     }
 
     /// A taker order's size: lognormal around the median, clamped. Informed

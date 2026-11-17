@@ -438,6 +438,26 @@ pub struct SessionV2 {
     pub anchor_drawdown: Option<f64>,
 }
 
+/// The least the ceiling must exceed the reference by, as a share of the
+/// ceiling: a set whose anchors are closer is refused.
+pub const MIN_ANCHOR_GAP: f64 = 0.05;
+
+/// What a session's scale is read from, by name.
+fn anchors_of(s: &Session) -> Vec<(&'static str, f64)> {
+    let mut anchors = vec![
+        ("the reference's PnL", s.reference_pnl_usd),
+        ("the nop PnL", s.nop_pnl_usd),
+    ];
+    let optional = [
+        ("the informed bot's PnL", s.informed_pnl_usd),
+        ("the hindsight ceiling", s.hindsight_ceiling_usd),
+        ("the reference's drawdown", s.reference_max_drawdown_usd),
+        ("the informed bot's drawdown", s.informed_max_drawdown_usd),
+    ];
+    anchors.extend(optional.into_iter().filter_map(|(n, v)| Some((n, v?))));
+    anchors
+}
+
 /// Score `sessions` under v2. With `fatal`, the grade is the floor: `raw`
 /// −1, score 0, no interval, and `raw_unfloored` at most −1; what the
 /// sessions made is still reported as `measured_raw`.
@@ -450,6 +470,18 @@ pub fn score(
 ) -> Result<ScoreV2, String> {
     if sessions.is_empty() {
         return Err("no sessions to score".into());
+    }
+    // The anchors set the scale: a NaN or infinite one would score every bot
+    // 1, or 0, whatever it did.
+    for s in sessions.iter().filter(|_| fatal.is_none()) {
+        for (name, value) in anchors_of(s) {
+            if !value.is_finite() {
+                return Err(format!(
+                    "{}: {name} is {value}: v2 scales to finite anchors",
+                    s.scenario
+                ));
+            }
+        }
     }
     let k = params.loss_weight;
     if !(k >= 1.0 && k.is_finite()) {
@@ -502,7 +534,16 @@ pub fn score(
             bot_usd: match s.breach {
                 // At least the worst allowed loss, and never less than what
                 // the session really lost: a breach doesn't cap a loss.
-                Some(_) => (-k * s.worst_loss_usd).min(weigh(s.pnl_usd - s.nop_pnl_usd)),
+                // Against a limit of 0 the worst loss is the session's bound,
+                // as with no limit at all.
+                Some(_) => {
+                    let worst = if s.worst_loss_usd > 0.0 {
+                        s.worst_loss_usd
+                    } else {
+                        s.bound_usd.max(0.0)
+                    };
+                    (-k * worst).min(weigh(s.pnl_usd - s.nop_pnl_usd))
+                }
                 None => weigh(s.pnl_usd - s.nop_pnl_usd),
             },
             reference_usd: weigh(s.reference_pnl_usd - s.nop_pnl_usd),
@@ -535,6 +576,16 @@ pub fn score(
         return Err(format!(
             "the reference ({anchor}) reaches the ceiling ({}): the ceiling is too low",
             sums.ceiling
+        ));
+    }
+    // 0.5 sits at the reference and 1 at the ceiling: the nearer they are,
+    // the more a cent of PnL moves the score.
+    if anchor > (1.0 - MIN_ANCHOR_GAP) * sums.ceiling {
+        return Err(format!(
+            "the reference ({anchor}) and the ceiling ({}) are less than {}% apart: the \
+             scale between them is too short to score on",
+            sums.ceiling,
+            MIN_ANCHOR_GAP * 100.0
         ));
     }
     let scored = sums.score(phi, k, params.risk_weight, risk_anchor);
@@ -1447,6 +1498,69 @@ mod tests {
         let nop = score(&set(&[0.0; 6], &REFERENCE), &informed(), None, None).unwrap();
         assert_eq!(nop.raw, 0.0);
         assert_eq!(nop.score, 0.0);
+    }
+
+    #[test]
+    fn v2_refuses_anchors_that_are_nearly_the_same() {
+        // Reference 899.94 over six sessions, informed 900: a 0.007% gap, so
+        // 0.1% of PnL would move the score by about 0.5.
+        let close = [149.99; 6];
+        let refused = score(&set(&[100.0; 6], &close), &informed(), None, None).unwrap_err();
+        assert!(refused.contains("apart"), "{refused}");
+        // Reference at 95% of the informed bot: the least gap that scores.
+        let wide = [142.5 - 1e-9; 6];
+        assert!(score(&set(&[100.0; 6], &wide), &informed(), None, None).is_ok());
+        let inside = [143.0; 6];
+        assert!(score(&set(&[100.0; 6], &inside), &informed(), None, None).is_err());
+    }
+
+    #[test]
+    fn v2_refuses_anchors_that_are_not_numbers() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut informed_nan = set(&REFERENCE, &REFERENCE);
+            informed_nan[0].informed_pnl_usd = Some(bad);
+            let refused = score(&informed_nan, &informed(), None, None).unwrap_err();
+            assert!(
+                refused.contains("hidden-0") && refused.contains("finite"),
+                "{bad}: {refused}"
+            );
+            let mut reference = set(&REFERENCE, &REFERENCE);
+            reference[1].reference_pnl_usd = bad;
+            let refused = score(&reference, &informed(), None, None).unwrap_err();
+            assert!(
+                refused.contains("hidden-1") && refused.contains("finite"),
+                "{bad}: {refused}"
+            );
+            let mut hindsight = without_informed(set(&REFERENCE, &REFERENCE));
+            hindsight[2].hindsight_ceiling_usd = Some(bad);
+            let refused = score(
+                &hindsight,
+                &Params::new(Ceiling::Informed { eta_override: None }),
+                None,
+                None,
+            )
+            .unwrap_err();
+            assert!(
+                refused.contains("hidden-2") && refused.contains("finite"),
+                "{bad}: {refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_breach_is_floored_even_when_the_limit_is_zero() {
+        // A session that breaches a limit of 0 and made money anyway: its
+        // floor is the worst loss it could have made, here the bound.
+        let mut sessions = set(&[150.0; 6], &REFERENCE);
+        sessions[0].worst_loss_usd = 0.0;
+        sessions[0].breach = Some("drew down past its limit".into());
+        let breached = score(&sessions, &informed(), None, None).unwrap();
+        let floor = -breached.loss_weight * sessions[0].bound_usd;
+        assert!(
+            breached.sessions[0].bot_usd <= floor + 1e-9,
+            "{} against a floor of {floor}",
+            breached.sessions[0].bot_usd
+        );
     }
 
     #[test]
