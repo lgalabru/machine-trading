@@ -1,0 +1,14 @@
+sessions 144
+rung             total     mean       sd   won  dq
+informed        8103.8    56.28    32.39   137   0
+reference       3557.3    24.70    44.93    68   0
+ride           -2160.9   -15.01    73.06    65   0
+fade             190.6     1.32    73.04    79   0
+hold             427.4     2.97   137.54    77   0
+chase          -1010.4    -7.02     7.23     5   0
+net-flow       -3205.5   -22.26    72.30    59   0
+informed / best non-reading (hold): 18.96 (need >= 2)
+order (non-reading, nop < reference < informed) on the set: True; holds on 0.968 of 2000 bootstrapped sets (need >= 0.85)
+informed >= 2x best non-reading on 0.989 of bootstrapped sets
+v2 weighted (k = 1.5), as a share of informed: informed 1.00, reference 0.40, ride -0.63, fade -0.27, hold -0.43, chase -0.19, net-flow -0.79
+reference per-session Sharpe 0.55 (need >= 0.25)

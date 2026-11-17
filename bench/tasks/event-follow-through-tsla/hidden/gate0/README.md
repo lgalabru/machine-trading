@@ -30,3 +30,18 @@ The ladder's order holds on 0.854 of 2000 bootstrapped sets (0.841 of 5000
 with another seed): just at the bar, because the lucky `fade` and `hold`
 sometimes beat the reference in a resample. The informed bot doubles the
 best non-reading rung on 0.95 of them.
+
+## A second set, and both pooled
+
+The order bootstrap was at the bar, so the same binaries graded a second
+fresh 72-session secret, with no tuning between the sets
+(`gate0-run2.txt`), and `summary.py` ran on both sets pooled, 144 sessions
+(`gate0-pooled-144.txt`; session names prefixed by set):
+
+| | Second set | Pooled, 144 |
+| --- | --- | --- |
+| informed / best non-reading | 21.5 (hold) | 19.0 (hold) |
+| informed >= 2x best non-reading, bootstrap | 0.922 | 0.989 |
+| ladder order, bootstrap (2000; 5000 seed 11) | 0.898; 0.910 | 0.968; 0.972 |
+| reference, weighted share of informed | 0.44 | 0.40 |
+| reference per-session Sharpe | 0.56 | 0.55 |
