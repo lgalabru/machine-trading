@@ -203,6 +203,19 @@ pub fn rescore(
             Ok((session, scenario))
         })
         .collect::<Result<Vec<_>>>()?;
+    if v2.is_some() {
+        // A report from before `truncated` was recorded: the reference's
+        // sessions, which a grade runs in full, show the bot's stopped short.
+        let reference = graded_sessions(&details.join("reference"));
+        if reference > sessions.len() {
+            bail!(
+                "{}: the report holds {} of the reference's {reference} sessions: the grade \
+                 stopped at its first breach, and v2 scores every session",
+                report.display(),
+                sessions.len()
+            );
+        }
+    }
     let mut report = grade::rescore(sessions, verdict);
     if let Some(params) = v2 {
         // The cost-aware hindsight ceiling reads the reference's sessions,
@@ -264,6 +277,16 @@ pub fn rescore(
     Ok(Rescored {
         report,
         differences,
+    })
+}
+
+/// How many sessions `dir` holds detail files of: none, when it isn't there.
+fn graded_sessions(dir: &Path) -> usize {
+    std::fs::read_dir(dir).map_or(0, |entries| {
+        entries
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".json.gz"))
+            .count()
     })
 }
 
@@ -637,6 +660,18 @@ mod tests {
         let counted = &summary["v2_comparison"]["flash-crash-spcx"]["not_rescored"];
         assert_eq!(counted["gpt-6-astra"], json!({ "skipped": 1, "failed": 1 }));
         assert_eq!(counted["gpt-6.1-sol"], json!({ "failed": 1 }));
+    }
+
+    #[test]
+    fn detail_files_are_counted_by_session() {
+        let dir = std::env::temp_dir().join(format!("mtx-count-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(graded_sessions(&dir.join("absent")), 0);
+        for name in ["a.json.gz", "b.json.gz", "notes.txt"] {
+            std::fs::write(dir.join(name), "").unwrap();
+        }
+        assert_eq!(graded_sessions(&dir), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
