@@ -19,9 +19,10 @@
 //! ([`Competition::reactive`]), which differs in four ways. It keeps its
 //! prices in whole ticks, so a step inside a rival is exactly the rival's
 //! price plus its step and never one tick off by a float's rounding. It
-//! reacts only to rivals resting at least `q_react` (smaller quotes are odd
-//! lots and set no touch). Its look delay and its step are drawn from the
-//! session's seeded randomness, so a run replays but a bot can't time its
+//! reacts to any rival resting at least `q_react`, by default the market's
+//! minimum lot (a smaller quote can't exist on the market; a larger `q_react`
+//! makes quotes under it odd lots that set no touch). Its look delay and its
+//! step are drawn from the session's seeded randomness, so a run replays but a bot can't time its
 //! quotes to a fixed cadence. And after one-sided fills it quotes the hit
 //! side at its full half-spread for a while, as a maker does against toxic
 //! flow. It pulls its own orders before it reads the book at each look, so
@@ -280,7 +281,7 @@ impl Competitor {
             }
             self.reactive.as_mut().expect("reactive").resting = false;
         }
-        let book = self.seat.top_sized(rules.q_react).await;
+        let book = self.seat.top_sized(rules.min_size(self.seat.lot())).await;
         let state = self.reactive.as_mut().expect("reactive");
         let widened = (now.at < state.wide_bid_until, now.at < state.wide_ask_until);
         let (best_bid, best_ask) = match book {
@@ -468,6 +469,7 @@ mod tests {
 
     struct BookSeat {
         tick: f64,
+        lot: f64,
         book: Arc<Mutex<Book>>,
     }
 
@@ -544,6 +546,9 @@ mod tests {
         fn tick(&self) -> f64 {
             self.tick
         }
+        fn lot(&self) -> f64 {
+            self.lot
+        }
     }
 
     struct Rig {
@@ -570,6 +575,7 @@ mod tests {
         let book = Arc::new(Mutex::new(Book::default()));
         let seat = Box::new(BookSeat {
             tick,
+            lot: 0.01,
             book: book.clone(),
         });
         Rig {
@@ -735,8 +741,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_ignores_quotes_under_the_reaction_size() {
-        let mut rig = rig(0.01, fixed_steps(1), 7);
+    async fn it_ignores_quotes_under_an_explicit_reaction_size() {
+        let explicit = Reactive {
+            q_react: Some(1.0),
+            ..fixed_steps(1)
+        };
+        let mut rig = rig(0.01, explicit, 7);
         let level = 400.0;
         let level_t = 40_000;
         rig.at(4, level).await;
@@ -765,6 +775,54 @@ mod tests {
             .push((level_t + 20, 0.01));
         rig.at(44, level).await;
         assert_eq!(rig.quotes().1, level_t + 19);
+    }
+
+    /// Both sides, one rival of `size` 5 bp out, five looks: its undercuts.
+    async fn undercuts_of_a_rival_sized(size: f64) -> usize {
+        let mut rig = rig(0.01, fixed_steps(1), 7);
+        let level = 400.0;
+        let level_t = 40_000;
+        rig.at(4, level).await;
+        {
+            let mut book = rig.book.lock().unwrap();
+            book.rival_bids.push((level_t - 20, size));
+            book.rival_asks.push((level_t + 20, size));
+        }
+        for at in (8..28).step_by(4) {
+            rig.at(at, level).await;
+        }
+        let mut report = ActorsReport::default();
+        rig.maker.report(&mut report).await;
+        report.competitor.unwrap().undercuts
+    }
+
+    #[tokio::test]
+    async fn by_default_it_steps_in_front_of_a_bid_just_under_the_old_threshold() {
+        // 0.95 was under the old fixed 1.0; the market's lot here is 0.01.
+        assert!(undercuts_of_a_rival_sized(0.95).await > 0);
+        assert!(undercuts_of_a_rival_sized(0.01).await > 0, "one lot");
+    }
+
+    #[tokio::test]
+    async fn by_default_it_ignores_a_quote_under_the_minimum_lot() {
+        assert_eq!(undercuts_of_a_rival_sized(0.005).await, 0);
+    }
+
+    #[test]
+    fn the_default_reaction_size_follows_the_markets_lot() {
+        let default = Reactive::default();
+        assert_eq!(default.min_size(0.001), 0.001 * (1.0 - 1e-9));
+        assert!(default.min_size(0.1) < 0.1 && default.min_size(0.1) > 0.099);
+        assert_eq!(default.min_size(0.0), 0.0);
+        let explicit = Reactive {
+            q_react: Some(2.5),
+            ..default
+        };
+        assert_eq!(explicit.min_size(0.001), 2.5);
+        let parsed: Reactive = serde_json::from_str("{}").unwrap();
+        assert_eq!(parsed.q_react, None);
+        let parsed: Reactive = serde_json::from_str(r#"{"q_react": 1.0}"#).unwrap();
+        assert_eq!(parsed.q_react, Some(1.0));
     }
 
     #[tokio::test]
