@@ -21,6 +21,10 @@ name = "solana-foundation/funding-carry-spcx"
 digest = "sha256:6e3ed43826c0e818008369dbdcf3721c56df643a186e74dd81886c7e2d7175a8"
 
 [[tasks]]
+name = "solana-foundation/hunt-or-breakout-tsla"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[[tasks]]
 name = "solana-foundation/market-making-spcx"
 digest = "sha256:20de31a20da425b432f6355da213057a6774b3ff834bc4cfebe11ee465ede89b"
 

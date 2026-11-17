@@ -4953,6 +4953,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-hunt-or-breakout"
+version = "0.1.0"
+dependencies = [
+ "bs58",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-hunt-or-breakout-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-hunt-or-breakout",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-hunt-or-breakout-naive"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-hunt-or-breakout",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-kamino-drain"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,66 @@
+{
+  "anchors": {
+    "informed": "informed",
+    "reference": "reference"
+  },
+  "count": 72,
+  "exploits": {
+    "below": "informed",
+    "bots": [],
+    "max_profitable": 0.75
+  },
+  "family": "hunt-or-breakout",
+  "gates": {
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop",
+      "fade",
+      "follow"
+    ]
+  },
+  "min_rule_odds": 0.85,
+  "probes": {},
+  "rules": [
+    "max(fade, follow) < wait-oracle",
+    "max(fade, follow, nop) < reference",
+    "reference < informed < hindsight"
+  ],
+  "rungs": [
+    {
+      "dir": "bots/starter",
+      "name": "nop"
+    },
+    {
+      "dir": "bench/tasks/hunt-or-breakout-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "fade"
+      },
+      "name": "fade"
+    },
+    {
+      "dir": "bench/tasks/hunt-or-breakout-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "follow"
+      },
+      "name": "follow"
+    },
+    {
+      "dir": "bench/tasks/hunt-or-breakout-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "wait-oracle"
+      },
+      "name": "wait-oracle"
+    },
+    {
+      "dir": "bench/tasks/hunt-or-breakout-tsla/reference",
+      "name": "reference"
+    },
+    {
+      "dir": "bench/tasks/hunt-or-breakout-tsla/checks/bots/informed",
+      "name": "informed",
+      "tell_latent": true
+    }
+  ]
+}

@@ -2,5 +2,7 @@
 # <anchor> <package> <binary> <directory>, one per task.
 flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
+hunt-or-breakout mtx-bot-hunt-or-breakout mtx-hunt-or-breakout bench/tasks/hunt-or-breakout-tsla/reference
+hunt-or-breakout-informed mtx-bot-hunt-or-breakout-informed mtx-hunt-or-breakout-informed bench/tasks/hunt-or-breakout-tsla/checks/bots/informed
 market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
