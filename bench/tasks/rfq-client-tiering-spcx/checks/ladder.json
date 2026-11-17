@@ -6,7 +6,9 @@
   "count": 72,
   "exploits": {
     "below": "informed",
-    "bots": [],
+    "bots": [
+      "perp-front-run"
+    ],
     "max_profitable": 0.75
   },
   "family": "rfq-tiering",
@@ -16,15 +18,19 @@
     ],
     "non_reading": [
       "nop",
-      "blind-long",
-      "blind-short"
+      "quote-all",
+      "quote-wide",
+      "fixed-width",
+      "size-tier",
+      "side-skew"
     ]
   },
   "min_rule_odds": 0.85,
   "probes": {},
   "rules": [
-    "max(blind-long, blind-short) < reference",
-    "reference < informed < hindsight"
+    "max(quote-all, quote-wide) < reference",
+    "max(fixed-width, size-tier, side-skew) < reference",
+    "reference < informed"
   ],
   "rungs": [
     {
@@ -32,14 +38,29 @@
       "name": "nop"
     },
     {
-      "dir": "bench/checks/ladder/blind-long",
-      "may_breach": true,
-      "name": "blind-long"
+      "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/naive/rungs/quote-all",
+      "name": "quote-all",
+      "tell_latent": true
     },
     {
-      "dir": "bench/checks/ladder/blind-short",
-      "may_breach": true,
-      "name": "blind-short"
+      "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/naive/rungs/quote-wide",
+      "name": "quote-wide",
+      "tell_latent": true
+    },
+    {
+      "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/naive/rungs/fixed-width",
+      "name": "fixed-width",
+      "tell_latent": true
+    },
+    {
+      "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/naive/rungs/size-tier",
+      "name": "size-tier",
+      "tell_latent": true
+    },
+    {
+      "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/naive/rungs/side-skew",
+      "name": "side-skew",
+      "tell_latent": true
     },
     {
       "dir": "bench/tasks/rfq-client-tiering-spcx/reference",
@@ -49,6 +70,12 @@
       "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/informed",
       "name": "informed",
       "tell_latent": true
+    },
+    {
+      "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/naive/rungs/perp-front-run",
+      "name": "perp-front-run",
+      "tell_latent": true,
+      "may_breach": true
     }
   ]
 }

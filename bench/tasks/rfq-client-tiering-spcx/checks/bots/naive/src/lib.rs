@@ -11,6 +11,9 @@
 //!   reach, smaller ones declined;
 //! - `side-skew`: every request inside its reach, unless the requests of the
 //!   last `MTX_WINDOW` slots lean `MTX_LEAN` or more to its side.
+//! - `perp-front-run` (an exploit): quotes every request inside its reach,
+//!   and trades the perp the way each request asks, ahead of the clients'
+//!   move. The mandate's 0.001 SPCX cap on the perp stops it.
 
 use mtx_bot_rfq_client_tiering::{Answer, Ask, Desk, EPS_BP, Policy, Tag, Told, View, reach_bp};
 use mtx_kit::prelude::*;
@@ -72,8 +75,40 @@ impl Policy for Naive {
     }
 }
 
-/// A rung: the desk with its rule.
-pub type Bot = Desk<Naive>;
+/// A rung: the desk with its rule, and for the exploit, its perp trades.
+#[derive(Default)]
+pub struct Bot {
+    desk: Desk<Naive>,
+    seen: std::collections::HashSet<String>,
+}
+
+impl Strategy for Bot {
+    fn start(&mut self, session: &Session) -> BotResult {
+        self.desk.start(session)
+    }
+
+    fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
+        self.desk.step(market, orders)?;
+        if option_env!("MTX_NAIVE") != Some("perp-front-run") || market.index <= 0.0 {
+            return Ok(());
+        }
+        for rfq in &market.rfqs {
+            if !self.seen.insert(rfq.id.clone()) {
+                continue;
+            }
+            match rfq.side {
+                Some(Side::Bid) => {
+                    orders.buy(rfq.size, market.index * 1.01);
+                }
+                Some(Side::Ask) => {
+                    orders.sell(rfq.size, market.index * 0.99);
+                }
+                None => {}
+            }
+        }
+        Ok(())
+    }
+}
 
 #[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Bot);

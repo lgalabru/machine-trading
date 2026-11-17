@@ -19,3 +19,4 @@ build:
     rung fixed-width MTX_NAIVE=fixed-width MTX_WIDTH=2
     rung size-tier MTX_NAIVE=size-tier MTX_TIER_N=5
     rung side-skew MTX_NAIVE=side-skew MTX_WINDOW=80 MTX_LEAN=0.1
+    rung perp-front-run MTX_NAIVE=perp-front-run
