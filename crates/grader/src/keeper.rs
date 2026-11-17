@@ -488,7 +488,10 @@ impl LiquidationKeeper {
             position_after,
             ok,
             error: outcome.clone().err(),
+            // Its transaction: a session that audits fills leaves the
+            // liquidation's out, as the keeper's, not the bot's.
             signature: outcome.clone().ok(),
+            market: None,
         };
         if ok {
             self.liquidations += 1;
@@ -593,6 +596,7 @@ impl LiquidationKeeper {
             peak_usd: episode.value_before_usd,
             value_after_usd: episode.value_after_usd,
             position_before: episode.position_before,
+            positions_before: Default::default(),
             orders: episode.orders,
             flat: is_flat(episode.position_after),
         });

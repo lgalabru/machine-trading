@@ -48,6 +48,7 @@ phoenix = [
     "phoenix-rise/events",
     "phoenix-rise/tx-builder",
     "dep:tracing-subscriber",
+    "dep:futures",
 ]
 # What a strategy reads of Phoenix without the chain: the market metadata a
 # session hands it (Session::venue), tick and lot conversions, account
@@ -92,6 +93,8 @@ serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "time"], optional = true }
+# Joins the meter's Phoenix view reads (already in the workspace's lock).
+futures = { version = "0.3", default-features = false, features = ["std"], optional = true }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 uuid = { version = "1", features = ["v4", "serde"] }
