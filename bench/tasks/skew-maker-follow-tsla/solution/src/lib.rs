@@ -473,8 +473,10 @@ mod tests {
 
     #[test]
     fn the_leader_must_lead_every_other_maker() {
-        let mut m = Markout::default();
-        m.pnl = BTreeMap::from([(1, 60.0), (2, 10.0), (3, -30.0)]);
+        let mut m = Markout {
+            pnl: BTreeMap::from([(1, 60.0), (2, 10.0), (3, -30.0)]),
+            ..Markout::default()
+        };
         assert_eq!(m.leader(40.0), Some(1));
         m.pnl.insert(2, 30.0);
         assert_eq!(m.leader(40.0), None);
