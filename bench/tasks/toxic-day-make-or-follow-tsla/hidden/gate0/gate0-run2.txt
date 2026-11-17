@@ -1,0 +1,17 @@
+sessions 72
+rung             total     mean       sd   won  dq
+informed        1513.3    21.02    27.73    48   0
+reference          7.5     0.10     7.96     4   0
+make            -513.4    -7.13    10.04    11   0
+follow         -1665.8   -23.14    31.16    12   0
+switch          -457.1    -6.35    21.84    20   0
+burst           -231.2    -3.21    21.46    20   0
+informed / best non-reading (burst): inf (need >= 2)
+order (non-reading, nop < reference < informed) on the set: True; holds on 0.476 of 2000 bootstrapped sets (need >= 0.85)
+informed >= 2x best non-reading on 1.000 of bootstrapped sets
+v2 weighted (k = 1.5), as a share of informed: informed 1.00, reference -0.03, make -0.52, follow -1.80, switch -0.57, burst -0.37
+reference per-session Sharpe 0.01 (need >= 0.25)
+mean PnL by kind of session:
+group        n   informed  reference       make     follow     switch      burst
+toxic       26      28.04       0.10     -11.15     -21.07      -0.45       2.67
+quiet       46      17.05       0.10      -4.86     -24.30      -9.68      -6.54

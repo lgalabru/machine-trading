@@ -7,7 +7,7 @@ each version learned. It is card 2 of the batch-4 cards
 (`JUMP_REGIME_MEASUREMENT.md`). The departures from the card are listed
 last.
 
-Status: Gate 0 failed on version 2 once main's #114 made informed wallets err; the bots were adapted (flow over the longest horizon, no flips) and Gate 0 rerun once (`hidden/gate0/README.md`).
+Status: RETIRED at Gate 0. Version 2 failed once main's #114 made informed wallets err; the bots were adapted and rerun once; the order and the band still fail (`hidden/gate0/README.md`).
 
 ## Thesis
 

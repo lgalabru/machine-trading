@@ -30,3 +30,35 @@ and it now leans 9.4 times a session against 4.5 on dev3. The fund's flow
 is no longer a clean signal, and following it pays a round trip for each
 wrong view. This is my diagnosis from the lean counts; it has not been
 tested in isolation.
+
+## The rerun, with the bots adapted to #114
+
+This is the coordinator's one rerun; adapting the bots to #114 doesn't
+count as a design rework. `hit_rate` stays 0.85 (Michael's call). The bots
+read flow over 150 slots (the longest horizon the fund trades on). A flow
+counts only when at least two wallets are on its side and they outnumber
+those on the other side. A lean never flips after entry. One fresh
+72-session secret (`gate0-run2.txt`):
+
+| Rung | Total $ | Mean $ | Won |
+| --- | --- | --- | --- |
+| informed | +1,513 | +21.02 | 48/72 |
+| reference | +7.5 | +0.10 | 4/72 |
+| make | -513 | -7.13 | 11/72 |
+| follow | -1,666 | -23.14 | 12/72 |
+| switch | -457 | -6.35 | 20/72 |
+| burst | -231 | -3.21 | 20/72 |
+
+- **Signal: pass.** Informed is positive, and every non-reading rung loses,
+  so informed is at least 2x the best one in 1.000 of bootstraps.
+- **Order: fail.** It holds in 0.476 of 2,000 bootstrapped sets (0.481 of
+  5,000), against 0.85 needed.
+- **Band: fail.** The reference is +$0.10 a session, 0.005 of informed
+  (-0.03 weighted), with Sharpe 0.01.
+
+The reference read a morning as toxic in 17 of 72 sessions. Over a 150-slot
+window, a burst is only seen once it has mostly run, so its 60-slot markout
+rarely clears the 10 bp bar. Even when the reference follows, it enters
+late. The untold read no longer earns anything.
+
+**Verdict: RETIRE**, per the coordinator's rule (the order fails).
