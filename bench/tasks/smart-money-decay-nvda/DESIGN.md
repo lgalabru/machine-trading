@@ -56,6 +56,20 @@ way), stay out, or close. The defensible options and where each fails:
 | Noise | random sides | ignores it | markouts around zero |
 | Costs | 3.5 bp taker fee and a half-spread of about 2 bp | trades a few times a session | its own fills |
 
+## How often the informed are right
+
+The informed wallets keep the actor library's default `hit_rate` of 0.85:
+each wallet, on its own, reads 85 in 100 of its horizons right and trades
+the rest the wrong way for the whole horizon (decoys do the same until they
+fade). A desk's best counterparties are right most of the time, not every
+time, and a perfect record would make one take a label. The instruction
+states it as a process fact. It is why the informed bot and the reference
+vote: each trusted wallet's net flow over 20 slots is a vote, they enter
+when two agree (the one, when only one is trusted) and hold 80 slots with no
+flips. On the engine's tapes a wrong horizon can't be seen in the price
+before its burst is over (a median of 40 slots to move 8 bp against it,
+against a 10-slot burst), so a stop doesn't help; a second wallet does.
+
 ## No tells
 
 - Every role is seated in every session, from fresh wallets of the
