@@ -1,0 +1,12 @@
+sessions 72
+rung             total     mean       sd   won  dq
+informed        3595.2    49.93    22.52    72   0
+reference       1113.9    15.47    24.62    54   0
+fade           -1497.9   -20.80    30.05    16   0
+follow         -2335.6   -32.44    27.23     7   0
+wait-oracle     -489.4    -6.80    27.84    30   0
+informed / best non-reading (fade): inf (need >= 2)
+order (non-reading, nop < reference < informed) on the set: True; holds on 1.000 of 2000 bootstrapped sets (need >= 0.85)
+informed >= 2x best non-reading on 1.000 of bootstrapped sets
+v2 weighted (k = 1.5), as a share of informed: informed 1.00, reference 0.27, fade -0.67, follow -0.99, wait-oracle -0.28
+reference per-session Sharpe 0.63 (need >= 0.25)

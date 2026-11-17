@@ -14,3 +14,5 @@ secret), then `summary.py` on their reports:
 `gate0-run1-reference-v1.txt` is the first reference; `-v2` the one rework
 (it reads the crowd before chasers can join, and leaves runs nobody led),
 graded on the same sessions as the other rungs' v1 reports.
+
+`gate0-final.txt` is the full build (main merged, reference as shipped), every rung re-graded on the same 72 sessions as run 1.
