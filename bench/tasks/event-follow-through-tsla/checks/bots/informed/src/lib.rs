@@ -12,10 +12,15 @@
 //! Phoenix names traders by their account, a PDA of the wallet, so it maps
 //! each wallet to its account and reads their TSLA positions every step.
 //! Flat through the headline; once the jump is done, the fund's net buying
-//! over the last 30 slots past 1.2 TSLA either way sets the side, with the
-//! cap, until six slots after the verdict.
+//! over the last 90 slots (a fund's longest horizon) past 2 TSLA either way,
+//! read the same three steps running, sets the side, with the cap, until six
+//! slots after the verdict. It doesn't turn round once in: a fund misreads
+//! the move a horizon at a time now and then, and one stretch of that is not
+//! the verdict.
 
-use mtx_bot_event_follow_through::{FLOW_SLOTS, Headline, Hold, Watch, flow_side, go_to, mid};
+use mtx_bot_event_follow_through::{
+    CONFIRM_STEPS, FLOW_SLOTS, Headline, Hold, Watch, flow_side, go_to, mid,
+};
 use mtx_kit::{log, prelude::*, venue::PhoenixVenue};
 
 /// The strategy.
@@ -25,6 +30,8 @@ pub struct Informed {
     watch: Watch,
     headline: Headline,
     hold: Hold,
+    /// The side the fund's flow has read, and for how many steps running.
+    reading: (f64, u32),
 }
 
 impl Strategy for Informed {
@@ -58,8 +65,14 @@ impl Strategy for Informed {
                 .changes(self.headline.flow_slots(at))
                 .iter()
                 .sum();
-            if let Some(dir) = flow_side(net) {
-                self.hold.want(dir, at);
+            let side = flow_side(net).unwrap_or(0.0);
+            self.reading = if side != 0.0 && side == self.reading.0 {
+                (side, self.reading.1 + 1)
+            } else {
+                (side, u32::from(side != 0.0))
+            };
+            if self.hold.dir == 0.0 && self.reading.1 >= CONFIRM_STEPS {
+                self.hold.want(side, at);
             }
         }
         self.hold.manage(at, &self.headline);

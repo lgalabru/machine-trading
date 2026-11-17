@@ -14,8 +14,8 @@
 //!   points, the take's way. An account with six or more takes whose mean
 //!   markout is two standard errors above zero leads the price; one two
 //!   below lags it.
-//! - **The trade.** The leaders' net buying over the last 30 slots, less
-//!   the laggards', past 1.2 TSLA either way sets the side, with the cap,
+//! - **The trade.** The leaders' net buying over the last 90 slots, less
+//!   the laggards', past 2 TSLA either way sets the side, with the cap,
 //!   once it has read the same side three steps running. An account stays
 //!   read until its markouts fall under one standard error, and once in,
 //!   the bot doesn't turn round.
@@ -43,9 +43,11 @@ use mtx_kit::{
 pub const EVENT_FROM: u64 = 300;
 /// How far past the price a taking order may fill, as a share.
 pub const TAKE_REACH: f64 = 0.006;
-/// Slots a flow is summed over, and the net, in TSLA, that sets a side.
-pub const FLOW_SLOTS: u64 = 30;
-pub const FLOW_UNITS: f64 = 1.2;
+/// Slots a flow is summed over, and the net, in TSLA, that sets a side: at
+/// least one horizon of the funds' (30 to 90 slots), so a stretch in which a
+/// fund misreads the move doesn't turn the reading.
+pub const FLOW_SLOTS: u64 = 90;
+pub const FLOW_UNITS: f64 = 2.0;
 /// Slots after the verdict's first move the bot closes at.
 pub const AFTER_VERDICT_SLOTS: u64 = 6;
 
@@ -58,7 +60,7 @@ const MIN_T: f64 = 2.0;
 /// falls back under this many standard errors.
 const KEEP_T: f64 = 1.0;
 /// Steps running the same side must read before the bot enters.
-const CONFIRM_STEPS: u32 = 3;
+pub const CONFIRM_STEPS: u32 = 3;
 
 /// The mid of the book, if it has both sides.
 pub fn mid(market: &Market) -> Option<f64> {

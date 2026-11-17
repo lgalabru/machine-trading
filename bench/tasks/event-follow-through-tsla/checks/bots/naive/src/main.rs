@@ -9,7 +9,7 @@
 //!   past 0.2% from where it settled (a drift, or the verdict), and holds
 //!   it 150 slots.
 //! - `net-flow`: once the jump is done, follows the net buying of every
-//!   account in the session over the last 30 slots, past 2.4 TSLA either
+//!   account in the session over the last 90 slots, past 4 TSLA either
 //!   way, until six slots after the verdict.
 
 use mtx_bot_event_follow_through::{FLOW_SLOTS, FLOW_UNITS, Headline, Hold, Watch, go_to, mid};
