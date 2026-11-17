@@ -249,6 +249,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.engine.outputs.changed }}
+      tasks: ${{ steps.engine.outputs.tasks }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -268,6 +269,7 @@ jobs:
             *) changed=all ;;
           esac
           if [ -n "$changed" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+          echo "tasks=$(ls bench/tasks | while read -r t; do [ -f "bench/tasks/$t/task.toml" ] && echo "$t"; done | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
           echo "engine changed: ${changed:-no}"
 
   # Hash behaviour, not source: each task's `tests/anchor.digest` is what the
@@ -275,12 +277,18 @@ jobs:
   # An engine, kit or dependency change that alters it altered what the task
   # does: bump GRADER_VERSION and run `mtx task sync --anchors`, which moves
   # the task's fingerprint. A change that doesn't leaves the fingerprints
-  # alone. Reference-only sessions: minutes, not the ladder.
+  # alone. Reference-only sessions: 12 a task, minutes, not the ladder; one
+  # job a task.
   anchor-digests:
+    name: anchor digest (${{ matrix.task }})
     needs: [ci-image, rust, engine-changed]
     if: needs.engine-changed.outputs.changed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJSON(needs.engine-changed.outputs.tasks) }}
     container:
       image: ${{ needs.ci-image.outputs.image }}
       # Process anchors run as their own users; the grader switches to them.
@@ -297,11 +305,13 @@ jobs:
         run: |
           rustup target add wasm32-wasip2
           cargo build --release --locked -p mtx-cli
-          for task in bench/tasks/*/; do
-            just --justfile "$task/reference/Justfile" build
+          just --justfile "bench/tasks/${{ matrix.task }}/reference/Justfile" build
+          # A v2 task's informed bot, when it has one.
+          for informed in bench/tasks/${{ matrix.task }}/checks/bots/informed; do
+            [ -f "$informed/Justfile" ] && just --justfile "$informed/Justfile" build || true
           done
-      - name: Anchor digests are unchanged
-        run: target/release/mtx task anchor-digest --check
+      - name: The anchor digest is unchanged
+        run: target/release/mtx task anchor-digest --check "${{ matrix.task }}"
 
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.

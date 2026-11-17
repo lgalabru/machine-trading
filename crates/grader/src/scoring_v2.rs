@@ -96,7 +96,7 @@ use serde::{Deserialize, Serialize};
 /// The scoring code's version: bump it with any change to how `score` maps
 /// sessions to a score that no constant or [`Params`] field captures, so the
 /// spec hash moves ([`spec_hash`]).
-pub const CODE_VERSION: &str = "2.0";
+pub const CODE_VERSION: &str = "2.1";
 /// The loss weight `k` by default.
 pub const LOSS_WEIGHT: f64 = 1.5;
 /// The reference anchor's floor `φ`, as a share of the ceiling, by default.
@@ -172,10 +172,6 @@ pub struct Params {
 ///
 /// `Params` is destructured whole: a field added to it without a line here
 /// is a compile error.
-///
-/// When the breach rate lands (it removes `BREACH_CAP_ONE` and
-/// `BREACH_CAP_MORE`): swap those two keys for `"breach_rate_weight":
-/// BREACH_RATE_WEIGHT`, bump [`CODE_VERSION`] to "2.1", update the pin.
 pub fn spec_hash(params: &Params) -> String {
     let Params {
         loss_weight,
@@ -203,8 +199,7 @@ pub fn spec_hash(params: &Params) -> String {
             "risk_weight": RISK_WEIGHT,
             "hindsight_cost": HINDSIGHT_COST,
             "raw_floor": RAW_FLOOR,
-            "breach_cap_one": BREACH_CAP_ONE,
-            "breach_cap_more": BREACH_CAP_MORE,
+            "breach_rate_weight": BREACH_RATE_WEIGHT,
             "resamples": RESAMPLES,
             "ci_level": CI_LEVEL,
         },
@@ -1527,7 +1522,7 @@ mod tests {
         let base = Params::new(Ceiling::Informed { eta_override: None });
         assert_eq!(
             spec_hash(&base),
-            "d2cfacfe76a5e9981a88a1172ff2c9b246043a5d3ffe4a2a9e2ac68c6be447a8"
+            "427836cf868d4212e805102e627416b54a0b30f87f0077b9bceedf0a350df3cd"
         );
     }
 
