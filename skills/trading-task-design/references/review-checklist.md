@@ -11,7 +11,7 @@ prevents.
 - [ ] Every waypoint respects protocol limits (e.g. Phoenix ≤4% per step). *Prevents testing the simulator instead of the bot.*
 - [ ] Path shape leaks nothing: uneven steps and gaps, a random tail, noise between moves, independent legs, overlapping ranges for phases that should look alike. *Prevents bots that trade the generator instead of the market.*
 - [ ] Design record written ([design-record.md](design-record.md)): each regime flips the best response, each lever has an honest way to detect it, and every mechanic is present in every session (no tells). *Prevents regimes that are noise, hidden facts, and setup-time labels.*
-- [ ] Read the generator as an adversary: write down every rule an agent could deduce from the instruction, the practice files and `mtx scenario generate`, and check that none beats the reference on its own. *Prevents structural leaks that no cheat check catches.*
+- [ ] Read the generator as an adversary: write down every rule an agent could deduce from the instruction, the practice files and, for a task on the dev image, `mtx scenario generate`, and check that none beats the reference on its own. *Prevents structural leaks that no cheat check catches.*
 
 ## Instruction as contract
 
@@ -44,6 +44,7 @@ trading-specific.
 - [ ] Bot runs unprivileged; can't read `/tests` or write `/logs`.
 - [ ] RPC access is an allowlist; refused calls recorded and disqualifying.
 - [ ] One cheat bot per closed path in `bench/checks/`, each scoring 0.
+- [ ] A new task is guarded: its `environment/Dockerfile` starts from the base's `-agent` image (an `mtx` that can't draw from the family), and its `[agent]` has `network_mode = "allowlist"` (the crates registry, plus the model's proxy the bench adds). `just leak-audit <task>` passes on its image and `just network-probe <task>` can't reach ghcr.io or github.com. *Prevents an agent drawing the hidden distribution, or pulling the full `mtx` and the reference bots, from the public registry or source.*
 
 ## Reproducibility
 
