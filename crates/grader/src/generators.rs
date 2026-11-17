@@ -18,6 +18,7 @@ use serde_json::json;
 #[cfg(feature = "generators")]
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
+    copy_or_bait::{CopyOrBaitFamily, Shape as CopyOrBaitShape},
     making::MakingFamily,
     scenario::{Shape, ShockFamily},
     weekend::{WeekendFamily, WeekendShape},
@@ -124,6 +125,23 @@ pub const GENERATORS: &[Generator] = &[
                 CarryFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 carry_latent,
+            )
+        },
+    },
+    Generator {
+        name: "copy-or-bait",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                CopyOrBaitFamily::nvda().draw_set(prefix, count, seed),
+                false,
+                copy_or_bait_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                CopyOrBaitFamily::nvda().draw_set("hidden", count, seed),
+                tell,
+                copy_or_bait_latent,
             )
         },
     },
@@ -264,6 +282,7 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("funding-carry", "funding", Knowable::Process),
     ("funding-carry", "cap_pct", Knowable::Process),
     ("funding-carry", "noise_pct", Knowable::Process),
+    ("copy-or-bait", "rule", Knowable::Process),
     ("weekend-gap", "informed", Knowable::Identity),
     ("weekend-gap", "informed_account", Knowable::Identity),
     ("weekend-gap", "worker", Knowable::Identity),
@@ -398,6 +417,15 @@ fn carry_latent(shape: &CarryShape) -> Value {
         "cap_pct": shape.cap_pct,
         "noise_pct": shape.noise_pct,
     })
+}
+
+#[cfg(feature = "generators")]
+/// The leader's bait rule: how soon after a run's start, and how much of
+/// it, following flow must come to, how many of its last runs one account
+/// must follow, and how long its runs are. Not whether today is a bait day,
+/// the path, or when the leader trades; its wallet is public to every bot.
+fn copy_or_bait_latent(shape: &CopyOrBaitShape) -> Value {
+    json!({ "rule": shape.rule() })
 }
 
 #[cfg(feature = "generators")]
