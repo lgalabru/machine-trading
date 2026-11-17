@@ -238,7 +238,7 @@ pub struct ScoreV2 {
     /// not scored.
     pub measured_raw: f64,
     /// `raw` before the near-breach charge and any breach's penalty (each
-    /// session weighed as its PnL alone, no breach floor, no run cap),
+    /// session weighed as its PnL alone, no breach floor),
     /// floored at −1; −1 for a fatal grade. The reference graded against
     /// itself scores 0.5 here exactly, whatever its drawdowns: what an
     /// oracle check reads. Reported, not scored. Absent in reports from
