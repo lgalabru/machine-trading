@@ -338,6 +338,32 @@ mod tests {
         }
     }
 
+    /// A jump's uncross fills a resting order in an override: no event, so
+    /// the position moves with no fill behind it. It is recorded, so the
+    /// audit counts the position as the bot held it.
+    #[test]
+    fn an_uncross_fill_reconciles_fills_with_the_position() {
+        use crate::making::{UNCROSS, position_after, uncross_fill};
+        let sold = fill(2, Side::Sell, "taker", 1.0);
+        let mut all = vec![sold];
+        assert_eq!(position_after(0.0, &all), -1.0);
+        // The bot is at -0.329 after a bid filled at a jump: 0.671 bought
+        // that no event shows.
+        let uncross = uncross_fill(0.0, &all, -0.329, 3, 7, 100.0).expect("a fill");
+        assert_eq!(uncross.side, Side::Buy);
+        assert!((uncross.base - 0.671).abs() < 1e-9);
+        assert_eq!((uncross.role, uncross.counterparty), ("maker", UNCROSS));
+        all.push(uncross);
+        assert!(uncross_fill(0.0, &all, -0.329, 3, 9, 100.0).is_none());
+        // Under half a lot is rounding.
+        assert!(uncross_fill(0.0, &all, -0.3294, 3, 9, 100.0).is_none());
+        // The audit then counts a later take from -0.329, not from -1.
+        all.push(fill(10, Side::Sell, "taker", 0.1));
+        let takes = takes(&spcx(), 0.0, &all);
+        assert_eq!(takes.len(), 2);
+        assert!((takes[1].position_before + 0.329).abs() < 1e-9);
+    }
+
     #[test]
     fn takes_carry_the_position_each_found() {
         // Rests and is hit: long 3. Takes 2 to sell (reducing), then buys

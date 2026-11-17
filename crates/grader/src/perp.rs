@@ -1782,12 +1782,34 @@ impl Account for PerpAccount {
         self.own().moment(at)
     }
 
+    /// Record what moved the bot's position with no fill event behind it:
+    /// a jump's uncross fills the orders the move crossed in an account
+    /// override, not in a transaction, so [`Self::scan_making`] never sees
+    /// it. The leftover is a maker fill of the uncross, so the fills still
+    /// add up to the position (the taking audit counts from them).
+    fn reconcile_making(&mut self, slot: u64, position: f64) {
+        let at = slot.saturating_sub(self.base_slot);
+        let own = self.own();
+        let price = own.moment(at).level_usd;
+        let decimals = own.market.base_lots_decimals;
+        let start = own.start_position;
+        let Some(read) = self.making_fills.as_mut() else {
+            return;
+        };
+        if let Some(fill) = crate::making::uncross_fill(start, &read.fills, position, decimals, at, price)
+        {
+            read.fills.push(fill);
+            read.keys.push((u128::MAX - read.keys.len() as u128, false));
+        }
+    }
+
     async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord> {
         self.scan(slot).await?;
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
         self.record_notional(&now, slot)?;
         let positions = self.positions(&now);
+        self.reconcile_making(slot, positions[self.primary]);
         let position = positions[self.primary];
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
         let value_usd = self
@@ -2026,6 +2048,7 @@ impl Account for PerpAccount {
         record(&mut self.observed, &end)?;
         self.record_notional(&end, done.end_slot)?;
         let end_positions = self.positions(&end);
+        self.reconcile_making(done.end_slot, end_positions[self.primary]);
         let end_desk = self.desk_holdings().await?;
         let end_value_usd = self
             .value(grader_f64(end.value_usd), &end_positions, done.end_slot)

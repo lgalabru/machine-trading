@@ -44,6 +44,12 @@ pub(crate) mod tests {
         with_sha(Calibration::parse(SPCX).unwrap(), SPCX)
     }
 
+    const TSLA: &str = include_str!("../../../../calibration/market/tsla.20261113.8b7bca8e.toml");
+
+    pub(crate) fn tsla() -> Calibration {
+        with_sha(Calibration::parse(TSLA).unwrap(), TSLA)
+    }
+
     fn with_sha(mut calibration: Calibration, text: &str) -> Calibration {
         calibration.sha256 = super::calibration::sha256_hex(text.as_bytes());
         calibration

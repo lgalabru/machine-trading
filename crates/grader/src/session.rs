@@ -150,7 +150,10 @@ pub struct SessionReport {
     /// The market's base lot is `10^-base_lots_decimals` base units: what the
     /// scenario's funding cap is read against. Reports from before it was
     /// written are read as 3 decimals, as every market then was.
-    #[serde(default = "default_base_lots_decimals")]
+    #[serde(
+        default = "default_base_lots_decimals",
+        skip_serializing_if = "is_default_lots"
+    )]
     pub base_lots_decimals: i8,
     pub end_mark_usd: f64,
     /// Collateral plus unrealized PnL plus wallet USDC, at the start and end.
@@ -298,7 +301,10 @@ pub struct MarketReport {
     /// what the market's path, its bound and its valuation count from.
     pub start_mark_usd: f64,
     /// The market's lot size (see [`SessionReport::base_lots_decimals`]).
-    #[serde(default = "default_base_lots_decimals")]
+    #[serde(
+        default = "default_base_lots_decimals",
+        skip_serializing_if = "is_default_lots"
+    )]
     pub base_lots_decimals: i8,
     pub end_mark_usd: f64,
     /// The position at the start and the end, in base units.
@@ -317,6 +323,12 @@ pub struct MarketReport {
 
 fn default_base_lots_decimals() -> i8 {
     3
+}
+
+/// Reports leave the default out, so a report from before the field was
+/// written and the same session rescored today are the same JSON.
+fn is_default_lots(decimals: &i8) -> bool {
+    *decimals == default_base_lots_decimals()
 }
 
 impl SessionReport {

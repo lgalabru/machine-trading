@@ -96,6 +96,10 @@ pub struct SessionPath {
     pub masked_slots: Vec<u64>,
     /// Gap sizes, in percent.
     pub gaps_pct: Vec<f64>,
+    /// The spec the path was drawn with, where it states a jump rate, jump
+    /// sizes or scheduled events: the short-session checks judge it against
+    /// those, not against the calibration's all-day rates.
+    pub stated: Option<ModelSpec>,
 }
 
 impl SessionPath {
@@ -119,6 +123,10 @@ impl SessionPath {
                 .map(|e| e.slot)
                 .collect(),
             gaps_pct: gaps.iter().map(|e| e.pct).collect(),
+            stated: scenario
+                .market_model
+                .as_ref()
+                .and_then(|m| m.stated_spec()),
         }
     }
 
@@ -133,6 +141,7 @@ impl SessionPath {
                 .map(|e| e.slot)
                 .collect(),
             gaps_pct: gaps.iter().map(|e| e.pct).collect(),
+            stated: path.record.stated_spec(),
         }
     }
 }
@@ -1175,6 +1184,31 @@ pub fn short_session_checks(
     let (bars, jumps) = minute_jumps(sessions, per_bar, threshold, &price);
     let hours = bars as f64 * JUMP_BAR_SECONDS / 3_600.0;
     let jumping = &calibration.fair_value.jumps;
+    // What the sessions' own specs state: a jump rate (averaged over the
+    // sessions' lengths) and jump sizes replace the calibration's all-day
+    // ones, which would call an honest opening-hour regime unrealistic.
+    let calibrated_rate = jumping.per_hour;
+    let (rate_slots, rate_total) = sessions.iter().fold((0.0, 0.0), |(w, t), s| {
+        let slots = s.log_levels.len().saturating_sub(1) as f64;
+        let rate = s
+            .stated
+            .as_ref()
+            .and_then(|spec| spec.jump_rate_per_hour)
+            .unwrap_or(calibrated_rate);
+        (w + slots, t + slots * rate)
+    });
+    let calibrated_rate = if rate_slots > 0.0 {
+        rate_total / rate_slots
+    } else {
+        calibrated_rate
+    };
+    let (size_median_pct, size_p90_pct) = sessions
+        .iter()
+        .find_map(|s| s.stated.as_ref().and_then(|spec| spec.jump_size.as_ref()))
+        .map_or(
+            (jumping.abs_size_median_pct, jumping.abs_size_p90_pct),
+            |size| (size.abs_median_pct, size.abs_p90_pct),
+        );
     if bars == 0 {
         checks.push(Check::skipped(
             "short_jump_rate",
@@ -1189,7 +1223,7 @@ pub fn short_session_checks(
             let (bars, jumps) = minute_jumps(reference, per_bar, threshold, &price);
             jumps.len() as f64 / (bars.max(1) as f64 * JUMP_BAR_SECONDS / 3_600.0)
         });
-        let rate = jumping.per_hour.max(model_rate.unwrap_or(0.0));
+        let rate = calibrated_rate.max(model_rate.unwrap_or(0.0));
         let expected = rate * hours;
         let slack = (sigmas * (JUMP_DISPERSION * expected).sqrt() + 1.0) / hours;
         let band = Band {
@@ -1198,10 +1232,10 @@ pub fn short_session_checks(
         };
         let mut check = judge("short_jump_rate", rate, jumps.len() as f64 / hours, band);
         check.detail = format!(
-            "{} jumps (a minute past {:.2}%) in {hours:.1} h of sessions, per hour; expected {expected:.1} at {rate:.2} an hour (the calibration's {:.2}, the calibrated model's own at these lengths {}); {}",
+            "{} jumps (a minute past {:.2}%) in {hours:.1} h of sessions, per hour; expected {expected:.1} at {rate:.2} an hour (the stated or calibrated {:.2}, the model's own at these lengths {}); {}",
             jumps.len(),
             threshold * 100.0,
-            jumping.per_hour,
+            calibrated_rate,
             model_rate.map_or("not drawn".to_string(), |r| format!("{r:.2}")),
             check.detail
         );
@@ -1219,13 +1253,13 @@ pub fn short_session_checks(
         // The calibration's jump sizes are log-normal, fitted to the median
         // and the 90th percentile; only the upper tail is judged, since the
         // generated jumps are cut at the threshold and the real ones aren't.
-        let sd_log = (jumping.abs_size_p90_pct / jumping.abs_size_median_pct).ln() / 1.281_551_6;
+        let sd_log = (size_p90_pct / size_median_pct).ln() / 1.281_551_6;
         let se = sd_log * (0.9_f64 * 0.1 / jumps.len() as f64).sqrt() / 0.175_498;
         let spread = realism.spread.log_sd.vol_level;
         let w = (sigmas * se.hypot(spread)).exp();
         checks.push(judge(
             "short_jump_size",
-            jumping.abs_size_p90_pct / 100.0,
+            size_p90_pct / 100.0,
             quantile(&jumps, 0.9).exp_m1(),
             Band {
                 ratio: Some([1.0 / w, w]),
@@ -1246,19 +1280,27 @@ fn reference_sessions(
     realism: &Realism,
     sessions: &[SessionPath],
 ) -> Option<Vec<SessionPath>> {
-    let mut spec = ModelSpec::default();
+    let mut default = ModelSpec::default();
     if let Some(kind) = &realism.session_kind {
-        spec.start = Start::Session { kind: kind.clone() };
+        default.start = Start::Session { kind: kind.clone() };
     }
-    let model = MarketModel::new(calibration.clone(), spec).ok()?;
-    Some(
-        (0..2 * sessions.len())
-            .map(|i| {
-                let duration = (sessions[i % sessions.len()].log_levels.len() - 1) as u64;
-                SessionPath::from_model(&model.draw(0x7261_6e67_6500_0000 ^ i as u64, duration))
-            })
-            .collect(),
-    )
+    let default_model = MarketModel::new(calibration.clone(), default).ok()?;
+    let mut reference = Vec::with_capacity(2 * sessions.len());
+    for i in 0..2 * sessions.len() {
+        let session = &sessions[i % sessions.len()];
+        let duration = (session.log_levels.len() - 1) as u64;
+        // A session drawn with stated departures is drawn again with them,
+        // from where it started.
+        let stated = match &session.stated {
+            Some(spec) => Some(MarketModel::new(calibration.clone(), spec.clone()).ok()?),
+            None => None,
+        };
+        let model = stated.as_ref().unwrap_or(&default_model);
+        reference.push(SessionPath::from_model(
+            &model.draw(0x7261_6e67_6500_0000 ^ i as u64, duration),
+        ));
+    }
+    Some(reference)
 }
 
 /// How many whole `per_bar`-slot minutes the sessions hold (gaps left out),
@@ -1453,7 +1495,7 @@ fn quantile(x: &[f64], q: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::market::tests::{sol, spcx, template};
+    use crate::market::tests::{sol, spcx, template, tsla};
 
     /// The fitter's statistics on a fixed series of fat-tailed windows
     /// with SOL's reference settings, computed by `window_stats` in
@@ -1845,6 +1887,7 @@ mod tests {
                     log_levels,
                     masked_slots: vec![],
                     gaps_pct: vec![],
+                    stated: None,
                 }
             })
             .collect();
@@ -1939,6 +1982,52 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A stated regime (infra/58's measured opening hour: TSLA at 3.9 jumps an
+    /// hour, sized 0.382 / 0.652) is judged against what it states, and its
+    /// range against sessions drawn with the same spec.
+    #[test]
+    fn a_stated_jump_regime_is_judged_against_what_it_states() {
+        use crate::market::model::JumpSize;
+        let cal = tsla();
+        let spec = ModelSpec {
+            jumps: true,
+            jump_rate_per_hour: Some(3.9),
+            jump_size: Some(JumpSize {
+                abs_median_pct: 0.382,
+                abs_p90_pct: 0.652,
+                source: "calibration archives, opening hour".into(),
+            }),
+            ..ModelSpec::default()
+        };
+        for (lengths, label) in [((80.0, 400.0), "short"), ((600.0, 1500.0), "mid")] {
+            for seed in 1..=3 {
+                let sessions = short_model_sessions(&cal, &spec, 300, lengths, seed);
+                assert!(sessions.iter().all(|s| s.stated.is_some()));
+                let report = report(&cal, "stated", &sessions, SLOT_SECONDS, None);
+                let missed: Vec<_> = report
+                    .checks
+                    .iter()
+                    .filter(|c| c.status == Status::Fail)
+                    .collect();
+                assert!(missed.is_empty(), "{label} seed {seed}: {missed:#?}");
+            }
+        }
+        // The default spec on the same calibration still passes, and a
+        // stated rate far from the one drawn still fails.
+        let sessions = short_model_sessions(&cal, &ModelSpec::default(), 300, (80.0, 400.0), 1);
+        assert!(sessions.iter().all(|s| s.stated.is_none()));
+        assert_eq!(
+            report(&cal, "default", &sessions, SLOT_SECONDS, None).verdict,
+            Verdict::Pass
+        );
+        let mut mislabelled = short_model_sessions(&cal, &spec, 300, (80.0, 400.0), 1);
+        for s in &mut mislabelled {
+            s.stated.as_mut().unwrap().jump_rate_per_hour = Some(0.3);
+        }
+        let report = report(&cal, "mislabelled", &mislabelled, SLOT_SECONDS, None);
+        assert_eq!(status(&report, "short_jump_rate"), Status::Fail);
     }
 
     /// The calibrated model's false-fail rate on short sessions, on fresh

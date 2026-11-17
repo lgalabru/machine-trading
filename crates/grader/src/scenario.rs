@@ -1110,7 +1110,8 @@ pub const MARKET_SETUP_SLOTS: u64 = 60;
 /// to exactly one step.
 const JUMP_PART_PCT: f64 = 3.8;
 
-/// Slots a move between two levels spans, uncross included. Mirrors
+/// Slots a move between two levels spans: its steps, each uncrossed in its
+/// own slot, so the last step's slot is two slots short of this. Mirrors
 /// [`market_move`]'s stepping.
 pub(crate) fn move_slots(from_pct: f64, to_pct: f64) -> u64 {
     let ratio = (1.0 + to_pct / 100.0) / (1.0 + from_pct / 100.0);

@@ -186,10 +186,10 @@ pub const SLOTS_BETWEEN_STEPS: u64 = 2;
 
 /// Overrides that walk `symbol` from `from_ticks` to `to_ticks` in steps
 /// Phoenix accepts, starting at `start_slot`, then uncross the book the move
-/// crossed. The uncross lands in the slot of the last step, after it: a bot's
+/// crossed. Each step is uncrossed in its own slot, right after it: a bot's
 /// turn is as many slots as a step, so an uncross a step later would show it
 /// the crossed book and let it cancel before the fill. Returns the overrides
-/// and the slot of the final uncross.
+/// and the slot of the last step.
 pub fn market_move(
     perp_asset_map: Pubkey,
     symbol: &str,
@@ -201,6 +201,7 @@ pub fn market_move(
     let steps = ((total_pct.abs() / MAX_MOVE_STEP_PCT).ceil() as u64).max(1);
     let mut overrides = Vec::new();
     let mut slot = start_slot;
+    let mut last = start_slot;
     for step in 1..=steps {
         let ticks =
             from_ticks as f64 + (to_ticks as f64 - from_ticks as f64) * step as f64 / steps as f64;
@@ -211,17 +212,17 @@ pub fn market_move(
             slot,
             label: format!("{symbol} step {step}/{steps}"),
         });
+        overrides.push(Override {
+            template_id: "phoenix-market-uncross",
+            account: perp_asset_map,
+            values: json!({ "symbol": symbol }),
+            slot,
+            label: format!("{symbol} uncross {step}/{steps}"),
+        });
+        last = slot;
         slot += SLOTS_BETWEEN_STEPS;
     }
-    slot -= SLOTS_BETWEEN_STEPS;
-    overrides.push(Override {
-        template_id: "phoenix-market-uncross",
-        account: perp_asset_map,
-        values: json!({ "symbol": symbol }),
-        slot,
-        label: "uncross".into(),
-    });
-    (overrides, slot)
+    (overrides, last)
 }
 
 /// An override that moves only `symbol`'s oracle reports to `ticks`, at
@@ -439,7 +440,7 @@ mod tests {
     /// turn, and a bot that requotes every turn cancels the quote before the
     /// fill.
     #[test]
-    fn the_uncross_lands_in_the_last_steps_slot() {
+    fn every_step_is_uncrossed_in_its_own_slot() {
         let map = Pubkey::new_unique();
         for (to, steps) in [(9_700u64, 1u64), (9_000, 3), (12_000, 5), (10_100, 1)] {
             let (moves, at) = market_move(map, "SPCX", 10_000, to, 40);
@@ -449,9 +450,18 @@ mod tests {
                 .collect();
             assert_eq!(stepped.len() as u64, steps, "{to}");
             let last_step = stepped.last().unwrap().slot;
-            let uncross = moves.last().unwrap();
-            assert_eq!(uncross.template_id, "phoenix-market-uncross");
-            assert_eq!(uncross.slot, last_step, "{to}: uncross slot");
+            let uncrosses: Vec<_> = moves
+                .iter()
+                .filter(|o| o.template_id == "phoenix-market-uncross")
+                .collect();
+            assert_eq!(uncrosses.len() as u64, steps, "{to}: one uncross a step");
+            for (step, uncross) in stepped.iter().zip(&uncrosses) {
+                assert_eq!(uncross.slot, step.slot, "{to}: uncross slot");
+            }
+            assert_eq!(
+                moves.last().unwrap().template_id,
+                "phoenix-market-uncross"
+            );
             assert_eq!(at, last_step, "{to}: returned slot");
             assert_eq!(last_step, 40 + (steps - 1) * SLOTS_BETWEEN_STEPS);
         }

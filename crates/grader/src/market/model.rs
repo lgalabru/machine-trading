@@ -266,6 +266,31 @@ pub enum EventKind {
 }
 
 impl MarketModelRecord {
+    /// The spec's stated departures that change what a session looks like
+    /// (a jump rate, jump sizes, scheduled events), with the session's own
+    /// start and the departures that came with them, to draw more sessions
+    /// like it. `None` where the spec states none of them: such a session
+    /// is the calibration's.
+    pub fn stated_spec(&self) -> Option<ModelSpec> {
+        if self.jump_rate_per_hour.is_none() && self.jump_size.is_none() && self.scheduled.is_empty()
+        {
+            return None;
+        }
+        Some(ModelSpec {
+            vol_mult: self.vol_mult,
+            start: Start::At {
+                unix: self.start_unix,
+            },
+            jumps: true,
+            jump_rate_per_hour: self.jump_rate_per_hour,
+            jump_size: self.jump_size.clone(),
+            events: self.scheduled.clone(),
+            regime_clock: self.regime_clock,
+            regimes: self.regime_set.clone(),
+            ..ModelSpec::default()
+        })
+    }
+
     pub fn validate(&self, duration_slots: u64) -> std::result::Result<(), String> {
         if self.calibration.is_empty()
             || self.calibration_sha256.len() != 64
