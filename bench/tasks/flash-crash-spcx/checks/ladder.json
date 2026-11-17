@@ -135,6 +135,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
+        "MTX_PROBE_SALT": "1",
         "MTX_PROBE_BLEND": "0.15"
       },
       "may_breach": true
@@ -144,6 +145,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
+        "MTX_PROBE_SALT": "2",
         "MTX_PROBE_BLEND": "0.29"
       },
       "may_breach": true
@@ -153,6 +155,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
+        "MTX_PROBE_SALT": "3",
         "MTX_PROBE_BLEND": "0.40"
       },
       "may_breach": true
@@ -162,6 +165,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
+        "MTX_PROBE_SALT": "4",
         "MTX_PROBE_BLEND": "0.74"
       },
       "may_breach": true
@@ -171,6 +175,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
+        "MTX_PROBE_SALT": "2",
         "MTX_PROBE_BLEND": "0.29",
         "MTX_PROBE_CRASH_BELOW": "0.03"
       },
@@ -181,6 +186,7 @@
       "dir": "bench/tasks/flash-crash-spcx/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
+        "MTX_PROBE_SALT": "2",
         "MTX_PROBE_BLEND": "0.29",
         "MTX_PROBE_CRASH_BELOW": "0.03",
         "MTX_PROBE_CRASH": "fatal"
