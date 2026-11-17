@@ -37,7 +37,9 @@ pub struct RecordedFill {
     pub fill: Fill,
     /// The worst price level the fill reached, as `fill.price` is its
     /// average: the highest for a buy, the lowest for a sell. It equals
-    /// `fill.price` for a fill at one level. Limit prices are judged on it.
+    /// `fill.price` for a fill at one level, and for the maker of a
+    /// multi-level fill, whose worst level the venue doesn't name (it is
+    /// judged at its average). Limit prices are judged on it.
     pub worst_price: Decimal,
 }
 

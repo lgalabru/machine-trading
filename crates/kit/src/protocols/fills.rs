@@ -48,12 +48,15 @@ pub struct MarketFill {
     /// Price, in quote units per base unit, before fees: what the fill
     /// paid on average, its quote over its size.
     pub price: Decimal,
-    /// The worst price level the fill reached, in the same units: the
+    /// The worst price level the taker reached, in the same units: the
     /// highest for a taker's buy, the lowest for a taker's sell. It equals
     /// [`MarketFill::price`] for a fill at one level, and for every venue
-    /// whose records can't say more. The limit-price rule judges each unit
+    /// whose records can't say more. The limit-price rule judges the taker
     /// at this level, so a fill can't buy through a cap or sell through a
-    /// floor on the strength of its average.
+    /// floor on the strength of its average. The maker of a spline's fill
+    /// is judged at the average price: the event names only the last tick
+    /// the spline reached, which is the maker's best level, not its worst
+    /// ([`MarketFill::recorded`]).
     pub worst_price: Decimal,
     /// Size, in base units. Always positive.
     pub quantity: Decimal,
@@ -114,7 +117,14 @@ impl MarketFill {
         };
         RecordedFill {
             slot: self.slot,
-            worst_price: self.worst_price,
+            // The event names the taker's worst level; for the maker of a
+            // multi-level fill that is its best, and its own worst isn't
+            // named, so it gets the average.
+            worst_price: if as_taker {
+                self.worst_price
+            } else {
+                self.price
+            },
             fill: Fill {
                 id: FillId(id),
                 order_id: OrderId(order_id),

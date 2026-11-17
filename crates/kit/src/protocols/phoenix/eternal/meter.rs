@@ -1757,6 +1757,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_owner_of_a_spline_is_judged_at_its_average_not_its_best_level() {
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        chain.set_account(main, account(PhoenixAccount::Trader, &owner));
+        let taker = Pubkey::new_unique();
+        let (meter, book) = spcx_meter(&chain, owner);
+        let spcx = meter.markets[0].clone();
+        let price = |ticks: u64| spcx.ticks_to_price(ticks);
+        // The account's spline sold 14,992 lots through ticks 13,821 and
+        // 13,822 to a buyer; then bought 6,000 lots through 13,819 and
+        // 13,818 from a seller. Each event names the last tick it reached.
+        let events = [
+            header(&spcx, 30, taker),
+            priced(
+                spline_filled(&spcx, main, MathSide::Ask, 13_822, 14_992),
+                2_072_120_240,
+                0,
+            ),
+            summary_of(taker, MathSide::Bid, 14_992, 0),
+            header(&spcx, 31, taker),
+            priced(
+                spline_filled(&spcx, main, MathSide::Bid, 13_818, 6_000),
+                829_115_000,
+                0,
+            ),
+            summary_of(taker, MathSide::Ask, 6_000, 0),
+        ];
+        chain.record_transaction(logged(50, 11, &events, false), &[book]);
+
+        let mine = meter.records(0).await.unwrap().fills;
+        assert_eq!(mine.len(), 2);
+        let sold = &mine[0];
+        assert_eq!(sold.fill.side, Side::Sell);
+        assert!(price(13_821) < sold.fill.price && sold.fill.price < price(13_822));
+        assert_eq!(sold.worst_price, sold.fill.price);
+        let bought = &mine[1];
+        assert_eq!(bought.fill.side, Side::Buy);
+        assert!(price(13_818) < bought.fill.price);
+        assert_eq!(bought.worst_price, bought.fill.price);
+        // The taker of the same events is judged at the last tick.
+        let all = meter.market_records(0).await.unwrap().fills;
+        assert_eq!(all[0].recorded(Side::Buy).worst_price, price(13_822));
+        assert_eq!(all[1].recorded(Side::Sell).worst_price, price(13_818));
+    }
+
+    #[tokio::test]
     async fn a_spline_fill_of_size_for_no_quote_lots_is_refused() {
         let chain = Arc::new(MockChainClient::new());
         let owner = Pubkey::new_unique();
