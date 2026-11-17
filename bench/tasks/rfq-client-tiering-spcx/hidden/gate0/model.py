@@ -12,9 +12,15 @@ It follows the grader's RFQ clients (crates/grader/src/actors/library/rfq.rs) st
   buy, the other way for a sale. No hedging, inventory rides at the index.
 
 The level walks SPCX's calibration (per-second sd 1.553e-4, Student-t 5.47 steps, a per-session level with
-log-sd 0.54) with 0-2 jumps of 1-3% either way.
+log-sd 0.54) with its jumps (0.674 an hour, median 0.519%), either way. Phoenix's index, which the bot sees
+and the desk is valued at, is the level to a cent.
+
+The careful rungs are told the session's tolerance; the fixed-width, size-tier and side-skew rungs pick
+their setting on a training set of their own. The reference learns the tolerance from its own answers.
 
     python3 model.py <seed> '<overrides as JSON>' <sessions>
+
+The recorded runs (`gate0-seed-*.txt`) use the family as built: `python3 model.py 51 '{}' 1000`.
 """
 
 import json

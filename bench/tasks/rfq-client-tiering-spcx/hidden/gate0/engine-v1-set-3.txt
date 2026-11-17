@@ -1,0 +1,14 @@
+== set: 72 sessions
+  quote-wide   total    -12.53  mean  -0.1741  sd   0.282
+  fixed-width  total     -2.66  mean  -0.0370  sd   0.410
+  nop          total      0.00  mean   0.0000  sd   0.000
+  size-tier    total      6.47  mean   0.0899  sd   0.322
+  quote-all    total      8.14  mean   0.1131  sd   0.378
+  side-skew    total     10.33  mean   0.1435  sd   0.326
+  reference    total     16.14  mean   0.2242  sd   0.279
+  informed     total     30.12  mean   0.4183  sd   0.302
+  informed / best careful (side-skew): 2.91 (need >= 2)
+  nop_lt_ref 1.000, naive_lt_ref 0.993, careful_lt_ref 0.961, ref_lt_told 1.000, told_2x 0.959
+  order holds on 0.961 of 2000 bootstrapped 72-session sets (need >= 0.85)
+  v2 weighted, share of informed's: fixed-width -0.29, informed 1.00, nop 0.00, quote-all 0.16, quote-wide -0.66, reference 0.51, side-skew 0.26, size-tier 0.12
+  reference per-session Sharpe 0.80
