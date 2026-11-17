@@ -1085,7 +1085,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
     checks.push(signal_gate(summary, gate));
     checks.push(exploit_check(summary, fast));
     checks.push(probe_check(summary, fast));
-    checks.extend(zoo_checks(summary, fast));
+    checks.extend(zoo_checks(summary, fast, thin));
     checks.push(Check::from(
         GRADED,
         "ladder-clean",
@@ -1311,7 +1311,9 @@ fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
 /// fails the full gate and is inconclusive on a fast set; the hybrid fails
 /// only with confidence. A task whose ladder file sets `zoo.enforce` false
 /// (Ludo's four, which predate the zoo) gets a warning instead of a failure.
-pub fn zoo_checks(summary: &LadderSummary, fast: bool) -> Vec<Check> {
+/// `thin`: a fast set whose reference lost money by chance, which can't say
+/// whether a zoo rung is under it.
+pub fn zoo_checks(summary: &LadderSummary, fast: bool, thin: bool) -> Vec<Check> {
     const BELOW: (&str, &str) = (
         "zoo-below-reference",
         "Strategies told nothing stay under the reference",
@@ -1375,14 +1377,16 @@ pub fn zoo_checks(summary: &LadderSummary, fast: bool) -> Vec<Check> {
                 },
             );
         }
+        let noisy_reference = thin && kind == "below_reference";
+        let breaks = |c: &&ZooResult| c.verdict == "fail" || (!fast && c.point_violated);
         let failed: Vec<String> = results
             .iter()
-            .filter(|c| c.verdict == "fail" || (!fast && c.point_violated))
+            .filter(|c| breaks(c) && !noisy_reference)
             .map(|c| c.detail.clone())
             .collect();
         let unsure: Vec<String> = results
             .iter()
-            .filter(|c| c.verdict == "inconclusive" && fast)
+            .filter(|c| (c.verdict == "inconclusive" && fast) || (breaks(c) && noisy_reference))
             .map(|c| c.detail.clone())
             .collect();
         let check = if !failed.is_empty() {
@@ -2700,7 +2704,7 @@ mod tests {
     fn zoo_statuses(zoo: Option<ZooSummary>, fast: bool) -> Vec<(&'static str, Status)> {
         let mut s = summary(&[&[("nop", 0.0), ("reference", 50.0)]]);
         s.zoo = zoo;
-        zoo_checks(&s, fast)
+        zoo_checks(&s, fast, false)
             .into_iter()
             .map(|c| (c.id, c.status))
             .collect()
@@ -2787,6 +2791,32 @@ mod tests {
         assert_eq!(status(anchor("pass")), Status::Pass);
         assert_eq!(status(zoo(true, "absent", vec![])), Status::Fail);
         assert_eq!(status(zoo(true, "exempt", vec![])), Status::NotRun);
+    }
+
+    #[test]
+    fn a_reference_that_lost_by_chance_cannot_fail_the_zoo_under_it() {
+        let mut s = summary(&[&[("nop", 0.0), ("reference", -5.0)]]);
+        s.zoo = Some(zoo(
+            true,
+            "exempt",
+            vec![
+                zoo_result("below_reference:zoo-dump", "below_reference", "fail", true),
+                zoo_result(
+                    "far_from_informed:zoo-dump",
+                    "far_from_informed",
+                    "fail",
+                    true,
+                ),
+            ],
+        ));
+        let statuses: Vec<Status> = zoo_checks(&s, true, true)
+            .into_iter()
+            .map(|c| c.status)
+            .collect();
+        assert_eq!(
+            statuses,
+            [Status::Inconclusive, Status::Fail, Status::NotRun]
+        );
     }
 
     #[test]
