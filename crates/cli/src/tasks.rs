@@ -51,6 +51,20 @@ pub struct Task {
     pub reference: Reference,
     /// The ladder bots' crates, `bench/tasks/<dir>/checks/bots/*`.
     pub check_bots: Vec<String>,
+    /// A v2 task's informed bot, which the verifier runs on its hidden sets
+    /// beside the reference: the crate of the ladder's `anchors.informed`
+    /// rung, when it names one with a crate.
+    pub informed: Option<InformedBot>,
+}
+
+/// A v2 task's informed bot crate, as the image builds it into
+/// `/opt/mtx/anchors/<anchor>-informed` ([`Task::informed_anchor`]).
+#[derive(Debug, Clone)]
+pub struct InformedBot {
+    pub package: String,
+    pub bin: String,
+    /// The crate's directory, from the repository's root.
+    pub dir: String,
 }
 
 /// The reference bot's crate, `reference/Cargo.toml`.
@@ -65,6 +79,12 @@ impl Task {
     /// The reference crate's directory, from the repository's root.
     pub fn reference_dir(&self) -> String {
         format!("bench/tasks/{}/reference", self.dir)
+    }
+
+    /// Where the image puts the informed bot for the verifier, under
+    /// `/opt/mtx/anchors`: beside the reference's anchor.
+    pub fn informed_anchor(&self) -> String {
+        format!("{}-informed", self.mtx.anchor())
     }
 }
 
@@ -212,21 +232,22 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
             parsed.task.name
         );
     }
-    let cargo = folder.join("reference/Cargo.toml");
-    let manifest: CargoToml =
-        toml::from_str(&std::fs::read_to_string(&cargo).with_context(|| {
-            format!(
-                "{}: a task's reference bot is its reference/ crate",
-                cargo.display()
-            )
-        })?)
-        .with_context(|| cargo.display().to_string())?;
-    let reference = Reference {
-        bin: manifest
-            .bin
-            .first()
-            .map_or_else(|| manifest.package.name.clone(), |b| b.name.clone()),
-        package: manifest.package.name,
+    let reference = crate_of(&folder.join("reference")).with_context(|| {
+        format!(
+            "{}: a task's reference bot is its reference/ crate",
+            folder.join("reference/Cargo.toml").display()
+        )
+    })?;
+    let informed = if mtx.headline == Headline::V2 {
+        informed_dir(root, &dir).and_then(|informed| {
+            crate_of(&root.join(&informed)).ok().map(|bot| InformedBot {
+                package: bot.package,
+                bin: bot.bin,
+                dir: informed,
+            })
+        })
+    } else {
+        None
     };
     let mut check_bots: Vec<String> = std::fs::read_dir(folder.join("checks/bots"))
         .into_iter()
@@ -247,7 +268,40 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
         mtx,
         reference,
         check_bots,
+        informed,
     })
+}
+
+/// A bot crate's package, and the binary it runs as a process.
+fn crate_of(dir: &Path) -> Result<Reference> {
+    let cargo = dir.join("Cargo.toml");
+    let manifest: CargoToml = toml::from_str(&std::fs::read_to_string(&cargo)?)
+        .with_context(|| cargo.display().to_string())?;
+    Ok(Reference {
+        bin: manifest
+            .bin
+            .first()
+            .map_or_else(|| manifest.package.name.clone(), |b| b.name.clone()),
+        package: manifest.package.name,
+    })
+}
+
+/// The directory of the bot a task's ladder names as its informed anchor
+/// (`anchors.informed`, a rung's name), from the repository's root.
+pub fn informed_dir(root: &Path, task: &str) -> Option<String> {
+    let path = root
+        .join("bench/tasks")
+        .join(task)
+        .join("checks/ladder.json");
+    let ladder: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let name = ladder["anchors"]["informed"].as_str()?;
+    ladder["rungs"]
+        .as_array()?
+        .iter()
+        .find(|r| r["name"] == name)?["dir"]
+        .as_str()
+        .map(str::to_string)
 }
 
 /// `items` without repeats, in order.
@@ -304,13 +358,25 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         format!(
             "# {GENERATED}\n# <anchor> <package> <binary> <directory>, one per task.\n{}\n",
             join(
-                &|t| format!(
-                    "{} {} {} {}",
-                    t.mtx.anchor(),
-                    t.reference.package,
-                    t.reference.bin,
-                    t.reference_dir()
-                ),
+                &|t| {
+                    let mut lines = format!(
+                        "{} {} {} {}",
+                        t.mtx.anchor(),
+                        t.reference.package,
+                        t.reference.bin,
+                        t.reference_dir()
+                    );
+                    if let Some(informed) = &t.informed {
+                        lines += &format!(
+                            "\n{} {} {} {}",
+                            t.informed_anchor(),
+                            informed.package,
+                            informed.bin,
+                            informed.dir
+                        );
+                    }
+                    lines
+                },
                 "\n"
             )
         )
@@ -373,8 +439,67 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         {
             files.insert(folder.join("instruction.md"), text.into_bytes());
         }
+        if task.mtx.headline == Headline::V2 {
+            let dockerfile = folder.join("environment/Dockerfile");
+            let text = std::fs::read_to_string(root.join(&dockerfile))
+                .with_context(|| dockerfile.display().to_string())?;
+            files.insert(
+                dockerfile,
+                with_practice_scoring(&text, &practice_scoring(&script)).into_bytes(),
+            );
+        }
     }
     Ok(files)
+}
+
+/// The variable `mtx-practice` reads its scoring flags from.
+pub const PRACTICE_SCORING: &str = "MTX_PRACTICE_SCORING";
+
+/// The scoring flags a verifier script grades with, for `mtx-practice` to
+/// grade practice the same way: `--scoring` and v2's settings, none of the
+/// hidden set's own (the draw, its size, the reference anchor).
+pub fn practice_scoring(script: &str) -> String {
+    let mut flags = Vec::new();
+    for flag in [
+        "--scoring",
+        "--loss-weight",
+        "--risk-weight",
+        "--anchor-floor",
+        "--ceiling-cost-bps",
+    ] {
+        if let Some(value) = scoring_text::flag_value(script, flag) {
+            flags.push(format!("{flag} {value}"));
+        }
+    }
+    if scoring_text::has_flag(script, "--v2-sessions") {
+        flags.push("--v2-sessions".to_string());
+    }
+    flags.join(" ")
+}
+
+/// A task's environment Dockerfile with its `MTX_PRACTICE_SCORING` line set
+/// to `flags`: replaced in place, else added after `ENV MTX_TASK=`, else at
+/// the end.
+fn with_practice_scoring(dockerfile: &str, flags: &str) -> String {
+    let line = format!("ENV {PRACTICE_SCORING}=\"{flags}\"");
+    let prefix = format!("ENV {PRACTICE_SCORING}=");
+    let mut lines: Vec<String> = dockerfile.lines().map(str::to_string).collect();
+    if let Some(i) = lines.iter().position(|l| l.starts_with(&prefix)) {
+        lines[i] = line;
+    } else {
+        let block = [
+            "# mtx-practice grades practice with the verifier's scoring (tests/test.sh),"
+                .to_string(),
+            "# written by `mtx task sync`.".to_string(),
+            line,
+        ];
+        let at = lines
+            .iter()
+            .position(|l| l.starts_with("ENV MTX_TASK="))
+            .map_or(lines.len(), |i| i + 1);
+        lines.splice(at..at, block);
+    }
+    lines.join("\n") + "\n"
 }
 
 /// What the task's `solution/` holds of its reference, as `(from, to)`: its
@@ -522,6 +647,7 @@ mod tests {
                 bin: "mtx-x".into(),
             },
             check_bots: vec![],
+            informed: None,
         }
     }
 
@@ -581,6 +707,30 @@ mod tests {
         let err = load(&dir).unwrap_err().to_string();
         assert!(err.contains("both anchor"), "{err}");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn practice_grades_with_the_verifiers_scoring() {
+        let script = "mtx grade \\\n  --draw x --count 72 --reference /opt/mtx/anchors/x \\\n  --scoring v2-headline \\\n  --v2-sessions \\\n  --loss-weight 2 \\\n  --bot /app/bot\n";
+        let flags = practice_scoring(script);
+        assert_eq!(flags, "--scoring v2-headline --loss-weight 2 --v2-sessions");
+        let docker = "FROM base\nENV MTX_TASK=t-spcx\nCOPY practice/ /opt/mtx/practice/\n";
+        let once = with_practice_scoring(docker, &flags);
+        assert!(once.contains("ENV MTX_TASK=t-spcx\n# mtx-practice grades practice"));
+        assert!(once.contains(&format!("ENV {PRACTICE_SCORING}=\"{flags}\"\nCOPY")));
+        assert_eq!(with_practice_scoring(&once, &flags), once);
+        let changed = with_practice_scoring(&once, "--scoring v2-headline");
+        assert!(
+            changed.contains("=\"--scoring v2-headline\"\n")
+                && changed.matches(PRACTICE_SCORING).count() == 1
+        );
+        // The image's mtx-practice passes them to the grade.
+        let root = crate::authoring::repo_root();
+        let practice = std::fs::read_to_string(root.join("bench/image/mtx-practice")).unwrap();
+        assert!(
+            practice.contains(&format!("${{{PRACTICE_SCORING}:-}}")),
+            "{practice}"
+        );
     }
 
     #[test]
