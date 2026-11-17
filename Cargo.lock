@@ -5030,6 +5030,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-skew-maker-follow"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-skew-maker-follow-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-skew-maker-follow",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-skew-maker-follow-naive"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-skew-maker-follow",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-spot-smoke"
 version = "0.1.0"
 dependencies = [
