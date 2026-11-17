@@ -4936,6 +4936,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-event-follow-through"
+version = "0.1.0"
+dependencies = [
+ "bs58",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-event-follow-through-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-event-follow-through",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-event-follow-through-naive"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-event-follow-through",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-fault-probe"
 version = "0.1.0"
 dependencies = [
