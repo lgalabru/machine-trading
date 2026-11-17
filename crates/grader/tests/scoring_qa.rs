@@ -197,3 +197,25 @@ async fn a_bot_that_does_nothing_scores_zero_under_v2_on_a_session_that_starts_h
         v2.raw
     );
 }
+
+/// An RFQ desk that starts with the asset: by default the asset's move is
+/// the desk's PnL, so a desk that quotes nothing makes or loses it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_desk_that_quotes_nothing_scores_zero_under_v2_with_inventory_it_started_with() {
+    let mut scenario =
+        Scenario::load(&root().join("bench/checks/actors/rfq-dust.json")).unwrap();
+    scenario.reference_pnl_usd = Some(100.0);
+    scenario.informed_pnl_usd = Some(1000.0);
+    scenario.reference_max_drawdown_usd = Some(0.0);
+    scenario.informed_max_drawdown_usd = Some(0.0);
+    let mut report = grade_nop(&[scenario], true).await;
+    let params = Params::new(Ceiling::Informed { eta_override: None });
+    report.score_v2(&params).unwrap();
+    let v2 = report.v2.as_ref().unwrap();
+    let pnl = report.scenarios[0].session.pnl_usd;
+    assert!(
+        v2.raw.abs() < 0.005,
+        "a desk that quoted nothing made {pnl} and scored {}",
+        v2.raw
+    );
+}
