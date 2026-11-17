@@ -284,7 +284,16 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         &format!("description = {}", toml_string(&spec.summary)),
     );
     let toml = replace_section(&toml, "[metadata.mtx]", &metadata(spec, &family, base));
-    std::fs::write(&toml_path, toml)?;
+    let toml = retarget_images(&toml, base.task(), name);
+    std::fs::write(&toml_path, guard_task_toml(&toml))?;
+    // The agent starts from the base's agent image: its `mtx` can't draw
+    // scenarios from the family, and its network is closed to the registries
+    // that hold the full one (the base's own four tasks keep the dev image).
+    let dockerfile_path = to.join("environment/Dockerfile");
+    std::fs::write(
+        &dockerfile_path,
+        guard_dockerfile(&std::fs::read_to_string(&dockerfile_path)?),
+    )?;
 
     let test_path = to.join("tests/test.sh");
     // The verifier's 0.5 is this task's reference, which the image builds
@@ -432,8 +441,82 @@ fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
 
 /// The instruction's `mtx-practice` line for a v2 task.
 const PRACTICE_LINE: &str = "- `mtx-practice`: grades `/app/bot` on the practice scenarios in `/opt/mtx/practice` by the same rules and settings as the hidden scenarios (scoring v2, each scenario against the reference's and the informed bot's PnL on it), and prints a JSON report: your `reward` (the v2 score), the `v2` block that explains it, and each session's PnL. Bot logs go to `/tmp/mtx-practice-logs/`. It runs three sessions at a time (`MTX_JOBS=1` for one).";
-/// The instruction's `mtx` line for a v2 task.
-const MTX_LINE: &str = "- `mtx`: the grader itself. `mtx scenario generate --out DIR --prefix NAME --count N --seed S` draws more scenarios from the same family. They carry neither anchor's PnL, so `mtx-practice` can't score them by v2 and says so: use them to see your bot run and read its logs.";
+/// The instruction's `mtx` line for a v2 task: its agent's `mtx` holds no
+/// generator (the task is guarded: see [`guard_dockerfile`]).
+const MTX_LINE: &str = "- `mtx`: the grader itself. `mtx grade --bot /app/bot --snapshot \"$MTX_SNAPSHOT\" FILE...` plays your bot on scenario files, as `mtx-practice` does for the practice set. There is no way to draw more scenarios from the family: the practice scenarios in `/opt/mtx/practice` are the only ones you have, so the bot has to learn what it can from them.";
+
+/// What a guarded task adds to its `[agent]`: an agent that can reach
+/// ghcr.io or github.com can pull the full `mtx` (with the generator) and the
+/// reference bots, so its network is its model's (the bench adds the key
+/// proxy's address) and the crates registry.
+const GUARDED_NETWORK: &str = "# While it works, the agent reaches its model (the bench adds the key proxy's\n# address) and the crates registry, and nothing else: ghcr.io and github.com\n# hold the full grader and the reference bots. The install before it runs\n# keeps [environment]'s network. `just network-probe` checks it.\nnetwork_mode = \"allowlist\"\nallowed_hosts = [\"crates.io\", \"index.crates.io\", \"static.crates.io\"]\n";
+
+/// A task environment's Dockerfile, started from the base's agent image
+/// (`<tag>-agent`) instead of its dev image: the `mtx` in it can't draw
+/// scenarios from the task's family. The digest is dropped; `just pin-image`
+/// pins the agent image's.
+pub fn guard_dockerfile(text: &str) -> String {
+    text.replace(
+        "The dev image (bench/image/Dockerfile, target dev)",
+        "The agent image (bench/image/Dockerfile, target agent)",
+    )
+    .lines()
+    .map(|l| match l.strip_prefix("FROM ") {
+        Some(image) if image.contains("/machine-trading:") => {
+            let image = image.split_whitespace().next().unwrap_or("");
+            let image = image.split('@').next().unwrap_or("");
+            if image.ends_with("-agent") {
+                format!("FROM {image}")
+            } else {
+                format!("FROM {image}-agent")
+            }
+        }
+        _ => l.to_string(),
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n"
+}
+
+/// A task.toml whose `docker_image`s (the task's, and its verifier's) are the
+/// new task's own, `<registry>/<image>:<tag>-<name>` and `-<name>-verifier`:
+/// Harbor runs those, not the Dockerfile, so keeping the base's would run the
+/// agent in the base's unguarded image. Unpinned, for `just image` to build
+/// and `just pin-image` to pin.
+pub fn retarget_images(toml: &str, base_task: &str, name: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in toml.lines() {
+        let retargeted = line
+            .strip_prefix("docker_image = \"")
+            .and_then(|rest| rest.strip_suffix('"'))
+            .map(|image| {
+                let image = image.split('@').next().unwrap_or("");
+                match image.strip_suffix("-verifier") {
+                    Some(own) => (own, "-verifier"),
+                    None => (image, ""),
+                }
+            })
+            .and_then(|(image, suffix)| {
+                let stem = image.strip_suffix(&format!("-{base_task}"))?;
+                Some(format!("docker_image = \"{stem}-{name}{suffix}\""))
+            });
+        out.push(retargeted.unwrap_or_else(|| line.to_string()));
+    }
+    out.join("\n") + "\n"
+}
+
+/// A task.toml with the agent's network limited to [`GUARDED_NETWORK`].
+pub fn guard_task_toml(toml: &str) -> String {
+    if toml.contains("[agent]") && !toml.contains("allowed_hosts") {
+        toml.replacen(
+            "user = \"agent\"\n",
+            &format!("user = \"agent\"\n{GUARDED_NETWORK}"),
+            1,
+        )
+    } else {
+        toml.to_string()
+    }
+}
 
 /// Point a copied bot's process entry (`src/main.rs`) at its own library,
 /// renamed from `from` to `to` (packages, as Cargo.toml names them).
@@ -1639,6 +1722,52 @@ mod tests {
         // Practice is v2's too: the image grades it with the verifier's
         // scoring, and the instruction says so, with no v1 practice line.
         assert!(instruction.contains(PRACTICE_LINE) && instruction.contains(MTX_LINE));
+        assert!(!instruction.contains("scenario generate"));
+
+        // Guarded: the agent starts from the agent image, with an allowlist
+        // for its network; the verifier keeps none.
+        let dockerfile = read(&task.join("environment/Dockerfile"));
+        assert!(
+            dockerfile.lines().any(|l| l.starts_with("FROM ")
+                && l.contains("/machine-trading:")
+                && l.ends_with("-agent")),
+            "{dockerfile}"
+        );
+        assert!(dockerfile.contains("target agent"));
+        let toml = read(&task.join("task.toml"));
+        let agent = toml.split("[agent]").nth(1).unwrap();
+        let agent = agent.split("\n[").next().unwrap();
+        assert!(agent.contains("network_mode = \"allowlist\""), "{agent}");
+        assert!(agent.contains("\"index.crates.io\""));
+        let hosts = agent
+            .lines()
+            .find(|l| l.starts_with("allowed_hosts"))
+            .unwrap();
+        assert!(!hosts.contains("github.com") && !hosts.contains("ghcr.io"));
+        assert!(!hosts.contains("anthropic") && !hosts.contains("openai"));
+        // Harbor runs task.toml's docker_image, not the Dockerfile: it is the
+        // task's own image, and the verifier's, not the base's.
+        let images: Vec<&str> = toml
+            .lines()
+            .filter_map(|l| l.strip_prefix("docker_image = "))
+            .collect();
+        assert_eq!(images.len(), 2, "{toml}");
+        assert!(
+            images.iter().any(|i| i.ends_with(&format!("-{name}\""))),
+            "{images:?}"
+        );
+        assert!(
+            images
+                .iter()
+                .any(|i| i.ends_with(&format!("-{name}-verifier\""))),
+            "{images:?}"
+        );
+        assert!(
+            images
+                .iter()
+                .all(|i| !i.contains('@') && !i.contains("flash-crash-spcx")),
+            "{images:?}"
+        );
         assert!(!instruction.contains("the reward needs no reference"));
         assert!(
             read(&task.join("environment/Dockerfile"))

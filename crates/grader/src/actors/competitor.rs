@@ -425,6 +425,7 @@ mod tests {
                 reactive: None,
             },
             takers: Vec::new(),
+            obligations: None,
             makers_bps: None,
             roles: Default::default(),
         };
@@ -561,6 +562,7 @@ mod tests {
                 reactive,
             },
             takers: Vec::new(),
+            obligations: None,
             makers_bps: None,
             roles: Default::default(),
         }

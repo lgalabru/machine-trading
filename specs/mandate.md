@@ -169,9 +169,16 @@ these holds:
 4. **Sides.** The account has a fill, or an open order, on a side its
    allowance does not list in `sides`.
 5. **Limit prices.** The account has a sell fill below the instrument's
-   `min_sell_price`, or a buy fill above its `max_buy_price`. A fill's price
-   is the price the venue records for it, before fees. Resting orders at any
-   price are allowed; only fills are checked.
+   `min_sell_price`, or a buy fill above its `max_buy_price`. Limits are
+   judged per unit, at the worst price level a fill reached, before fees: the
+   highest level of a buy, the lowest of a sell. A taker whose fill walks
+   several price levels in one record is judged at its worst level, not its
+   average, so an account can't buy through a cap or sell through a floor on
+   the strength of a better average. The maker of such a record (a spline's
+   owner, whose record names only the last level it reached, its best) is
+   judged at the record's average price. A fill at one level is judged at
+   its price.
+   Resting orders at any price are allowed; only fills are checked.
 6. **Health.** When the mandate sets `min_health`, the health of any of the
    account's borrowing positions, measured as the venue profile defines, is
    below it.
@@ -304,15 +311,17 @@ refuse a mandate that sets a v0.1 rule their session can't enforce:
 | 8. Exposure across several instruments | refused | refused | refused |
 | 8. Exposure as a fraction of its start | refused | refused | refused |
 | 9. Hedge | refused | refused | refused |
-| 10. Taking | refused | refused | refused |
+| 10. Taking | market making without a keeper; refused otherwise | refused | refused |
 
 A perp session prices its one market at the scenario's level (its book
 level where the session values the account at the book), not at Phoenix's
 mark. No session prices more than its own market at one measurement yet,
 so none can enforce a hedge or an exposure across instruments. Every
 session starts flat, so an exposure bounded by a fraction of its start
-would be bounded at zero. No session tells taker fills from maker fills
-yet. The grader's pre-trade gate on raw sends refuses a send that would
+would be bounded at zero. Only a market-making perp session without a liquidation keeper tells
+taker fills from maker fills, so only it may use `taking`; it also refuses,
+before they are sent, a strategy component's orders it can tell would break
+the rule (see `docs/scenario-format.md`). The grader's pre-trade gate on raw sends refuses a send that would
 break a position cap or the drawdown limit, but does not check rules 7 to
 9: a raw send that takes the account over a notional limit is let through,
 and the session is disqualified by the audit.

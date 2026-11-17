@@ -26,9 +26,9 @@ docs together.
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet`; a perp session's `start_positions`, signed base units by market symbol |
 | `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
-| `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
+| `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps). `record.jump_rate_per_hour`, `record.jump_size` and `record.scheduled` (all optional, absent unless stated) state a jump rate, jump sizes and scheduled releases in place of the calibration's. Values must come from measured real event or opening-window data with the source cited, and no all-session rate may exceed the instrument's measured opening-window rate (reference table, Phoenix 1 m archives and the calibration's 5-sigma rule: [market calibration](market-calibration.md#stated-jump-regimes), realism rule: [market realism](../skills/trading-task-design/references/market-realism.md)) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
-| `actors` | The `competitor` maker (with `makers_bps`, where the snapshot's makers are widened to when not `competitor_bps`, at least that: a book whose depth near the touch is the grader's maker alone, the snapshot's deep curve behind it), the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
+| `actors` | The `competitor` maker (in a market-making scenario with the bot's quoting `obligations`, and `makers_bps`, where the snapshot's makers are widened to when not `competitor_bps`, at least that: a book whose depth near the touch is the grader's maker alone, the snapshot's deep curve behind it), the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
@@ -119,7 +119,7 @@ own cap and start mark, summed. A session's report lists each market
 (`markets`: start and end marks, positions, valuation, flow), and each step
 records each market (`markets` in the timeline's steps).
 
-Net scoring (`scoring.net`) works per market: each market's start position is held to that market's fair close (else its level), and the holds are summed, so a bot that holds every market scores 0. `scoring.bound_on` works on several markets too.
+Net scoring (`scoring.net`) works per market: each market's start position is held to that market's fair close (else its level), and the holds are summed, so a bot that holds every market scores 0. The same hold, step by step, comes off the drawdown the bot is shown and the risk desk reads. `scoring.bound_on` works on several markets too. Scoring v2 scores a session on several markets against the informed bot, not the cost-aware hindsight ceiling.
 
 What a session on several markets doesn't do yet:
 
@@ -193,6 +193,82 @@ forced close records each market's position at the trigger in
 `positions_before` (`position_before` stays the primary's), and `flat`
 holds only once every market is flat. The desk's fills on any market are
 marked `forced`.
+
+## Market making: obligations and reduce-only taking
+
+A market-making scenario can hold its bot to two terms a designated market
+maker works under, each opt-in; without them a session runs and grades as
+before.
+
+**Quoting obligations**, `actors.competitor.obligations` (v2) or
+`making.obligations` (v1):
+
+```json
+"actors": { "competitor": { "competitor_bps": 12, "competition": { "...": "" },
+  "obligations": { "presence": 0.75, "max_half_spread_bps": 18, "min_size": 1.0 } } }
+```
+
+- `presence`: the share of the session's steps, in (0, 1], at which the bot
+  must quote both sides;
+- `max_half_spread_bps`: how far each side may sit from fair value (the
+  scenario's level, the price the account is valued at), in basis points of
+  it;
+- `min_size`: what the bot's orders within that band must add up to on each
+  side, in base units.
+
+After each of the bot's turns, before the next step's takers trade, the
+session reads Phoenix's order book and samples the bot's resting orders
+(orders past their last valid slot don't count). The report's
+`obligations` gives the session's `steps` (what `presence` is a share of),
+the steps it quoted both sides within the band at the size (`two_sided`),
+the steps it fell short and why (`one_sided`: a side with no order;
+`too_wide`: a side with orders, none within the band; `too_small`: a side
+within the band under `min_size`), the steps a stop-out kept the session
+from reaching (`unsampled`, which count as missed), `uptime` and whether it
+`met` `presence`. The book names each order's trader by Phoenix's trader id;
+the session finds the bot's from an order of its resting where only the
+bot's own market events place one. Obligations are reported, not scored: a
+shortfall is no breach and changes no PnL or reward.
+
+**Reduce-only taking**, the mandate's `"taking": "reduce_only"` on the
+scenario's market (a v0.1 mandate; [mandate spec](../specs/mandate.md) rule
+10). Only a market-making perp session records which of the bot's fills it
+took (`making_fills`, `role` `taker`), so only one, without a
+`liquidator`, may use it. Two layers enforce it:
+
+- before an order goes out, the grader refuses one it can tell would take
+  liquidity to open, add to or flip the position. A component's market or
+  immediate-or-cancel order is one; so is a resting order priced at or
+  through the best opposite price of the *other* traders on Phoenix's book
+  (the bot's own orders are left out, however many it has resting, and a
+  sheet that cancels first and then crosses is judged the same). If the
+  cancel-all simulation can't read the touch, a side the bot has orders
+  resting on is trusted and left to the audit. A component's raw send is
+  simulated before it goes and refused the same way if its fills would take
+  to open, add to or flip. A process bot has no sheet:
+  the RPC guard simulates each transaction it sends (`sendTransaction`,
+  `sendBundle`, the staked route) against the paused chain, and refuses one
+  whose fills would move the position as a taker to open, add to or flip
+  it (a post-only order, a cancel or a match against its own orders moves
+  nothing). An order flagged reduce-only goes (Phoenix applies the flag),
+  and so does a post-only one. A refused order is not sent, its status or
+  the RPC error tells the bot why, and `turns.refused_takes` counts it: the
+  act doesn't happen, so it is no breach;
+- the audit judges every taker fill against the position just before it,
+  counted from the start position through the fills of all the bot's trader
+  accounts, its cross-margin account and any subaccount it registers, in
+  Phoenix's order (a match between the bot's own accounts, which the fill
+  record marks, moves nothing). A take that opened, added to or flipped the
+  position is a `taking` breach, as any mandate rule's. This catches what
+  the checks can't see before the trade: a take from a subaccount, or a cross
+  of a touch the session couldn't read.
+
+The code is `crates/grader/src/obligations.rs`, `crates/grader/src/taking.rs`
+and the perp session.
+
+A market-making scenario is on one market, so both terms apply to the
+primary market of a session that lists several.
+
 
 ## The liquidation keeper: `venues.perp.liquidator`
 

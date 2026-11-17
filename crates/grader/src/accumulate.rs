@@ -359,6 +359,7 @@ impl AccumulateFamily {
                 takers,
                 makers_bps: Some(backstop_bps),
                 roles: [("informed".to_string(), vec![informed_account])].into(),
+                obligations: None,
             }),
             offhours: None,
             funding: None,
