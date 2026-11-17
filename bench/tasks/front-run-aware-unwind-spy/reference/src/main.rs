@@ -1,9 +1,9 @@
-//! The flash-crash reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
+//! The reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
 //! run loop. The anchor hidden sets are scored against runs this way.
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> mtx_kit::BotResult {
-    mtx_kit::run(mtx_bot_front_run_aware_unwind::Reference::default())
+    mtx_kit::run(mtx_bot_front_run_aware_unwind::Unwind::default())
 }
 
 // The component is the library: a wasm build has no process to run.

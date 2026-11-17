@@ -9,45 +9,90 @@
     "bots": [],
     "max_profitable": 0.75
   },
-  "family": "flash-crash",
+  "family": "front-run-unwind",
   "gates": {
     "informed": [
       "informed"
     ],
     "non_reading": [
       "nop",
-      "blind-long",
-      "blind-short"
+      "dump",
+      "twap",
+      "random-twap",
+      "slow",
+      "tiny",
+      "patient",
+      "passive"
     ]
   },
   "min_rule_odds": 0.85,
   "probes": {},
   "rules": [
-    "max(blind-long, blind-short) < reference",
-    "reference < informed < hindsight"
+    "max(dump, twap, random-twap) < reference",
+    "max(slow, tiny, patient, passive) < reference",
+    "reference < informed"
   ],
   "rungs": [
     {
-      "dir": "bots/starter",
-      "name": "nop"
+      "name": "nop",
+      "dir": "bots/starter"
     },
     {
-      "dir": "bench/checks/ladder/blind-long",
-      "may_breach": true,
-      "name": "blind-long"
+      "name": "dump",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/naive",
+      "env": {
+        "MTX_RUNG": "dump"
+      }
     },
     {
-      "dir": "bench/checks/ladder/blind-short",
-      "may_breach": true,
-      "name": "blind-short"
+      "name": "twap",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/naive",
+      "env": {
+        "MTX_RUNG": "twap"
+      }
     },
     {
-      "dir": "bench/tasks/front-run-aware-unwind-spy/reference",
-      "name": "reference"
+      "name": "random-twap",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/naive",
+      "env": {
+        "MTX_RUNG": "random-twap"
+      }
     },
     {
-      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/informed",
+      "name": "slow",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/naive",
+      "env": {
+        "MTX_RUNG": "slow"
+      }
+    },
+    {
+      "name": "tiny",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/naive",
+      "env": {
+        "MTX_RUNG": "tiny"
+      }
+    },
+    {
+      "name": "patient",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/naive",
+      "env": {
+        "MTX_RUNG": "patient"
+      }
+    },
+    {
+      "name": "passive",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/naive",
+      "env": {
+        "MTX_RUNG": "passive"
+      }
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/reference"
+    },
+    {
       "name": "informed",
+      "dir": "bench/tasks/front-run-aware-unwind-spy/checks/bots/informed",
       "tell_latent": true
     }
   ]

@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
     error::Result,
+    front_run::{FrontRunFamily, PREDATORS, Shape as FrontRunShape},
     making::MakingFamily,
     scenario::{Scenario, Shape, ShockFamily},
     weekend::{WeekendFamily, WeekendShape},
@@ -84,6 +85,17 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "front-run-unwind",
+        practice: |prefix, count, seed| FrontRunFamily::spy().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| {
+            shaped(
+                FrontRunFamily::spy().draw_set("hidden", count, seed),
+                tell,
+                front_run_latent,
             )
         },
     },
@@ -205,7 +217,35 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
+    ("front-run-unwind", "predator", Knowable::Identity),
+    ("front-run-unwind", "window_steps", Knowable::Process),
+    ("front-run-unwind", "threshold", Knowable::Process),
+    ("front-run-unwind", "share", Knowable::Process),
+    ("front-run-unwind", "persist_steps", Knowable::Process),
+    ("front-run-unwind", "hold_steps", Knowable::Process),
 ];
+
+/// Who is who: the front-runner's wallet and which of the menu's predators
+/// it is, with that type's fixed settings (the window it reads, the net
+/// selling in SPY that makes the bot a seller to it, what it sells ahead,
+/// how long it stays on a seller and holds). Not when or whether it trades
+/// ahead, which follows the bot, nor the path.
+fn front_run_latent(shape: &FrontRunShape) -> Value {
+    let family = FrontRunFamily::spy();
+    let kind = PREDATORS
+        .iter()
+        .find(|p| p.name == shape.predator)
+        .expect("a session's predator is on the menu");
+    json!({
+        "roster": ["front-runner"],
+        "predator": kind.name,
+        "window_steps": kind.window_steps,
+        "threshold": kind.min_mult * family.trade_size,
+        "share": kind.share,
+        "persist_steps": kind.persist_steps,
+        "hold_steps": kind.hold_steps,
+    })
+}
 
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
 /// one draw that makes it, so all of it is the session's future.

@@ -1,20 +1,16 @@
-# `just build` builds the strategy both ways: bot.wasm, the component the
-# task grades, and bin/bot, the process the anchors and the ladder run
-# (`just run` starts it). The grader builds nothing: build before grading.
+# A process bot: `just build` builds it into bin/bot, and the grader starts
+# it with `just run`. Build before grading.
 
-# Build bot.wasm and bin/bot.
+# Build the bot into bin/bot.
 build:
     #!/usr/bin/env bash
     set -euo pipefail
-    wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
-      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
-    cp "$wasm" bot.wasm
     exe="$(cargo build --release --bin mtx-front-run-aware-unwind-informed --message-format=json-render-diagnostics \
       | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
     mkdir -p bin
     cp "$exe" bin/bot
-    echo "built bot.wasm and bin/bot"
+    echo "built bin/bot from $exe"
 
-# Start the process bot: what the grader runs for the anchor.
+# Start the bot: what the grader runs.
 run:
     @exec ./bin/bot

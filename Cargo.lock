@@ -4953,6 +4953,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-front-run-aware-unwind"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-front-run-aware-unwind-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-front-run-aware-unwind",
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-front-run-aware-unwind-naive"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-front-run-aware-unwind",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-kamino-drain"
 version = "0.1.0"
 dependencies = [

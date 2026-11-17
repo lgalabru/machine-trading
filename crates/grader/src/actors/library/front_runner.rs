@@ -12,12 +12,20 @@
 //! once, or a limit through the touch) that the chain would run, takes
 //! `share` of that order just before it lands.
 //!
+//! With `window_steps`, the pattern is persistent flow however it is
+//! spread out: the bot's net trading one way over the last `window_steps`
+//! steps reaching `min_mult` trade sizes in all, so pauses and uneven
+//! slices don't hide it. It then takes `share` of that net. With
+//! `persist_steps`, once the pattern has held it stays on the bot that many
+//! steps more, whatever the bot does meanwhile: it has found a seller (or a
+//! buyer) and keeps trading ahead of it.
+//!
 //! Either way it front-runs at most once a turn, and never holds more than
 //! `max_inventory_mult` market trade sizes: what it does follows the bot,
 //! so how often and how much is bounded by the market, not by how much the
 //! bot sends.
 
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use async_trait::async_trait;
 use futures::future::BoxFuture;
@@ -74,6 +82,13 @@ pub struct FrontRunner {
     pub max_inventory_mult: f64,
     #[serde(default)]
     pub on_send: bool,
+    /// The steps whose net trading makes the pattern, in place of
+    /// `pattern_steps` steps running.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_steps: Option<u64>,
+    /// The steps it stays on the bot after the pattern last held.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persist_steps: Option<u64>,
 }
 
 impl Default for FrontRunner {
@@ -86,6 +101,8 @@ impl Default for FrontRunner {
             limit_bps: fifty(),
             max_inventory_mult: twenty(),
             on_send: false,
+            window_steps: None,
+            persist_steps: None,
         }
     }
 }
@@ -94,6 +111,9 @@ impl FrontRunner {
     pub fn validate(&self) -> Result<(), String> {
         if self.pattern_steps == 0 {
             return Err("pattern_steps must be at least 1".into());
+        }
+        if self.window_steps == Some(0) {
+            return Err("window_steps must be at least 1".into());
         }
         finite_positive("min_mult", self.min_mult)?;
         finite_positive("share", self.share)?;
@@ -109,8 +129,14 @@ struct Inner {
     /// What the bot's sends carry, for `on_send`.
     reader: Option<SendReader>,
     /// The bot's way and how many steps in a row it has traded it, and its
-    /// last step's size.
+    /// last step's size (with `window_steps`, the window's net).
     run: Option<(Side, u64, f64)>,
+    /// The bot's net trading in each of the last `window_steps` steps.
+    recent: VecDeque<f64>,
+    /// The pattern as it last held, and the step it stays on the bot to,
+    /// with `persist_steps`.
+    seen: Option<(Side, u64, f64)>,
+    on_until: u64,
     /// What it holds from front-running: each trade's way, size and the
     /// step it was made at.
     held: Vec<(Side, f64, u64)>,
@@ -238,6 +264,9 @@ impl Runner {
                 wallet,
                 reader,
                 run: None,
+                recent: VecDeque::new(),
+                seen: None,
+                on_until: 0,
                 held: Vec::new(),
                 steps: 0,
                 fronted: false,
@@ -255,8 +284,15 @@ impl Actor for Runner {
 
     async fn flow(&mut self, flow: &StepFlow) {
         let mut inner = self.inner.lock().await;
-        let net = flow.bot_net();
+        let mut net = flow.bot_net();
         let min = inner.spec.min_mult * inner.scale.trade_size;
+        if let Some(window) = inner.spec.window_steps {
+            inner.recent.push_back(net);
+            while inner.recent.len() as u64 > window {
+                inner.recent.pop_front();
+            }
+            net = inner.recent.iter().sum();
+        }
         let side = if net > min {
             Some(Side::Bid)
         } else if net < -min {
@@ -264,10 +300,26 @@ impl Actor for Runner {
         } else {
             None
         };
-        inner.run = side.map(|side| match inner.run {
+        let pattern = inner.spec.pattern_steps;
+        let run = side.map(|side| match inner.run {
+            _ if inner.spec.window_steps.is_some() => (side, pattern, net.abs()),
             Some((before, n, _)) if before == side => (side, n + 1, net.abs()),
             _ => (side, 1, net.abs()),
         });
+        inner.run = match inner.spec.persist_steps {
+            None => run,
+            Some(persist) => {
+                if run.is_some_and(|(_, n, _)| n >= pattern) {
+                    inner.seen = run;
+                    inner.on_until = inner.steps + 1 + persist;
+                }
+                match run {
+                    Some(run) if run.1 >= pattern => Some(run),
+                    _ if inner.steps < inner.on_until => inner.seen,
+                    run => run,
+                }
+            }
+        };
     }
 
     async fn after_blocks(&mut self, now: &Moment) {
@@ -402,6 +454,69 @@ mod tests {
         let tally = &ledger.report().actors[0];
         assert_eq!(tally.counts["front_runs"], 1);
         assert_eq!((tally.sold, tally.bought), (2.0, 2.0));
+    }
+
+    /// Over a window, uneven slices and pauses still make the pattern: what
+    /// counts is the net one way.
+    #[tokio::test]
+    async fn over_a_window_pauses_dont_hide_a_seller() {
+        let (book, log) = Book::new("f", 99.0, 101.0);
+        let (wallet, ledger) = wallet(book);
+        let mut runner = Runner::new(
+            FrontRunner {
+                window_steps: Some(4),
+                min_mult: 5.0,
+                hold_steps: 100,
+                ..FrontRunner::default()
+            },
+            scale(),
+            wallet,
+            None,
+        );
+        // 2, a pause, 2: 4 in the window, under 5. Then 2 more: 6 over the
+        // last four steps, and it sells half of that ahead.
+        for (s, base) in [(2, 2.0), (4, 0.0), (6, 2.0)] {
+            runner.flow(&sold(base)).await;
+            runner.after_blocks(&at(s, 100.0)).await;
+        }
+        assert!(log.lock().unwrap().is_empty());
+        runner.flow(&sold(2.0)).await;
+        runner.after_blocks(&at(8, 100.0)).await;
+        assert_eq!(*log.lock().unwrap(), ["f take Ask 3.000 at 99.50"]);
+        // The first 2 leaves the window and nothing comes: 4, under 5.
+        runner.flow(&StepFlow::default()).await;
+        runner.after_blocks(&at(10, 100.0)).await;
+        assert_eq!(ledger.report().actors[0].counts["front_runs"], 1);
+    }
+
+    /// Once it has found a seller it stays on it for `persist_steps`, and
+    /// then lets it go.
+    #[tokio::test]
+    async fn once_on_a_seller_it_stays_on_it() {
+        let (book, _) = Book::new("f", 99.0, 101.0);
+        let (wallet, ledger) = wallet(book);
+        let mut runner = Runner::new(
+            FrontRunner {
+                window_steps: Some(2),
+                min_mult: 1.0,
+                persist_steps: Some(3),
+                hold_steps: 100,
+                max_inventory_mult: 100.0,
+                ..FrontRunner::default()
+            },
+            scale(),
+            wallet,
+            None,
+        );
+        runner.flow(&sold(2.0)).await;
+        runner.after_blocks(&at(2, 100.0)).await;
+        // The bot stops: the window holds its sale one more step, then it
+        // stays on three more, then lets go.
+        for s in (4..=12).step_by(2) {
+            runner.flow(&StepFlow::default()).await;
+            runner.after_blocks(&at(s, 100.0)).await;
+        }
+        assert_eq!(ledger.report().actors[0].counts["front_runs"], 5);
     }
 
     #[tokio::test]

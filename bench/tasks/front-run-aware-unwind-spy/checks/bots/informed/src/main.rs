@@ -1,11 +1,10 @@
-//! The flash-crash reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
-//! run loop. The anchor hidden sets are scored against runs this way.
+//! The informed bot: told which of the menu's predators is seated, with its
+//! window and threshold (`MTX_REGIME`), it sells at the maker's bid as fast
+//! as keeps its selling over the window under the threshold, and leaves the
+//! rest to the broker. It isn't told the path or when anyone trades.
 
-#[cfg(not(target_arch = "wasm32"))]
+use mtx_bot_front_run_aware_unwind::{Mode, Unwind};
+
 fn main() -> mtx_kit::BotResult {
-    mtx_kit::run(mtx_bot_front_run_aware_unwind_informed::Reference::default())
+    mtx_kit::run(Unwind::new(Mode::Informed))
 }
-
-// The component is the library: a wasm build has no process to run.
-#[cfg(target_arch = "wasm32")]
-fn main() {}
