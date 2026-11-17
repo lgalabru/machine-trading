@@ -157,7 +157,8 @@
       "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.000"
+        "MTX_PROBE_BLEND": "0.342",
+        "MTX_PROBE_SIZE": "0.324"
       },
       "may_breach": true
     },
@@ -166,7 +167,8 @@
       "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.000"
+        "MTX_PROBE_BLEND": "0.549",
+        "MTX_PROBE_SIZE": "0.324"
       },
       "may_breach": true
     },
@@ -175,7 +177,8 @@
       "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.000"
+        "MTX_PROBE_BLEND": "0.752",
+        "MTX_PROBE_SIZE": "0.324"
       },
       "may_breach": true
     },
@@ -184,7 +187,8 @@
       "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.000"
+        "MTX_PROBE_BLEND": "1.000",
+        "MTX_PROBE_SIZE": "0.324"
       },
       "may_breach": true
     },
@@ -193,8 +197,9 @@
       "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.000",
-        "MTX_PROBE_CRASH_BELOW": "0.03"
+        "MTX_PROBE_BLEND": "0.549",
+        "MTX_PROBE_CRASH_BELOW": "0.03",
+        "MTX_PROBE_SIZE": "0.324"
       },
       "may_breach": true
     },
@@ -203,9 +208,10 @@
       "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.000",
+        "MTX_PROBE_BLEND": "0.549",
         "MTX_PROBE_CRASH_BELOW": "0.03",
-        "MTX_PROBE_CRASH": "fatal"
+        "MTX_PROBE_CRASH": "fatal",
+        "MTX_PROBE_SIZE": "0.324"
       },
       "may_breach": true
     }

@@ -145,6 +145,15 @@ rung a component, bootstrapped 72-session sets. Walls 8 to 36 ticks out.
 - Passed. An earlier run with walls 6 to 28 ticks out, before #114, put
   the reference at 0.71: the walls' distance sets the band.
 
+## The probes' blends
+
+`bench/checks/probes/calibrate.py` on the four Gate 0 sets (the reference
+and the full-cap coin flip): the coin at the reference's risk is 0.324 of
+the cap; blends 0.342, 0.549 and 0.752 for per-session Sharpe 0.1, 0.2 and
+0.3. Sharpe 0.5 is out of reach (the reference's own is 0.43), so
+`honest-0.5` follows the reference in every session and is judged on what
+it measures.
+
 ## The anchors (Gate 0 prototypes)
 
 - **The reference (0.5)** reads Phoenix's orderbook account every step and
