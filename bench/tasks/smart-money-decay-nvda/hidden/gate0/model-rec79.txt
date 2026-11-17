@@ -1,0 +1,12 @@
+48 sessions
+most-active       -8418 -175.38   52.06  entries  38.4
+momentum           -564  -11.74   12.06  entries   4.6
+fade-flow           -40   -0.84    1.91  entries   0.2
+nop                   0    0.00    0.00  entries   0.0
+follow-flow         325    6.76   27.02  entries   3.3
+reference          1707   35.56   30.29  entries   5.6
+informed           3423   71.31   20.62  entries   4.2
+informed / best non-reading (follow-flow): 10.54
+reference v2-weighted / informed: 0.48
+reference Sharpe 1.17
+order holds on 1.000 of 2000 bootstrapped 72-session sets
