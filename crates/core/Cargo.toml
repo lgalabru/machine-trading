@@ -7,7 +7,6 @@ description = "The mtx vocabulary: instruments, orders, fills, positions and hol
 edition = "2024"
 version = "0.1.0"
 license = "MIT"
-publish = false
 
 [dependencies]
 async-trait = "0.1"

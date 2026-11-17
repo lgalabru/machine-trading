@@ -19,6 +19,13 @@
 //! resting order) and logs that under the same header. Only a run no
 //! summary closes takes the header's trader as its taker.
 //!
+//! A fill's price is what it paid per base unit, before fees, and its
+//! `worst_price` the worst level it reached. An `OrderFilled` fills at its
+//! order's price, both. A `SplineFilled` can fill across several of the
+//! spline's ticks and names only the last it reached, which is its
+//! `worst_price`; its price is its `quote_lots_filled` over its size (its
+//! tick, for a fill of no size).
+//!
 //! Two instructions move a position without a fill: `LiquidationTransfer`
 //! (a keeper takes a liquidatee's position into its own account) and
 //! `CloseMatchedPositions` (auto-deleveraging closes a long against a
@@ -140,9 +147,11 @@ pub struct TraderRecords {
     pub position_changes: Vec<PerpPositionChange>,
 }
 
-/// What a perp market recorded in the transactions read, between any
-/// accounts, each list in order once [`PerpMarketRecords::sort`] has run. A transaction added twice
-/// counts once.
+/// What one or more perp markets recorded in the transactions read, between
+/// any accounts, each list in the order the transactions were added, and
+/// each transaction's records in the order it logged them, once
+/// [`PerpMarketRecords::sort`] has put them in slot order. A transaction
+/// added twice counts once.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PerpMarketRecords {
     /// Every match, its [`MarketFill::sequence`] the market's sequence
@@ -158,14 +167,17 @@ pub struct PerpMarketRecords {
 }
 
 impl PerpMarketRecords {
-    /// Adds what a landed transaction recorded on `market`: nothing for a
-    /// failed transaction, or one already added. An event that doesn't
-    /// decode, or that `market`'s records can't hold, is an error, and adds
-    /// nothing of the transaction.
+    /// Adds what a landed transaction recorded on `markets`, decoded once:
+    /// each event goes to the market whose asset it names, and an event on
+    /// any other market is left out. Nothing for a failed transaction, or
+    /// one already added. An event that doesn't decode, or that its
+    /// market's records can't hold, is an error naming the market, and adds
+    /// nothing of the transaction. On one market, pass a one-element slice
+    /// (`std::slice::from_ref(&market)`).
     pub fn add_transaction(
         &mut self,
         summary: &TransactionSummary,
-        market: &PhoenixMarket,
+        markets: &[PhoenixMarket],
     ) -> Result<(), MeterError> {
         if summary.error.is_some() || self.transactions.contains(&summary.signature) {
             return Ok(());
@@ -195,7 +207,7 @@ impl PerpMarketRecords {
                     ),
                 ));
             }
-            added.add_events(&parsed.events, market, summary, index)?;
+            added.add_events(&parsed.events, markets, summary, index)?;
         }
         self.fills.append(&mut added.fills);
         self.placed.append(&mut added.placed);
@@ -207,17 +219,21 @@ impl PerpMarketRecords {
     fn add_events(
         &mut self,
         events: &[MarketEvent],
-        market: &PhoenixMarket,
+        markets: &[PhoenixMarket],
         summary: &TransactionSummary,
         instruction: u8,
     ) -> Result<(), MeterError> {
         let mut header: Option<&MarketEventHeader> = None;
+        // The market the header names, if it is one of `markets`.
+        let mut on: Option<&PhoenixMarket> = None;
         // The fills since the last trade summary, with their quote lots: its
         // trader took them.
         let mut run: Vec<(usize, u64)> = Vec::new();
-        let quote = |lots: i64| Decimal::new(lots, u32::from(market.quote_lot_decimals));
+        let quote = |market: &PhoenixMarket, lots: i64| {
+            Decimal::new(lots, u32::from(market.quote_lot_decimals))
+        };
+        let by_asset = |asset_id: u64| markets.iter().find(|m| u64::from(m.asset_id) == asset_id);
         let mut unix_timestamp = summary.block_time.map(|t| t.timestamp());
-        let asset_id = u64::from(market.asset_id);
         for (i, event) in events.iter().enumerate() {
             let at = |what: &'static str| -> Result<(u128, &MarketEventHeader), MeterError> {
                 let h = header.ok_or_else(|| decode(what, "logged before any header".into()))?;
@@ -226,7 +242,8 @@ impl PerpMarketRecords {
                     h,
                 ))
             };
-            let fill = |what: &'static str,
+            let fill = |market: &PhoenixMarket,
+                        what: &'static str,
                         maker: [u8; 32],
                         maker_side,
                         ticks: u64,
@@ -238,7 +255,13 @@ impl PerpMarketRecords {
                 let (sequence, h) = at(what)?;
                 let unix_timestamp = unix_timestamp
                     .filter(|&t| chrono::DateTime::from_timestamp(t, 0).is_some())
-                    .ok_or_else(|| decode(what, "no time: no block time or slot context".into()))?;
+                    .ok_or_else(|| {
+                        decode(
+                            what,
+                            format!("{}: no time: no block time or slot context", market.id()),
+                        )
+                    })?;
+                let price = market.ticks_to_price(ticks);
                 Ok(MarketFill {
                     slot: summary.slot,
                     instrument: market.id().clone(),
@@ -246,15 +269,16 @@ impl PerpMarketRecords {
                     taker: Pubkey::new_from_array(h.trader_account),
                     maker: Pubkey::new_from_array(maker),
                     taker_side: side(maker_side).opposite(),
-                    price: market.ticks_to_price(ticks),
-                    quantity: market.base_lots_to_quantity(lots_i64(what, lots)?),
+                    price,
+                    worst_price: price,
+                    quantity: market
+                        .base_lots_to_quantity(on_market(market, lots_i64(what, lots))?),
                     unix_timestamp,
                     taker_fee: Decimal::ZERO,
-                    maker_fee: quote(maker_fee_lots(rate, quote_lots)?),
+                    maker_fee: quote(market, on_market(market, maker_fee_lots(rate, quote_lots))?),
                     maker_order: maker_order.map(u128::from),
                 })
             };
-            let on_market = header.is_some_and(|h| h.asset_id == market.asset_id);
             match event {
                 MarketEvent::OrderFilled(_)
                 | MarketEvent::SplineFilled(_)
@@ -275,10 +299,12 @@ impl PerpMarketRecords {
                 }
                 MarketEvent::Header(next) => {
                     header = Some(next);
+                    on = by_asset(u64::from(next.asset_id));
                     run.clear();
                 }
-                MarketEvent::OrderFilled(f) if on_market => {
+                MarketEvent::OrderFilled(f) if let Some(market) = on => {
                     let taken = fill(
+                        market,
                         "an order's fill",
                         f.maker,
                         f.side,
@@ -291,8 +317,9 @@ impl PerpMarketRecords {
                     run.push((self.fills.len(), f.quote_lots_filled.as_inner()));
                     self.fills.push(taken);
                 }
-                MarketEvent::SplineFilled(f) if on_market => {
-                    let taken = fill(
+                MarketEvent::SplineFilled(f) if let Some(market) = on => {
+                    let mut taken = fill(
+                        market,
                         "a spline's fill",
                         f.maker,
                         f.side,
@@ -302,20 +329,43 @@ impl PerpMarketRecords {
                         f.maker_fee_rate,
                         None,
                     )?;
+                    // One event can fill across several of the spline's
+                    // ticks and names only the last, the worst it reached
+                    // (the fill's `worst_price`, already set): the price is
+                    // what the fill's quote lots paid per unit.
+                    if !taken.quantity.is_zero() {
+                        let paid = quote(
+                            market,
+                            on_market(
+                                market,
+                                lots_i64("a spline's fill", f.quote_lots_filled.as_inner()),
+                            )?,
+                        );
+                        if paid.is_zero() {
+                            return Err(decode(
+                                "a spline's fill",
+                                format!("{} of size and no quote lots", taken.quantity),
+                            ));
+                        }
+                        taken.price = paid.checked_div(taken.quantity).ok_or_else(|| {
+                            decode("a spline's fill", format!("{paid} over {}", taken.quantity))
+                        })?;
+                    }
                     run.push((self.fills.len(), f.quote_lots_filled.as_inner()));
                     self.fills.push(taken);
                 }
-                MarketEvent::TradeSummary(trade) if on_market => {
+                MarketEvent::TradeSummary(trade) if let Some(market) = on => {
                     let taker = Pubkey::new_from_array(trade.trader);
                     let shares = split(trade.fee_in_quote_lots.as_inner(), &run);
                     for (&(i, _), share) in run.iter().zip(shares) {
                         let fill = &mut self.fills[i];
                         fill.taker = taker;
-                        fill.taker_fee = quote(lots_i64("a trade's fee", share)?);
+                        fill.taker_fee =
+                            quote(market, on_market(market, lots_i64("a trade's fee", share))?);
                     }
                     run.clear();
                 }
-                MarketEvent::OrderPlaced(p) if on_market => {
+                MarketEvent::OrderPlaced(p) if let Some(market) = on => {
                     let (sequence, h) = at("a placed order")?;
                     let lots = p.quantity.as_inner();
                     self.placed.push(PerpOrderPlaced {
@@ -325,20 +375,20 @@ impl PerpMarketRecords {
                         trader: Pubkey::new_from_array(h.trader_account),
                         side: if lots < 0 { Side::Sell } else { Side::Buy },
                         price: market.ticks_to_price(p.price.as_inner()),
-                        quantity: market.base_lots_to_quantity(lots_i64(
-                            "a placed order",
-                            lots.unsigned_abs(),
+                        quantity: market.base_lots_to_quantity(on_market(
+                            market,
+                            lots_i64("a placed order", lots.unsigned_abs()),
                         )?),
                     });
                 }
-                MarketEvent::LiquidationTransfer(t) if t.asset_id == asset_id => {
+                MarketEvent::LiquidationTransfer(t) if let Some(market) = by_asset(t.asset_id) => {
                     let event = (instruction, place(i, "a liquidation transfer")?);
                     // The liquidatee's position, signed, moves to the
                     // liquidator.
                     let lots = t.base_lots_transferred.as_inner();
-                    let quantity = market.base_lots_to_quantity(lots_i64(
-                        "a liquidation transfer",
-                        lots.unsigned_abs(),
+                    let quantity = market.base_lots_to_quantity(on_market(
+                        market,
+                        lots_i64("a liquidation transfer", lots.unsigned_abs()),
                     )?);
                     let toward_long = if lots < 0 { Side::Sell } else { Side::Buy };
                     let (liquidatee, liquidator) = (
@@ -362,11 +412,16 @@ impl PerpMarketRecords {
                         });
                     }
                 }
-                MarketEvent::CloseMatchedPositions(c) if c.asset_id == asset_id => {
+                MarketEvent::CloseMatchedPositions(c)
+                    if let Some(market) = by_asset(c.asset_id) =>
+                {
                     let event = (instruction, place(i, "an auto-deleveraging close")?);
-                    let quantity = market.base_lots_to_quantity(lots_i64(
-                        "an auto-deleveraging close",
-                        c.base_lots_closed.as_inner().unsigned_abs(),
+                    let quantity = market.base_lots_to_quantity(on_market(
+                        market,
+                        lots_i64(
+                            "an auto-deleveraging close",
+                            c.base_lots_closed.as_inner().unsigned_abs(),
+                        ),
                     )?);
                     let (long, short) = (
                         Pubkey::new_from_array(c.closed_long),
@@ -399,14 +454,17 @@ impl PerpMarketRecords {
         self.transactions.contains(signature)
     }
 
-    /// Puts the records in the market's own order: by slot, then sequence;
-    /// position changes, which have none, by slot, then transaction and
-    /// event.
+    /// Puts the records in order: by slot, a stable sort, so within a slot
+    /// they keep the order they were added in (add transactions in the
+    /// order they landed); and, within a slot, each market's fills and
+    /// placed orders in its own sequence, in the places that market's
+    /// records hold. A market's sequence numbers are its own, so they order
+    /// its records but can't order two markets' against each other; a
+    /// transaction's own events keep the order it logged them in.
     pub fn sort(&mut self) {
-        self.fills.sort_by_key(|f| (f.slot, f.sequence));
-        self.placed.sort_by_key(|p| (p.slot, p.sequence));
-        self.position_changes
-            .sort_by_key(|c| (c.slot, c.transaction, c.event, c.trader));
+        in_order(&mut self.fills, |f| (f.slot, &f.instrument, f.sequence));
+        in_order(&mut self.placed, |p| (p.slot, &p.instrument, p.sequence));
+        self.position_changes.sort_by_key(|c| c.slot);
     }
 
     /// What `accounts` did: each fill once for each side they traded, with
@@ -428,6 +486,41 @@ impl PerpMarketRecords {
                 .cloned()
                 .collect(),
         }
+    }
+}
+
+/// Sorts `records` stably by slot, then, within each slot, puts each
+/// market's records in its sequence order in the places they hold, so the
+/// order across markets is the order they were added in. `key` gives a
+/// record's slot, market and sequence.
+fn in_order<T: Clone>(records: &mut [T], key: impl Fn(&T) -> (u64, &InstrumentId, u128)) {
+    records.sort_by_key(|r| key(r).0);
+    let mut start = 0;
+    while start < records.len() {
+        let slot = key(&records[start]).0;
+        let end = start
+            + records[start..]
+                .iter()
+                .take_while(|r| key(r).0 == slot)
+                .count();
+        let run = records[start..end].to_vec();
+        let mut done = vec![false; run.len()];
+        for first in 0..run.len() {
+            if done[first] {
+                continue;
+            }
+            let market = key(&run[first]).1;
+            let places: Vec<usize> = (first..run.len())
+                .filter(|&i| key(&run[i]).1 == market)
+                .collect();
+            let mut by_sequence = places.clone();
+            by_sequence.sort_by_key(|&i| key(&run[i]).2);
+            for (&place, &from) in places.iter().zip(&by_sequence) {
+                records[start + place] = run[from].clone();
+                done[place] = true;
+            }
+        }
+        start = end;
     }
 }
 
@@ -477,6 +570,14 @@ fn place(i: usize, what: &'static str) -> Result<u32, MeterError> {
 
 fn lots_i64(what: &'static str, lots: u64) -> Result<i64, MeterError> {
     i64::try_from(lots).map_err(|_| decode(what, format!("{lots} lots overflow")))
+}
+
+/// A decoding error on `market`, named in its detail.
+fn on_market<T>(market: &PhoenixMarket, result: Result<T, MeterError>) -> Result<T, MeterError> {
+    result.map_err(|e| match e {
+        MeterError::Decode { what, detail } => decode(what, format!("{}: {detail}", market.id())),
+        other => other,
+    })
 }
 
 fn decode(what: &'static str, detail: String) -> MeterError {

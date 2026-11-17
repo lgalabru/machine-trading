@@ -15,3 +15,14 @@ build:
 # Start the bot: what the grader runs.
 run:
     @exec ./bin/bot
+
+# Build the one-unit bot into one-unit/bin/bot (a Justfile beside it runs it).
+one-unit:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    exe="$(cargo build --release --bin mtx-subaccount-probe --features one-unit --message-format=json-render-diagnostics \
+      | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
+    mkdir -p one-unit/bin
+    cp "$exe" one-unit/bin/bot
+    printf 'run:\n    @exec ./bin/bot\n' > one-unit/Justfile
+    echo "built one-unit/bin/bot from $exe"

@@ -67,6 +67,21 @@ pub struct ModelSpec {
     /// as multiples of the calibration's jump p90.
     #[serde(default)]
     pub jumps: bool,
+    /// A stated jump rate per hour in place of the calibration's, for a
+    /// regime the average hides (a news-heavy day). Needs `jumps`. Sizes
+    /// stay the calibration's, and `vol_mult` is untouched. The value must
+    /// come from measured real event days, with its source cited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_rate_per_hour: Option<f64>,
+    /// Stated jump sizes in place of the calibration's. Drawn as stated:
+    /// `vol_mult` scales the calibration's jump sizes only, never these.
+    /// Needs `jumps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_size: Option<JumpSize>,
+    /// Scheduled releases: one move each at a stated slot, with a fair-coin
+    /// sign. Drawn whether or not `jumps` is on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<ScheduledEvent>,
     /// Gaps when a session opens (on by default).
     #[serde(default = "yes")]
     pub gaps: bool,
@@ -82,6 +97,50 @@ pub struct ModelSpec {
     /// one state, this is how a family switches between stated ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regimes: Option<Regimes>,
+}
+
+/// Stated jump sizes: the absolute move's median and 90th percentile, in
+/// percent, with where they were measured.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JumpSize {
+    pub abs_median_pct: f64,
+    pub abs_p90_pct: f64,
+    pub source: String,
+}
+
+/// A scheduled release: at `slot`, one move of absolute size lognormal with
+/// this median and p90 (percent), sign a fair coin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduledEvent {
+    pub slot: u64,
+    pub abs_median_pct: f64,
+    pub abs_p90_pct: f64,
+    pub source: String,
+}
+
+/// The largest stated jump or event size (p90, percent): above the largest
+/// move any calibrated asset showed in a minute.
+pub const MAX_STATED_SIZE_PCT: f64 = 10.0;
+/// The most scheduled events one spec states.
+pub const MAX_EVENTS: usize = 16;
+
+fn check_size(what: &str, median: f64, p90: f64, source: &str) -> Result<(), String> {
+    if !(median.is_finite() && p90.is_finite() && median > 0.0 && p90 >= median) {
+        return Err(format!(
+            "{what}: abs_median_pct {median} must be positive and abs_p90_pct {p90} at least the median"
+        ));
+    }
+    if p90 > MAX_STATED_SIZE_PCT {
+        return Err(format!(
+            "{what}: abs_p90_pct {p90} is above {MAX_STATED_SIZE_PCT}"
+        ));
+    }
+    if source.trim().is_empty() {
+        return Err(format!("{what}: a stated size needs its source"));
+    }
+    Ok(())
 }
 
 fn is_one(x: &f64) -> bool {
@@ -108,12 +167,19 @@ impl Default for ModelSpec {
             start: Start::Draw,
             waypoint_slots: default_waypoint_slots(),
             jumps: false,
+            jump_rate_per_hour: None,
+            jump_size: None,
+            events: Vec::new(),
             gaps: true,
             regime_clock: 1.0,
             regimes: None,
         }
     }
 }
+
+/// The largest stated jump rate: two a minute, far above any measured
+/// event day and well under one a slot.
+pub const MAX_JUMP_RATE_PER_HOUR: f64 = 120.0;
 
 /// When on the calendar a session starts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -155,6 +221,15 @@ pub struct MarketModelRecord {
     /// Gaps and jumps, with their sizes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Event>,
+    /// The spec's stated jump rate, when it replaces the calibration's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_rate_per_hour: Option<f64>,
+    /// The spec's stated jump sizes, when they replace the calibration's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_size: Option<JumpSize>,
+    /// The spec's scheduled events (their draws are in `events`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scheduled: Vec<ScheduledEvent>,
     /// The spec's regime clock, when it departs from 1.
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub regime_clock: f64,
@@ -186,6 +261,8 @@ pub enum EventKind {
     Gap,
     /// A background jump.
     Jump,
+    /// A scheduled release.
+    Scheduled,
 }
 
 impl MarketModelRecord {
@@ -274,6 +351,41 @@ impl MarketModel {
         if !(spec.vol_mult.is_finite() && spec.vol_mult > 0.0) {
             return Err(format!("vol_mult {} must be positive", spec.vol_mult));
         }
+        if let Some(rate) = spec.jump_rate_per_hour {
+            if !(rate.is_finite() && (0.0..=MAX_JUMP_RATE_PER_HOUR).contains(&rate)) {
+                return Err(format!(
+                    "jump_rate_per_hour {rate} must be between 0 and {MAX_JUMP_RATE_PER_HOUR}"
+                ));
+            }
+            if !spec.jumps {
+                return Err("jump_rate_per_hour needs jumps = true".into());
+            }
+        }
+        if let Some(size) = &spec.jump_size {
+            check_size(
+                "jump_size",
+                size.abs_median_pct,
+                size.abs_p90_pct,
+                &size.source,
+            )?;
+            if !spec.jumps {
+                return Err("jump_size needs jumps = true".into());
+            }
+        }
+        if spec.events.len() > MAX_EVENTS {
+            return Err(format!("at most {MAX_EVENTS} events"));
+        }
+        for (i, e) in spec.events.iter().enumerate() {
+            check_size(
+                &format!("events[{i}]"),
+                e.abs_median_pct,
+                e.abs_p90_pct,
+                &e.source,
+            )?;
+            if e.slot == 0 {
+                return Err(format!("events[{i}]: slot 0 is before the first move"));
+            }
+        }
         if let Some(regimes) = &spec.regimes {
             validate_regimes(regimes, "regimes")?;
             calibration.fair_value.regimes = regimes.clone();
@@ -339,8 +451,23 @@ impl MarketModel {
         name: &str,
         seed: u64,
     ) -> std::result::Result<Scenario, String> {
+        self.check_events(template.duration_slots)?;
         let drawn = self.draw(seed, template.duration_slots);
         self.fill(template, name, drawn)
+    }
+
+    /// Refuses a scheduled event the session would never reach: a slot at
+    /// or past the session's end.
+    fn check_events(&self, duration_slots: u64) -> std::result::Result<(), String> {
+        for (i, e) in self.spec.events.iter().enumerate() {
+            if e.slot >= duration_slots {
+                return Err(format!(
+                    "events[{i}]: slot {} is at or past the session's end ({duration_slots} slots)",
+                    e.slot
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn fill(
@@ -549,16 +676,34 @@ impl<'a> Walker<'a> {
                 }
             }
             let jumps = &fv.jumps;
+            let (median, p90) = match &model.spec.jump_size {
+                Some(size) => (size.abs_median_pct, size.abs_p90_pct),
+                None => (jumps.abs_size_median_pct, jumps.abs_size_p90_pct),
+            };
+            let per_hour = model.spec.jump_rate_per_hour.unwrap_or(jumps.per_hour);
             if model.spec.jumps
-                && jumps.per_hour > 0.0
-                && rng.next_f64() < jumps.per_hour * self.slot_seconds / 3600.0
+                && per_hour > 0.0
+                && rng.next_f64() < per_hour * self.slot_seconds / 3600.0
             {
-                let pct = signed_lognormal(rng, jumps.abs_size_median_pct, jumps.abs_size_p90_pct)
-                    * model.spec.vol_mult;
+                let scale = if model.spec.jump_size.is_some() {
+                    1.0
+                } else {
+                    model.spec.vol_mult
+                };
+                let pct = signed_lognormal(rng, median, p90) * scale;
                 step += pct / 100.0;
                 self.events.push(Event {
                     slot,
                     kind: EventKind::Jump,
+                    pct,
+                });
+            }
+            for e in model.spec.events.iter().filter(|e| e.slot == slot) {
+                let pct = signed_lognormal(rng, e.abs_median_pct, e.abs_p90_pct);
+                step += pct / 100.0;
+                self.events.push(Event {
+                    slot,
+                    kind: EventKind::Scheduled,
                     pct,
                 });
             }
@@ -608,6 +753,9 @@ impl<'a> Walker<'a> {
                 calibration_sha256: cal.sha256.clone(),
                 process: cal.fair_value.model,
                 vol_mult: self.model.spec.vol_mult,
+                jump_rate_per_hour: self.model.spec.jump_rate_per_hour,
+                jump_size: self.model.spec.jump_size.clone(),
+                scheduled: self.model.spec.events.clone(),
                 slot_seconds: self.slot_seconds,
                 start_unix: self.start,
                 regime_vol: self.regime_vol,
@@ -644,6 +792,15 @@ pub fn draw_joint(
     if blocks.iter().any(|b| *b != blocks[0]) {
         return Err(format!("the assets' block_seconds differ: {blocks:?}"));
     }
+    for model in models {
+        model.check_events(duration_slots)?;
+        if !model.spec.events.is_empty() {
+            return Err(
+                "scheduled events aren't supported in a joint draw: each market would draw its own sign, so a common release can't be stated (joint events are a follow-up)"
+                    .into(),
+            );
+        }
+    }
     let lower = cholesky(correlation)?;
     let mut rng = SplitMix64(seed ^ 0x6a6f_696e_7476_3200);
     let start = models[0].draw_start(&mut rng, duration_slots);
@@ -659,6 +816,86 @@ pub fn draw_joint(
         }
     }
     Ok(walkers.into_iter().map(Walker::finish).collect())
+}
+
+/// A template scenario on several markets with every market's path drawn
+/// jointly ([`draw_joint`]): `models` names each market's model by symbol,
+/// in the matrix's order, and the template's markets are those symbols.
+/// Each market's `path` and `fair_path` are its drawn waypoints;
+/// [`Scenario::joint`] records the draw and where the matrix came from
+/// (`matrix_source`: `design` for a matrix the author states). Everything
+/// else is the template's.
+pub fn joint_scenario(
+    models: &[(&str, &MarketModel)],
+    correlation: &[Vec<f64>],
+    matrix_source: &str,
+    template: &Scenario,
+    name: &str,
+    seed: u64,
+) -> std::result::Result<Scenario, String> {
+    let mut scenario = template.clone();
+    let mut symbols: Vec<&str> = models.iter().map(|(symbol, _)| *symbol).collect();
+    symbols.sort();
+    let markets: Vec<&str> = scenario.markets.iter().map(|m| m.symbol.as_str()).collect();
+    if symbols != markets {
+        return Err(format!(
+            "the models are for {symbols:?}, and the template's markets are {markets:?}"
+        ));
+    }
+    let only: Vec<&MarketModel> = models.iter().map(|(_, model)| *model).collect();
+    let drawn = draw_joint(&only, correlation, seed, template.duration_slots)?;
+    let mut records = std::collections::BTreeMap::new();
+    for ((symbol, model), drawn) in models.iter().zip(drawn) {
+        let path = drawn.waypoints(model.spec.waypoint_slots);
+        let market = scenario
+            .markets
+            .iter_mut()
+            .find(|m| m.symbol == *symbol)
+            .expect("checked above");
+        market.fair_path = Some(path.clone());
+        market.path = path;
+        market.market_model = None;
+        records.insert(symbol.to_string(), drawn.record);
+    }
+    scenario.name = name.into();
+    scenario.joint = Some(crate::scenario::JointDraw {
+        matrix_source: matrix_source.into(),
+        matrix_sha256: None,
+        assets: models
+            .iter()
+            .map(|(symbol, _)| symbol.to_string())
+            .collect(),
+        matrix: correlation.to_vec(),
+        records,
+    });
+    scenario.validate()?;
+    Ok(scenario)
+}
+
+/// `count` [`joint_scenario`]s from a template, named `<prefix>-<n>`, each
+/// seed drawn as [`MarketModel::sample_set`] draws its.
+pub fn joint_sample_set(
+    models: &[(&str, &MarketModel)],
+    correlation: &[Vec<f64>],
+    matrix_source: &str,
+    template: &Scenario,
+    prefix: &str,
+    count: usize,
+    seed: u64,
+) -> std::result::Result<Vec<Scenario>, String> {
+    (0..count)
+        .map(|i| {
+            let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(i as u64);
+            joint_scenario(
+                models,
+                correlation,
+                matrix_source,
+                template,
+                &format!("{prefix}-{}", i + 1),
+                draw_seed,
+            )
+        })
+        .collect()
 }
 
 fn cholesky(a: &[Vec<f64>]) -> std::result::Result<Vec<Vec<f64>>, String> {
@@ -844,8 +1081,10 @@ fn gamma(rng: &mut SplitMix64, shape: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use mtx_core::mandate::Mandate;
+
     use super::*;
-    use crate::market::tests::{sol, spcx};
+    use crate::market::tests::{sol, spcx, template};
 
     #[test]
     fn draws_are_deterministic_and_seeded() {
@@ -1145,6 +1384,56 @@ mod tests {
     }
 
     #[test]
+    fn a_joint_draw_fills_each_market_and_records_the_draw() {
+        let model = MarketModel::new(spcx(), ModelSpec::default()).unwrap();
+        let mut template = template();
+        template.symbol = "NVDA".into();
+        template.mandate = Mandate::perp(crate::scenario::VENUE, "NVDA", 40.0, 1_000.0);
+        template
+            .mandate
+            .universe
+            .extend(Mandate::perp(crate::scenario::VENUE, "SPCX", 70.0, 1_000.0).universe);
+        template.markets = ["NVDA", "SPCX"]
+            .into_iter()
+            .map(|symbol| crate::scenario::MarketScenario {
+                symbol: symbol.into(),
+                path: Vec::new(),
+                fair_path: None,
+                funding: None,
+                making: None,
+                tape: Vec::new(),
+                takers_pricing: None,
+                market_model: None,
+            })
+            .collect();
+        let corr = vec![vec![1.0, 0.6], vec![0.6, 1.0]];
+        let models = [("SPCX", &model), ("NVDA", &model)];
+        let set = joint_sample_set(&models, &corr, "design", &template, "j", 3, 9).unwrap();
+        let again = joint_sample_set(&models, &corr, "design", &template, "j", 3, 9).unwrap();
+        assert_eq!(set, again);
+        for s in &set {
+            s.validate().unwrap();
+            let joint = s.joint.as_ref().unwrap();
+            assert_eq!(joint.assets, ["SPCX", "NVDA"]);
+            assert_eq!(joint.matrix_source, "design");
+            assert_eq!(
+                joint.records["NVDA"].start_unix,
+                joint.records["SPCX"].start_unix
+            );
+            for market in &s.markets {
+                assert!(!market.path.is_empty());
+                assert_eq!(market.fair_path.as_ref(), Some(&market.path));
+            }
+            assert_ne!(s.markets[0].path, s.markets[1].path);
+            // The v2 file says it and reads back the same.
+            let v2 = crate::scenario_v2::ScenarioV2::try_from(s).unwrap();
+            let text = serde_json::to_string(&v2).unwrap();
+            assert_eq!(&crate::scenario_v2::parse(&text).unwrap(), s);
+        }
+        assert!(joint_scenario(&models[..1], &corr[..1], "design", &template, "x", 1).is_err());
+    }
+
+    #[test]
     fn student_t_has_unit_variance_and_fat_tails() {
         let mut rng = SplitMix64(5);
         let df = 5.0;
@@ -1158,6 +1447,328 @@ mod tests {
         assert!((var - 1.0).abs() < 0.03, "{var}");
         // 6 / (df - 4) = 6, noisy at this df.
         assert!(kurt > 3.0, "{kurt}");
+    }
+
+    fn jump_events(spec: ModelSpec, draws: u64, slots: u64) -> (usize, Vec<f64>) {
+        let model = MarketModel::new(sol(), spec).unwrap();
+        let mut count = 0;
+        let mut sizes = Vec::new();
+        for seed in 0..draws {
+            for e in model.draw(seed, slots).record.events {
+                if e.kind == EventKind::Jump {
+                    count += 1;
+                    sizes.push(e.pct.abs());
+                }
+            }
+        }
+        (count, sizes)
+    }
+
+    fn jumpy(rate: Option<f64>) -> ModelSpec {
+        ModelSpec {
+            jumps: true,
+            jump_rate_per_hour: rate,
+            ..ModelSpec::default()
+        }
+    }
+
+    #[test]
+    fn an_absent_jump_rate_is_todays_path() {
+        let own = sol().fair_value.jumps.per_hour;
+        let same = |a: ModelSpec, b: ModelSpec| {
+            let (a, b) = (MarketModel::new(sol(), a), MarketModel::new(sol(), b));
+            let (a, b) = (a.unwrap(), b.unwrap());
+            (0..20).all(|seed| {
+                let (x, y) = (a.draw(seed, 4000), b.draw(seed, 4000));
+                x.log_levels == y.log_levels && x.record.events == y.record.events
+            })
+        };
+        // The calibration's own rate stated is the same path as none.
+        assert!(same(jumpy(None), jumpy(Some(own))));
+        assert!(!same(jumpy(None), jumpy(Some(60.0))));
+        // Absent, it serialises as before and is not in the record.
+        let json = serde_json::to_string(&ModelSpec::default()).unwrap();
+        assert!(!json.contains("jump_rate_per_hour"));
+        let rec = MarketModel::new(sol(), jumpy(None))
+            .unwrap()
+            .draw(1, 400)
+            .record;
+        assert!(
+            !serde_json::to_string(&rec)
+                .unwrap()
+                .contains("jump_rate_per_hour")
+        );
+    }
+
+    #[test]
+    fn a_stated_jump_rate_sets_the_frequency_and_leaves_sizes() {
+        let rate = 6.0;
+        let (draws, slots) = (300, 14_400);
+        let (count, sizes) = jump_events(jumpy(Some(rate)), draws, slots);
+        let expected = rate * draws as f64 * slots as f64 * SLOT_SECONDS / 3600.0;
+        // Poisson sd is about 42 here; allow five.
+        assert!(
+            (count as f64 - expected).abs() < 5.0 * expected.sqrt(),
+            "{count} vs {expected}"
+        );
+        let (_, own) = jump_events(jumpy(None), 3000, slots);
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v[v.len() / 2]
+        };
+        let p90 = |mut v: Vec<f64>| {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v[v.len() * 9 / 10]
+        };
+        let cal = sol().fair_value.jumps;
+        for v in [&sizes, &own] {
+            assert!((median(v.clone()) / cal.abs_size_median_pct - 1.0).abs() < 0.08);
+            assert!((p90(v.clone()) / cal.abs_size_p90_pct - 1.0).abs() < 0.12);
+        }
+        let model = MarketModel::new(sol(), jumpy(Some(rate))).unwrap();
+        assert_eq!(model.draw(3, 400).record.jump_rate_per_hour, Some(rate));
+        // Diffusive vol is untouched: the log levels differ from the
+        // jump-free path only where a jump landed.
+        let (count0, _) = jump_events(jumpy(Some(0.0)), 20, slots);
+        assert_eq!(count0, 0);
+    }
+
+    #[test]
+    fn a_stated_jump_rate_survives_the_v2_file() {
+        let mut spec = sized(0.4, 0.8);
+        spec.jump_rate_per_hour = Some(5.0);
+        spec.events = vec![ScheduledEvent {
+            slot: 40,
+            abs_median_pct: 0.4,
+            abs_p90_pct: 0.8,
+            source: "s".into(),
+        }];
+        let model = MarketModel::new(sol(), spec).unwrap();
+        let template = crate::market::tests::template();
+        for s in &model.sample_set(&template, "cal", 2, 7).unwrap() {
+            assert_eq!(
+                s.market_model.as_ref().unwrap().jump_rate_per_hour,
+                Some(5.0)
+            );
+            let v2 = crate::scenario_v2::ScenarioV2::try_from(s).unwrap();
+            let text = serde_json::to_string(&v2).unwrap();
+            assert!(text.contains("\"jump_rate_per_hour\":5.0"));
+            assert!(text.contains("\"jump_size\"") && text.contains("\"scheduled\""));
+            assert_eq!(&crate::scenario_v2::parse(&text).unwrap(), s);
+        }
+    }
+
+    fn sized(median: f64, p90: f64) -> ModelSpec {
+        ModelSpec {
+            jumps: true,
+            jump_rate_per_hour: Some(6.0),
+            jump_size: Some(JumpSize {
+                abs_median_pct: median,
+                abs_p90_pct: p90,
+                source: "test".into(),
+            }),
+            ..ModelSpec::default()
+        }
+    }
+
+    #[test]
+    fn a_stated_jump_size_replaces_the_calibrations_and_not_the_rate() {
+        let (_, sizes) = jump_events(sized(0.4, 0.8), 300, 14_400);
+        let mut v = sizes.clone();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let (median, p90) = (v[v.len() / 2], v[v.len() * 9 / 10]);
+        assert!((median / 0.4 - 1.0).abs() < 0.08, "{median}");
+        assert!((p90 / 0.8 - 1.0).abs() < 0.12, "{p90}");
+        // Same rate as the rate-only spec: the size draw is the only change.
+        let (a, _) = jump_events(sized(0.4, 0.8), 40, 14_400);
+        let (b, _) = jump_events(jumpy(Some(6.0)), 40, 14_400);
+        assert_eq!(a, b);
+        // Stated sizes are drawn as stated: vol_mult does not scale them.
+        let scaled = ModelSpec {
+            vol_mult: 2.0,
+            ..sized(0.4, 0.8)
+        };
+        let (_, same) = jump_events(scaled, 300, 14_400);
+        let mut w = same.clone();
+        w.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            (w[w.len() / 2] / 0.4 - 1.0).abs() < 0.08,
+            "{}",
+            w[w.len() / 2]
+        );
+        // The calibration's own sizes are still scaled by vol_mult.
+        let (_, own) = jump_events(jumpy(Some(6.0)), 100, 14_400);
+        let (_, own2) = jump_events(
+            ModelSpec {
+                vol_mult: 2.0,
+                ..jumpy(Some(6.0))
+            },
+            100,
+            14_400,
+        );
+        assert!(
+            own2.iter().sum::<f64>() / own2.len() as f64
+                > 1.5 * own.iter().sum::<f64>() / own.len() as f64
+        );
+    }
+
+    #[test]
+    fn a_large_vol_mult_leaves_stated_jump_sizes_inside_the_cap() {
+        let (_, sizes) = jump_events(
+            ModelSpec {
+                vol_mult: 5.0,
+                ..sized(9.0, 10.0)
+            },
+            200,
+            14_400,
+        );
+        let mut v = sizes.clone();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!(
+            (v[v.len() / 2] / 9.0 - 1.0).abs() < 0.08,
+            "{}",
+            v[v.len() / 2]
+        );
+        assert!((v[v.len() * 9 / 10] / 10.0 - 1.0).abs() < 0.12);
+        // Lognormal with p90 = 10: the 99.9th percentile is far below 5x.
+        assert!(*v.last().unwrap() < 20.0, "{}", v.last().unwrap());
+    }
+
+    #[test]
+    fn events_at_or_past_the_session_end_and_joint_events_are_refused() {
+        let at = |slot| ModelSpec {
+            events: vec![ScheduledEvent {
+                slot,
+                abs_median_pct: 0.4,
+                abs_p90_pct: 0.8,
+                source: "test".into(),
+            }],
+            ..ModelSpec::default()
+        };
+        let template = crate::market::tests::template();
+        let d = template.duration_slots;
+        let ok = MarketModel::new(sol(), at(d - 1)).unwrap();
+        assert!(ok.scenario(&template, "x", 1).is_ok());
+        for slot in [d, d + 1] {
+            let model = MarketModel::new(sol(), at(slot)).unwrap();
+            let err = model.scenario(&template, "x", 1).unwrap_err();
+            assert!(
+                err.contains("events[0]") && err.contains("past the session's end"),
+                "{err}"
+            );
+            let corr = vec![vec![1.0, 0.5], vec![0.5, 1.0]];
+            let err = draw_joint(&[&model, &model], &corr, 1, d).unwrap_err();
+            assert!(err.contains("past the session's end"), "{err}");
+        }
+        // A valid event is still refused in a joint draw.
+        let corr = vec![vec![1.0, 0.5], vec![0.5, 1.0]];
+        let err = draw_joint(&[&ok, &ok], &corr, 1, d).unwrap_err();
+        assert!(err.contains("joint") && err.contains("follow-up"), "{err}");
+        let plain = MarketModel::new(sol(), ModelSpec::default()).unwrap();
+        assert!(draw_joint(&[&plain, &plain], &corr, 1, d).is_ok());
+    }
+
+    #[test]
+    fn scheduled_events_land_at_their_slot_with_a_fair_sign() {
+        let spec = ModelSpec {
+            events: vec![ScheduledEvent {
+                slot: 800,
+                abs_median_pct: 0.45,
+                abs_p90_pct: 0.9,
+                source: "test".into(),
+            }],
+            ..ModelSpec::default()
+        };
+        let model = MarketModel::new(sol(), spec).unwrap();
+        let (mut up, mut sizes) = (0, Vec::new());
+        for seed in 0..400 {
+            let path = model.draw(seed, 1600);
+            let hits: Vec<_> = path
+                .record
+                .events
+                .iter()
+                .filter(|e| e.kind == EventKind::Scheduled)
+                .collect();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].slot, 800);
+            up += usize::from(hits[0].pct > 0.0);
+            sizes.push(hits[0].pct.abs());
+            assert_eq!(path.record.scheduled.len(), 1);
+        }
+        assert!((140..260).contains(&up), "{up}");
+        sizes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!((sizes[200] / 0.45 - 1.0).abs() < 0.15, "{}", sizes[200]);
+        // Without events the record carries none.
+        let plain = MarketModel::new(sol(), ModelSpec::default()).unwrap();
+        let json = serde_json::to_string(&plain.draw(1, 400).record).unwrap();
+        assert!(!json.contains("scheduled") && !json.contains("jump_size"));
+    }
+
+    #[test]
+    fn bad_sizes_and_events_fail() {
+        for (m, p) in [
+            (0.0, 0.5),
+            (-1.0, 1.0),
+            (0.5, 0.4),
+            (0.5, f64::NAN),
+            (1.0, 11.0),
+        ] {
+            let err = MarketModel::new(sol(), sized(m, p)).unwrap_err();
+            assert!(err.contains("jump_size"), "{err}");
+        }
+        let mut no_source = sized(0.4, 0.8);
+        no_source.jump_size.as_mut().unwrap().source = " ".into();
+        assert!(
+            MarketModel::new(sol(), no_source)
+                .unwrap_err()
+                .contains("source")
+        );
+        let mut off = sized(0.4, 0.8);
+        off.jumps = false;
+        off.jump_rate_per_hour = None;
+        assert!(
+            MarketModel::new(sol(), off)
+                .unwrap_err()
+                .contains("needs jumps")
+        );
+        let event = |slot, median, p90| ModelSpec {
+            events: vec![ScheduledEvent {
+                slot,
+                abs_median_pct: median,
+                abs_p90_pct: p90,
+                source: "s".into(),
+            }],
+            ..ModelSpec::default()
+        };
+        assert!(MarketModel::new(sol(), event(10, 0.4, 0.8)).is_ok());
+        assert!(MarketModel::new(sol(), event(0, 0.4, 0.8)).is_err());
+        assert!(MarketModel::new(sol(), event(10, 0.8, 0.4)).is_err());
+        let many = ModelSpec {
+            events: (1..=MAX_EVENTS as u64 + 1)
+                .map(|slot| event(slot, 0.4, 0.8).events.remove(0))
+                .collect(),
+            ..ModelSpec::default()
+        };
+        assert!(MarketModel::new(sol(), many).is_err());
+        let toml = "jumps = true\njump_rate_per_hour = 2.0\n[jump_size]\nabs_median_pct = 0.3\nabs_p90_pct = 0.5\nsource = \"x\"\n[[events]]\nslot = 40\nabs_median_pct = 0.4\nabs_p90_pct = 0.8\nsource = \"y\"";
+        assert!(toml::from_str::<ModelSpec>(toml).is_ok());
+    }
+
+    #[test]
+    fn bad_jump_rates_fail() {
+        for rate in [-1.0, f64::NAN, f64::INFINITY, MAX_JUMP_RATE_PER_HOUR + 1.0] {
+            let err = MarketModel::new(sol(), jumpy(Some(rate))).unwrap_err();
+            assert!(err.contains("jump_rate_per_hour"), "{err}");
+        }
+        let off = ModelSpec {
+            jump_rate_per_hour: Some(4.0),
+            ..ModelSpec::default()
+        };
+        let err = MarketModel::new(sol(), off).unwrap_err();
+        assert!(err.contains("needs jumps"), "{err}");
+        assert!(MarketModel::new(sol(), jumpy(Some(MAX_JUMP_RATE_PER_HOUR))).is_ok());
+        assert!(toml::from_str::<ModelSpec>("jumps = true\njump_rate_per_hour = 4.5").is_ok());
+        assert!(toml::from_str::<ModelSpec>("jump_rate = 4.5").is_err());
     }
 
     #[test]

@@ -37,7 +37,7 @@ use std::{
 use async_trait::async_trait;
 use mtx_core::{
     Decimal,
-    mandate::{InstrumentRef, Mandate, Observed, ObservedFill, PositionRange},
+    mandate::{InstrumentRef, Mandate, Observed, ObservedFill, PositionRange, SampleLog},
     turns::{self, Hello, Message, Step},
 };
 use mtx_kit::BotEnv;
@@ -179,6 +179,14 @@ pub struct SessionReport {
     /// The deepest the account's value fell below its running peak while the
     /// bot ran, in USD.
     pub max_drawdown_usd: f64,
+    /// The account priced at each step, for the mandate's notional rules
+    /// (gross notional, exposures, hedges), and as the term started where
+    /// an exposure is bounded by its start: what [`SessionReport::observed`]
+    /// hands the audit. Empty unless the mandate has such a rule.
+    #[serde(default, skip_serializing_if = "SampleLog::is_empty")]
+    pub samples: SampleLog,
+    #[serde(default, skip_serializing_if = "SampleLog::is_empty")]
+    pub term_start: SampleLog,
     /// The price the account's position was valued at: the `mark`, or for
     /// market making the `oracle` the scenario sets, which a bot's own
     /// quotes can't move.
@@ -232,6 +240,10 @@ pub struct SessionReport {
     /// Phoenix recorded them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub making_fills: Vec<crate::making::MakingFill>,
+    /// A market-making session with quoting obligations: how the bot met
+    /// them (see [`crate::obligations`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obligations: Option<crate::obligations::ObligationReport>,
     /// The transaction layer: each slot's block in order, what became of
     /// each of the bot's sends, and what it paid.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -256,6 +268,11 @@ pub struct SessionReport {
     /// Each anchored oracle feed's start, against its account's own price.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oracle_starts: BTreeMap<String, crate::oracles::OracleStart>,
+    /// A perp session on several markets: each market, in symbol order, the
+    /// primary included. The fields above that name one market are the
+    /// primary's. Empty for a session on one market.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markets: Vec<MarketReport>,
     /// How the bot's turns went.
     pub turns: TurnReport,
     /// The session's wall time, setup included, in milliseconds.
@@ -265,6 +282,40 @@ pub struct SessionReport {
     /// [`crate::grade::GradeOptions::detail_dir`]).
     #[serde(skip)]
     pub timeline: Timeline,
+}
+
+/// One market of a perp session on several markets (see
+/// [`SessionReport::markets`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MarketReport {
+    pub symbol: String,
+    /// Phoenix's mark at the start and the end, in USD: the start mark is
+    /// what the market's path, its bound and its valuation count from.
+    pub start_mark_usd: f64,
+    pub end_mark_usd: f64,
+    /// The position at the start and the end, in base units.
+    pub start_position: f64,
+    pub end_position: f64,
+    /// The price the market's position was valued at (see
+    /// [`SessionReport::valuation`]).
+    #[serde(deserialize_with = "static_name")]
+    pub valuation: StaticName,
+    /// What the market's takers and competing maker did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flow: Option<FlowReport>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub competitor: Option<CompeteReport>,
+}
+
+impl SessionReport {
+    /// Each market's start mark, by symbol, for a session on several
+    /// markets; empty for one.
+    pub fn start_marks_usd(&self) -> BTreeMap<String, f64> {
+        self.markets
+            .iter()
+            .map(|m| (m.symbol.clone(), m.start_mark_usd))
+            .collect()
+    }
 }
 
 /// A session step by step: the market and the account at every step, what
@@ -286,6 +337,10 @@ pub struct Timeline {
     /// Market making: the grader's taker orders, as sent.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub taker_orders: Vec<TakerRecord>,
+    /// A session on several markets: the taker orders on each market but
+    /// the primary, by symbol.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub market_taker_orders: BTreeMap<String, Vec<TakerRecord>>,
 }
 
 /// The world and the account after a step's blocks landed, before the bot's
@@ -322,6 +377,29 @@ pub struct StepRecord {
     pub turn_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answered: Option<bool>,
+    /// A session on several markets: each market at this step, in symbol
+    /// order. The fields above that name one market are the primary's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markets: Vec<MarketStep>,
+}
+
+/// One market of a session on several markets at a step (see
+/// [`StepRecord`]'s fields of the same names).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MarketStep {
+    pub symbol: String,
+    pub mark_usd: f64,
+    pub index_usd: f64,
+    pub level_usd: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fair_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_bid_usd: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_ask_usd: Option<f64>,
+    pub position: f64,
 }
 
 /// One of the bot's transactions, looked up once the session ended.
@@ -381,41 +459,51 @@ pub struct TurnReport {
     /// a transaction layer, accepted and not applied elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_options: Option<u64>,
+    /// Under a mandate that allows taking only to reduce: a component's
+    /// orders the grader refused before they went out, for taking to open,
+    /// add to or flip the position (see [`crate::taking`]). Not a breach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_takes: Option<u64>,
 }
 
 impl SessionReport {
     /// What the session measured, in the terms [`Mandate::audit`] checks.
     pub fn observed(&self) -> Observed {
-        Observed {
-            positions: self.positions.clone(),
-            positions_outside_universe: self.positions_outside_universe,
-            max_drawdown_usd: self.audited_drawdown_usd(),
-            fills: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.observed_fills())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(
-                    self.perp_fills
-                        .iter()
-                        .filter(|fill| !fill.forced)
-                        .map(|fill| ObservedFill {
-                            instrument: fill.instrument.clone(),
-                            side: fill.side,
-                            price: fill.price,
-                        }),
-                )
-                .collect(),
-            open_orders: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.open_orders.clone())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(self.perp_open_orders.iter().cloned())
-                .collect(),
-        }
+        let mut observed = Observed::default();
+        observed.positions = self.positions.clone();
+        observed.positions_outside_universe = self.positions_outside_universe;
+        observed.max_drawdown_usd = self.audited_drawdown_usd();
+        observed.fills = self
+            .spot
+            .as_ref()
+            .map(|spot| spot.observed_fills())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(
+                self.perp_fills
+                    .iter()
+                    .filter(|fill| !fill.forced)
+                    .map(|fill| ObservedFill {
+                        instrument: fill.instrument.clone(),
+                        side: fill.side,
+                        price: fill.price,
+                        worst_price: fill.worst_price.unwrap_or(fill.price),
+                    }),
+            )
+            .collect();
+        observed.open_orders = self
+            .spot
+            .as_ref()
+            .map(|spot| spot.open_orders.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(self.perp_open_orders.iter().cloned())
+            .collect();
+        observed.samples = self.samples.clone();
+        observed.term_start = self.term_start.clone();
+        observed.takes =
+            crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
+        observed
     }
 }
 
@@ -502,6 +590,9 @@ pub(crate) struct Prepared {
     /// session's starting positions and order (see [`crate::perp`]).
     pub vars: Vec<(String, String)>,
     pub cast: Cast,
+    /// Who is who among the session's actors, for the regime the task's
+    /// informed bot is told (see [`crate::latent`]).
+    pub roster: crate::actors::library::Roster,
     /// Upkeep the session's venues need, beyond the options' (see
     /// [`crate::crank`]).
     pub cranks: Vec<Box<dyn crate::crank::VenueCrank>>,
@@ -582,6 +673,26 @@ pub(crate) trait Account: Send + Sync {
         Ok(())
     }
 
+    /// After the bot's turn, at `slot`, before the next step's takers
+    /// trade: what it left quoting, for a market maker's obligations (see
+    /// [`crate::obligations`]). Nothing by default.
+    async fn sample_quotes(&mut self, _slot: u64) -> Result<()> {
+        Ok(())
+    }
+
+    /// Under a mandate that allows taking only to reduce, in a market-making
+    /// session: the check the RPC guard runs on a process bot's sends.
+    fn take_gate(&self) -> Option<std::sync::Arc<crate::taking::TakeGate>> {
+        None
+    }
+
+    /// At `slot`, before the bot's turn: the best bid and ask on the book
+    /// that aren't the bot's own orders, once the session can tell which
+    /// are (see [`crate::taking`]). Nothing by default.
+    async fn net_touch(&self, _slot: u64) -> Result<Option<crate::taking::Touch>> {
+        Ok(None)
+    }
+
     /// The session is over: measure the account a last time and report.
     async fn finish(self: Box<Self>, done: Done) -> Result<SessionReport>;
 }
@@ -650,6 +761,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         reopen_slot,
         vars,
         mut cast,
+        roster,
         cranks: kind_cranks,
         mut account,
     } = if scenario.lending.is_some() {
@@ -701,9 +813,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let user = opts.slot.map(|slot| BOT_USERS[slot]);
     // The task's variables (`mtx_kit::SESSION_VARS`): the regime, an off-hours
     // reopen, and what the session's kind adds.
-    let told: Vec<(String, String)> = opts
+    let regime = opts
         .regime
-        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
+        .map(|r| crate::latent::resolve(r, &roster).map_err(Error::Latent))
+        .transpose()?;
+    let told: Vec<(String, String)> = regime
+        .map(|r| ("MTX_REGIME".to_string(), r))
         .into_iter()
         .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
         .collect();
@@ -715,6 +830,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // grader calls (`crate::wasm`, RFD 0002).
     let mut process = None;
     let mut wasm_bot = None;
+    let mut take_gate: Option<std::sync::Arc<crate::taking::TakeGate>> = None;
     let legacy;
     if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
         let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
@@ -794,6 +910,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         if user.is_none() {
             return Err(Error::NoBotUser);
         }
+        take_gate = account.take_gate();
+        if let Some(gate) = &take_gate {
+            guard.set_send_gate(gate.clone());
+        }
         let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
         let told: Vec<(String, String)> = told.into_iter().chain(vars).collect();
         let child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs, &told)?;
@@ -851,6 +971,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         // pick off every quote: a sniper the task doesn't describe. Here the
         // toxic flow is the informed flow, ahead of the jumps.
         guard.set_turn(legacy);
+        // What the last turn left quoting, before the takers trade on it.
+        if k > 0 && closing.is_none() {
+            account.sample_quotes(slot).await?;
+        }
         cast.before_blocks().await;
         // A scenario's clock jump lands before the step's blocks.
         if let Some(warp) = scenario.warps.iter().find(|w| w.step == k) {
@@ -951,6 +1075,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 peak_usd,
                 value_after_usd: measured.value_usd,
                 position_before: measured.position,
+                positions_before: measured
+                    .markets
+                    .iter()
+                    .map(|m| (m.symbol.clone(), m.position))
+                    .collect(),
                 orders: Vec::new(),
                 flat: false,
             });
@@ -1021,12 +1150,15 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     position: now.position,
                     position_change: now.position - before,
                     level_usd: now.level_usd,
-                    valued_at_usd: match scenario.valuation() {
+                    valued_at_usd: match scenario.primary_valuation() {
                         "oracle" => Some(now.level_usd),
                         "book" => now.book_usd,
                         _ => None,
                     },
                 });
+            }
+            if bot.refused_takes().is_some() {
+                bot.touched(account.net_touch(slot).await?);
             }
             let started = Instant::now();
             account.turn_data(&mut step).await?;
@@ -1063,11 +1195,18 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             record.answered = Some(answered);
         }
     }
+    // And what the last turn left.
+    if steps > 0 && closing.is_none() {
+        account.sample_quotes(slot).await?;
+    }
     guard.set_turn(false);
     cast.end().await;
     if let Some((mut child, mut writer, _)) = process {
         let _ = send(&mut writer, &Message::End).await;
         stop_bot(&mut child, workdir.bot_user.and(user)).await;
+    }
+    if let Some(gate) = &take_gate {
+        turns.refused_takes = Some(gate.refused());
     }
     if let Some(bot) = wasm_bot.as_mut() {
         if closing.is_none() {
@@ -1078,6 +1217,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         turns.fuel_max_call = Some(max_call);
         turns.stopped = bot.stopped.clone();
         turns.tx_options = (bot.tx_options > 0).then_some(bot.tx_options);
+        turns.refused_takes = bot.refused_takes();
     }
     if let Some(close) = &closing
         && turns.stopped.is_none()
@@ -1153,13 +1293,19 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             );
         }
     }
-    let (end_value_usd, end_position) = (report.end_value_usd, report.end_position);
+    let end_value_usd = report.end_value_usd;
+    // Flat on every market: a session on several lists each in `markets`.
+    let flat = crate::risk::is_flat(report.end_position)
+        && report
+            .markets
+            .iter()
+            .all(|m| crate::risk::is_flat(m.end_position));
     // A stop-out's close settles at the session's end; a liquidation's
     // is the keeper's own account of its stretch.
     for close in &mut report.forced_closes {
         if matches!(close.reason, crate::risk::ForcedCloseReason::StopOut { .. }) {
             close.value_after_usd = end_value_usd;
-            close.flat = crate::risk::is_flat(end_position);
+            close.flat = flat;
         }
     }
     info!(

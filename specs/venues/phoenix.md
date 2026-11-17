@@ -53,9 +53,18 @@ cross-margin account.
   then an `OrderFilled` event for each resting order it took from and a
   `SplineFilled` event for each spline, each naming the maker's trader
   account, the maker's side, the price in ticks, `base_lots_filled` and
-  `quote_lots_filled`. Each run of fills is closed by a `TradeSummary` event
-  whose `trader` is the run's taker, on the side opposite the makers', and
-  which carries the fee the taker paid (`fee_in_quote_lots`). The taker need
+  `quote_lots_filled`. A fill's price is what it paid per base unit: an
+  order's fill is at its price in ticks, but a spline's can span several of
+  its ticks and names only the last it reached. For the taker that tick is
+  the fill's worst level (`worst_price`, which the mandate's limit prices
+  judge); for the spline's owner it is the best level, so the owner is
+  judged at the average; its
+  price is `quote_lots_filled` over `base_lots_filled`, after converting
+  lots to USDC and base units, never its tick. A spline's fill of no size
+  keeps its tick, and one of size for no quote lots is refused. Each run of
+  fills is closed by a `TradeSummary` event whose `trader` is the run's
+  taker, on the side opposite the makers', and which carries the fee the
+  taker paid (`fee_in_quote_lots`). The taker need
   not be the header's trader: an instruction can match two other parties (a
   spline that re-centres crosses a stale resting order) and logs that under
   the same header. The header's trader is the taker only for a run no
@@ -86,6 +95,27 @@ cross-margin account.
 - **Resting orders.** An `OrderPlaced` event after a trader's `Header` is an
   order it placed to rest on the book, its side the sign of its
   `quantity`; it may since have filled or been cancelled.
+
+### Several markets
+
+One cross-margin trader account trades every perpetual market, and Phoenix
+margins them together. On a universe of several perpetual markets, an
+enforcer measures each market's position from `view_margin_for_asset` for
+that market, and the account's collateral, unrealized PnL and
+`position_count` from `view_margin` once, for every market. Markets the
+account holds outside the universe are its `position_count` less the
+universe markets it holds a position or orders in. Each fill names its
+market by the `Header` event's `asset_id`; a market's sequence numbers are
+its own, so an enforcer tells two markets' fills apart by the market as
+well as the sequence number: the kit's fill id comes from the instrument,
+the sequence and the side. One transaction can trade several markets, so
+the kit's meter reads the union of the markets' transactions, fetches and
+decodes each once, and routes each event to the market its `asset_id`
+names. Fills come in the order they landed: by slot, then each market's
+own sequence, with two markets' fills in one slot in the order the
+transaction lists saw them. The markets an account is measured on must
+count quote lots alike, as its collateral is one number; the kit's meter
+refuses others.
 
 ### Liquidation
 
@@ -184,6 +214,10 @@ such as the authority's USDC, are counted once, as the
   and the deepest drawdown, and disqualifies the session on any breach.
 - It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
   set to the session's last slot.
+- A session on several perpetual markets measures the one account on each
+  of them, and lists them in `MTX_MARKETS` (`["phoenix:perp:NVDA", ...]`,
+  the session's own market first); a component gets a seat on each, every
+  one tradable at its market address.
 
 It audits spot sessions on the spot market this profile names, alone or
 with OpenBook's:
