@@ -828,6 +828,8 @@ mod tests {
             wallets: 1,
             horizon_slots: 20,
             edge_bps: 50.0,
+            hit_rate: 1.0,
+            view_noise_bps: 0.0,
             informed_for: Window {
                 from: 100,
                 until: Some(101),

@@ -435,6 +435,7 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
     })
 }
 
+#[cfg(feature = "generators")]
 /// Which size class the informed trade in today: a fact of how the
 /// session's flow is drawn. Not the path, the jumps, a side, a wallet or
 /// when anyone trades.
