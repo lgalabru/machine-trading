@@ -463,9 +463,15 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     # A guarded task's agent can reach only its model's address and the crates
     # registry; a native harness would need its provider's API open, with its
     # real key in the agent's environment and the provider's server-side fetch
-    # and search tools behind it. Guarded tasks run through Hermes, or native
-    # Codex with web search disabled; Claude Code is refused.
+    # and search tools behind it. Guarded tasks run through Hermes only
+    # (MTX_UNGUARDED=1 lets a screen that is never published run natives anyway).
     python3 -I bench/harness/models.py native-guard {{tasks}} {{models}}
+    unguarded=""
+    if [ -n "${MTX_UNGUARDED:-}" ] && python3 -I -c 'import sys; sys.exit(0 if "native:" in sys.argv[1] else 1)' "{{models}}"; then
+      unguarded=1
+      echo "WARNING: MTX_UNGUARDED is set: native harnesses run with their provider's API open and a real key" >&2
+      echo "WARNING: in the agent's environment. Guarded tasks are NOT guarded in this batch; it can't be published." >&2
+    fi
     for model in {{models}}; do
       case "$model" in
         native:openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
@@ -521,7 +527,6 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     # the key proxy's address to it (native harnesses don't run guarded tasks:
     # see native-guard above). A task on the public network ignores the flag.
     proxy_host() { local h="${proxy_url#*://}"; echo "${h%%:*}"; }
-    mapfile -t codex_aks < <(python3 -I bench/harness/models.py codex-args)
     run_model() {
       local model="$1"
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
@@ -533,13 +538,13 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
             --allow-agent-host api.openai.com --allow-agent-host chatgpt.com \
-            "${codex_aks[@]}" \
-            --ak version={{codex}}
+            --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
           ;;
         native:*)
           model="${model#native:}"
           harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
+            --allow-agent-host api.anthropic.com \
             --ak version={{claude_code}} \
             --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
             --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
@@ -640,6 +645,11 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     [ "$status" = 0 ] || { echo "a harbor run failed; see above"; exit 1; }
     if grep -rlF --exclude=.seed "$MTX_EVAL_SEED" "$batch"; then
       echo "the batch's secret appears in the job files above"; exit 1
+    fi
+    if [ -n "$unguarded" ]; then
+      python3 -I bench/harness/models.py stamp-unguarded "$batch"
+      python3 -I bench/harness/models.py fetch-scan "$batch"
+      echo "WARNING: this batch was not guarded (guarded: false in batch.json): it can't be published"
     fi
     python3 -I bench/report.py "$batch"
     echo "browse it: just review $batch"

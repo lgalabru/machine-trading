@@ -73,6 +73,17 @@ pub fn results_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bench/results")
 }
 
+/// Why a batch wasn't guarded, if it wasn't: its `.unguarded` marker, or
+/// `"guarded": false` in its batch.json.
+fn unguarded(batch: &Path) -> Option<&'static str> {
+    if batch.join(".unguarded").exists() {
+        return Some("marked .unguarded");
+    }
+    let plan = std::fs::read_to_string(batch.join("batch.json")).ok()?;
+    let plan: serde_json::Value = serde_json::from_str(&plan).ok()?;
+    (plan.get("guarded") == Some(&json!(false))).then_some("batch.json says guarded: false")
+}
+
 /// Published releases, newest first. A release in the results dataset is
 /// fetched, once, and read from its cache; one that fails to fetch is left
 /// out, with a warning. A slim release whose full copy is in
@@ -218,6 +229,12 @@ pub fn publish(
     let batch = batch
         .canonicalize()
         .with_context(|| batch.display().to_string())?;
+    // A batch whose native harnesses ran on guarded tasks (`just bench` with
+    // MTX_UNGUARDED=1) was a screen: its agents could reach their provider's
+    // API, so its results aren't published.
+    if let Some(why) = unguarded(&batch) {
+        bail!("{} was not guarded ({why}); it can't be published", batch.display());
+    }
     let trials = review::discover(&batch);
     if trials.is_empty() {
         bail!("no Harbor trials under {}", batch.display());
@@ -1169,6 +1186,23 @@ mod tests {
             .is_err(),
             "exists"
         );
+
+        // A batch whose native harnesses ran on guarded tasks is refused,
+        // by its marker or by its batch.json, whatever else is allowed.
+        std::fs::write(batch.join(".unguarded"), "").unwrap();
+        let error = publish(&batch, "1.0.9", &results, false, None, true, true).unwrap_err();
+        assert!(error.to_string().contains("not guarded"), "{error}");
+        std::fs::remove_file(batch.join(".unguarded")).unwrap();
+        let plan = batch.join("batch.json");
+        let kept = std::fs::read_to_string(&plan).ok();
+        std::fs::write(&plan, r#"{"guarded": false}"#).unwrap();
+        let error = publish(&batch, "1.0.9", &results, false, None, true, true).unwrap_err();
+        assert!(error.to_string().contains("not guarded"), "{error}");
+        match kept {
+            Some(text) => std::fs::write(&plan, text).unwrap(),
+            None => std::fs::remove_file(&plan).unwrap(),
+        }
+        assert!(!results.join("1.0.9").exists());
 
         // A run without its agent's trajectory: refused, unless allowed.
         std::fs::remove_file(trial.join("agent/trajectory.json")).unwrap();
