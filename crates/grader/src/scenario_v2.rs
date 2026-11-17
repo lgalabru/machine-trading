@@ -2420,8 +2420,10 @@ mod tests {
         assert_eq!(scenario.validate(), Ok(()));
         // Each market's own cap, start mark and funding make its bound.
         let marks = [("NVDA".to_string(), 180.0), ("SPCX".to_string(), 100.0)].into();
-        let nvda = scenario.markets[0].bound_usd(BoundOn::Path, 40.0, 180.0, scenario.duration_slots);
-        let spcx = scenario.markets[1].bound_usd(BoundOn::Path, 70.0, 100.0, scenario.duration_slots);
+        let nvda =
+            scenario.markets[0].bound_usd(BoundOn::Path, 40.0, 180.0, scenario.duration_slots);
+        let spcx =
+            scenario.markets[1].bound_usd(BoundOn::Path, 70.0, 100.0, scenario.duration_slots);
         assert!(nvda > 0.0 && spcx > 0.0);
         assert_eq!(scenario.markets_bound_usd(&marks), nvda + spcx);
         assert_eq!(scenario.max_position(), 40.0);
