@@ -5058,6 +5058,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-toxic-day-make-or-follow"
+version = "0.1.0"
+dependencies = [
+ "bs58",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-toxic-day-make-or-follow-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-toxic-day-make-or-follow",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-toxic-day-make-or-follow-naive"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-toxic-day-make-or-follow",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-tx-probe"
 version = "0.1.0"
 dependencies = [

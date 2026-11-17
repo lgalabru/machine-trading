@@ -1,0 +1,26 @@
+# The ladder's non-reading rungs for toxic-day-make-or-follow-tsla: a
+# component built once per rung with MTX_NAIVE set, or a process that reads
+# MTX_NAIVE when it starts.
+[package]
+name = "mtx-bot-toxic-day-make-or-follow-naive"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "mtx-toxic-day-make-or-follow-naive"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-toxic-day-make-or-follow = { path = "../../../reference", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../../../../../crates/kit", default-features = false, features = ["component", "venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mtx-kit = { path = "../../../../../../crates/kit" }

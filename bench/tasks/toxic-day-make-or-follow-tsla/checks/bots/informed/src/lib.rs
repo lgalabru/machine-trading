@@ -1,210 +1,92 @@
-//! TODO(informed): this is a copy of the reference. Make it the task's informed
-//! bot, scoring v2's 1: it reads every fact the task's data could tell in
-//! principle (`MTX_REGIME`: the session's latent state, which the verifier
-//! and the ladder's `tell_latent` hand it) but not the session's future,
-//! and trades under the same costs, mandate and latency. Then drop this
-//! paragraph.
+//! The informed bot, scoring v2's 1: told which wallets are the fund's,
+//! and nothing of the session's draws.
 //!
-//! Reference: quote one tick inside the competing makers, skew against
-//! inventory, and trade with the flow when it turns toxic.
+//! It reads `MTX_REGIME`, what the verifier's `--informed` hands it: the
+//! fund's wallets (`wallets.informed`, authorities the session resolves
+//! from the latent's roster). It isn't told whether the morning is toxic or
+//! quiet (how busy the fund is), the path or its jumps, or how far ahead
+//! the fund sees; every session seats the fund, with as many wallets either
+//! way. It trades the same market under the same mandate, costs and
+//! latency as any bot.
 //!
-//! The competitors' half-spread is read once, from their spline account; the
-//! quotes sit that far less one tick either side of a reservation price:
-//! the oracle, shifted against what the bot holds, so a long inventory lowers
-//! both quotes and sheds itself (Avellaneda-Stoikov's idea, with a linear
-//! skew). Holding a quarter of the cap, it stops quoting the side that would
-//! add to it. Fills that pile up one way in a few slots look like informed
-//! flow ahead of a jump: it buys (or sells) a few units the burst's way, pulls
-//! the quote the burst was hitting for a while, and lets the skew unwind the
-//! position after. Only fills that grow the inventory count toward a burst:
-//! the skew unwinding a lean is a run of one-sided fills too, and a maker
-//! that took it for one would lean back and forth on its own. And it leans
-//! with the drift: the further the oracle runs from its recent average, the
-//! further the reservation price follows, so it sells into a falling market
-//! rather than buying all the way down.
-//!
-//! It prices off the oracle, not Phoenix's mark: the mark blends in the
-//! book, and the bot's own best bid or ask pulls it along, so a maker that
-//! quotes around the mark chases its own quotes.
-//!
-//! Its PnL is a published baseline, not the reward's scale (that's the
-//! spread bound plus the hindsight bound). It reacts to its own fills only:
-//! it doesn't read the tape, doesn't tell a fake-out from a real burst, and
-//! leans the same few units whatever the burst's size.
-//!
-//! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
-//! solution), and a process (`src/main.rs`), the anchor hidden sets are
-//! scored against.
+//! Phoenix names traders by their account, a PDA of the wallet, so it maps
+//! each wallet to its account and reads their TSLA positions every step.
+//! Any net buying or selling by the fund over the last 10 slots sets the
+//! side, with the cap, held 40 slots after the fund's last take; between
+//! the fund's trades it makes, as the reference does on a quiet morning.
 
-use std::collections::VecDeque;
+use mtx_bot_toxic_day_make_or_follow::{Lean, Watch, closing, go_to, make};
+use mtx_kit::{log, prelude::*, venue::PhoenixVenue};
 
-use mtx_kit::{
-    log,
-    prelude::*,
-    rpc_account,
-    venue::{PhoenixVenue, phoenix_rise::accounts::spline_collection::SplineCollection},
-};
-
-const SKEW_BPS_PER_UNIT: f64 = 2.5;
-const DRIFT_WEIGHT: f64 = 0.5;
-const DRIFT_SLOTS: f64 = 80.0;
-const DRIFT_MAX_BPS: f64 = 5.0;
-const QUOTE_SIZE: f64 = 1.0;
-const INVENTORY_LIMIT: f64 = 0.25;
-const TOXIC_UNITS: f64 = 1.5;
-const TOXIC_WINDOW_SLOTS: u64 = 8;
-const LEAN_UNITS: f64 = 5.0;
-const TOXIC_SLOTS: u64 = 24;
-const REQUOTE_BPS: f64 = 1.5;
-const REQUOTE_SLOTS: u64 = 12;
+/// Slots the fund's flow is summed over, and the least net that counts.
+const FUND_SLOTS: u64 = 10;
+const FUND_UNITS: f64 = 0.001;
 
 /// The strategy.
-#[derive(Default)]
-pub struct Maker {
-    cap: f64,
-    half_spread_bps: f64,
-    /// (slot, position, position from its quotes' fills) at each step.
-    history: VecDeque<(u64, f64, f64)>,
-    /// What its own market orders added to the position.
-    own: f64,
-    toxic_until: u64,
-    /// Which way the toxic fills took the inventory: +1 long, -1 short.
-    toxic_side: f64,
-    quoted: Option<(u64, f64, f64)>,
-    requotes: u64,
-    /// The oracle's recent average, and the slot it was last updated at.
-    average: Option<(u64, f64)>,
+pub struct Informed {
+    start_slot: u64,
+    watch: Watch,
+    lean: Lean,
+    /// Whether it makes between the fund's trades.
+    makes: bool,
 }
 
-impl Strategy for Maker {
+impl Default for Informed {
+    fn default() -> Self {
+        Self {
+            start_slot: 0,
+            watch: Watch::default(),
+            lean: Lean::default(),
+            makes: option_env!("MTX_INFORMED_MAKE") != Some("0"),
+        }
+    }
+}
+
+impl Strategy for Informed {
     fn start(&mut self, session: &Session) -> BotResult {
-        self.cap = session.mandate.universe[0].max_position;
-        self.half_spread_bps = competitor_half_spread_bps(session)?;
+        self.start_slot = session.start_slot;
+        let told = session
+            .var("MTX_REGIME")
+            .ok_or("no MTX_REGIME: the informed bot is told the session's latent state")?;
+        let told: serde_json::Value = serde_json::from_str(told)?;
+        let fund: Vec<String> = told["wallets"]["informed"]
+            .as_array()
+            .ok_or("MTX_REGIME names no informed wallets")?
+            .iter()
+            .filter_map(|w| w.as_str().map(str::to_string))
+            .collect();
+        let venue = PhoenixVenue::from_json(&session.venue)?;
+        let accounts = Watch::of_authorities(&venue, &fund)?;
         log(&format!(
-            "one tick inside the competitor: {:.3} bps; quoting a cap of {}",
-            self.half_spread_bps, self.cap
+            "fund {} wallets, accounts {accounts:?}, makes {}",
+            fund.len(),
+            self.makes
         ));
+        self.watch = Watch::new(&venue, &session.symbol, accounts, FUND_SLOTS + 20)?;
         Ok(())
     }
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
-        let (slot, mark, held, cap) = (market.slot, market.oracle, market.position.size, self.cap);
-        let filled = held - self.own;
-        self.history.push_back((slot, held, filled));
-        while self
-            .history
-            .front()
-            .is_some_and(|(s, ..)| s + TOXIC_WINDOW_SLOTS < slot)
-        {
-            self.history.pop_front();
-        }
-        if let Some(&(_, held_then, then)) = self.history.front()
-            && (filled - then).abs() >= TOXIC_UNITS
-            && held.abs() > held_then.abs()
-            && self.toxic_until <= slot
-        {
-            log(&format!("slot {slot}: one-sided fills; backing off"));
-            self.toxic_until = slot + TOXIC_SLOTS;
-            self.toxic_side = (filled - then).signum();
-            let lean = -self.toxic_side * LEAN_UNITS - held;
-            if lean.abs() >= 0.5 {
-                let size = lean.abs().min(cap);
-                orders.cancel_all();
-                if lean > 0.0 {
-                    orders.buy(size, round_cents(mark * 1.003));
-                } else {
-                    orders.sell(size, round_cents(mark * 0.997));
-                }
-                self.own += size.copysign(lean);
-                return Ok(());
-            }
-        }
-        let toxic = slot < self.toxic_until;
-
-        let mean = match self.average {
-            Some((at, mean)) => {
-                let weight = 1.0 - (-((slot - at) as f64) / DRIFT_SLOTS).exp();
-                mean + weight * (mark - mean)
-            }
-            None => mark,
-        };
-        self.average = Some((slot, mean));
-        let drift_bps =
-            (DRIFT_WEIGHT * (mark / mean - 1.0) * 10_000.0).clamp(-DRIFT_MAX_BPS, DRIFT_MAX_BPS);
-        let reservation = mark * (1.0 + (drift_bps - SKEW_BPS_PER_UNIT * held) / 10_000.0);
-        let half = self.half_spread_bps;
-        let bid = reservation * (1.0 - half / 10_000.0);
-        let ask = reservation * (1.0 + half / 10_000.0);
-        let moved = self.quoted.is_none_or(|(at, b, a)| {
-            slot >= at + REQUOTE_SLOTS
-                || ((bid - b) / mark).abs() * 10_000.0 >= REQUOTE_BPS
-                || ((ask - a) / mark).abs() * 10_000.0 >= REQUOTE_BPS
-        });
-        if !moved {
-            return Ok(());
-        }
-
+        let at = market.slot.saturating_sub(self.start_slot);
         orders.cancel_all();
-        let bid_size = QUOTE_SIZE.min(cap - held);
-        let ask_size = QUOTE_SIZE.min(cap + held);
-        let mut quotes = [
-            (
-                Side::Bid,
-                bid,
-                bid_size,
-                held < INVENTORY_LIMIT * cap && !(toxic && self.toxic_side > 0.0),
-            ),
-            (
-                Side::Ask,
-                ask,
-                ask_size,
-                held > -INVENTORY_LIMIT * cap && !(toxic && self.toxic_side < 0.0),
-            ),
-        ];
-        if self.requotes % 2 == 1 {
-            quotes.reverse();
+        self.watch.read(at)?;
+        let net: f64 = self.watch.changes(FUND_SLOTS).iter().sum();
+        if net.abs() >= FUND_UNITS {
+            self.lean.signal(net.signum(), at);
         }
-        self.requotes += 1;
-        for (side, price, size, wanted) in quotes {
-            if wanted && size >= 0.01 {
-                match side {
-                    Side::Bid => orders.bid(price, size),
-                    Side::Ask => orders.ask(price, size),
-                };
-            }
+        self.lean.manage(at);
+        if closing(market) {
+            go_to(0.0, market, orders);
+        } else if self.lean.dir != 0.0 {
+            go_to(self.lean.dir * market.cap, market, orders);
+        } else if self.makes && market.position.size.abs() <= market.cap * 0.75 {
+            make(market, orders);
+        } else {
+            go_to(0.0, market, orders);
         }
-        self.quoted = Some((slot, bid, ask));
         Ok(())
     }
 }
 
-/// The competing makers' half-spread less one tick, in basis points of the
-/// starting oracle: the closest any enabled spline quotes to its mid.
-fn competitor_half_spread_bps(session: &Session) -> BotResult<f64> {
-    let venue = PhoenixVenue::from_json(&session.venue)?;
-    let market = venue.market(&session.symbol)?;
-    let data = rpc_account(&market.spline_pubkey)?.ok_or("no spline account")?;
-    let collection = SplineCollection::try_from_account_bytes(&data).map_err(|e| e.to_string())?;
-    let inner = collection
-        .splines()
-        .filter_map(|s| s.ok())
-        .filter(|s| s.is_enabled())
-        .flat_map(|s| {
-            s.active_bid_regions()
-                .iter()
-                .chain(s.active_ask_regions())
-                .map(|r| r.start_offset().as_inner())
-                .collect::<Vec<_>>()
-        })
-        .min()
-        .ok_or("no competing quotes")?;
-    let tick_usd = venue.ticks_to_usd(market, 1);
-    Ok(((inner.saturating_sub(1)) as f64 * tick_usd / session.start_oracle * 10_000.0).max(1.0))
-}
-
-fn round_cents(usd: f64) -> f64 {
-    (usd * 100.0).round() / 100.0
-}
-
 #[cfg(target_arch = "wasm32")]
-mtx_kit::export!(Maker);
+mtx_kit::export!(Informed);

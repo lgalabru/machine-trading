@@ -1,9 +1,9 @@
-//! The market-making reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
-//! run loop. The anchor hidden sets are scored against runs this way.
+//! The informed bot as a process: the strategy in `lib.rs`, on `mtx-kit`'s
+//! run loop, told each session's latent state as `MTX_REGIME`.
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> mtx_kit::BotResult {
-    mtx_kit::run(mtx_bot_toxic_day_make_or_follow_informed::Maker::default())
+    mtx_kit::run(mtx_bot_toxic_day_make_or_follow_informed::Informed::default())
 }
 
 // The component is the library: a wasm build has no process to run.
