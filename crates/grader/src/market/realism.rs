@@ -1167,25 +1167,8 @@ pub fn short_session_checks(
     }
     // Jumps: whole minutes.
     let threshold = JUMP_SIGMAS * real_1s * JUMP_BAR_SECONDS.sqrt();
-    let (mut bars, mut jumps) = (0usize, Vec::new());
-    for session in sessions {
-        let slots = session.log_levels.len().saturating_sub(1);
-        for i in 0..slots / per_bar {
-            let (from, to) = (i * per_bar, (i + 1) * per_bar);
-            if session
-                .masked_slots
-                .iter()
-                .any(|m| (from as u64..=to as u64).contains(m))
-            {
-                continue;
-            }
-            bars += 1;
-            let r = (price(session, to) / price(session, from)).ln();
-            if r.abs() > threshold {
-                jumps.push(r.abs());
-            }
-        }
-    }
+    let reference = reference_sessions(calibration, realism, sessions);
+    let (bars, jumps) = minute_jumps(sessions, per_bar, threshold, &price);
     let hours = bars as f64 * JUMP_BAR_SECONDS / 3_600.0;
     let jumping = &calibration.fair_value.jumps;
     if bars == 0 {
@@ -1194,22 +1177,28 @@ pub fn short_session_checks(
             "no session holds a whole minute",
         ));
     } else {
-        let expected = jumping.per_hour * hours;
+        // The calibration's rate, or the calibrated model's own at these
+        // lengths where that is higher: the model's tails aren't fitted to
+        // the jump rule, so its sessions can't be asked for fewer jumps than
+        // they make.
+        let model_rate = reference.as_ref().map(|reference| {
+            let (bars, jumps) = minute_jumps(reference, per_bar, threshold, &price);
+            jumps.len() as f64 / (bars.max(1) as f64 * JUMP_BAR_SECONDS / 3_600.0)
+        });
+        let rate = jumping.per_hour.max(model_rate.unwrap_or(0.0));
+        let expected = rate * hours;
         let slack = (sigmas * (JUMP_DISPERSION * expected).sqrt() + 1.0) / hours;
         let band = Band {
             ratio: None,
             diff: Some(slack),
         };
-        let mut check = judge(
-            "short_jump_rate",
-            jumping.per_hour,
-            jumps.len() as f64 / hours,
-            band,
-        );
+        let mut check = judge("short_jump_rate", rate, jumps.len() as f64 / hours, band);
         check.detail = format!(
-            "{} jumps (a minute past {:.2}%) in {hours:.1} h of sessions, per hour; expected {expected:.1}; {}",
+            "{} jumps (a minute past {:.2}%) in {hours:.1} h of sessions, per hour; expected {expected:.1} at {rate:.2} an hour (the calibration's {:.2}, the calibrated model's own at these lengths {}); {}",
             jumps.len(),
             threshold * 100.0,
+            jumping.per_hour,
+            model_rate.map_or("not drawn".to_string(), |r| format!("{r:.2}")),
             check.detail
         );
         checks.push(check);
@@ -1240,32 +1229,77 @@ pub fn short_session_checks(
             },
         ));
     }
-    checks.extend(range_checks(calibration, realism, sessions, sigmas));
+    checks.extend(range_checks(reference.as_deref(), sessions, sigmas));
     checks
 }
 
-/// The sessions' high-to-low range against sessions of the same lengths from
-/// the calibration's own model, at the median and the 90th percentile.
-fn range_checks(
+/// As many sessions of the same lengths, twice over, from the calibration's
+/// own model, each inside a session of the reference windows' kind: what the
+/// calibration says sessions of those lengths look like. `None` where the
+/// calibration can't draw them.
+fn reference_sessions(
     calibration: &Calibration,
     realism: &Realism,
     sessions: &[SessionPath],
-    sigmas: f64,
-) -> Vec<Check> {
-    let names = ["short_range_median", "short_range_p90"];
-    let skipped = |why: String| {
-        names
-            .iter()
-            .map(|n| Check::skipped(n, why.clone()))
-            .collect()
-    };
+) -> Option<Vec<SessionPath>> {
     let mut spec = ModelSpec::default();
     if let Some(kind) = &realism.session_kind {
         spec.start = Start::Session { kind: kind.clone() };
     }
-    let model = match MarketModel::new(calibration.clone(), spec) {
-        Ok(model) => model,
-        Err(why) => return skipped(format!("no model to draw the reference from: {why}")),
+    let model = MarketModel::new(calibration.clone(), spec).ok()?;
+    Some(
+        (0..2 * sessions.len())
+            .map(|i| {
+                let duration = (sessions[i % sessions.len()].log_levels.len() - 1) as u64;
+                SessionPath::from_model(&model.draw(0x7261_6e67_6500_0000 ^ i as u64, duration))
+            })
+            .collect(),
+    )
+}
+
+/// How many whole `per_bar`-slot minutes the sessions hold (gaps left out),
+/// and the absolute moves of those past `threshold` (a log return).
+fn minute_jumps(
+    sessions: &[SessionPath],
+    per_bar: usize,
+    threshold: f64,
+    price: &dyn Fn(&SessionPath, usize) -> f64,
+) -> (usize, Vec<f64>) {
+    let (mut bars, mut jumps) = (0usize, Vec::new());
+    for session in sessions {
+        let slots = session.log_levels.len().saturating_sub(1);
+        for i in 0..slots / per_bar {
+            let (from, to) = (i * per_bar, (i + 1) * per_bar);
+            if session
+                .masked_slots
+                .iter()
+                .any(|m| (from as u64..=to as u64).contains(m))
+            {
+                continue;
+            }
+            bars += 1;
+            let r = (price(session, to) / price(session, from)).ln();
+            if r.abs() > threshold {
+                jumps.push(r.abs());
+            }
+        }
+    }
+    (bars, jumps)
+}
+
+/// The sessions' high-to-low range against the reference sessions', at the
+/// median and the 90th percentile.
+fn range_checks(
+    reference: Option<&[SessionPath]>,
+    sessions: &[SessionPath],
+    sigmas: f64,
+) -> Vec<Check> {
+    let names = ["short_range_median", "short_range_p90"];
+    let Some(reference) = reference else {
+        return names
+            .iter()
+            .map(|n| Check::skipped(n, "no model to draw the reference sessions from"))
+            .collect();
     };
     let range = |levels: &[f64]| {
         let (lo, hi) = levels
@@ -1276,15 +1310,7 @@ fn range_checks(
         hi.exp() / lo.exp() - 1.0
     };
     let generated: Vec<f64> = sessions.iter().map(|s| range(&s.log_levels)).collect();
-    // As many reference sessions as generated ones, at the same lengths,
-    // twice over: the reference's own spread is then the smaller.
-    let reference: Vec<f64> = (0..2 * sessions.len())
-        .map(|i| {
-            let duration = (sessions[i % sessions.len()].log_levels.len() - 1) as u64;
-            let path = model.draw(0x7261_6e67_6500_0000 ^ i as u64, duration);
-            range(&path.log_levels)
-        })
-        .collect();
+    let reference: Vec<f64> = reference.iter().map(|s| range(&s.log_levels)).collect();
     let mut out = Vec::new();
     for (name, q) in names.iter().zip([0.5, 0.9]) {
         let (real, got) = (quantile(&reference, q), quantile(&generated, q));
