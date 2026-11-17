@@ -242,6 +242,10 @@ pub struct SessionReport {
     /// Phoenix recorded them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub making_fills: Vec<crate::making::MakingFill>,
+    /// A market-making session with quoting obligations: how the bot met
+    /// them (see [`crate::obligations`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obligations: Option<crate::obligations::ObligationReport>,
     /// The transaction layer: each slot's block in order, what became of
     /// each of the bot's sends, and what it paid.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -464,6 +468,11 @@ pub struct TurnReport {
     /// a transaction layer, accepted and not applied elsewhere.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tx_options: Option<u64>,
+    /// Under a mandate that allows taking only to reduce: a component's
+    /// orders the grader refused before they went out, for taking to open,
+    /// add to or flip the position (see [`crate::taking`]). Not a breach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refused_takes: Option<u64>,
 }
 
 impl SessionReport {
@@ -487,6 +496,7 @@ impl SessionReport {
                         instrument: fill.instrument.clone(),
                         side: fill.side,
                         price: fill.price,
+                        worst_price: fill.worst_price.unwrap_or(fill.price),
                     }),
             )
             .collect();
@@ -500,6 +510,8 @@ impl SessionReport {
             .collect();
         observed.samples = self.samples.clone();
         observed.term_start = self.term_start.clone();
+        observed.takes =
+            crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
         observed
     }
 }
@@ -670,6 +682,26 @@ pub(crate) trait Account: Send + Sync {
         Ok(())
     }
 
+    /// After the bot's turn, at `slot`, before the next step's takers
+    /// trade: what it left quoting, for a market maker's obligations (see
+    /// [`crate::obligations`]). Nothing by default.
+    async fn sample_quotes(&mut self, _slot: u64) -> Result<()> {
+        Ok(())
+    }
+
+    /// Under a mandate that allows taking only to reduce, in a market-making
+    /// session: the check the RPC guard runs on a process bot's sends.
+    fn take_gate(&self) -> Option<std::sync::Arc<crate::taking::TakeGate>> {
+        None
+    }
+
+    /// At `slot`, before the bot's turn: the best bid and ask on the book
+    /// that aren't the bot's own orders, once the session can tell which
+    /// are (see [`crate::taking`]). Nothing by default.
+    async fn net_touch(&self, _slot: u64) -> Result<Option<crate::taking::Touch>> {
+        Ok(None)
+    }
+
     /// The session is over: measure the account a last time and report.
     async fn finish(self: Box<Self>, done: Done) -> Result<SessionReport>;
 }
@@ -807,6 +839,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     // grader calls (`crate::wasm`, RFD 0002).
     let mut process = None;
     let mut wasm_bot = None;
+    let mut take_gate: Option<std::sync::Arc<crate::taking::TakeGate>> = None;
     let legacy;
     if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
         let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
@@ -886,6 +919,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         if user.is_none() {
             return Err(Error::NoBotUser);
         }
+        take_gate = account.take_gate();
+        if let Some(gate) = &take_gate {
+            guard.set_send_gate(gate.clone());
+        }
         let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
         let told: Vec<(String, String)> = told.into_iter().chain(vars).collect();
         let child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs, &told)?;
@@ -943,6 +980,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         // pick off every quote: a sniper the task doesn't describe. Here the
         // toxic flow is the informed flow, ahead of the jumps.
         guard.set_turn(legacy);
+        // What the last turn left quoting, before the takers trade on it.
+        if k > 0 && closing.is_none() {
+            account.sample_quotes(slot).await?;
+        }
         cast.before_blocks().await;
         // A scenario's clock jump lands before the step's blocks.
         if let Some(warp) = scenario.warps.iter().find(|w| w.step == k) {
@@ -1128,6 +1169,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     },
                 });
             }
+            if bot.refused_takes().is_some() {
+                bot.touched(account.net_touch(slot).await?);
+            }
             let started = Instant::now();
             account.turn_data(&mut step).await?;
             let answered = bot.turn(&step, account.wallet()).await;
@@ -1163,11 +1207,18 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             record.answered = Some(answered);
         }
     }
+    // And what the last turn left.
+    if steps > 0 && closing.is_none() {
+        account.sample_quotes(slot).await?;
+    }
     guard.set_turn(false);
     cast.end().await;
     if let Some((mut child, mut writer, _)) = process {
         let _ = send(&mut writer, &Message::End).await;
         stop_bot(&mut child, workdir.bot_user.and(user)).await;
+    }
+    if let Some(gate) = &take_gate {
+        turns.refused_takes = Some(gate.refused());
     }
     if let Some(bot) = wasm_bot.as_mut() {
         if closing.is_none() {
@@ -1178,6 +1229,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         turns.fuel_max_call = Some(max_call);
         turns.stopped = bot.stopped.clone();
         turns.tx_options = (bot.tx_options > 0).then_some(bot.tx_options);
+        turns.refused_takes = bot.refused_takes();
     }
     if let Some(close) = &closing
         && turns.stopped.is_none()

@@ -1777,6 +1777,7 @@ mod tests {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            obligations: None,
             tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
@@ -1804,6 +1805,7 @@ mod tests {
             side,
             price,
             base: 1.0,
+            worst_price: None,
             forced: false,
         };
         // A buy and a sell inside one step net to nothing; the sell is still
@@ -2849,6 +2851,7 @@ mod tests {
             side,
             price: 100.0,
             base: 70.0,
+            worst_price: None,
             forced,
         };
         liquidated.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
@@ -2900,6 +2903,7 @@ mod tests {
             side,
             price: 100.0,
             base: 70.0,
+            worst_price: None,
             forced,
         };
         stopped.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
@@ -2963,6 +2967,7 @@ mod tests {
             side,
             price: 100.0,
             base: 10.0,
+            worst_price: None,
             forced,
         };
         stopped.perp_fills = vec![

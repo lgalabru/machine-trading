@@ -10,6 +10,11 @@ publish = false
 name = "mtx-subaccount-probe"
 path = "src/main.rs"
 
+[features]
+# Buy one unit instead of twice the cap: well inside the position cap, so
+# only a rule on taking can object.
+one-unit = []
+
 [dependencies]
 mtx-kit = { path = "../../crates/kit" }
 solana-compute-budget-interface = "3"

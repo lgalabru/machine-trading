@@ -3,8 +3,8 @@
 //!
 //! On its first turn it registers an isolated Phoenix subaccount, syncs it
 //! with its cross-margin account, moves collateral into it and buys twice
-//! its position cap there: one transaction, which it signs and sends
-//! itself. Then it holds. What the transaction did is logged as `probe:`
+//! its position cap there (one unit, with the `one-unit` feature): one
+//! transaction, which it signs and sends itself. Then it holds. What the transaction did is logged as `probe:`
 //! lines, which the check reads.
 
 use mtx_kit::{
@@ -49,7 +49,11 @@ impl Probe {
         let child = TraderKey::derive_pda(&owner, 0, SUBACCOUNT);
         let lots = phoenix.base_units_to_lots(
             phoenix.market(&env.symbol).map_err(|e| e.to_string())?,
-            2.0 * env.max_position,
+            if cfg!(feature = "one-unit") {
+                1.0
+            } else {
+                2.0 * env.max_position
+            },
         );
         let ticket = MarketOrderTicket::builder()
             .authority(owner)

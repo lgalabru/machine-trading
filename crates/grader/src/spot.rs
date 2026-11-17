@@ -161,6 +161,7 @@ impl SpotReport {
                 instrument: fill.instrument.clone(),
                 side: fill.side,
                 price: fill.price,
+                worst_price: fill.price,
             })
             .collect()
     }
@@ -1170,6 +1171,7 @@ impl Account for SpotAccount {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            obligations: None,
             tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,
