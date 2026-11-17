@@ -670,16 +670,29 @@ fn read_on(mode: Mode, leg: &mut Leg, oracle: f64, now: u64, start: u64, end: u6
             }
             // A move under way with the flow behind it confirms itself.
             leg.marks.push_back((now, oracle));
-            while leg.marks.front().is_some_and(|(at, _)| at + MOVE_SLOTS < now) {
+            while leg
+                .marks
+                .front()
+                .is_some_and(|(at, _)| at + MOVE_SLOTS < now)
+            {
                 leg.marks.pop_front();
             }
             let first = leg.marks.front().map_or(oracle, |(_, p)| *p);
             let run = (oracle / first - 1.0) * 1e4;
             let flow = leg.net_flow(into);
-            if leg.read == Read::Calm && now >= leg.quiet_until && run.abs() >= CONFIRM_BPS && run * flow > 0.0 {
+            if leg.read == Read::Calm
+                && now >= leg.quiet_until
+                && run.abs() >= CONFIRM_BPS
+                && run * flow > 0.0
+            {
                 let low = leg.marks.iter().map(|(_, p)| *p).fold(oracle, f64::min);
-                leg.read = if run < 0.0 { Read::Falling } else { Read::Rising };
-                (leg.watch_from, leg.watch_oracle, leg.watch_sold, leg.low) = (now, first, 0.0, low);
+                leg.read = if run < 0.0 {
+                    Read::Falling
+                } else {
+                    Read::Rising
+                };
+                (leg.watch_from, leg.watch_oracle, leg.watch_sold, leg.low) =
+                    (now, first, 0.0, low);
             }
             let moved = (oracle / leg.watch_oracle.max(1e-9) - 1.0) * 1e4;
             match leg.read {
