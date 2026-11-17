@@ -644,6 +644,26 @@ impl Drop for PrivateDir {
     }
 }
 
+/// A phase's log files, by path relative to its log directory.
+type HeldLogs = Vec<(std::path::PathBuf, Vec<u8>)>;
+
+/// What a trusted phase logged, taken out of its private directory. A phase
+/// that failed has run before any bot did, and its logs are the only evidence
+/// of why, so they are written to `to` at once.
+fn keep_logs<T>(ran: Result<T>, logs: PrivateDir, to: &Path) -> Result<(T, HeldLogs)> {
+    let held = read_files(&logs.0);
+    match (ran, held) {
+        (Ok(value), Ok(held)) => Ok((value, held)),
+        (Ok(_), Err(e)) => Err(e),
+        (Err(e), held) => {
+            if let Ok(held) = held {
+                let _ = write_files(to, &held);
+            }
+            Err(e)
+        }
+    }
+}
+
 /// Every file under `dir`, by its path relative to `dir`, read into
 /// memory.
 fn read_files(dir: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
@@ -731,29 +751,36 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     let mut scenarios = opts.scenarios.to_vec();
     let mut anchored = Vec::new();
     // The reference plays the bot's world, so its logs say when its flow
-    // arrives: held like the informed bot's, written after the bot has run.
+    // arrives, and the informed bot's may say what it was told: each phase
+    // logs where only the grader can enter and is held in memory, with
+    // nothing of it on disk, while the bot runs.
     let mut reference_logs = None;
     if let Some(reference) = opts.reference_dir {
         let logs = PrivateDir::create("mtx-reference-logs")?;
-        let anchors = run_sessions(
-            opts.snapshot_dir,
-            reference,
-            &scenarios,
-            &logs.0,
-            opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
-            None,
-            false,
-            true,
-            None,
-            opts.keys.role("reference"),
-            // The anchor's drawdown at the bot's granularity.
-            session::Rules {
-                every_slot: opts.v2_sessions,
-            },
-        )
-        .await?;
-        check_timing(&anchors)?;
-        check_anchors("the reference", &anchors)?;
+        let ran = async {
+            let anchors = run_sessions(
+                opts.snapshot_dir,
+                reference,
+                &scenarios,
+                &logs.0,
+                opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
+                None,
+                false,
+                true,
+                None,
+                opts.keys.role("reference"),
+                // The anchor's drawdown at the bot's granularity.
+                session::Rules {
+                    every_slot: opts.v2_sessions,
+                },
+            )
+            .await?;
+            check_timing(&anchors)?;
+            check_anchors("the reference", &anchors)?;
+            Ok(anchors)
+        }
+        .await;
+        let (anchors, held) = keep_logs(ran, logs, &opts.log_dir.join("reference"))?;
         for (scenario, anchor) in scenarios.iter_mut().zip(&anchors) {
             scenario.reference_pnl_usd = Some((anchor.pnl_usd * 100.0).round() / 100.0);
         }
@@ -762,34 +789,35 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "reference graded"
         );
         anchored = anchors;
-        reference_logs = Some(read_files(&logs.0)?);
-        drop(logs);
+        reference_logs = Some(held);
     }
     let mut informed_sessions = Vec::new();
-    // The informed bot's logs may say what it was told: written where only
-    // the grader can enter, then held in memory, with nothing of them on
-    // disk, while the bot runs.
     let mut informed_logs = None;
     if let Some(informed) = &opts.informed {
         let logs = PrivateDir::create("mtx-informed-logs")?;
-        let sessions = run_sessions(
-            opts.snapshot_dir,
-            informed.dir,
-            &scenarios,
-            &logs.0,
-            opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
-            informed.latent,
-            false,
-            true,
-            None,
-            opts.keys.role("informed"),
-            session::Rules {
-                every_slot: opts.v2_sessions,
-            },
-        )
-        .await?;
-        check_timing(&sessions)?;
-        check_anchors("the informed bot", &sessions)?;
+        let ran = async {
+            let sessions = run_sessions(
+                opts.snapshot_dir,
+                informed.dir,
+                &scenarios,
+                &logs.0,
+                opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
+                informed.latent,
+                false,
+                true,
+                None,
+                opts.keys.role("informed"),
+                session::Rules {
+                    every_slot: opts.v2_sessions,
+                },
+            )
+            .await?;
+            check_timing(&sessions)?;
+            check_anchors("the informed bot", &sessions)?;
+            Ok(sessions)
+        }
+        .await;
+        let (sessions, held) = keep_logs(ran, logs, &opts.log_dir.join("informed"))?;
         // As `calibrate --informed` saves them in a scenario file.
         for (scenario, session) in scenarios.iter_mut().zip(&sessions) {
             scenario.informed_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
@@ -801,17 +829,34 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "informed bot graded"
         );
         informed_sessions = sessions;
-        informed_logs = Some(read_files(&logs.0)?);
-        drop(logs);
+        informed_logs = Some(held);
     }
+    // No bot has run yet, or every bot has stopped: where a later phase
+    // fails, the held logs are the evidence of why, so they are written
+    // before the error goes on.
+    let publish_held = || -> Result<()> {
+        if let Some(logs) = &reference_logs {
+            write_files(&opts.log_dir.join("reference"), logs)?;
+        }
+        if let Some(logs) = &informed_logs {
+            write_files(&opts.log_dir.join("informed"), logs)?;
+        }
+        Ok(())
+    };
     // What doing nothing makes, where it isn't 0: measured by a bot that
     // does nothing, so no rule has to say what holding the start is worth.
     let nops = if opts.v2_sessions {
-        run_nop(&opts, &scenarios).await?
+        match run_nop(&opts, &scenarios).await {
+            Ok(nops) => nops,
+            Err(e) => {
+                publish_held()?;
+                return Err(e);
+            }
+        }
     } else {
         vec![None; scenarios.len()]
     };
-    let sessions = run_sessions(
+    let ran = run_sessions(
         opts.snapshot_dir,
         opts.bot_dir,
         &scenarios,
@@ -826,16 +871,12 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             every_slot: opts.v2_sessions,
         },
     )
-    .await?;
+    .await;
+    // Every bot has stopped: the held logs join the others, and the
+    // scenarios can be written out.
+    publish_held()?;
+    let sessions = ran?;
     check_timing(&sessions)?;
-    // Every bot has stopped: the reference's and the informed bot's logs join
-    // the others, and the scenarios can be written out.
-    if let Some(logs) = &reference_logs {
-        write_files(&opts.log_dir.join("reference"), logs)?;
-    }
-    if let Some(logs) = &informed_logs {
-        write_files(&opts.log_dir.join("informed"), logs)?;
-    }
     if let Some(dir) = opts.detail_dir {
         // Whatever a bot left there goes first, links included: the
         // grader writes as root.
@@ -1715,6 +1756,28 @@ mod tests {
 
     use super::*;
     use crate::scenario::{VENUE, Waypoint};
+
+    #[test]
+    fn a_failed_trusted_phase_leaves_its_logs_and_a_good_one_holds_them() {
+        let to = std::env::temp_dir().join(format!("mtx-keep-logs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&to);
+        let logs = PrivateDir::create("mtx-keep-logs-test").unwrap();
+        std::fs::write(logs.0.join("hidden-1.log"), "the reference crashed").unwrap();
+        let held = keep_logs(Ok(7), logs, &to).unwrap();
+        assert_eq!(held.0, 7);
+        assert_eq!(held.1.len(), 1);
+        assert!(!to.exists(), "a good phase's logs wait for the bot to end");
+
+        let logs = PrivateDir::create("mtx-keep-logs-test").unwrap();
+        std::fs::write(logs.0.join("hidden-1.log"), "the reference crashed").unwrap();
+        let held = keep_logs::<()>(Err(Error::Jobs(0, 1)), logs, &to);
+        assert!(held.is_err());
+        assert_eq!(
+            std::fs::read_to_string(to.join("hidden-1.log")).unwrap(),
+            "the reference crashed"
+        );
+        let _ = std::fs::remove_dir_all(&to);
+    }
 
     #[tokio::test]
     async fn a_components_only_grade_of_a_process_bot_scores_zero() {
