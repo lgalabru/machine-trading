@@ -2,53 +2,131 @@
 
 Written to `skills/trading-task-design/references/design-record.md`. The
 README says what the task is; this says why it's built this way, and what
-each version learned.
+each version learned. It is card B3 of the batch-2 cards
+(`TASK_CARDS_BATCH2.md`); the departures from the card are listed last.
 
 ## Thesis
 
 A good bot profits here because it reads who leads a run through a round level (one hunter wallet pushing, or informed wallets building) and whether the oracle follows, then fades the hunt or follows the break before it resolves.
 
-- **Wins:** fading a hunter push while the book is through the level; following informed flow into a break before the level jumps
-- **Loses:** fading every run loses the breaks; following every run loses the hunts; waiting for the oracle enters breaks late and misses hunts that end first
-- **Regimes:** every session: 1-3 stop hunts and 1-3 real breaks through a 2-dollar grid, mirrored
-- **Mandate:** 12 SPCX position cap, $500 loss limit, 72 hidden sessions per grade.
+- **Wins:** fading a hunter's push while the book is through the level; following informed flow into a break, before the level jumps if it can.
+- **Loses:** fading every run loses the breaks; following every run loses the hunts; waiting for the oracle enters breaks late and misses hunts that end first; trading every crossing of the grid pays costs on runs nobody led.
+- **Regimes:** every session has 1 to 3 hunts and 1 to 3 breaks, mirrored up and down.
+- **Mandate:** TSLA only, ±12 TSLA, a $500 loss limit; a position left at the close is closed at the oracle less 5 bp.
 
 ## Expert research
 
-<!-- TODO: why this is a real expert task, the expert's method, where non-experts go wrong, with sources. -->
+Stops cluster at round numbers, and price runs through them are the classic
+place where liquidity is engineered (Osler 2003, "Currency orders and
+exchange rate dynamics: an explanation for the predictive success of
+technical analysis"; Osler 2005 on stop-loss cascades). A desk's question at
+the moment of a break is whether it is information or a run on the stops:
+
+- **Who is trading.** Informed flow comes from several accounts building a
+  position over time (Kyle 1985; Easley, Kiefer and O'Hara on informed
+  order arrival); a stop run is one large aggressive order followed by the
+  same account unwinding.
+- **Whether fair value moves.** A hunter can push a book but not the
+  reference price: an index or oracle that doesn't follow is evidence of a
+  run, one that does is evidence of information.
+- **Speed.** The fade pays only while the book is through the level; waiting
+  for full confirmation gives up most of it, which is why desks read the
+  tape rather than the chart.
+
+The non-expert trades the chart: it buys every breakout or sells every one.
 
 ## The central decision
 
-<!-- TODO: the one decision the task is about, and the options that look defensible. -->
+At each run through a level: fade it (bet the book comes back to the
+level), follow it (bet the level goes on), or stay out. The evidence is on
+chain: every trader's Phoenix account, its position step by step, and the
+oracle.
 
 ## Variants
 
-<!-- TODO: each regime and the best response to it; a table of which habit fails where. -->
+| Run | Best response | Fade every run | Follow every run | Wait for the oracle |
+| --- | --- | --- | --- | --- |
+| Hunt | fade at once, cover when the book comes back | right | loses the excursion and the approach | right only if the hold outlasts the wait |
+| Break | follow the informed flow, before the jump if it shows early | loses the follow-through | gains the follow-through less the excursion | enters late, or fades the creep |
+| Drift through a level (no one leads) | stay out | pays costs | pays costs | pays costs |
 
 ## Levers
 
-<!-- TODO: what the market does, what a good bot does, and how an honest operator detects each lever. -->
+| Lever | What the market does | What a good bot does | How an honest operator detects it |
+| --- | --- | --- | --- |
+| The hunter | 2 wallets, one per hunt; pushes 2.4-4.8 TSLA a couple of slots before the run, trades the same size back its hold later | fade the run it leads; remember the wallet | trader accounts' positions (`getProgramAccounts`, then `getMultipleAccounts` each step), or the fills |
+| The informed | 2-3 wallets that trade the oracle's move 20-60 slots ahead of it | follow their flow | the same accounts, building one way before or as the book runs |
+| The excursion | the book's makers jump 0.15-0.45% through the level, hunts and breaks alike | nothing: it doesn't tell them apart | the book |
+| The oracle | stays put in a hunt; creeps then jumps in a break | a confirmation, not a trigger | `market.oracle` |
+| Chasers and noise | chasers take the way the book moved; noise either way | ignore them | they join after the run starts |
 
 ## No tells
 
-<!-- TODO: the audit: nothing in the path's shape gives away what a trader couldn't see. -->
+- Every session seats every actor (noise, chasers, the informed, the
+  hunter's two wallets) and has both kinds of run; the roster the informed
+  bot is told never depends on which runs come.
+- Hunts and breaks draw the excursion, the approach and the time the book
+  spends through the level from the same ranges.
+- The run's way is the side the walk approaches the nearest level from, so
+  runs go up and down with equal odds.
+- The hunter's schedule (`at_slots`) and the path's premiums are in the
+  scenario file, which the bot never sees.
 
 ## Detectability
 
-<!-- TODO: how early a good bot can tell the regime, measured on generated sets. -->
+From the Gate 0 ladder (README), the reference, reading only the session's
+new takers, calls about three in four runs right, at the moment the book
+runs; the informed bot knows the wallets and is right on nearly every run,
+and on breaks often enters before the book moves.
 
 ## Fairness
 
-<!-- TODO: what the agent is told, what it can learn from practice, and that the reference stays inside the mandate. -->
+- The instruction states the family's every range: the grid, the counts of
+  hunts and breaks, the excursion and follow-through, the hunter's size,
+  hold and trigger, the informed horizon and pace, the noise and chasers.
+- Everything a good bot uses is on chain: trader accounts and their
+  positions, the book, the oracle.
+- Practice is six sessions from the family.
+- The reference stays inside the mandate in every session.
+
+## The anchors
+
+- **The reference (0.5)** lists Phoenix's trader accounts, keeps those that
+  are new this session and take liquidity, and classifies each run by its
+  leader (a single pusher, or a known hunter), the crowd that built a
+  position before it, and the oracle when those disagree. It isn't told
+  who anyone is.
+- **The informed bot (1)** is told the informed and hunter wallets, the
+  hunter's hold and trigger, the grid and the informed horizon (identity
+  and process facts; `LATENT_FIELDS`), never where, when or which way a run
+  goes or whether it is a hunt. It fades a hunter's push once the book is
+  through, and follows the informed wallets' flow at once.
 
 ## Failure modes, priced
 
-<!-- TODO: each way a bot can lose, and what it costs. -->
+See the README's baselines: following every run and fading every run lose
+about $20-35 a session; waiting for the oracle loses a little; staying out
+of runs nobody led is worth more than any single rule.
 
 ## Predictions
 
-<!-- TODO: what you expect each model tier to score, before running them. -->
+Frontier agents will find the oracle-versus-book gap and land near the
+wait-for-oracle rung or a little above. Reading trader accounts is what
+lifts a bot past the reference; few will build the account scan.
 
 ## Generations
 
-<!-- TODO: what each version learned. -->
+- **v1 (this build).** Gate 0 on the engine (72 sessions): the informed bot
+  made $3,595, every non-reading rung lost. The first reference lost money;
+  the second (crowd read before chasers, runs nobody led skipped) made $648,
+  0.12 of the informed bot; the third (only the session's new takers, the
+  hunter learned from runs it led) is the one shipped.
+
+## Departures from the card
+
+| Card | Built | Why |
+| --- | --- | --- |
+| Break continuation 0.4-1.5% beyond the level | 0.15-0.65% beyond an excursion of 0.15-0.45% | follow-every-run must net about zero: what a follower gains past the excursion matches what it loses in a hunt |
+| The hunter hunts whenever it is near a level | the generator schedules its hunts (`at_slots`) and lays the book's excursion as a premium on the path | the snapshot's makers re-centre on every path move, so a push alone moves the book for a slot or two; the run is the makers repricing |
+| Informed see the book ahead | they see the level (`sees: level`) | seeing the book, they would trade ahead of hunts too |
+| Reference reads fill events | it reads trader accounts' positions | the kit's Phoenix event decoder isn't in the component build; positions are on chain for any bot |

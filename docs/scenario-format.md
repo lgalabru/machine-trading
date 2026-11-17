@@ -71,6 +71,9 @@ on a perp (`positions_fit_the_market`):
 - the order's market has no `close_out`: the order's broker already takes
   what is left of it.
 
+A perp session can trade several markets of one cross-margin Phoenix
+account (see [Several perp markets](#several-perp-markets)).
+
 A perp order and close-outs price the close at the scenario's own level at
 the last slot (the index, not Phoenix's mark, which quotes can push), and
 the session values the account there too (`valuation` `oracle`). A start
@@ -84,6 +87,63 @@ nothing moves with the price, or earns or pays the funding, and v2 refuses
 the grade. A v1
 grade takes a funded start position as it is: the funding the start earns
 or pays is in the session's PnL, order or not.
+
+## Several perp markets
+
+A perp session on several markets of one account names them in keyed maps,
+one per section, and leaves that section's one-market fields out:
+
+| Map | Holds, per market symbol |
+| --- | --- |
+| `venues.perp.markets` | `funding`, as `venues.perp.funding` (not with it) |
+| `market_model.markets` | `path`, `fair_path` and `record`, as the section's own fields (not with them); no `closed_period` |
+| `market_model.joint` | Optional: a joint draw of the markets' paths: `matrix_source` (`design` for a matrix the author states, or a correlation file's id, with its `matrix_sha256`), `assets` in the matrix's order, the correlation `matrix`, and each asset's draw in `records`. Like a single draw's record, never its seed |
+| `actors.markets` | `competitor`, `takers` and `takers_pricing`, as the section's own fields (not with them). One pool of taker accounts trades every market, so `account` numbers are shared |
+
+`assets.symbol` is the primary market, one of the maps' keys: it is the one
+`MTX_SYMBOL` names and the report's one-market fields describe. The actor
+library, if any, trades it.
+
+One rule joins the maps (`markets_agree`): `venues.perp.markets` names at
+least two markets, and `market_model.markets` and `actors.markets`, where
+given, name the same ones. The mandate's universe is exactly their perps,
+each with its own cap. Each market's funding, path and flow are checked as
+a one-market scenario's, and an error names the market. A Phoenix oracle
+feed may write any market's oracle, but not one whose market has a path.
+`start_positions` and `close_out` may name any of the markets, and an
+`order` may be on any of them; each is checked against its market's range.
+
+Each market's position is valued by its own rule (`oracle`, `book` or
+`mark`, as a one-market scenario's), and the bound is each market's at its
+own cap and start mark, summed. A session's report lists each market
+(`markets`: start and end marks, positions, valuation, flow), and each step
+records each market (`markets` in the timeline's steps).
+
+Net scoring (`scoring.net`) works per market: each market's start position is held to that market's fair close (else its level), and the holds are summed, so a bot that holds every market scores 0. `scoring.bound_on` works on several markets too.
+
+What a session on several markets doesn't do yet:
+
+- **Library actors** (`actors.library`) trade the primary market only.
+- **Making fills** (`making_fills`) record the primary market's fills only.
+- **Markout:** the grade's markout, luck and residual split is a
+  one-market split; a session on several markets reports none, whatever
+  fair paths it has.
+- **Raw sends** (`tx.raw_sends`) are refused: their pre-check audits one
+  market's position and value.
+- **Closed periods** stay a one-market scenario's.
+- **The liquidation keeper** (`venues.perp.liquidator`) is refused: it
+  liquidates the scenario's market only.
+- **Process bots** built on `mtx_kit::run` trade the primary market only:
+  its run loop holds one trader. A process bot that wants the others reads
+  `MTX_MARKETS` (`["phoenix:perp:NVDA", "phoenix:perp:SPCX"]`, the primary
+  first) and trades them itself; a strategy component gets a seat on every
+  market, and the planner cuts each market's lines to its own cap.
+
+There is no v1 form: `Scenario::save` refuses such a scenario and
+`save_v2` writes it (`save_any` writes each scenario in the layout it has,
+as `mtx calibrate` does). `mtx market-cal generate` draws one from a template
+on several markets, given `--calibration SYMBOL=FILE` per market and
+`--correlation`.
 
 ## The risk desk: `scoring.stop_out`
 
@@ -119,6 +179,20 @@ count toward the position and the PnL. Because the desk closes to flat, a
 scenario with `stop_out` must allow flat in every instrument's range: a
 `min_position` above 0 is refused. A component sees `MTX_STOP_OUT=1` in its session vars.
 The code is `crates/grader/src/risk.rs` and the session loop.
+
+On a session on several markets the desk closes every market of the
+account. It cancels the bot's orders on each, then goes round the markets
+in symbol order, one order to each market still open per round, within the
+same 8 orders a step: one market's book can't take the whole budget while
+another's exposure runs on, and a market whose book took nothing gets no
+more orders that step. `slice_base` caps every market's orders in that
+market's own base units, so on markets whose prices differ widely (SPY
+against SPCX, say) it slices the dearer one finer in dollars; set it for
+the market that most needs it. Each close order names its `market`, the
+forced close records each market's position at the trigger in
+`positions_before` (`position_before` stays the primary's), and `flat`
+holds only once every market is flat. The desk's fills on any market are
+marked `forced`.
 
 ## The liquidation keeper: `venues.perp.liquidator`
 
