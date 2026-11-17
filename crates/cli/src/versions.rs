@@ -516,226 +516,236 @@ pub(crate) mod tests {
         assert_eq!(v["task"]["scoring_hash"], "ss");
     }
 
-    fn disk(root: &Path) -> impl Fn(&Path) -> Option<Vec<u8>> + '_ {
-        move |p| std::fs::read(root.join(p)).ok()
-    }
+    /// The fingerprint itself is only built with `generate`.
+    #[cfg(feature = "generate")]
+    mod fingerprints {
+        use std::path::PathBuf;
 
-    /// A copy of one real task's folder in a scratch repo root.
-    fn scratch(task: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!("mtx-fp-{}", uuid::Uuid::new_v4().simple()));
-        let from = crate::authoring::repo_root().join("bench/tasks").join(task);
-        let to = root.join("bench/tasks").join(task);
-        crate::authoring::copy_dir(&from, &to, &["target", "bin"]).unwrap();
-        git(&root, &["init", "-q"]);
-        track(&root);
-        root
-    }
+        use super::super::*;
 
-    fn git(root: &Path, args: &[&str]) {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(args)
-            .status()
+        fn disk(root: &Path) -> impl Fn(&Path) -> Option<Vec<u8>> + '_ {
+            move |p| std::fs::read(root.join(p)).ok()
+        }
+
+        /// A copy of one real task's folder in a scratch repo root.
+        fn scratch(task: &str) -> PathBuf {
+            let root =
+                std::env::temp_dir().join(format!("mtx-fp-{}", uuid::Uuid::new_v4().simple()));
+            let from = crate::authoring::repo_root().join("bench/tasks").join(task);
+            let to = root.join("bench/tasks").join(task);
+            crate::authoring::copy_dir(&from, &to, &["target", "bin"]).unwrap();
+            git(&root, &["init", "-q"]);
+            track(&root);
+            root
+        }
+
+        fn git(root: &Path, args: &[&str]) {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?}");
+        }
+
+        /// What `git add` does to a file a test wrote.
+        fn track(root: &Path) {
+            git(root, &["add", "-A"]);
+        }
+
+        /// The fingerprint with `rel` replaced by `f` of it, then put back.
+        fn with(root: &Path, task: &str, rel: &str, f: &dyn Fn(String) -> String) -> String {
+            let path = root.join("bench/tasks").join(task).join(rel);
+            let before = std::fs::read_to_string(&path).unwrap_or_default();
+            std::fs::write(&path, f(before.clone())).unwrap();
+            let fp = fingerprint(root, task, &disk(root)).unwrap();
+            std::fs::write(&path, before).unwrap();
+            fp
+        }
+
+        #[test]
+        fn the_fingerprint_moves_with_what_a_task_measures_and_not_with_wording() {
+            let task = "flash-crash-spcx";
+            let root = scratch(task);
+            let base = fingerprint(&root, task, &disk(&root)).unwrap();
+            assert_eq!(base.len(), 64);
+            assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+            // Cosmetic: not in it.
+            for rel in ["README.md", "DESIGN.md"] {
+                assert_eq!(with(&root, task, rel, &|t| t + "\nreworded"), base, "{rel}");
+            }
+            let version = |t: String| t.replacen("\nversion = \"", "\nversion = \"9", 1);
+            assert_eq!(with(&root, task, "task.toml", &version), base, "version");
+            let digest = |t: String| t.replace("@sha256:", "@sha256:0");
+            assert_eq!(with(&root, task, "task.toml", &digest), base, "digest");
+            // What it measures: each one moves it, and no two alike.
+            let mut seen = vec![base];
+            for (rel, what, f) in [
+                (
+                    "instruction.md",
+                    "mandate",
+                    (|t| t + "\nloss limit 1") as fn(String) -> String,
+                ),
+                ("tests/test.sh", "grader flags", |t| {
+                    t + "\n# --loss-weight 2"
+                }),
+                ("environment/practice/practice-1.json", "practice", |t| {
+                    format!(" {t}")
+                }),
+                ("reference/Cargo.toml", "anchor", |t| t + "\n# x"),
+                ("task.toml", "spec", |t| {
+                    t.replace("[agent]", "[agent]\nextra = 1")
+                }),
+            ] {
+                let fp = with(&root, task, rel, &f);
+                assert!(!seen.contains(&fp), "{what} didn't move the fingerprint");
+                seen.push(fp);
+            }
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+
+        #[test]
+        fn the_scenario_family_is_in_the_fingerprint() {
+            let task = "flash-crash-spcx";
+            let root = scratch(task);
+            let a = fingerprint(&root, task, &disk(&root)).unwrap();
+            // Another family under the same folder: only the generator differs.
+            let b = with(&root, task, "task.toml", &|t| {
+                t.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\"")
+            });
+            assert_ne!(a, b);
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+
+        #[test]
+        fn the_digest_file_counts_by_its_fields_not_its_comments() {
+            let task = "flash-crash-spcx";
+            let root = scratch(task);
+            let path = root
+                .join("bench/tasks")
+                .join(task)
+                .join(crate::anchors::DIGEST_FILE);
+            let text = std::fs::read_to_string(&path).unwrap();
+            let base = fingerprint(&root, task, &disk(&root)).unwrap();
+            std::fs::write(
+                &path,
+                format!("# reworded header\n# more\n{text}\n# trailer\n"),
+            )
             .unwrap();
-        assert!(status.success(), "git {args:?}");
-    }
-
-    /// What `git add` does to a file a test wrote.
-    fn track(root: &Path) {
-        git(root, &["add", "-A"]);
-    }
-
-    /// The fingerprint with `rel` replaced by `f` of it, then put back.
-    fn with(root: &Path, task: &str, rel: &str, f: &dyn Fn(String) -> String) -> String {
-        let path = root.join("bench/tasks").join(task).join(rel);
-        let before = std::fs::read_to_string(&path).unwrap_or_default();
-        std::fs::write(&path, f(before.clone())).unwrap();
-        let fp = fingerprint(root, task, &disk(root)).unwrap();
-        std::fs::write(&path, before).unwrap();
-        fp
-    }
-
-    #[test]
-    fn the_fingerprint_moves_with_what_a_task_measures_and_not_with_wording() {
-        let task = "flash-crash-spcx";
-        let root = scratch(task);
-        let base = fingerprint(&root, task, &disk(&root)).unwrap();
-        assert_eq!(base.len(), 64);
-        assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
-        // Cosmetic: not in it.
-        for rel in ["README.md", "DESIGN.md"] {
-            assert_eq!(with(&root, task, rel, &|t| t + "\nreworded"), base, "{rel}");
+            assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+            let digest = text.lines().find(|l| l.starts_with("digest: ")).unwrap();
+            std::fs::write(&path, text.replace(digest, "digest: 00")).unwrap();
+            assert_ne!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+            let inputs = text.lines().find(|l| l.starts_with("inputs: ")).unwrap();
+            std::fs::write(&path, text.replace(inputs, "inputs: 00")).unwrap();
+            assert_ne!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+            std::fs::remove_dir_all(&root).unwrap();
         }
-        let version = |t: String| t.replacen("\nversion = \"", "\nversion = \"9", 1);
-        assert_eq!(with(&root, task, "task.toml", &version), base, "version");
-        let digest = |t: String| t.replace("@sha256:", "@sha256:0");
-        assert_eq!(with(&root, task, "task.toml", &digest), base, "digest");
-        // What it measures: each one moves it, and no two alike.
-        let mut seen = vec![base];
-        for (rel, what, f) in [
-            (
-                "instruction.md",
-                "mandate",
-                (|t| t + "\nloss limit 1") as fn(String) -> String,
-            ),
-            ("tests/test.sh", "grader flags", |t| {
-                t + "\n# --loss-weight 2"
-            }),
-            ("environment/practice/practice-1.json", "practice", |t| {
-                format!(" {t}")
-            }),
-            ("reference/Cargo.toml", "anchor", |t| t + "\n# x"),
-            ("task.toml", "spec", |t| {
-                t.replace("[agent]", "[agent]\nextra = 1")
-            }),
-        ] {
-            let fp = with(&root, task, rel, &f);
-            assert!(!seen.contains(&fp), "{what} didn't move the fingerprint");
-            seen.push(fp);
+
+        #[test]
+        fn the_whole_snapshot_the_anchor_digest_and_the_grader_version_are_in_the_fingerprint() {
+            let task = "flash-crash-spcx";
+            let root = scratch(task);
+            let base = fingerprint(&root, task, &disk(&root)).unwrap();
+            let toml =
+                std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml"))
+                    .unwrap();
+            let snapshot = toml::from_str::<toml::Value>(&toml).unwrap()["metadata"]["snapshot"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let mut seen = vec![base];
+            for rel in [
+                format!("snapshots/{snapshot}/exchange.json"),
+                format!("snapshots/{snapshot}/surfnet.json.gz"),
+                format!("bench/tasks/{task}/{}", crate::anchors::DIGEST_FILE),
+            ] {
+                let path = root.join(&rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, "one").unwrap();
+                track(&root);
+                let one = fingerprint(&root, task, &disk(&root)).unwrap();
+                std::fs::write(&path, "two").unwrap();
+                let two = fingerprint(&root, task, &disk(&root)).unwrap();
+                assert_ne!(one, two, "{rel}");
+                assert!(!seen.contains(&one), "{rel}");
+                seen.push(one);
+            }
+            std::fs::remove_dir_all(&root).unwrap();
         }
-        std::fs::remove_dir_all(&root).unwrap();
-    }
 
-    #[test]
-    fn the_scenario_family_is_in_the_fingerprint() {
-        let task = "flash-crash-spcx";
-        let root = scratch(task);
-        let a = fingerprint(&root, task, &disk(&root)).unwrap();
-        // Another family under the same folder: only the generator differs.
-        let b = with(&root, task, "task.toml", &|t| {
-            t.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\"")
-        });
-        assert_ne!(a, b);
-        std::fs::remove_dir_all(&root).unwrap();
-    }
+        #[test]
+        fn the_engines_source_is_not_in_the_fingerprint_but_its_behaviour_is() {
+            let task = "flash-crash-spcx";
+            let root = scratch(task);
+            let base = fingerprint(&root, task, &disk(&root)).unwrap();
+            // A doc comment in the kit, a comment in the grader, a new file in
+            // core, a lockfile and a toolchain: none changes what a task does
+            // (an engine edit that does shows in the anchor digest, played by CI).
+            for rel in [
+                "crates/kit/src/lib.rs",
+                "crates/grader/tests/files.rs",
+                "crates/core/NOTES.md",
+                "Cargo.lock",
+                "rust-toolchain",
+            ] {
+                let path = root.join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, "/// x\n").unwrap();
+                track(&root);
+                assert_eq!(
+                    base,
+                    fingerprint(&root, task, &disk(&root)).unwrap(),
+                    "{rel}"
+                );
+            }
+            std::fs::remove_dir_all(&root).unwrap();
+        }
 
-    #[test]
-    fn the_digest_file_counts_by_its_fields_not_its_comments() {
-        let task = "flash-crash-spcx";
-        let root = scratch(task);
-        let path = root
-            .join("bench/tasks")
-            .join(task)
-            .join(crate::anchors::DIGEST_FILE);
-        let text = std::fs::read_to_string(&path).unwrap();
-        let base = fingerprint(&root, task, &disk(&root)).unwrap();
-        std::fs::write(
-            &path,
-            format!("# reworded header\n# more\n{text}\n# trailer\n"),
-        )
-        .unwrap();
-        assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
-        let digest = text.lines().find(|l| l.starts_with("digest: ")).unwrap();
-        std::fs::write(&path, text.replace(digest, "digest: 00")).unwrap();
-        assert_ne!(base, fingerprint(&root, task, &disk(&root)).unwrap());
-        let inputs = text.lines().find(|l| l.starts_with("inputs: ")).unwrap();
-        std::fs::write(&path, text.replace(inputs, "inputs: 00")).unwrap();
-        assert_ne!(base, fingerprint(&root, task, &disk(&root)).unwrap());
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn the_whole_snapshot_the_anchor_digest_and_the_grader_version_are_in_the_fingerprint() {
-        let task = "flash-crash-spcx";
-        let root = scratch(task);
-        let base = fingerprint(&root, task, &disk(&root)).unwrap();
-        let toml =
-            std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml")).unwrap();
-        let snapshot = toml::from_str::<toml::Value>(&toml).unwrap()["metadata"]["snapshot"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        let mut seen = vec![base];
-        for rel in [
-            format!("snapshots/{snapshot}/exchange.json"),
-            format!("snapshots/{snapshot}/surfnet.json.gz"),
-            format!("bench/tasks/{task}/{}", crate::anchors::DIGEST_FILE),
-        ] {
-            let path = root.join(&rel);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, "one").unwrap();
+        #[test]
+        fn a_new_task_counts_before_it_is_added_and_ignored_files_never_do() {
+            let task = "flash-crash-spcx";
+            let root = scratch(task);
+            std::fs::write(root.join(".gitignore"), "*.orig\nsurfnet.json\n").unwrap();
             track(&root);
-            let one = fingerprint(&root, task, &disk(&root)).unwrap();
-            std::fs::write(&path, "two").unwrap();
-            let two = fingerprint(&root, task, &disk(&root)).unwrap();
-            assert_ne!(one, two, "{rel}");
-            assert!(!seen.contains(&one), "{rel}");
-            seen.push(one);
-        }
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn the_engines_source_is_not_in_the_fingerprint_but_its_behaviour_is() {
-        let task = "flash-crash-spcx";
-        let root = scratch(task);
-        let base = fingerprint(&root, task, &disk(&root)).unwrap();
-        // A doc comment in the kit, a comment in the grader, a new file in
-        // core, a lockfile and a toolchain: none changes what a task does
-        // (an engine edit that does shows in the anchor digest, played by CI).
-        for rel in [
-            "crates/kit/src/lib.rs",
-            "crates/grader/tests/files.rs",
-            "crates/core/NOTES.md",
-            "Cargo.lock",
-            "rust-toolchain",
-        ] {
-            let path = root.join(rel);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, "/// x\n").unwrap();
+            let base = fingerprint(&root, task, &disk(&root)).unwrap();
+            let folder = root.join("bench/tasks").join(task);
+            // Ignored files and build output.
+            for rel in [
+                "environment/practice/practice-1.json.orig",
+                "reference/notes.orig",
+                "reference/target/x",
+            ] {
+                let path = folder.join(rel);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, "x").unwrap();
+            }
+            assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+            // A file `mtx task new` just wrote counts without `git add`, and the
+            // same after it: one sync is enough.
+            std::fs::write(folder.join("reference/src/new.rs"), "fn x() {}\n").unwrap();
+            let untracked = fingerprint(&root, task, &disk(&root)).unwrap();
+            assert_ne!(base, untracked);
             track(&root);
-            assert_eq!(
-                base,
-                fingerprint(&root, task, &disk(&root)).unwrap(),
-                "{rel}"
-            );
+            assert_eq!(untracked, fingerprint(&root, task, &disk(&root)).unwrap());
+            std::fs::remove_dir_all(&root).unwrap();
         }
-        std::fs::remove_dir_all(&root).unwrap();
-    }
 
-    #[test]
-    fn a_new_task_counts_before_it_is_added_and_ignored_files_never_do() {
-        let task = "flash-crash-spcx";
-        let root = scratch(task);
-        std::fs::write(root.join(".gitignore"), "*.orig\nsurfnet.json\n").unwrap();
-        track(&root);
-        let base = fingerprint(&root, task, &disk(&root)).unwrap();
-        let folder = root.join("bench/tasks").join(task);
-        // Ignored files and build output.
-        for rel in [
-            "environment/practice/practice-1.json.orig",
-            "reference/notes.orig",
-            "reference/target/x",
-        ] {
-            let path = folder.join(rel);
-            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(&path, "x").unwrap();
+        #[test]
+        fn the_draw_is_as_large_as_the_verifiers_and_its_size_is_in_the_fingerprint() {
+            assert_eq!(draw_count("grader \\\n  --count 72 \\\n  --x"), 72);
+            assert_eq!(draw_count("--count 9"), 9);
+            assert_eq!(draw_count("no count here"), FAMILY_COUNT);
+            let task = "flash-crash-spcx";
+            let root = scratch(task);
+            let a = fingerprint(&root, task, &disk(&root)).unwrap();
+            let b = with(&root, task, "tests/test.sh", &|t| {
+                t.replace("--count 72", "--count 73")
+            });
+            assert_ne!(a, b);
+            std::fs::remove_dir_all(&root).unwrap();
         }
-        assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
-        // A file `mtx task new` just wrote counts without `git add`, and the
-        // same after it: one sync is enough.
-        std::fs::write(folder.join("reference/src/new.rs"), "fn x() {}\n").unwrap();
-        let untracked = fingerprint(&root, task, &disk(&root)).unwrap();
-        assert_ne!(base, untracked);
-        track(&root);
-        assert_eq!(untracked, fingerprint(&root, task, &disk(&root)).unwrap());
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
-    fn the_draw_is_as_large_as_the_verifiers_and_its_size_is_in_the_fingerprint() {
-        assert_eq!(draw_count("grader \\\n  --count 72 \\\n  --x"), 72);
-        assert_eq!(draw_count("--count 9"), 9);
-        assert_eq!(draw_count("no count here"), FAMILY_COUNT);
-        let task = "flash-crash-spcx";
-        let root = scratch(task);
-        let a = fingerprint(&root, task, &disk(&root)).unwrap();
-        let b = with(&root, task, "tests/test.sh", &|t| {
-            t.replace("--count 72", "--count 73")
-        });
-        assert_ne!(a, b);
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// A root of finished, graded trials: `(task, fingerprint, scoring)` each.
