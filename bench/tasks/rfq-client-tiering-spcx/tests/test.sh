@@ -6,9 +6,6 @@
 # and writes the reward.
 set -euo pipefail
 
-# TODO(family): until the `rfq-client-tiering` family exists, this grades on the
-# market-making-spcx's family. See `mtx task status rfq-client-tiering-spcx`.
-
 # Hidden from the bot, readable by the bot's own user.
 chmod -R go-rwx /tests
 chmod -R a+rX /app/bot
@@ -20,8 +17,8 @@ trap 'rm -f /logs/verifier/reward.json' ERR
 
 # This script and the image it runs in must be the same task's: a build that
 # mixed two tasks' files would grade the bot on the wrong market.
-if [ "${MTX_TASK:-}" != "market-making-spcx" ]; then
-  echo "test.sh: this is market-making-spcx's verifier, in an image built for" \
+if [ "${MTX_TASK:-}" != "rfq-client-tiering-spcx" ]; then
+  echo "test.sh: this is rfq-client-tiering-spcx's verifier, in an image built for" \
     "'${MTX_TASK:-}': its tests were mixed up at build time. Rebuild it." >&2
   exit 3
 fi
@@ -44,7 +41,7 @@ fi
 # nothing.
 mtx grade \
   --informed /opt/mtx/anchors/rfq-client-tiering-informed \
-  --draw market-making \
+  --draw rfq-tiering \
   --count 72 \
   --reference /opt/mtx/anchors/rfq-client-tiering \
   --anchor-jobs 4 \

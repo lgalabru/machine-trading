@@ -10,44 +10,105 @@ A good bot profits here because it prices each client to its reach and declines 
 
 - **Wins:** quoting benign clients just inside their reach, flagging informed clients early from markouts and from who takes a quote no uninformed client would, and reading the flagged clients' sides as the coming move
 - **Loses:** quoting everyone pays every informed fill; quoting wider loses the benign flow entirely past the reach; tiering by size or leaning against recent request flow catches little of the informed flow
-- **Regimes:** 10 to 16 clients, 15% to 45% of them informed (which ones redrawn every session), seeing 30 to 90 slots ahead; reach 0.2 to 0.5 bp per trade size, times the square root of the size
-- **Mandate:** 0.001 SPCX position cap, $400 loss limit, 72 hidden sessions per grade.
+- **Regimes:** 10 to 16 clients, 15% to 45% of them informed (which ones redrawn every session), seeing 45 to 120 slots ahead; reach 0.8 to 1.6 bp a lot of 0.25 SPCX, times the square root of the size in lots
+- **Mandate:** answers to requests only (perp cap 0.001 SPCX), $400 loss limit on the desk's value over the idle desk, 72 hidden sessions per grade.
 
 ## Expert research
 
-<!-- TODO: why this is a real expert task, the expert's method, where non-experts go wrong, with sources. -->
+Dealers in request-for-quote markets price each client by its toxicity:
+the markout of its past trades, the hit ratio on its requests, and how
+those move after the fill (Glosten and Milgrom 1985 on the bid-ask spread
+as protection against informed counterparties; Bessembinder, Spatt and
+Venkataraman, "A Survey of the Microstructure of Fixed-Income Markets",
+JFQA 2020, on dealer RFQ markets; client tiering and "last look" markouts
+in FX, Oomen, "Last look", Quantitative Finance 2017). The expert's method:
+
+- **Price to the client's alternative, not to the screen.** A client trades
+  with the desk while the desk's price beats what it would pay elsewhere;
+  past that it walks. Widening everyone "for safety" loses the benign flow
+  outright.
+- **Score every counterparty from its own record,** shrunk to a prior,
+  because each client has only a handful of trades a session, and decide
+  early on thin evidence.
+- **Read who hits a wide price.** A client that takes a price no
+  liquidity-seeking client would take is telling the desk it knows
+  something (the dealer's winner's curse).
+
+The non-expert quotes everyone the same, or leans on the aggregate flow,
+and pays every informed fill.
 
 ## The central decision
 
-<!-- TODO: the one decision the task is about, and the options that look defensible. -->
+Each request: quote it at the client's reach, quote it wider (a probe
+that only an informed client takes), quote part of it, or let it lapse;
+and, for the client, keep or stop answering. Quoting everyone pays every
+informed fill; declining everyone earns nothing; widening loses the benign
+flow past the reach and still pays the informed clients on their big views.
 
 ## Variants
 
-<!-- TODO: each regime and the best response to it; a table of which habit fails where. -->
+| Session | Best response | Quote all | Quote wide | Size-tier | Side-skew |
+| --- | --- | --- | --- | --- | --- |
+| Few informed clients (15%) | quote nearly everyone, find the few | pays the few | loses all benign flow | gives up the small benign requests | declines benign flow on noise |
+| Many informed clients (45%) | flag them early, read their side | pays a third of its fills to them | the informed still take their big views | as quote-all on large requests | catches some, declines much benign flow |
+| Long lead, big moves | flag early: each informed fill costs more | loses the most | loses on every big view | as quote-all | best of the careful rungs |
 
 ## Levers
 
-<!-- TODO: what the market does, what a good bot does, and how an honest operator detects each lever. -->
+| Lever | What the market does | What a good bot does | How an honest operator detects it |
+| --- | --- | --- | --- |
+| Informed clients | 15% to 45% of clients see the level 45 to 120 slots ahead and ask its way | declines them | request markouts (the index after each request, signed by its side), and who takes a price past the widest reach |
+| The reach | 0.8 to 1.6 bp a lot, times sqrt(lots), one per session | quotes just inside it | its own answers: a declined price was past the reach |
+| The index's offset | the index is the level in cents, about 0.5 bp off it | keeps about 1 bp of margin | declines on quotes near the reach, and practice |
+| Informed flow | an informed request's side is the coming move's | declines benign requests on that side for a lead | the flagged clients' requests |
 
 ## No tells
 
-<!-- TODO: the audit: nothing in the path's shape gives away what a trader couldn't see. -->
+- Every client is seated and funded in every session; informed and benign
+  clients ask on one Poisson schedule, pick sizes from one distribution and
+  have one deadline (`rfq.rs`: one `send_requests` path for both).
+- Ids are `c<n>-<k>` with `k` the session's request count: nothing about the
+  client's role. Which clients are informed is the session's own draw.
+- The path is the calibrated model's, with no move laid for the informed;
+  practice files carry a neutral description and no roster (#109).
+- Known leak, practice only: a practice report's actor tallies count the
+  session's informed fills. Hidden sessions report nothing to the bot.
 
 ## Detectability
 
-<!-- TODO: how early a good bot can tell the regime, measured on generated sets. -->
+In the Gate 0 model, one probe a client flags most informed clients at
+their first request; markouts need several requests (3 to 10 a client a
+session), so a markout-only desk earned 0 to 0.2 of the informed bot and
+the probing reference 0.45 to 0.55.
 
 ## Fairness
 
-<!-- TODO: what the agent is told, what it can learn from practice, and that the reference stays inside the mandate. -->
+- The instruction states every rule the clients follow: the schedule, the
+  sizes, the reach formula and its range, what informed clients know, the
+  index's rounding and offset, the settlement, and that only components see
+  requests.
+- The margin under the reach is derivable: the instruction says the index
+  is the level in cents and about half a bp off it, and a bot sees every
+  declined answer. The informed bot's PnL moves less than 10% for margins
+  from 0.5 to 1.4 bp in the model (`index_noise_bp` 0.45): not a precision
+  game.
+- Practice: six sessions with both anchors' PnL.
+- The reference stays inside the mandate (no perp trade; its desk moves at
+  most 16 SPCX).
 
 ## Failure modes, priced
 
-<!-- TODO: each way a bot can lose, and what it costs. -->
+From the Gate 0 model, per session, share of the informed bot's v2-weighted
+PnL (`gate0-seed-81..84`): quote-all −0.6 to −1.1, quote-wide −0.9 to −1.1,
+fixed width −0.5 to −0.9, size-tier −0.3 to 0, side-skew −0.2 to 0, the
+markout-only desk −0.4 to −0.9, the reference 0.49 to 0.53.
 
 ## Predictions
 
-<!-- TODO: what you expect each model tier to score, before running them. -->
+Frontier agents find the reach quickly (practice shows declines) and most
+will quote everyone at it, near 0. Those that keep per-client markouts
+reach 0.2 to 0.4; few will think of probing with a wide price, the
+reference's sharpest read.
 
 ## Gate 0
 
