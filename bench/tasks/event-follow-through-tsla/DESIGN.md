@@ -5,7 +5,7 @@ README says what the task is; this says why it's built this way, and what
 each version learned. It is card B7 of the batch-2 cards
 (`TASK_CARDS_BATCH2.md`); the departures from the card are listed last.
 
-Status: Gate 0 passed on two fresh secrets (pooled); full build on that
+Status: RETIRED (2026-11-17). Gate 0 passed before main's #114; after it (funds' hit rate 0.85) it failed twice, see hidden/gate0/README.md. The full build below is kept as built.
 reference and informed bot, frozen since Gate 0.
 
 ## Thesis

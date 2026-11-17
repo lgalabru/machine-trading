@@ -61,3 +61,19 @@ fall under one standard error, and never turns round after entry. One fresh
 The informed bot halved ($30.65 a session against $56 before #114): it
 changed side 50 times and lost 10 sessions ($799). The reference traded 33
 sessions and won 23 of them (30 of 35 before).
+
+## Longer reading window (fails; the card retires)
+
+Both the informed bot and the reference read a fund's net flow over 90 slots
+(the funds' longest horizon) past 2 TSLA, confirmed three steps, and never
+turn round; `fund_hit_rate` stays 0.85. One fresh 72-session secret
+(`gate0-run4-longer-window.txt`):
+
+- informed $910 ($12.64 a session; lost 25 sessions, -$1,680) against the
+  best non-reading rung, fade, $182: 5.0x, but only 0.353 of bootstraps;
+- ladder order 0.134 of 2000 bootstraps (0.139 of 5000);
+- reference $85, Sharpe 0.02, below its band.
+
+With every wallet misreading a horizon at a time, a fund's flow after the
+jump no longer carries the verdict's sign reliably within the 20-260 slots
+before it lands, for the told bot or a reader. The card retires.
