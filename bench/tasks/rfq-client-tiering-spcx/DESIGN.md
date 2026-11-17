@@ -1,5 +1,12 @@
 # Design record: rfq-client-tiering-spcx
 
+**Status: RETIRED (2026-11-17).** With main's realistic `hit_rate` of 0.85 (#114), informed RFQ clients
+are wrong on 15% of their requests, which legitimately shrinks what knowing who they are is worth. The
+side-skew rung reads the session's net request flow without identity: it is exactly the cheaper skill the
+card must beat, and on two fresh sets the informed bot made only 1.64x and 1.65x of it, with the ladder's
+order holding on 0.511 and 0.307 of bootstraps. The diagnosis (no engine bug: #113 has no effect here, and
+#114 at a hit rate of 1.0 only redraws the requests) is in "Gate 0".
+
 Written to `skills/trading-task-design/references/design-record.md`. The
 README says what the task is; this says why it's built this way, and what
 each version learned.
