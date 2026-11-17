@@ -777,11 +777,16 @@ harbor-checks task="flash-crash-spcx" surfpool="" jobs="jobs": (image surfpool) 
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o {{jobs}}/cheater
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o {{jobs}}/sneaky
 
-# The commands a guarded agent's `mtx` offers, and no others: the grader's
-# files-in side (practice, snapshots, bots), none of what draws from a task's
-# family or authors a task. A new command is a leak until it is listed here.
-agent_commands := "bench bot calibrate grade help rescore scenario snapshot studio"
-agent_scenario_commands := "check help new play"
+# The commands a guarded agent's `mtx` offers, and no others: it grades a bot
+# on scenario files (what `mtx-practice` runs) and checks a bot or a scenario
+# file. Nothing that draws from a task's family or authors a task, and none of
+# the host's commands (studio, bench, snapshots, calibration), which start
+# from a checkout the image doesn't hold. A new command is a leak until it is
+# listed here; the build's own test (`cargo test -p mtx-cli
+# --no-default-features`) holds the same lists.
+agent_commands := "bot grade help scenario"
+agent_bot_commands := "check help"
+agent_scenario_commands := "check help"
 
 # Fail if an agent's image holds anything that answers its task: the anchors
 # (reference bots), their source or the tasks' solutions, the checks' bots, or
@@ -834,10 +839,13 @@ leak-audit task="":
       done
       if [ "$guard" = guarded ]; then
         # The agent's mtx offers the allowlisted commands only: no scenario
-        # generation, no task authoring, gates, MCP or market calibration.
+        # generation, no task authoring, gates, MCP or market calibration,
+        # and none of the host's commands.
         local extra
         extra="$(comm -13 <(printf '%s\n' {{agent_commands}} | sort -u) <(listed))"
         if [ -n "$extra" ]; then echo "LEAK: $image's mtx offers $(echo $extra)"; found=1; fi
+        extra="$(comm -13 <(printf '%s\n' {{agent_bot_commands}} | sort -u) <(listed bot))"
+        if [ -n "$extra" ]; then echo "LEAK: $image's mtx bot offers $(echo $extra)"; found=1; fi
         extra="$(comm -13 <(printf '%s\n' {{agent_scenario_commands}} | sort -u) <(listed scenario))"
         if [ -n "$extra" ]; then echo "LEAK: $image's mtx scenario offers $(echo $extra)"; found=1; fi
         if docker run --rm --entrypoint mtx "$image" grade --help 2>&1 | grep -q -e '--draw'; then
@@ -894,11 +902,15 @@ keypair-probe:
 network-probe task:
     bench/checks/network/probe.sh {{tasks}}/{{task}}
 
-# The agent's `mtx` (`--no-default-features`: no generators, no host-side
-# commands) lints and passes its tests. CI runs the same lines.
+# The agent's `mtx` (`--no-default-features`: no generators, none of the
+# host's commands) lints and passes its tests, and so does the build between
+# it and the default (`host` without `generate`), which nothing ships and
+# which would otherwise rot. CI runs the same lines.
 agent-build-check:
     cargo clippy -p mtx-cli --no-default-features --all-targets -- -D warnings
     cargo test -p mtx-cli --no-default-features
+    cargo clippy -p mtx-cli --no-default-features --features host --all-targets -- -D warnings
+    cargo test -p mtx-cli --no-default-features --features host
 
 # The clock check for a task that opts in to `time-left` (bench/checks/clock):
 # its agent reads half the limit at 0.5x and the clock runs down in step.

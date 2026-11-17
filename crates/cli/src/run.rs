@@ -48,7 +48,7 @@ pub async fn run(options: Run<'_>) -> Result<String> {
     if options.build {
         crate::bot::build(&dir)?;
     }
-    let checked = crate::bot::check(&dir);
+    let checked = crate::bot_check::check(&dir);
     if !checked.problems.is_empty() {
         bail!("the bot can't run:\n  {}", checked.problems.join("\n  "));
     }

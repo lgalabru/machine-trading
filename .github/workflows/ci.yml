@@ -123,11 +123,14 @@ jobs:
         run: cargo test --workspace
       - name: The agent's mtx
         # The agent image builds mtx with `--no-default-features` (no
-        # generators, no host-side commands): lint it and test it here, or it
-        # rots until a release image build.
+        # generators, none of the host's commands): lint it and test it here,
+        # or it rots until a release image build. The same for the build
+        # between it and the default (`host` without `generate`).
         run: |
           cargo clippy -p mtx-cli --no-default-features --all-targets -- -D warnings
           cargo test -p mtx-cli --no-default-features
+          cargo clippy -p mtx-cli --no-default-features --features host --all-targets -- -D warnings
+          cargo test -p mtx-cli --no-default-features --features host
       - name: The informed bot's boundary
         run: cargo test -p mtx-grader --features generators --test informed_boundary
       - name: Bench harness

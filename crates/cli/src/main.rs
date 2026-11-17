@@ -11,10 +11,11 @@ use mtx_grader::generators;
 use mtx_grader::{
     grade::{self, GradeOptions},
     keys::SessionKeys,
-    phoenix, recipe, replay,
+    replay,
     scenario::Scenario,
-    snapshot,
 };
+#[cfg(feature = "host")]
+use mtx_grader::{phoenix, recipe, snapshot};
 use tracing_subscriber::EnvFilter;
 
 /// Every session starts and drops a whole surfnet, hundreds of megabytes on a
@@ -24,12 +25,18 @@ use tracing_subscriber::EnvFilter;
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[cfg(feature = "host")]
 mod acp;
+#[cfg(feature = "host")]
 mod author;
 #[cfg(feature = "generate")]
 mod authoring;
+#[cfg(feature = "host")]
 mod bot;
+mod bot_check;
+#[cfg(feature = "host")]
 mod charts;
+#[cfg(feature = "host")]
 mod compact;
 #[cfg(feature = "generate")]
 mod gates;
@@ -38,22 +45,35 @@ mod market_cal;
 #[cfg(feature = "generate")]
 mod mcp;
 mod notice;
+#[cfg(feature = "host")]
 mod play;
+#[cfg(feature = "host")]
 mod publish;
+#[cfg(feature = "host")]
 mod rescore;
+#[cfg(feature = "host")]
 mod review;
+#[cfg(feature = "host")]
 mod run;
+mod scoring_args;
 #[cfg(feature = "generate")]
 mod scoring_text;
+#[cfg(feature = "host")]
 mod slim;
+#[cfg(feature = "host")]
 mod store;
+#[cfg(feature = "host")]
 mod studio;
+#[cfg(feature = "host")]
 mod tables;
 #[cfg(feature = "generate")]
 mod tasks;
+#[cfg(feature = "host")]
 mod tools;
+#[cfg(feature = "host")]
 mod ui;
 
+#[cfg(feature = "host")]
 /// The snapshot `scenario new` and `play` start from: the checkout's, by
 /// absolute path, so an installed `mtx` finds it from any directory.
 const DEFAULT_SNAPSHOT: &str = concat!(
@@ -82,6 +102,7 @@ fn generator_names() -> clap::builder::PossibleValuesParser {
 #[derive(Subcommand)]
 enum Command {
     /// Pinned chain state for offline tasks.
+    #[cfg(feature = "host")]
     #[command(subcommand)]
     Snapshot(SnapshotCommand),
     /// Market scenarios: the price paths sessions replay.
@@ -120,20 +141,32 @@ enum Command {
     /// A Claude Code agent speaking ACP on stdio: what mtx itself starts to
     /// talk to Claude Code (the studio's composer, `scenario new`). It drives
     /// the `claude` command, with no Node adapter.
+    #[cfg(feature = "host")]
     #[command(hide = true)]
     ClaudeAcp,
     /// The same for Codex: it drives `codex app-server`.
+    #[cfg(feature = "host")]
     #[command(hide = true)]
     CodexAcp,
     /// Bench results: what `just bench` and Harbor runs leave behind.
+    #[cfg(feature = "host")]
     #[command(subcommand)]
     Bench(BenchCommand),
-    /// Write your own bot: start one, practise it on a task, package it.
+    // The agent's build keeps `check` alone, so its help says only that.
+    #[cfg_attr(
+        feature = "host",
+        doc = "Write your own bot: start one, practise it on a task, package it."
+    )]
+    #[cfg_attr(
+        not(feature = "host"),
+        doc = "Check a bot directory before it is graded."
+    )]
     #[command(subcommand)]
     Bot(BotCommand),
     /// A workbench for a strategy and its scenarios, in the browser: edit
     /// the strategy, ask an agent to change it or the scenario, play it step
     /// by step against the market's chart.
+    #[cfg(feature = "host")]
     Studio {
         /// The strategy, as `mtx bot new` makes it: its directory, or its
         /// Cargo.toml.
@@ -256,12 +289,13 @@ enum Command {
         #[arg(long)]
         details: Option<PathBuf>,
         #[command(flatten)]
-        scoring: rescore::ScoringArgs,
+        scoring: scoring_args::ScoringArgs,
     },
     /// Score a finished grade again from what it wrote, without running a
     /// session: for when a scoring rule changes. Each session's report and
     /// scenario come from its detail file (`mtx grade --details`). Prints
     /// the new report, and on stderr where it differs from the old one.
+    #[cfg(feature = "host")]
     Rescore {
         /// The grade's report (`mtx grade --report`).
         report: PathBuf,
@@ -280,9 +314,10 @@ enum Command {
         #[arg(long)]
         check: bool,
         #[command(flatten)]
-        scoring: rescore::ScoringArgs,
+        scoring: scoring_args::ScoringArgs,
     },
     /// Run the reference bot through scenarios and save its PnL in each file.
+    #[cfg(feature = "host")]
     Calibrate {
         #[command(flatten)]
         sessions: Sessions,
@@ -359,6 +394,7 @@ enum Command {
 enum BotCommand {
     /// Make a bot that connects, watches the market and never trades: the
     /// plumbing works, the strategy is yours.
+    #[cfg(feature = "host")]
     New {
         /// Where to make it: an empty or new directory, outside this checkout.
         dir: PathBuf,
@@ -373,6 +409,7 @@ enum BotCommand {
     },
     /// Build a bot with `just build`, then grade it on a task's practice
     /// scenarios, exactly as the verifier grades the hidden ones.
+    #[cfg(feature = "host")]
     Practice {
         /// The bot directory.
         #[arg(long, default_value = ".")]
@@ -401,6 +438,7 @@ enum BotCommand {
     },
     /// Build a bot and play one practice session, showing what its strategy
     /// printed; with --debug, step by step.
+    #[cfg(feature = "host")]
     Run {
         /// The bot directory.
         #[arg(long, default_value = ".")]
@@ -439,6 +477,7 @@ enum BotCommand {
     },
     /// Package a bot's source (no builds, no logs) into one archive, with a
     /// manifest naming its task and the mtx it was made with.
+    #[cfg(feature = "host")]
     Pack {
         #[arg(default_value = ".")]
         dir: PathBuf,
@@ -556,6 +595,7 @@ struct TaskArgs {
 }
 
 #[derive(Subcommand)]
+#[cfg(feature = "host")]
 enum BenchCommand {
     /// Browse a bench's results in a web UI: the leaderboard, each trial's
     /// sessions against the reference's, every session step by step, the
@@ -663,7 +703,7 @@ enum BenchCommand {
         #[arg(long)]
         results: Option<PathBuf>,
         #[command(flatten)]
-        scoring: rescore::ScoringArgs,
+        scoring: scoring_args::ScoringArgs,
     },
     /// Compare two releases (or batches), task by task: each model's mean
     /// skill on both, and the change. As in `mtx bench compare 0.9.0...0.8.0`.
@@ -713,6 +753,7 @@ enum ScenarioCommand {
     },
     /// Have a coding agent author a Surfpool scenario from a request, e.g.
     /// "simulate a crash for SPCX", and save it.
+    #[cfg(feature = "host")]
     New {
         /// What should happen, in plain language.
         request: String,
@@ -727,6 +768,7 @@ enum ScenarioCommand {
     },
     /// Author a scenario like `new` (or load one: pass a .json file), then
     /// play it on a surfnet and chart it live in a web UI.
+    #[cfg(feature = "host")]
     Play {
         /// A request for the agent, or a scenario file to replay.
         request: String,
@@ -751,6 +793,7 @@ enum ScenarioCommand {
 }
 
 #[derive(clap::Args)]
+#[cfg(feature = "host")]
 struct Authoring {
     /// The coding agent that authors the scenario, over ACP.
     #[arg(long, short, value_enum, default_value = "claude-code")]
@@ -776,6 +819,7 @@ struct Authoring {
     verbose: bool,
 }
 
+#[cfg(feature = "host")]
 impl Authoring {
     async fn world(&self) -> Result<play::World> {
         play::World::start(&self.snapshot, self.symbol.as_deref(), true).await
@@ -808,6 +852,7 @@ impl Authoring {
 }
 
 #[derive(Subcommand)]
+#[cfg(feature = "host")]
 enum SnapshotCommand {
     /// Build a snapshot from its recipe: fork, warm up and export. Writes
     /// beside the recipe, with a manifest that records its hash.
@@ -856,8 +901,9 @@ enum SnapshotCommand {
 #[tokio::main]
 async fn main() -> Result<()> {
     let result = run().await;
+    // Don't leave a spinner line under the error.
+    #[cfg(feature = "host")]
     if result.is_err() {
-        // Don't leave a spinner line under the error.
         ui::clear();
     }
     result
@@ -866,13 +912,16 @@ async fn main() -> Result<()> {
 async fn run() -> Result<()> {
     // The ACP agent owns stdout for its protocol, and runs on its own
     // threads: before anything of mtx's writes there.
-    let serve: Option<fn() -> Result<()>> = match std::env::args_os().nth(1) {
-        Some(arg) if arg == "claude-acp" => Some(mtx_acp::claude::serve_stdio),
-        Some(arg) if arg == "codex-acp" => Some(mtx_acp::codex::serve_stdio),
-        _ => None,
-    };
-    if let Some(serve) = serve {
-        return tokio::task::spawn_blocking(serve).await?;
+    #[cfg(feature = "host")]
+    {
+        let serve: Option<fn() -> Result<()>> = match std::env::args_os().nth(1) {
+            Some(arg) if arg == "claude-acp" => Some(mtx_acp::claude::serve_stdio),
+            Some(arg) if arg == "codex-acp" => Some(mtx_acp::codex::serve_stdio),
+            _ => None,
+        };
+        if let Some(serve) = serve {
+            return tokio::task::spawn_blocking(serve).await?;
+        }
     }
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -888,27 +937,38 @@ async fn run() -> Result<()> {
     };
     // `scenario new` and `play` show progress lines instead of logs, unless
     // asked for logs.
+    #[cfg(feature = "host")]
     let interactive = match &cli.command {
         Command::Scenario(
             ScenarioCommand::New { authoring, .. } | ScenarioCommand::Play { authoring, .. },
         ) => !authoring.verbose,
         _ => false,
     };
+    // The agent's build has neither.
+    #[cfg(not(feature = "host"))]
+    let interactive = false;
     // `mtx bot` prints its own summary, and `mtx studio` its own notices
     // (the page shows the sessions): the grader's logs only if asked.
-    let default_filter =
-        if interactive || matches!(cli.command, Command::Bot(_) | Command::Studio { .. }) {
-            "warn"
-        } else {
-            "info"
-        };
-    tracing_subscriber::fmt()
+    #[cfg(feature = "host")]
+    let prints_its_own = matches!(cli.command, Command::Bot(_) | Command::Studio { .. });
+    #[cfg(not(feature = "host"))]
+    let prints_its_own = matches!(cli.command, Command::Bot(_));
+    let default_filter = if interactive || prints_its_own {
+        "warn"
+    } else {
+        "info"
+    };
+    let logs = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.into()),
         )
-        .with_writer(ui::LogWriter)
-        .event_format(notice::NoticeFormat)
-        .init();
+        .event_format(notice::NoticeFormat);
+    // The host's commands draw a spinner, which a log line clears first; the
+    // agent's build draws none.
+    #[cfg(feature = "host")]
+    logs.with_writer(ui::LogWriter).init();
+    #[cfg(not(feature = "host"))]
+    logs.with_writer(std::io::stderr).init();
     // A terminal reads the progress lines; JSON is for scripts.
     let quiet_stdout = interactive && std::io::stdout().is_terminal();
 
@@ -919,6 +979,7 @@ async fn run() -> Result<()> {
             return Ok(());
         }
         // Served above, before the arguments were parsed.
+        #[cfg(feature = "host")]
         Command::ClaudeAcp | Command::CodexAcp => return Ok(()),
         #[cfg(feature = "generate")]
         Command::Gates {
@@ -1016,6 +1077,7 @@ async fn run() -> Result<()> {
         Command::Task(TaskCommand::List) => {
             serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
         }
+        #[cfg(feature = "host")]
         Command::Bench(BenchCommand::Rescore {
             path,
             check,
@@ -1035,6 +1097,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&summary)?
         }
+        #[cfg(feature = "host")]
         Command::Rescore {
             report,
             details,
@@ -1082,6 +1145,7 @@ async fn run() -> Result<()> {
             }
             json
         }
+        #[cfg(feature = "host")]
         Command::Bench(BenchCommand::Review {
             path,
             port,
@@ -1101,6 +1165,7 @@ async fn run() -> Result<()> {
             .await?;
             serde_json::to_string_pretty(&summary)?
         }
+        #[cfg(feature = "host")]
         Command::Bench(BenchCommand::Slim {
             version,
             artifacts,
@@ -1114,6 +1179,7 @@ async fn run() -> Result<()> {
             let summary = slim::slim_in_place(&release, &artifacts)?;
             serde_json::to_string_pretty(&summary)?
         }
+        #[cfg(feature = "host")]
         Command::Bench(BenchCommand::Upload { version, results }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             let versions: Vec<String> = if version == "all" {
@@ -1153,6 +1219,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&out)?
         }
+        #[cfg(feature = "host")]
         Command::Bench(BenchCommand::Publish {
             batch,
             version,
@@ -1196,6 +1263,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&summary)?
         }
+        #[cfg(feature = "host")]
         Command::Bench(BenchCommand::Compact { version, results }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             let releases: Vec<PathBuf> = if version == "all" {
@@ -1229,6 +1297,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&out)?
         }
+        #[cfg(feature = "host")]
         Command::Bench(BenchCommand::Export { out, site, results }) => {
             let results = results.unwrap_or_else(publish::results_dir);
             let releases = publish::releases(&results);
@@ -1244,6 +1313,7 @@ async fn run() -> Result<()> {
             ui::done(format!("Exported to {}", out.display()));
             serde_json::to_string_pretty(&summary)?
         }
+        #[cfg(feature = "host")]
         Command::Bench(BenchCommand::Compare {
             range,
             open,
@@ -1276,6 +1346,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&cmp)?
         }
+        #[cfg(feature = "host")]
         Command::Snapshot(SnapshotCommand::Build {
             recipe,
             out,
@@ -1295,6 +1366,7 @@ async fn run() -> Result<()> {
             .await?;
             serde_json::to_string_pretty(&manifest)?
         }
+        #[cfg(feature = "host")]
         Command::Snapshot(SnapshotCommand::VerifyFork {
             fork_rpc,
             phoenix_api,
@@ -1304,30 +1376,32 @@ async fn run() -> Result<()> {
             let report = snapshot::verify_fork(&fork_rpc, &phoenix_api, &symbol, crash_pct).await?;
             serde_json::to_string_pretty(&report)?
         }
+        #[cfg(feature = "host")]
         Command::Snapshot(SnapshotCommand::Verify { dir, crash_pct }) => {
             serde_json::to_string_pretty(&snapshot::verify(&dir, crash_pct).await?)?
         }
         Command::Scenario(ScenarioCommand::Check { files }) => {
             let mut failed = 0;
             for file in &files {
-                let loaded = mtx_grader::scenario::Scenario::load(file)
-                    .map_err(anyhow::Error::from)
-                    .and_then(|scenario| {
-                        // A market no snapshot warmed up loads, then never
-                        // moves: say so here. Only when the repo is at hand.
-                        if let Ok(root) = bot::repo(None)
-                            && let Ok(task) = bot::resolve_task(&root, None)
-                            && let Ok(snapshot) = bot::task_snapshot(&root, &task)
-                            && scenario.spot.is_none()
-                        {
-                            bot::snapshot_for(&snapshot, &scenario.symbol).map_err(|e| {
-                                anyhow::anyhow!(
-                                    "{e:#}. Set `symbol`, and the mandate's instrument, to one of those"
-                                )
-                            })?;
-                        }
-                        Ok(scenario)
-                    });
+                let loaded = Scenario::load(file).map_err(anyhow::Error::from);
+                // A market no snapshot warmed up loads, then never moves: say
+                // so here. Only when the repo is at hand, which it never is
+                // in an agent's image.
+                #[cfg(feature = "host")]
+                let loaded = loaded.and_then(|scenario| {
+                    if let Ok(root) = bot::repo(None)
+                        && let Ok(task) = bot::resolve_task(&root, None)
+                        && let Ok(snapshot) = bot::task_snapshot(&root, &task)
+                        && scenario.spot.is_none()
+                    {
+                        bot::snapshot_for(&snapshot, &scenario.symbol).map_err(|e| {
+                            anyhow::anyhow!(
+                                "{e:#}. Set `symbol`, and the mandate's instrument, to one of those"
+                            )
+                        })?;
+                    }
+                    Ok(scenario)
+                });
                 match loaded {
                     Ok(scenario) => notice::print(
                         notice::NoticeLevel::Success,
@@ -1378,6 +1452,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&written)?
         }
+        #[cfg(feature = "host")]
         Command::Scenario(ScenarioCommand::New {
             request,
             authoring,
@@ -1398,6 +1473,7 @@ async fn run() -> Result<()> {
                 "overrides": scenario.overrides.len(),
             }))?
         }
+        #[cfg(feature = "host")]
         Command::Scenario(ScenarioCommand::Play {
             request,
             authoring,
@@ -1644,6 +1720,7 @@ async fn run() -> Result<()> {
             }
             json
         }
+        #[cfg(feature = "host")]
         Command::Studio {
             bot_path,
             task,
@@ -1664,7 +1741,9 @@ async fn run() -> Result<()> {
             String::new()
         }
         Command::Bot(command) => match command {
+            #[cfg(feature = "host")]
             BotCommand::New { dir, git, repo } => bot::new(&dir, git, repo.as_deref())?,
+            #[cfg(feature = "host")]
             BotCommand::Practice {
                 bot,
                 task,
@@ -1685,6 +1764,7 @@ async fn run() -> Result<()> {
                 })
                 .await?
             }
+            #[cfg(feature = "host")]
             BotCommand::Run {
                 bot,
                 task,
@@ -1708,7 +1788,7 @@ async fn run() -> Result<()> {
                 .await?
             }
             BotCommand::Check { dir } => {
-                let checked = bot::check(&dir);
+                let checked = bot_check::check(&dir);
                 let mut lines: Vec<String> = checked
                     .problems
                     .iter()
@@ -1724,6 +1804,7 @@ async fn run() -> Result<()> {
                 }
                 out
             }
+            #[cfg(feature = "host")]
             BotCommand::Pack {
                 dir,
                 task,
@@ -1731,6 +1812,7 @@ async fn run() -> Result<()> {
                 out,
             } => bot::pack(&dir, task.as_deref(), repo.as_deref(), &out)?,
         },
+        #[cfg(feature = "host")]
         Command::Calibrate {
             sessions,
             informed,
@@ -2088,6 +2170,113 @@ mod tests {
         assert!(v2_scores_every_session(false, Some(&v2)).is_ok());
         // Under v1 the flag is the verifiers' own.
         assert!(v2_scores_every_session(true, None).is_ok());
+    }
+
+    /// The commands under `mtx <path>`, hidden ones too, sorted.
+    #[cfg(not(feature = "generate"))]
+    fn offered(path: &[&str]) -> Vec<String> {
+        let mut command = <super::Cli as clap::CommandFactory>::command();
+        for name in path {
+            command = command
+                .find_subcommand(name)
+                .unwrap_or_else(|| panic!("no `mtx {}`", path.join(" ")))
+                .clone();
+        }
+        let mut names: Vec<String> = command
+            .get_subcommands()
+            .map(|sub| sub.get_name().to_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// Whether `mtx grade` takes `--<flag>`.
+    #[cfg(not(feature = "generate"))]
+    fn grade_takes(flag: &str) -> bool {
+        <super::Cli as clap::CommandFactory>::command()
+            .find_subcommand("grade")
+            .expect("mtx grade is in every build")
+            .get_arguments()
+            .any(|argument| argument.get_long() == Some(flag))
+    }
+
+    // The agent's build: `just leak-audit` reads the same lists off the
+    // image's binary (`agent_commands` and its two neighbours, less `help`),
+    // so a command added without the `host` gate fails here before an image
+    // is built.
+    #[cfg(not(feature = "host"))]
+    #[test]
+    fn the_agents_build_grades_and_checks_and_does_nothing_else() {
+        use clap::Parser;
+
+        assert_eq!(offered(&[]), ["bot", "grade", "scenario"]);
+        assert_eq!(offered(&["bot"]), ["check"]);
+        assert_eq!(offered(&["scenario"]), ["check"]);
+        assert!(!grade_takes("draw"));
+        // What `mtx-practice` runs in the agent's container still parses.
+        assert!(grade_takes("snapshot"));
+        let practice = [
+            "mtx",
+            "grade",
+            "--jobs",
+            "3",
+            "--snapshot",
+            "s",
+            "--bot",
+            "/app/bot",
+            "--components-only",
+            "--logs",
+            "/tmp/mtx-practice-logs",
+            "--scoring",
+            "v2-headline",
+            "/opt/mtx/practice/p1.json",
+        ];
+        assert!(super::Cli::try_parse_from(practice).is_ok());
+        // And what an agent might reach for is not a command at all.
+        for gone in [
+            &["scenario", "generate"][..],
+            &["scenario", "new"],
+            &["scenario", "play"],
+            &["bot", "practice"],
+            &["studio"],
+            &["bench", "show"],
+            &["calibrate"],
+            &["rescore"],
+            &["snapshot", "create"],
+            &["claude-acp"],
+            &["codex-acp"],
+        ] {
+            let args = [&["mtx"][..], gone].concat();
+            assert!(super::Cli::try_parse_from(args).is_err(), "{gone:?}");
+        }
+    }
+
+    // A host's build without the generators keeps its own commands and still
+    // draws nothing from a task's family.
+    #[cfg(all(feature = "host", not(feature = "generate")))]
+    #[test]
+    fn a_hosts_build_without_the_generators_draws_no_scenario() {
+        assert_eq!(
+            offered(&[]),
+            [
+                "bench",
+                "bot",
+                "calibrate",
+                "claude-acp",
+                "codex-acp",
+                "grade",
+                "rescore",
+                "scenario",
+                "snapshot",
+                "studio"
+            ]
+        );
+        assert_eq!(
+            offered(&["bot"]),
+            ["check", "new", "pack", "practice", "run"]
+        );
+        assert_eq!(offered(&["scenario"]), ["check", "new", "play"]);
+        assert!(!grade_takes("draw"));
     }
 
     #[cfg(feature = "generate")]

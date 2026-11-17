@@ -12,11 +12,15 @@
 #            dependencies compiled for it, and the starter strategy built at
 #            /app/bot/bot.wasm.
 #   agent    ghcr.io/solana-foundation/machine-trading:<tag>-agent
-#            dev with an `mtx` that can't draw scenarios from a task's family
-#            (no `scenario generate`, no `grade --draw`) and holds none of the
-#            host-side commands. A task opts in by starting its environment
-#            from it (`mtx task new` does); the four tasks from before the
-#            guard stay on dev, which keeps the `mtx` their instructions name.
+#            dev with a minimal `mtx`: it grades a bot on scenario files
+#            (`mtx grade`, what `mtx-practice` runs) and checks a bot or a
+#            scenario file, and that is all. It can't draw scenarios from a
+#            task's family (no `scenario generate`, no `grade --draw`) and
+#            holds none of the host's commands (studio, bench, snapshots,
+#            calibration, task authoring). A task opts in by starting its
+#            environment from it (`mtx task new` does); the four tasks from
+#            before the guard stay on dev, which keeps the `mtx` their
+#            instructions name.
 #
 # Tasks add what is theirs: the snapshot they trade on (MTX_SNAPSHOT) and
 # their practice scenarios (/opt/mtx/practice) in environment/. Hidden sets
@@ -145,9 +149,11 @@ FROM dev-base AS dev
 COPY --from=build /usr/local/bin/mtx /usr/local/bin/mtx
 
 # What agents of a guarded task start from: its `mtx` is built without the
-# `generate` feature. It grades the practice files a task ships and can't
-# draw scenarios from the task's family (`mtx scenario generate`, `mtx grade
-# --draw`), so an agent can't train on the distribution the hidden set is
-# drawn from. `just leak-audit` fails if this image's `mtx` can.
+# `generate` and `host` features. It grades the practice files a task ships
+# and can't draw scenarios from the task's family (`mtx scenario generate`,
+# `mtx grade --draw`), so an agent can't train on the distribution the hidden
+# set is drawn from; and it holds none of the host's commands, so there is
+# nothing else in it to find. `just leak-audit` fails if this image's `mtx`
+# offers a command outside its allowlist.
 FROM dev-base AS agent
 COPY --from=build /usr/local/bin/mtx-agent /usr/local/bin/mtx
