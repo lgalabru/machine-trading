@@ -19,8 +19,8 @@
 //! - `mtx task check` fails when the anchors' inputs changed since it was
 //!   written (the `inputs` line) and on a `pending` digest;
 //! - `mtx task anchor-digest --check`, which CI runs on every change to
-//!   `crates/`, `Cargo.lock`, `rust-toolchain` or `snapshots/`, and on a
-//!   task's own changes, plays the sessions again. It fails on a `pending`
+//!   `crates/`, `snapshots/`, `.cargo/`, the root `Cargo.toml`, `Cargo.lock`
+//!   or `rust-toolchain`, and on a task whose `tests/anchor.digest` changed, plays the sessions again. It fails on a `pending`
 //!   digest (printing the one to commit) and when the digest differs: the
 //!   engine changed what the task does. Then run `mtx task sync --anchors`
 //!   (its fingerprint moves with it; bump `GRADER_VERSION` only for changes

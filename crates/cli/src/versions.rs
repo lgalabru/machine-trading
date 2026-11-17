@@ -81,7 +81,7 @@ const COSMETIC_KEYS: &[&str] = &[
 /// output); the scenario family and its parameters, as the bytes of a fixed
 /// public draw of its generator, as large as the verifier's, and the
 /// generator's parameters; every file of the snapshot; the grader's version
-/// and `tests/anchor.digest`, which says what the engine does to the
+/// and `tests/anchor.digest` (its fields, not its comments), which says what the engine does to the
 /// anchors (see [`crate::anchors`]). The files are the ones git tracks
 /// (see [`tracked_files`]). Out: READMEs, DESIGN.md, the checks' ladder and
 /// other bots, the verifier's Dockerfile, and the engine's source: an edit
@@ -130,10 +130,15 @@ pub fn fingerprint(
             parts.push((rel.display().to_string(), bytes));
         }
     }
-    parts.push((
-        crate::anchors::DIGEST_FILE.into(),
-        get(crate::anchors::DIGEST_FILE).unwrap_or_default(),
-    ));
+    // The digest's fields, not the file's bytes: its header and comments can
+    // be reworded without moving a fingerprint. A file that doesn't parse
+    // counts as its bytes, so changing it still does.
+    let digest_file = get(crate::anchors::DIGEST_FILE).unwrap_or_default();
+    let digest_part = match crate::anchors::Digest::parse(&String::from_utf8_lossy(&digest_file)) {
+        Some(d) => format!("{}\n{}\n{}", d.informed, d.inputs, d.digest).into_bytes(),
+        None => digest_file,
+    };
+    parts.push((crate::anchors::DIGEST_FILE.into(), digest_part));
     let family = mtx_grader::generators::generator(&generator)
         .with_context(|| format!("{task}: no generator {generator}"))?;
     let script = String::from_utf8_lossy(&get("tests/test.sh").unwrap_or_default()).to_string();
@@ -590,6 +595,31 @@ pub(crate) mod tests {
             t.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\"")
         });
         assert_ne!(a, b);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_digest_file_counts_by_its_fields_not_its_comments() {
+        let task = "flash-crash-spcx";
+        let root = scratch(task);
+        let path = root
+            .join("bench/tasks")
+            .join(task)
+            .join(crate::anchors::DIGEST_FILE);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let base = fingerprint(&root, task, &disk(&root)).unwrap();
+        std::fs::write(
+            &path,
+            format!("# reworded header\n# more\n{text}\n# trailer\n"),
+        )
+        .unwrap();
+        assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+        let digest = text.lines().find(|l| l.starts_with("digest: ")).unwrap();
+        std::fs::write(&path, text.replace(digest, "digest: 00")).unwrap();
+        assert_ne!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+        let inputs = text.lines().find(|l| l.starts_with("inputs: ")).unwrap();
+        std::fs::write(&path, text.replace(inputs, "inputs: 00")).unwrap();
+        assert_ne!(base, fingerprint(&root, task, &disk(&root)).unwrap());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -243,9 +243,11 @@ jobs:
 
   # What `anchor-digests` has to check: every task when the engine could have
   # changed what a task does (a change under `crates/` or `snapshots/`, to
-  # `Cargo.lock` or to `rust-toolchain`; a manual run always), and a task
-  # whose own folder changed (an edited reference, a new task, a digest
-  # somebody committed by hand). A pending or wrong digest can't merge.
+  # the root `Cargo.toml`, `.cargo/`, `Cargo.lock` or `rust-toolchain`; a
+  # manual run always), and a task whose `tests/anchor.digest` changed (an
+  # edited reference or a new task, whose digest `sync` rewrote, or one
+  # somebody committed by hand; the lists test forces the file to change
+  # whenever an input does). A pending or wrong digest can't merge.
   engine-changed:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -276,12 +278,12 @@ jobs:
           else
             # shellcheck disable=SC2086
             changed_files="$(git diff --name-only $range)"
-            engine="$(printf '%s\n' "$changed_files" | grep -E '^(crates/|snapshots/|Cargo\.lock$|rust-toolchain$)' || true)"
+            engine="$(printf '%s\n' "$changed_files" | grep -E '^(crates/|snapshots/|\.cargo/|Cargo\.toml$|Cargo\.lock$|rust-toolchain$)' || true)"
           fi
           if [ -n "$engine" ]; then
             selected="$all"
           else
-            selected="$(printf '%s\n' "$changed_files" | grep -E '^bench/tasks/[^/]+/' | cut -d/ -f3 | sort -u | grep -Fxf <(printf '%s\n' "$all") || true)"
+            selected="$(printf '%s\n' "$changed_files" | grep -E '^bench/tasks/[^/]+/tests/anchor\.digest$' | cut -d/ -f3 | sort -u | grep -Fxf <(printf '%s\n' "$all") || true)"
           fi
           echo "tasks=$(printf '%s\n' "$selected" | grep . | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
           if [ -n "$selected" ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
@@ -297,7 +299,9 @@ jobs:
   # builds the anchors it plays.
   anchor-digests:
     name: anchor digest (${{ matrix.task }})
-    needs: [ci-image, rust, engine-changed]
+    # Not after `rust`: a pending digest fails the lists test there, and this
+    # job is the one that prints the digest to commit.
+    needs: [ci-image, engine-changed]
     if: needs.engine-changed.outputs.any == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90

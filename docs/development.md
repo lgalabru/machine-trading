@@ -263,8 +263,9 @@ the fields the identity proof below ignores. An engine, kit or dependency
 change that alters what the anchors do moves it, and so the fingerprint.
 
 - CI's `anchor-digests` job builds the anchors and plays them again for every
-  task, on a change under `crates/` or `snapshots/`, to `Cargo.lock` or
-  `rust-toolchain`, and for a task whose own folder changed. It fails if a
+  task, on a change under `crates/`, `snapshots/` or `.cargo/`, to the root
+  `Cargo.toml`, `Cargo.lock` or `rust-toolchain`, and for a task whose
+  `tests/anchor.digest` changed. It fails if a
   digest differs from the committed one, or is `pending` (the log then shows
   the file to commit). That is the signal that the change altered a task's
   behaviour: run `mtx task sync --anchors`. The digest is in that task's
