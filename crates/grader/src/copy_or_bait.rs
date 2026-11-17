@@ -160,7 +160,7 @@ impl CopyOrBaitFamily {
             chasers: (2, 2),
             noise: (3, 5),
             horizon_slots: (60, 150),
-            edge_bps: (20.0, 30.0),
+            edge_bps: (12.0, 18.0),
             hit_rate: 0.85,
             informed_mult: 48.0,
             decoy_mult: 4.0,
