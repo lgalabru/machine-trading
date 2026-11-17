@@ -5,7 +5,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 [task]
 name = "solana-foundation/spoof-or-iceberg-exit-qqq"
 version = "0.1.0"
-description = "Write a bot that sells an inherited long in Phoenix QQQ perps by the close, reading the large orders on the book: walls that are pulled as the price comes and icebergs that reload where they stand, on an offline copy of Solana mainnet."
+description = "A bot sells an inherited long in the Phoenix QQQ perp by the close, timing the sale on what the large orders on the book turn out to be: walls pulled as the price comes, or icebergs that reload where they stand."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "surfpool", "rust"]
 
 [[task.authors]]
@@ -22,10 +22,10 @@ snapshot = "phoenix-perps-2026-11-13"
 generator = "spoof-or-iceberg"
 anchor = "spoof-or-iceberg-exit"
 emoji = "🆕"
-market = "TODO: venue and instrument (flash-crash-spcx base)"
+market = "Phoenix QQQ perp"
 summary = "tells a wall that will be pulled from an order that will trade, by its owner's behaviour over time, and times its sale on what each says the price is about to do"
 skill = "tells a wall that will be pulled from an order that will trade, by its owner's behaviour over time, and times its sale on what each says the price is about to do"
-leak_needles = []
+leak_needles = ["wall is followed by its side and price", "the told wallet that sent a transaction in the slot"]
 headline = "v2"
 
 [verifier]
@@ -51,11 +51,17 @@ MTX_EVAL_SEED = "${MTX_EVAL_SEED:-}"
 timeout_sec = 3600.0
 # Created in the base image; owns /app, the shared target dir and its cargo home.
 user = "agent"
+# While it works, the agent reaches its model (the bench adds the key proxy's
+# address) and the crates registry, and nothing else: ghcr.io and github.com
+# hold the full grader and the reference bots. The install before it runs
+# keeps [environment]'s network. `just network-probe` checks it.
+network_mode = "allowlist"
+allowed_hosts = ["crates.io", "index.crates.io", "static.crates.io"]
 
 [verifier.environment]
 # The verifier's image, built by `just image` from tests/: the runtime
 # image with this task's tests in it. The rest as [environment].
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-flash-crash-spcx-verifier@sha256:d5de44dc1faf6014f3b4a61485940ae436e070f20aa3e61e774427b1360d7532"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-spoof-or-iceberg-exit-qqq-verifier"
 network_mode = "public"
 build_timeout_sec = 1800.0
 cpus = 4
@@ -66,7 +72,7 @@ os = "linux"
 # Built by `just image` from environment/ (pinned by `just release`):
 # Harbor builds nothing when a trial starts. Building the tasks' images
 # there, at once, has put one task's files into another's image.
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-flash-crash-spcx@sha256:fcfb6e049f62c3e0ff85cd81417672d9a1dce26515c4892c60c1f7ccb2c2d31b"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.12.0-spoof-or-iceberg-exit-qqq"
 # Agents need package registries and their model API. The chain they trade
 # on is a local, offline sandbox either way.
 network_mode = "public"

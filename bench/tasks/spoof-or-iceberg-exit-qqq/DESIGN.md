@@ -15,7 +15,30 @@ A good bot profits here because it tells a wall that will be pulled from an orde
 
 ## Expert research
 
-<!-- TODO: why this is a real expert task, the expert's method, where non-experts go wrong, with sources. -->
+Reading displayed liquidity is a core execution skill, and spoofing is the
+reason it can't be taken at face value. Regulators have prosecuted it on
+exactly this pattern: orders placed to be cancelled before they trade,
+on the side opposite the spoofer's real interest (the CFTC's and DOJ's
+cases against Navinder Sarao, 2015, and Michael Coscia, 2015, the first
+criminal conviction under the Dodd-Frank anti-spoofing provision, which
+turned on order-to-trade and cancel-on-approach patterns). Icebergs are the
+honest mirror: exchanges offer reserve orders so a large parent can work
+without showing its size, and execution research treats their refills at a
+fixed price as information about a genuine, persistent buyer or seller
+(Hautsch and Huang 2012, "On the dark side of the market: identifying and
+analyzing hidden order placements"; Frey and Sandas 2017 on iceberg
+detection). The expert's method:
+
+- **Judge a resting order by its owner's behaviour, not its size.** Who
+  placed it, whether it stays when the price comes, whether it refills
+  where it traded. A snapshot of the book can't tell the two apart.
+- **Act on the read, in the right direction.** A wall that will be pulled
+  says the opposite of what it shows; an iceberg says what it shows.
+- **Where nothing is known, don't pay for a guess.** Sell late, while the
+  bid beats the broker.
+
+The non-expert trusts the depth (support under a bid wall), fades every
+wall (all walls are fake), or sells on a schedule.
 
 ## The central decision
 
@@ -125,11 +148,20 @@ rung a component, bootstrapped 72-session sets. Walls 8 to 36 ticks out.
 
 ## Failure modes, priced
 
-<!-- TODO: each way a bot can lose, and what it costs. -->
+From Gate 0 (per session, mean USD): trusting the depth or fading the
+walls nets about the haircut less costs on average (+1.5 and −0.2) but
+swings ±20 a session on which wall came first; selling on a schedule
+nets +2.2 with the same swing at half the size; holding and selling late
+nets +0.2. Missing a fall the reference could have read costs the jump on
+the whole position: about $25 to $50.
 
 ## Predictions
 
-<!-- TODO: what you expect each model tier to score, before running them. -->
+Frontier agents find the late sale and the order's arithmetic quickly and
+land near 0 to 0.1. Reading the order book account's resting orders is
+within reach; telling pulled walls from reloaded slices, by side, before
+the jump, is what lifts a bot toward the reference. Few will name owners
+by the placing transaction's signer.
 
 ## Generations
 

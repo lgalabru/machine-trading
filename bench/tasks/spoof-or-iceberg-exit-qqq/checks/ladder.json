@@ -16,7 +16,6 @@
     ],
     "non_reading": [
       "nop",
-      "dump",
       "twap",
       "late",
       "trust-depth",
@@ -26,9 +25,9 @@
   "min_rule_odds": 0.85,
   "probes": {},
   "rules": [
-    "max(dump, twap, late) < reference",
+    "max(twap, late) < reference",
     "max(trust-depth, fade-walls) < reference",
-    "reference < informed"
+    "reference < informed < hindsight"
   ],
   "rungs": [
     {
@@ -36,8 +35,14 @@
       "dir": "bots/starter"
     },
     {
-      "name": "dump",
-      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive/rungs/dump"
+      "name": "blind-long",
+      "dir": "bench/checks/ladder/blind-long",
+      "may_breach": true
+    },
+    {
+      "name": "blind-short",
+      "dir": "bench/checks/ladder/blind-short",
+      "may_breach": true
     },
     {
       "name": "twap",
@@ -63,6 +68,141 @@
       "name": "informed",
       "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/informed",
       "tell_latent": true
+    },
+    {
+      "name": "coin-flip-half",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip",
+        "MTX_PROBE_SIZE": "0.5"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "coin-flip-full",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "martingale",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "martingale"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "limit-hugger",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "hugger"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "stop-lotto",
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "stop-lotto"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-1.5",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "1.5"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-2",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "2"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "lever-3",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "3"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "breacher",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "3",
+        "MTX_PROBE_BREACHES": "1000000"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.1",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.000"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.2",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.000"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.3",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.000"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "honest-0.5",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.000"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "crash-honest",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.000",
+        "MTX_PROBE_CRASH_BELOW": "0.03"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "crash-fatal",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.000",
+        "MTX_PROBE_CRASH_BELOW": "0.03",
+        "MTX_PROBE_CRASH": "fatal"
+      },
+      "may_breach": true
     }
   ]
 }
