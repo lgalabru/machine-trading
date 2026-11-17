@@ -3,14 +3,15 @@
 //! trader that is never wrong. Each test generates sessions of the library
 //! and reads the actors' actions the way a bot reading the chain would.
 
-use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 use mtx_kit::Side;
 use solana_pubkey::Pubkey;
 
-use super::tests::Book;
-use super::{Library, Setting, WalletSeat};
+use super::{Library, Setting, WalletSeat, tests::Book};
 use crate::actors::{Cast, Moment};
 
 /// One action of a wallet, as the pretend books note it.
@@ -183,31 +184,31 @@ fn key(v: f64) -> i64 {
     (v * 1_000.0).round() as i64
 }
 
-/// How well one exact value tells `actor` from `genuine`: learn each exact
-/// value's label on the first half of both, then label the second half by
-/// it, guessing a value never seen. Balanced accuracy: 0.5 is chance.
+/// How well one exact value tells `actor` from `genuine`: learn on the
+/// first half of each which exact values are commoner among the actor's,
+/// then label the second half of both by it: an actor's if its value is one
+/// of those, genuine otherwise. Balanced accuracy: 0.5 is chance.
 fn exact_value_accuracy(actor: &[f64], genuine: &[f64]) -> f64 {
     let split = |v: &[f64]| (v[..v.len() / 2].to_vec(), v[v.len() / 2..].to_vec());
     let (a_train, a_test) = split(actor);
     let (g_train, g_test) = split(genuine);
-    let mut seen: BTreeMap<i64, (u32, u32)> = BTreeMap::new();
-    for v in &a_train {
-        seen.entry(key(*v)).or_default().0 += 1;
-    }
-    for v in &g_train {
-        seen.entry(key(*v)).or_default().1 += 1;
-    }
-    let recall = |test: &[f64], actor_side: bool| {
-        let right: f64 = test
-            .iter()
-            .map(|v| match seen.get(&key(*v)) {
-                Some((a, g)) if a != g => ((a > g) == actor_side) as u8 as f64,
-                _ => 0.5,
-            })
-            .sum();
-        right / test.len() as f64
+    let rates = |train: &[f64]| {
+        let mut rates: BTreeMap<i64, f64> = BTreeMap::new();
+        for v in train {
+            *rates.entry(key(*v)).or_default() += 1.0 / train.len() as f64;
+        }
+        rates
     };
-    (recall(&a_test, true) + recall(&g_test, false)) / 2.0
+    let (of_actor, of_genuine) = (rates(&a_train), rates(&g_train));
+    let says_actor = |v: f64| {
+        let k = key(v);
+        of_actor.get(&k).copied().unwrap_or(0.0) > of_genuine.get(&k).copied().unwrap_or(0.0)
+    };
+    let recall_actor =
+        a_test.iter().filter(|v| says_actor(**v)).count() as f64 / a_test.len() as f64;
+    let recall_genuine =
+        g_test.iter().filter(|v| !says_actor(**v)).count() as f64 / g_test.len() as f64;
+    (recall_actor + recall_genuine) / 2.0
 }
 
 /// The most common value's share of `values`, to three decimals.
@@ -256,7 +257,13 @@ fn assert_sizes_blend(tells: &mut Vec<String>, what: &str, sizes: &[f64], genuin
     }
 }
 
-fn assert_varies(tells: &mut Vec<String>, what: &str, values: &[f64], most_common: f64, distinct: usize) {
+fn assert_varies(
+    tells: &mut Vec<String>,
+    what: &str,
+    values: &[f64],
+    most_common: f64,
+    distinct: usize,
+) {
     let kinds: std::collections::BTreeSet<i64> = values.iter().map(|v| key(*v)).collect();
     if kinds.len() < distinct || mode_share(values) > most_common {
         tells.push(format!(
@@ -306,7 +313,12 @@ async fn a_stop_hunters_push_hold_and_overshoot_are_drawn_each_hunt() {
         .collect();
     assert_eq!(pushes.len(), backs.len());
     let sizes: Vec<f64> = pushes.iter().map(|a| a.size).collect();
-    assert_sizes_blend(&mut tells, "a stop hunter's push", &sizes, &genuine(&session.acts));
+    assert_sizes_blend(
+        &mut tells,
+        "a stop hunter's push",
+        &sizes,
+        &genuine(&session.acts),
+    );
     let holds: Vec<f64> = pushes
         .iter()
         .zip(&backs)
@@ -360,13 +372,23 @@ async fn a_spoofers_wall_distance_lifetime_and_harvest_are_drawn_each_wall() {
         .filter(|a| a.verb == "cancel")
         .collect();
     let sizes: Vec<f64> = rests.iter().map(|a| a.size).collect();
-    assert_sizes_blend(&mut tells, "a spoofer's wall", &sizes, &genuine(&session.acts));
+    assert_sizes_blend(
+        &mut tells,
+        "a spoofer's wall",
+        &sizes,
+        &genuine(&session.acts),
+    );
     let harvests: Vec<f64> = spoofer
         .iter()
         .filter(|a| a.verb == "take")
         .map(|a| a.size)
         .collect();
-    assert_sizes_blend(&mut tells, "a spoofer's harvest", &harvests, &genuine(&session.acts));
+    assert_sizes_blend(
+        &mut tells,
+        "a spoofer's harvest",
+        &harvests,
+        &genuine(&session.acts),
+    );
     let lifetimes: Vec<f64> = rests
         .iter()
         .zip(&cancels)
@@ -392,7 +414,7 @@ async fn an_icebergs_slices_and_offset_are_drawn_but_it_reloads_at_one_price() {
             library: &serde_json::json!({
                 "scale": scale(),
                 "noise": [{}],
-                "icebergs": [{ "parent_mult": 4.0 }],
+                "icebergs": [{ "parent_mult": 20.0 }],
             }),
             salt,
             slots: 200,
@@ -452,7 +474,10 @@ async fn informed_traders_are_right_on_average_and_wrong_some_of_the_time() {
         "informed",
     )
     .await;
-    assert!((0.05..=0.35).contains(&wrong), "wrong {wrong:.3} of the time");
+    assert!(
+        (0.05..=0.35).contains(&wrong),
+        "wrong {wrong:.3} of the time"
+    );
 }
 
 #[tokio::test]
@@ -469,7 +494,10 @@ async fn decoys_that_still_see_ahead_are_as_fallible_as_the_informed() {
         "decoy",
     )
     .await;
-    assert!((0.05..=0.35).contains(&wrong), "wrong {wrong:.3} of the time");
+    assert!(
+        (0.05..=0.35).contains(&wrong),
+        "wrong {wrong:.3} of the time"
+    );
 }
 
 #[tokio::test]
@@ -502,5 +530,8 @@ async fn informed_rfq_clients_are_right_on_average_and_wrong_some_of_the_time() 
         .filter(|(_, side)| *side == Some(Side::Ask))
         .count() as f64
         / asked as f64;
-    assert!((0.05..=0.35).contains(&wrong), "wrong {wrong:.3} of the time");
+    assert!(
+        (0.05..=0.35).contains(&wrong),
+        "wrong {wrong:.3} of the time"
+    );
 }

@@ -21,7 +21,8 @@ use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BookSide, Scale, Wallet, Window, finite_at_least_zero, finite_positive, round_down, round_up,
+    BookSide, JITTER, Rng, Scale, Wallet, Window, finite_at_least_zero, finite_positive, jittered,
+    round_down, round_up, sized, within,
 };
 use crate::actors::{Actor, ActorsReport, Moment};
 
@@ -41,6 +42,10 @@ fn forty() -> u64 {
     40
 }
 
+fn jitter() -> f64 {
+    JITTER
+}
+
 /// A spoofer's settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -48,6 +53,11 @@ pub struct Spoofer {
     /// The side its walls go on: bids hold the price up.
     #[serde(default)]
     pub side: BookSide,
+    /// How far behind the touch a wall goes up, and how long it stands
+    /// (`lifetime_slots`) unless the price comes: each is drawn per wall
+    /// within `jitter` of its setting, and a wall's size (`wall_mult`) and
+    /// a harvest (`harvest_mult`) lognormally at `size_sigma` (by default the
+    /// market's own `trade_size_sigma`).
     #[serde(default = "five")]
     pub distance_ticks: u64,
     #[serde(default = "one_tick")]
@@ -63,6 +73,10 @@ pub struct Spoofer {
     /// How far ahead it sees, if it walls only against the move it sees.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ahead_slots: Option<u64>,
+    #[serde(default = "jitter")]
+    pub jitter: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_sigma: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<Window>,
 }
@@ -77,6 +91,8 @@ impl Default for Spoofer {
             lifetime_slots: forty(),
             harvest_mult: 0.0,
             ahead_slots: None,
+            jitter: jitter(),
+            size_sigma: None,
             active: None,
         }
     }
@@ -93,16 +109,22 @@ impl Spoofer {
         if self.ahead_slots == Some(0) {
             return Err("ahead_slots must be at least 1".into());
         }
+        within("jitter", self.jitter, 0.0, 0.9)?;
+        if let Some(sigma) = self.size_sigma {
+            within("size_sigma", sigma, 0.0, 3.0)?;
+        }
         finite_positive("wall_mult", self.wall_mult)?;
         finite_at_least_zero("harvest_mult", self.harvest_mult)
     }
 }
 
-/// A wall it has up: its price, and the slot it went up at.
+/// A wall it has up: its price, the slot it went up at, and how long it
+/// stands unless the price comes.
 #[derive(Debug, Clone, Copy)]
 struct Wall {
     price: f64,
     since: u64,
+    lifetime: u64,
 }
 
 pub(super) struct SpooferActor {
@@ -110,6 +132,7 @@ pub(super) struct SpooferActor {
     scale: Scale,
     wallet: Wallet,
     path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
+    rng: Rng,
     wall: Option<Wall>,
 }
 
@@ -119,12 +142,14 @@ impl SpooferActor {
         scale: Scale,
         wallet: Wallet,
         path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
+        rng: Rng,
     ) -> Self {
         Self {
             spec,
             scale,
             wallet,
             path,
+            rng,
             wall: None,
         }
     }
@@ -160,7 +185,7 @@ impl SpooferActor {
                 Side::Ask => (wall.price - t) / tick,
             });
             let near = gap.is_none_or(|g| g <= self.spec.cancel_ticks as f64 + 0.5);
-            let old = now.at >= wall.since + self.spec.lifetime_slots;
+            let old = now.at >= wall.since + wall.lifetime;
             if near || old || !Window::holds(&self.spec.active, now.at) {
                 if self.wallet.cancel_all(now.at).await {
                     self.wall = None;
@@ -177,7 +202,12 @@ impl SpooferActor {
             }
             if self.spec.harvest_mult > 0.0 {
                 // Sell into the other side the wall props up, one tick deep.
-                let size = self.scale.trade_size * self.spec.harvest_mult;
+                let size = sized(
+                    &self.scale,
+                    &mut self.rng,
+                    self.spec.harvest_mult,
+                    self.spec.size_sigma,
+                );
                 let (other, limit) = match side {
                     Side::Bid => (Side::Ask, bid.map(|b| b - tick)),
                     Side::Ask => (Side::Bid, ask.map(|a| a + tick)),
@@ -194,7 +224,13 @@ impl SpooferActor {
         let Some(touch) = touch else {
             return;
         };
-        let away = self.spec.distance_ticks as f64 * tick;
+        let distance = jittered(
+            &mut self.rng,
+            self.spec.distance_ticks,
+            self.spec.jitter,
+            self.spec.cancel_ticks + 1,
+        );
+        let away = distance as f64 * tick;
         let price = match side {
             Side::Bid => round_down(touch - away, tick),
             Side::Ask => round_up(touch + away, tick),
@@ -202,11 +238,18 @@ impl SpooferActor {
         if price <= 0.0 {
             return;
         }
-        let size = self.scale.trade_size * self.spec.wall_mult;
+        let size = sized(
+            &self.scale,
+            &mut self.rng,
+            self.spec.wall_mult,
+            self.spec.size_sigma,
+        );
+        let lifetime = jittered(&mut self.rng, self.spec.lifetime_slots, self.spec.jitter, 1);
         if self.wallet.rest(now.at, side, price, size).await {
             self.wall = Some(Wall {
                 price,
                 since: now.at,
+                lifetime,
             });
             self.wallet.count("walls", 1);
         }
@@ -233,6 +276,15 @@ mod tests {
     use super::*;
     use crate::actors::library::tests::{Book, at, scale, wallet};
 
+    /// The settings with every draw held to them.
+    fn fixed() -> Spoofer {
+        Spoofer {
+            jitter: 0.0,
+            size_sigma: Some(0.0),
+            ..Spoofer::default()
+        }
+    }
+
     #[tokio::test]
     async fn it_walls_behind_the_touch_and_pulls_the_wall_as_the_price_comes() {
         let (book, log) = Book::new("s", 100.00, 100.10);
@@ -241,11 +293,12 @@ mod tests {
         let mut spoofer = SpooferActor::new(
             Spoofer {
                 lifetime_slots: 100,
-                ..Spoofer::default()
+                ..fixed()
             },
             scale(),
             wallet,
             Arc::new(|s| at(s, 100.0)),
+            Rng::new([2; 32]),
         );
         spoofer.after_blocks(&at(2, 100.0)).await;
         // The bid falls to 2 ticks over the wall: still up.
@@ -280,11 +333,12 @@ mod tests {
             Spoofer {
                 lifetime_slots: 4,
                 harvest_mult: 0.5,
-                ..Spoofer::default()
+                ..fixed()
             },
             scale(),
             wallet,
             Arc::new(|s| at(s, 100.0)),
+            Rng::new([2; 32]),
         );
         for s in [2, 4, 6] {
             spoofer.after_blocks(&at(s, 100.0)).await;
@@ -307,11 +361,12 @@ mod tests {
         let mut spoofer = SpooferActor::new(
             Spoofer {
                 ahead_slots: Some(20),
-                ..Spoofer::default()
+                ..fixed()
             },
             scale(),
             wallet,
             Arc::new(|s| at(s, if s >= 50 { 99.0 } else { 100.0 })),
+            Rng::new([2; 32]),
         );
         spoofer.after_blocks(&at(10, 100.0)).await;
         assert!(log.lock().unwrap().is_empty(), "nothing falls in sight");

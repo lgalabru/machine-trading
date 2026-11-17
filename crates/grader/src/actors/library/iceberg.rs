@@ -15,7 +15,10 @@ use async_trait::async_trait;
 use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
 
-use super::{BookSide, Scale, Wallet, Window, finite_positive, round_down, round_up};
+use super::{
+    BookSide, JITTER, Rng, Scale, Wallet, Window, finite_positive, jittered, round_down, round_up,
+    sized, within,
+};
 use crate::actors::{Actor, ActorsReport, Moment};
 
 fn one() -> f64 {
@@ -34,6 +37,10 @@ fn ten_ticks() -> u64 {
     10
 }
 
+fn jitter() -> f64 {
+    JITTER
+}
+
 /// An iceberg's settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -44,9 +51,13 @@ pub struct Iceberg {
     /// Ticks behind the touch its slice goes up at.
     #[serde(default = "one_tick")]
     pub distance_ticks: u64,
-    /// What it shows at a time, in market trade sizes.
+    /// What it shows at a time, in market trade sizes: the median of each
+    /// slice, which is drawn lognormally at `size_sigma` (by default the
+    /// market's own `trade_size_sigma`).
     #[serde(default = "one")]
     pub display_mult: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_sigma: Option<f64>,
     /// The whole parent, in market trade sizes.
     #[serde(default = "six")]
     pub parent_mult: f64,
@@ -54,6 +65,11 @@ pub struct Iceberg {
     /// is moved.
     #[serde(default = "ten_ticks")]
     pub max_away_ticks: u64,
+    /// How far each new slice's distance from the touch varies from
+    /// `distance_ticks`, as a share of it either way. A slice that reloads
+    /// stays at its price.
+    #[serde(default = "jitter")]
+    pub jitter: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<Window>,
 }
@@ -66,6 +82,8 @@ impl Default for Iceberg {
             display_mult: one(),
             parent_mult: six(),
             max_away_ticks: ten_ticks(),
+            size_sigma: None,
+            jitter: jitter(),
             active: None,
         }
     }
@@ -78,8 +96,14 @@ impl Iceberg {
         if self.parent_mult < self.display_mult {
             return Err("parent_mult must be at least display_mult".into());
         }
-        if self.max_away_ticks <= self.distance_ticks {
-            return Err("max_away_ticks must be over distance_ticks".into());
+        if let Some(sigma) = self.size_sigma {
+            within("size_sigma", sigma, 0.0, 3.0)?;
+        }
+        within("jitter", self.jitter, 0.0, 0.9)?;
+        let farthest =
+            self.distance_ticks + (self.distance_ticks as f64 * self.jitter).ceil() as u64;
+        if self.max_away_ticks <= farthest {
+            return Err("max_away_ticks must be over the farthest distance_ticks it draws".into());
         }
         Ok(())
     }
@@ -89,6 +113,7 @@ pub(super) struct IcebergActor {
     spec: Iceberg,
     scale: Scale,
     wallet: Wallet,
+    rng: Rng,
     /// The price its slice stands at, once one does.
     standing: Option<f64>,
     /// The wallet's position at its last look, once it has looked.
@@ -98,24 +123,32 @@ pub(super) struct IcebergActor {
 }
 
 impl IcebergActor {
-    pub fn new(spec: Iceberg, scale: Scale, wallet: Wallet) -> Self {
+    pub fn new(spec: Iceberg, scale: Scale, wallet: Wallet, rng: Rng) -> Self {
         let left = scale.trade_size * spec.parent_mult;
         Self {
             spec,
             scale,
             wallet,
+            rng,
             standing: None,
             position: None,
             left,
         }
     }
 
-    fn slice(&self) -> f64 {
-        (self.scale.trade_size * self.spec.display_mult).min(self.left)
+    fn slice(&mut self) -> f64 {
+        sized(
+            &self.scale,
+            &mut self.rng,
+            self.spec.display_mult,
+            self.spec.size_sigma,
+        )
+        .min(self.left)
     }
 
     async fn show(&mut self, at: u64, side: Side, price: f64) {
-        if self.wallet.rest(at, side, price, self.slice()).await {
+        let slice = self.slice();
+        if self.wallet.rest(at, side, price, slice).await {
             self.standing = Some(price);
         }
     }
@@ -178,7 +211,8 @@ impl IcebergActor {
         let Some(touch) = touch else {
             return;
         };
-        let away = self.spec.distance_ticks as f64 * tick;
+        let distance = jittered(&mut self.rng, self.spec.distance_ticks, self.spec.jitter, 0);
+        let away = distance as f64 * tick;
         let price = match side {
             Side::Bid => round_down(touch - away, tick),
             Side::Ask => round_up(touch + away, tick),
@@ -213,6 +247,15 @@ mod tests {
     use super::*;
     use crate::actors::library::tests::{Book, at, scale, wallet};
 
+    /// The settings with every draw held to them.
+    fn fixed() -> Iceberg {
+        Iceberg {
+            jitter: 0.0,
+            size_sigma: Some(0.0),
+            ..Iceberg::default()
+        }
+    }
+
     fn iceberg(spec: Iceberg) -> (IcebergActor, Book) {
         let (book, _) = Book::new("i", 100.00, 100.10);
         let handle = Book {
@@ -222,7 +265,10 @@ mod tests {
             name: book.name.clone(),
         };
         let (wallet, _) = wallet(book);
-        (IcebergActor::new(spec, scale(), wallet), handle)
+        (
+            IcebergActor::new(spec, scale(), wallet, Rng::new([2; 32])),
+            handle,
+        )
     }
 
     #[tokio::test]
@@ -233,9 +279,9 @@ mod tests {
         let spec = Iceberg {
             display_mult: 1.0,
             parent_mult: 2.5,
-            ..Iceberg::default()
+            ..fixed()
         };
-        let mut iceberg = IcebergActor::new(spec, scale(), wallet);
+        let mut iceberg = IcebergActor::new(spec, scale(), wallet, Rng::new([2; 32]));
         iceberg.after_blocks(&at(2, 100.0)).await;
         // Nothing traded: it stands.
         iceberg.after_blocks(&at(4, 100.0)).await;
@@ -273,9 +319,9 @@ mod tests {
         let spec = Iceberg {
             side: BookSide::Ask,
             distance_ticks: 0,
-            ..Iceberg::default()
+            ..fixed()
         };
-        let mut iceberg = IcebergActor::new(spec, scale(), wallet);
+        let mut iceberg = IcebergActor::new(spec, scale(), wallet, Rng::new([2; 32]));
         iceberg.after_blocks(&at(2, 100.0)).await;
         *position.lock().unwrap() = -1.0;
         iceberg.after_blocks(&at(4, 100.0)).await;
@@ -296,7 +342,7 @@ mod tests {
     async fn a_slice_the_touch_has_left_behind_is_put_up_again_behind_the_new_touch() {
         let (mut iceberg, handle) = iceberg(Iceberg {
             max_away_ticks: 5,
-            ..Iceberg::default()
+            ..fixed()
         });
         iceberg.after_blocks(&at(2, 100.0)).await;
         // Four ticks away: it stays.
@@ -323,7 +369,7 @@ mod tests {
                 from: 4,
                 until: Some(8),
             }),
-            ..Iceberg::default()
+            ..fixed()
         });
         iceberg.after_blocks(&at(2, 100.0)).await;
         assert!(handle.log.lock().unwrap().is_empty());

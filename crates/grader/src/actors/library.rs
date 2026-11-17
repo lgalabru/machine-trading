@@ -209,6 +209,14 @@ pub(crate) fn finite_at_least_zero(what: &str, v: f64) -> Result<(), String> {
     }
 }
 
+pub(crate) fn within(what: &str, v: f64, low: f64, high: f64) -> Result<(), String> {
+    if (low..=high).contains(&v) {
+        Ok(())
+    } else {
+        Err(format!("{what} must be between {low} and {high}"))
+    }
+}
+
 impl Library {
     /// The actors that act on the bot's sends as they arrive (a
     /// [`SendHook`](crate::guard::SendHook)), by where the scenario names
@@ -473,6 +481,7 @@ impl Library {
                 scale,
                 wallet,
                 setting.path.clone(),
+                rng("spoofer"),
             )));
         }
         for spec in &self.icebergs {
@@ -481,6 +490,7 @@ impl Library {
                 spec.clone(),
                 scale,
                 wallet,
+                rng("iceberg"),
             )));
         }
         for spec in &self.stop_hunters {
@@ -1070,6 +1080,34 @@ impl Rng {
         }
         n
     }
+}
+
+/// How far an actor's per-action draws spread, unless a scenario says
+/// otherwise: timing and offsets within this share of their setting either
+/// way. Zero draws nothing, and acts exactly on the setting.
+pub(crate) const JITTER: f64 = 0.4;
+
+/// A duration or distance in slots or ticks, drawn uniformly within
+/// `jitter` of `base` either way, at least `floor`.
+pub(crate) fn jittered(rng: &mut Rng, base: u64, jitter: f64, floor: u64) -> u64 {
+    let spread = (base as f64 * jitter).ceil() as i64;
+    if spread == 0 {
+        return base;
+    }
+    let drawn = base as i64 + rng.below(2 * spread as usize + 1) as i64 - spread;
+    drawn.max(floor as i64) as u64
+}
+
+/// A size in base units: `mult` trade sizes of the market, drawn
+/// lognormally around it at `sigma`, or at the market's own sigma without
+/// one, so the draws spread as the market's ordinary trades do. The draw is
+/// cut at two sigmas either way.
+pub(crate) fn sized(scale: &Scale, rng: &mut Rng, mult: f64, sigma: Option<f64>) -> f64 {
+    let sigma = sigma.unwrap_or(scale.trade_size_sigma);
+    if sigma == 0.0 {
+        return scale.trade_size * mult;
+    }
+    scale.trade_size * mult * (sigma * rng.normal().clamp(-2.0, 2.0)).exp()
 }
 
 /// `usd` rounded down to the tick grid.
