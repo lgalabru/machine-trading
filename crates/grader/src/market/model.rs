@@ -67,6 +67,20 @@ pub struct ModelSpec {
     /// as multiples of the calibration's jump p90.
     #[serde(default)]
     pub jumps: bool,
+    /// A stated jump rate per hour in place of the calibration's, for a
+    /// regime the average hides (a news-heavy day). Needs `jumps`. Sizes
+    /// stay the calibration's, and `vol_mult` is untouched. The value must
+    /// come from measured real event days, with its source cited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_rate_per_hour: Option<f64>,
+    /// Stated jump sizes in place of the calibration's, kept apart from
+    /// `vol_mult` (which still scales them, as before). Needs `jumps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_size: Option<JumpSize>,
+    /// Scheduled releases: one move each at a stated slot, with a fair-coin
+    /// sign. Drawn whether or not `jumps` is on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<ScheduledEvent>,
     /// Gaps when a session opens (on by default).
     #[serde(default = "yes")]
     pub gaps: bool,
@@ -82,6 +96,50 @@ pub struct ModelSpec {
     /// one state, this is how a family switches between stated ones.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regimes: Option<Regimes>,
+}
+
+/// Stated jump sizes: the absolute move's median and 90th percentile, in
+/// percent, with where they were measured.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct JumpSize {
+    pub abs_median_pct: f64,
+    pub abs_p90_pct: f64,
+    pub source: String,
+}
+
+/// A scheduled release: at `slot`, one move of absolute size lognormal with
+/// this median and p90 (percent), sign a fair coin.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ScheduledEvent {
+    pub slot: u64,
+    pub abs_median_pct: f64,
+    pub abs_p90_pct: f64,
+    pub source: String,
+}
+
+/// The largest stated jump or event size (p90, percent): above the largest
+/// move any calibrated asset showed in a minute.
+pub const MAX_STATED_SIZE_PCT: f64 = 10.0;
+/// The most scheduled events one spec states.
+pub const MAX_EVENTS: usize = 16;
+
+fn check_size(what: &str, median: f64, p90: f64, source: &str) -> Result<(), String> {
+    if !(median.is_finite() && p90.is_finite() && median > 0.0 && p90 >= median) {
+        return Err(format!(
+            "{what}: abs_median_pct {median} must be positive and abs_p90_pct {p90} at least the median"
+        ));
+    }
+    if p90 > MAX_STATED_SIZE_PCT {
+        return Err(format!(
+            "{what}: abs_p90_pct {p90} is above {MAX_STATED_SIZE_PCT}"
+        ));
+    }
+    if source.trim().is_empty() {
+        return Err(format!("{what}: a stated size needs its source"));
+    }
+    Ok(())
 }
 
 fn is_one(x: &f64) -> bool {
@@ -108,12 +166,19 @@ impl Default for ModelSpec {
             start: Start::Draw,
             waypoint_slots: default_waypoint_slots(),
             jumps: false,
+            jump_rate_per_hour: None,
+            jump_size: None,
+            events: Vec::new(),
             gaps: true,
             regime_clock: 1.0,
             regimes: None,
         }
     }
 }
+
+/// The largest stated jump rate: two a minute, far above any measured
+/// event day and well under one a slot.
+pub const MAX_JUMP_RATE_PER_HOUR: f64 = 120.0;
 
 /// When on the calendar a session starts.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -155,6 +220,15 @@ pub struct MarketModelRecord {
     /// Gaps and jumps, with their sizes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<Event>,
+    /// The spec's stated jump rate, when it replaces the calibration's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_rate_per_hour: Option<f64>,
+    /// The spec's stated jump sizes, when they replace the calibration's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_size: Option<JumpSize>,
+    /// The spec's scheduled events (their draws are in `events`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scheduled: Vec<ScheduledEvent>,
     /// The spec's regime clock, when it departs from 1.
     #[serde(default = "one", skip_serializing_if = "is_one")]
     pub regime_clock: f64,
@@ -186,6 +260,8 @@ pub enum EventKind {
     Gap,
     /// A background jump.
     Jump,
+    /// A scheduled release.
+    Scheduled,
 }
 
 impl MarketModelRecord {
@@ -273,6 +349,41 @@ impl MarketModel {
     pub fn new(mut calibration: Calibration, spec: ModelSpec) -> std::result::Result<Self, String> {
         if !(spec.vol_mult.is_finite() && spec.vol_mult > 0.0) {
             return Err(format!("vol_mult {} must be positive", spec.vol_mult));
+        }
+        if let Some(rate) = spec.jump_rate_per_hour {
+            if !(rate.is_finite() && (0.0..=MAX_JUMP_RATE_PER_HOUR).contains(&rate)) {
+                return Err(format!(
+                    "jump_rate_per_hour {rate} must be between 0 and {MAX_JUMP_RATE_PER_HOUR}"
+                ));
+            }
+            if !spec.jumps {
+                return Err("jump_rate_per_hour needs jumps = true".into());
+            }
+        }
+        if let Some(size) = &spec.jump_size {
+            check_size(
+                "jump_size",
+                size.abs_median_pct,
+                size.abs_p90_pct,
+                &size.source,
+            )?;
+            if !spec.jumps {
+                return Err("jump_size needs jumps = true".into());
+            }
+        }
+        if spec.events.len() > MAX_EVENTS {
+            return Err(format!("at most {MAX_EVENTS} events"));
+        }
+        for (i, e) in spec.events.iter().enumerate() {
+            check_size(
+                &format!("events[{i}]"),
+                e.abs_median_pct,
+                e.abs_p90_pct,
+                &e.source,
+            )?;
+            if e.slot == 0 {
+                return Err(format!("events[{i}]: slot 0 is before the first move"));
+            }
         }
         if let Some(regimes) = &spec.regimes {
             validate_regimes(regimes, "regimes")?;
@@ -549,16 +660,29 @@ impl<'a> Walker<'a> {
                 }
             }
             let jumps = &fv.jumps;
+            let (median, p90) = match &model.spec.jump_size {
+                Some(size) => (size.abs_median_pct, size.abs_p90_pct),
+                None => (jumps.abs_size_median_pct, jumps.abs_size_p90_pct),
+            };
+            let per_hour = model.spec.jump_rate_per_hour.unwrap_or(jumps.per_hour);
             if model.spec.jumps
-                && jumps.per_hour > 0.0
-                && rng.next_f64() < jumps.per_hour * self.slot_seconds / 3600.0
+                && per_hour > 0.0
+                && rng.next_f64() < per_hour * self.slot_seconds / 3600.0
             {
-                let pct = signed_lognormal(rng, jumps.abs_size_median_pct, jumps.abs_size_p90_pct)
-                    * model.spec.vol_mult;
+                let pct = signed_lognormal(rng, median, p90) * model.spec.vol_mult;
                 step += pct / 100.0;
                 self.events.push(Event {
                     slot,
                     kind: EventKind::Jump,
+                    pct,
+                });
+            }
+            for e in model.spec.events.iter().filter(|e| e.slot == slot) {
+                let pct = signed_lognormal(rng, e.abs_median_pct, e.abs_p90_pct);
+                step += pct / 100.0;
+                self.events.push(Event {
+                    slot,
+                    kind: EventKind::Scheduled,
                     pct,
                 });
             }
@@ -608,6 +732,9 @@ impl<'a> Walker<'a> {
                 calibration_sha256: cal.sha256.clone(),
                 process: cal.fair_value.model,
                 vol_mult: self.model.spec.vol_mult,
+                jump_rate_per_hour: self.model.spec.jump_rate_per_hour,
+                jump_size: self.model.spec.jump_size.clone(),
+                scheduled: self.model.spec.events.clone(),
                 slot_seconds: self.slot_seconds,
                 start_unix: self.start,
                 regime_vol: self.regime_vol,
@@ -1290,6 +1417,264 @@ mod tests {
         assert!((var - 1.0).abs() < 0.03, "{var}");
         // 6 / (df - 4) = 6, noisy at this df.
         assert!(kurt > 3.0, "{kurt}");
+    }
+
+    fn jump_events(spec: ModelSpec, draws: u64, slots: u64) -> (usize, Vec<f64>) {
+        let model = MarketModel::new(sol(), spec).unwrap();
+        let mut count = 0;
+        let mut sizes = Vec::new();
+        for seed in 0..draws {
+            for e in model.draw(seed, slots).record.events {
+                if e.kind == EventKind::Jump {
+                    count += 1;
+                    sizes.push(e.pct.abs());
+                }
+            }
+        }
+        (count, sizes)
+    }
+
+    fn jumpy(rate: Option<f64>) -> ModelSpec {
+        ModelSpec {
+            jumps: true,
+            jump_rate_per_hour: rate,
+            ..ModelSpec::default()
+        }
+    }
+
+    #[test]
+    fn an_absent_jump_rate_is_todays_path() {
+        let own = sol().fair_value.jumps.per_hour;
+        let same = |a: ModelSpec, b: ModelSpec| {
+            let (a, b) = (MarketModel::new(sol(), a), MarketModel::new(sol(), b));
+            let (a, b) = (a.unwrap(), b.unwrap());
+            (0..20).all(|seed| {
+                let (x, y) = (a.draw(seed, 4000), b.draw(seed, 4000));
+                x.log_levels == y.log_levels && x.record.events == y.record.events
+            })
+        };
+        // The calibration's own rate stated is the same path as none.
+        assert!(same(jumpy(None), jumpy(Some(own))));
+        assert!(!same(jumpy(None), jumpy(Some(60.0))));
+        // Absent, it serialises as before and is not in the record.
+        let json = serde_json::to_string(&ModelSpec::default()).unwrap();
+        assert!(!json.contains("jump_rate_per_hour"));
+        let rec = MarketModel::new(sol(), jumpy(None))
+            .unwrap()
+            .draw(1, 400)
+            .record;
+        assert!(
+            !serde_json::to_string(&rec)
+                .unwrap()
+                .contains("jump_rate_per_hour")
+        );
+    }
+
+    #[test]
+    fn a_stated_jump_rate_sets_the_frequency_and_leaves_sizes() {
+        let rate = 6.0;
+        let (draws, slots) = (300, 14_400);
+        let (count, sizes) = jump_events(jumpy(Some(rate)), draws, slots);
+        let expected = rate * draws as f64 * slots as f64 * SLOT_SECONDS / 3600.0;
+        // Poisson sd is about 42 here; allow five.
+        assert!(
+            (count as f64 - expected).abs() < 5.0 * expected.sqrt(),
+            "{count} vs {expected}"
+        );
+        let (_, own) = jump_events(jumpy(None), 3000, slots);
+        let median = |mut v: Vec<f64>| {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v[v.len() / 2]
+        };
+        let p90 = |mut v: Vec<f64>| {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v[v.len() * 9 / 10]
+        };
+        let cal = sol().fair_value.jumps;
+        for v in [&sizes, &own] {
+            assert!((median(v.clone()) / cal.abs_size_median_pct - 1.0).abs() < 0.08);
+            assert!((p90(v.clone()) / cal.abs_size_p90_pct - 1.0).abs() < 0.12);
+        }
+        let model = MarketModel::new(sol(), jumpy(Some(rate))).unwrap();
+        assert_eq!(model.draw(3, 400).record.jump_rate_per_hour, Some(rate));
+        // Diffusive vol is untouched: the log levels differ from the
+        // jump-free path only where a jump landed.
+        let (count0, _) = jump_events(jumpy(Some(0.0)), 20, slots);
+        assert_eq!(count0, 0);
+    }
+
+    #[test]
+    fn a_stated_jump_rate_survives_the_v2_file() {
+        let mut spec = sized(0.4, 0.8);
+        spec.jump_rate_per_hour = Some(5.0);
+        spec.events = vec![ScheduledEvent {
+            slot: 40,
+            abs_median_pct: 0.4,
+            abs_p90_pct: 0.8,
+            source: "s".into(),
+        }];
+        let model = MarketModel::new(sol(), spec).unwrap();
+        let template = crate::market::tests::template();
+        for s in &model.sample_set(&template, "cal", 2, 7).unwrap() {
+            assert_eq!(
+                s.market_model.as_ref().unwrap().jump_rate_per_hour,
+                Some(5.0)
+            );
+            let v2 = crate::scenario_v2::ScenarioV2::try_from(s).unwrap();
+            let text = serde_json::to_string(&v2).unwrap();
+            assert!(text.contains("\"jump_rate_per_hour\":5.0"));
+            assert!(text.contains("\"jump_size\"") && text.contains("\"scheduled\""));
+            assert_eq!(&crate::scenario_v2::parse(&text).unwrap(), s);
+        }
+    }
+
+    fn sized(median: f64, p90: f64) -> ModelSpec {
+        ModelSpec {
+            jumps: true,
+            jump_rate_per_hour: Some(6.0),
+            jump_size: Some(JumpSize {
+                abs_median_pct: median,
+                abs_p90_pct: p90,
+                source: "test".into(),
+            }),
+            ..ModelSpec::default()
+        }
+    }
+
+    #[test]
+    fn a_stated_jump_size_replaces_the_calibrations_and_not_the_rate() {
+        let (_, sizes) = jump_events(sized(0.4, 0.8), 300, 14_400);
+        let mut v = sizes.clone();
+        v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let (median, p90) = (v[v.len() / 2], v[v.len() * 9 / 10]);
+        assert!((median / 0.4 - 1.0).abs() < 0.08, "{median}");
+        assert!((p90 / 0.8 - 1.0).abs() < 0.12, "{p90}");
+        // Same rate as the rate-only spec: the size draw is the only change.
+        let (a, _) = jump_events(sized(0.4, 0.8), 40, 14_400);
+        let (b, _) = jump_events(jumpy(Some(6.0)), 40, 14_400);
+        assert_eq!(a, b);
+        // vol_mult is a separate knob: it still scales sizes as before.
+        let scaled = ModelSpec {
+            vol_mult: 2.0,
+            ..sized(0.4, 0.8)
+        };
+        let (_, big) = jump_events(scaled, 100, 14_400);
+        assert!(
+            big.iter().sum::<f64>() / big.len() as f64
+                > 1.5 * sizes.iter().sum::<f64>() / sizes.len() as f64
+        );
+    }
+
+    #[test]
+    fn scheduled_events_land_at_their_slot_with_a_fair_sign() {
+        let spec = ModelSpec {
+            events: vec![ScheduledEvent {
+                slot: 800,
+                abs_median_pct: 0.45,
+                abs_p90_pct: 0.9,
+                source: "test".into(),
+            }],
+            ..ModelSpec::default()
+        };
+        let model = MarketModel::new(sol(), spec).unwrap();
+        let (mut up, mut sizes) = (0, Vec::new());
+        for seed in 0..400 {
+            let path = model.draw(seed, 1600);
+            let hits: Vec<_> = path
+                .record
+                .events
+                .iter()
+                .filter(|e| e.kind == EventKind::Scheduled)
+                .collect();
+            assert_eq!(hits.len(), 1);
+            assert_eq!(hits[0].slot, 800);
+            up += usize::from(hits[0].pct > 0.0);
+            sizes.push(hits[0].pct.abs());
+            assert_eq!(path.record.scheduled.len(), 1);
+            // A shorter session never reaches it.
+            assert!(
+                model
+                    .draw(seed, 700)
+                    .record
+                    .events
+                    .iter()
+                    .all(|e| e.kind != EventKind::Scheduled)
+            );
+        }
+        assert!((140..260).contains(&up), "{up}");
+        sizes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert!((sizes[200] / 0.45 - 1.0).abs() < 0.15, "{}", sizes[200]);
+        // Without events the record carries none.
+        let plain = MarketModel::new(sol(), ModelSpec::default()).unwrap();
+        let json = serde_json::to_string(&plain.draw(1, 400).record).unwrap();
+        assert!(!json.contains("scheduled") && !json.contains("jump_size"));
+    }
+
+    #[test]
+    fn bad_sizes_and_events_fail() {
+        for (m, p) in [
+            (0.0, 0.5),
+            (-1.0, 1.0),
+            (0.5, 0.4),
+            (0.5, f64::NAN),
+            (1.0, 11.0),
+        ] {
+            let err = MarketModel::new(sol(), sized(m, p)).unwrap_err();
+            assert!(err.contains("jump_size"), "{err}");
+        }
+        let mut no_source = sized(0.4, 0.8);
+        no_source.jump_size.as_mut().unwrap().source = " ".into();
+        assert!(
+            MarketModel::new(sol(), no_source)
+                .unwrap_err()
+                .contains("source")
+        );
+        let mut off = sized(0.4, 0.8);
+        off.jumps = false;
+        off.jump_rate_per_hour = None;
+        assert!(
+            MarketModel::new(sol(), off)
+                .unwrap_err()
+                .contains("needs jumps")
+        );
+        let event = |slot, median, p90| ModelSpec {
+            events: vec![ScheduledEvent {
+                slot,
+                abs_median_pct: median,
+                abs_p90_pct: p90,
+                source: "s".into(),
+            }],
+            ..ModelSpec::default()
+        };
+        assert!(MarketModel::new(sol(), event(10, 0.4, 0.8)).is_ok());
+        assert!(MarketModel::new(sol(), event(0, 0.4, 0.8)).is_err());
+        assert!(MarketModel::new(sol(), event(10, 0.8, 0.4)).is_err());
+        let many = ModelSpec {
+            events: (1..=MAX_EVENTS as u64 + 1)
+                .map(|slot| event(slot, 0.4, 0.8).events.remove(0))
+                .collect(),
+            ..ModelSpec::default()
+        };
+        assert!(MarketModel::new(sol(), many).is_err());
+        let toml = "jumps = true\njump_rate_per_hour = 2.0\n[jump_size]\nabs_median_pct = 0.3\nabs_p90_pct = 0.5\nsource = \"x\"\n[[events]]\nslot = 40\nabs_median_pct = 0.4\nabs_p90_pct = 0.8\nsource = \"y\"";
+        assert!(toml::from_str::<ModelSpec>(toml).is_ok());
+    }
+
+    #[test]
+    fn bad_jump_rates_fail() {
+        for rate in [-1.0, f64::NAN, f64::INFINITY, MAX_JUMP_RATE_PER_HOUR + 1.0] {
+            let err = MarketModel::new(sol(), jumpy(Some(rate))).unwrap_err();
+            assert!(err.contains("jump_rate_per_hour"), "{err}");
+        }
+        let off = ModelSpec {
+            jump_rate_per_hour: Some(4.0),
+            ..ModelSpec::default()
+        };
+        let err = MarketModel::new(sol(), off).unwrap_err();
+        assert!(err.contains("needs jumps"), "{err}");
+        assert!(MarketModel::new(sol(), jumpy(Some(MAX_JUMP_RATE_PER_HOUR))).is_ok());
+        assert!(toml::from_str::<ModelSpec>("jumps = true\njump_rate_per_hour = 4.5").is_ok());
+        assert!(toml::from_str::<ModelSpec>("jump_rate = 4.5").is_err());
     }
 
     #[test]
