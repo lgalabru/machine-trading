@@ -851,7 +851,7 @@ leak-audit task="":
           echo "LEAK: generator source in $image:"; echo "$gen_hits" | sed 's/^/  /'; found=1
         fi
         # The families' code, by its mangled type names, is not in the binary.
-        if docker run --rm --entrypoint grep "$image" -qaE '[0-9](Shock|Making|Carry|Weekend)Family' /usr/local/bin/mtx; then
+        if docker run --rm --entrypoint grep "$image" -qaE '[0-9](Shock|Making|Carry|Weekend|Flow)Family' /usr/local/bin/mtx; then
           echo "LEAK: $image's mtx holds a scenario family's code"; found=1
         fi
       fi
