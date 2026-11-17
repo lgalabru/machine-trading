@@ -14,6 +14,7 @@ use std::{
 use futures::future::join_all;
 use phoenix_rise::{
     accounts::{PhoenixAccount, trader::TraderHeader},
+    api::TraderKey,
     core::PhoenixHawkeyeClient,
     ix::{
         PHOENIX_PROGRAM_ID,
@@ -479,8 +480,11 @@ async fn trader_headers(
                 detail: format!("{address}: {e}"),
             }
         })?;
-        if TraderKey::derive_pda(owner, header.trader_pda_index, header.trader_subaccount_index)
-            != address
+        if TraderKey::derive_pda(
+            owner,
+            header.trader_pda_index,
+            header.trader_subaccount_index,
+        ) != address
         {
             return Err(MeterError::Decode {
                 what: "trader account header",
@@ -612,7 +616,6 @@ fn read(error: impl std::fmt::Display) -> MeterError {
 #[cfg(test)]
 mod tests {
     use phoenix_rise::{
-        api::TraderKey,
         events::market_events::{
             CloseMatchedPositionsEvent, LiquidationTransferEvent, MarketEvent, MarketEventHeader,
             OptionalNonZeroU64, OrderFilledEvent, OrderFlags, OrderPlacedEvent, SlotContextEvent,
@@ -700,8 +703,8 @@ mod tests {
         let isolated = TraderKey::derive_pda(&owner, 0, 1);
         let second = TraderKey::derive_pda(&owner, 3, 0);
         let chain = MockChainClient::new();
-        for key in [main, isolated, second] {
-            chain.set_account(key, account(PhoenixAccount::Trader, &owner));
+        for (key, pda, sub) in [(main, 0, 0), (isolated, 0, 1), (second, 3, 0)] {
+            chain.set_account(key, indexed(PhoenixAccount::Trader, &owner, pda, sub));
         }
         // Another owner's trader account, and a Phoenix account of another
         // kind that happens to carry the owner's key at the same offset.
@@ -1111,8 +1114,8 @@ mod tests {
         let owner = Pubkey::new_unique();
         let main = TraderKey::derive_pda(&owner, 0, 0);
         let isolated = TraderKey::derive_pda(&owner, 0, 1);
-        for key in [main, isolated] {
-            chain.set_account(key, account(PhoenixAccount::Trader, &owner));
+        for (key, sub) in [(main, 0), (isolated, 1)] {
+            chain.set_account(key, indexed(PhoenixAccount::Trader, &owner, 0, sub));
         }
         let other = TraderKey::derive_pda(&Pubkey::new_unique(), 0, 0);
         let (meter, book) = spcx_meter(&chain, owner);
