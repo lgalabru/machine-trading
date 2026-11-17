@@ -1,0 +1,67 @@
+{
+  "anchors": {
+    "informed": "informed",
+    "reference": "reference"
+  },
+  "count": 72,
+  "exploits": {
+    "below": "informed",
+    "bots": [],
+    "max_profitable": 0.75
+  },
+  "family": "skew-maker",
+  "gates": {
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop",
+      "mean-skew",
+      "most-skewed",
+      "seat-a",
+      "twap",
+      "neutral"
+    ]
+  },
+  "min_rule_odds": 0.85,
+  "probes": {},
+  "rules": [
+    "max(nop, mean-skew, most-skewed, seat-a, twap, neutral) < reference",
+    "reference < informed"
+  ],
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "mean-skew",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/mean-skew"
+    },
+    {
+      "name": "most-skewed",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/most-skewed"
+    },
+    {
+      "name": "seat-a",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/seat-a"
+    },
+    {
+      "name": "twap",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/twap"
+    },
+    {
+      "name": "neutral",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/neutral"
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/skew-maker-follow-tsla/reference"
+    },
+    {
+      "name": "informed",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/informed",
+      "tell_latent": true
+    }
+  ]
+}
