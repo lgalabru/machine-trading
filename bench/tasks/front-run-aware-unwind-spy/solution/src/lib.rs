@@ -224,9 +224,7 @@ impl Unwind {
         let near = market
             .best_bid
             .is_some_and(|b| b >= market.index * (1.0 - GOOD_BPS / 10_000.0));
-        let after_sale = self
-            .last_sale
-            .is_some_and(|k| market.k <= k + SOLD_WITHIN);
+        let after_sale = self.last_sale.is_some_and(|k| market.k <= k + SOLD_WITHIN);
         if !near && after_sale {
             self.gone += 1;
             if self.gone >= FOUND_AFTER && !self.waiting {

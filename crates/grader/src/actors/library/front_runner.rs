@@ -560,14 +560,21 @@ mod tests {
             None,
         );
         for s in [2, 4, 6] {
-            let flow = if s < 6 { sold(4.0) } else { StepFlow::default() };
+            let flow = if s < 6 {
+                sold(4.0)
+            } else {
+                StepFlow::default()
+            };
             runner.flow(&flow).await;
             runner.after_blocks(&at(s, 100.0)).await;
         }
         // It sold at 100's book; the ask, 101, is over it: it holds.
         assert_eq!(*log.lock().unwrap(), ["f take Ask 2.000 at 99.50"]);
         runner.end(&at(8, 100.0)).await;
-        assert_eq!(log.lock().unwrap().last().unwrap(), "f take Bid 2.000 at 100.50");
+        assert_eq!(
+            log.lock().unwrap().last().unwrap(),
+            "f take Bid 2.000 at 100.50"
+        );
     }
 
     /// Once it has found a seller it stays on it for `persist_steps`, and

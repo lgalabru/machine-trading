@@ -36,11 +36,7 @@ use serde_json::json;
 use crate::{
     actors::Library,
     making::{Competition, Making, Reactive, TAKER_ACCOUNTS, TakerOrder, TakerSide},
-    market::{
-        Calibration, MarketModel, ModelSpec,
-        calibration::sha256_hex,
-        model::Start,
-    },
+    market::{Calibration, MarketModel, ModelSpec, calibration::sha256_hex, model::Start},
     orders::ExecutionOrder,
     scenario::{Scenario, SplitMix64, VENUE},
 };
