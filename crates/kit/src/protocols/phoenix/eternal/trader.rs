@@ -567,6 +567,53 @@ impl PhoenixTrader {
         .await
     }
 
+    /// Cancels every open order in the market of `account`, one of the
+    /// authority's trader accounts (a subaccount's, say).
+    pub async fn cancel_all_in(
+        &self,
+        account: Pubkey,
+        signer: &dyn TransactionSigner,
+    ) -> Result<Signature, PhoenixError> {
+        let instructions = self.exchange.tx().build_cancel_all_orders(
+            self.authority,
+            account,
+            self.market.symbol(),
+        )?;
+        let plan = self.pack("cancel all", instructions)?;
+        self.execute(&plan, signer).await
+    }
+
+    /// A reduce-only market order from `account`, isolated subaccount number
+    /// `subaccount` of the authority's, to close what it holds: Phoenix
+    /// refuses it where it would open or flip that account's own position.
+    pub async fn reduce_in(
+        &self,
+        account: Pubkey,
+        subaccount: u8,
+        side: Side,
+        quantity: Decimal,
+        worst_price: Decimal,
+        signer: &dyn TransactionSigner,
+    ) -> Result<Signature, PhoenixError> {
+        let ticket = MarketOrderTicket::builder()
+            .authority(self.authority)
+            .trader_account(account)
+            .subaccount_index(subaccount)
+            .symbol(self.market.symbol())
+            .side(phoenix_side(side))
+            .num_base_lots(self.lots(quantity)?)
+            .price(self.ticket_price(worst_price)?)
+            .order_flags(OrderFlags::ReduceOnly)
+            .client_order_id(self.order_id());
+        let instructions = self
+            .exchange
+            .tx()
+            .place_market_order(ticket.build()?)
+            .await?;
+        let plan = self.pack("reduce", instructions)?;
+        self.execute(&plan, signer).await
+    }
+
     /// Cancels every open order of the account in the market.
     pub async fn cancel_all(
         &self,

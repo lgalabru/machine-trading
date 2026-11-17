@@ -64,6 +64,15 @@ pub enum Error {
     /// collateral margins. The scenario's, not the machine's: not retried.
     #[error("the starting position: {0}")]
     StartPosition(String),
+    /// The latent state a hidden set told the informed bot couldn't be
+    /// filled in for the session (see [`crate::latent`]). The grade's, not
+    /// the machine's.
+    #[error("the informed bot's latent state: {0}")]
+    Latent(String),
+    /// A session variable the scenario can't be written as: a value that
+    /// isn't a finite number. The scenario's, not the machine's.
+    #[error("session variable {0}")]
+    SessionVar(#[from] mtx_kit::SessionVarError),
     /// A session's setup produced more slots than its scenario leaves it: a
     /// setup that changed, not a slow machine (setup runs on no clock).
     #[error("{scenario}'s setup took {used} slots, past the {budget} its scenario leaves it")]

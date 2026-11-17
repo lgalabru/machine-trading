@@ -28,12 +28,12 @@ docs together.
 | `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
-| `actors` | The `competitor` maker (in a market-making scenario, with the bot's quoting `obligations`), the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
+| `actors` | The `competitor` maker (in a market-making scenario with the bot's quoting `obligations`, and `makers_bps`, where the snapshot's makers are widened to when not `competitor_bps`, at least that: a book whose depth near the touch is the grader's maker alone, the snapshot's deep curve behind it), the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
 | `mandate` | What the bot may trade and its limits ([mandate spec](../specs/mandate.md)) |
 | `order` | A quantity the bot has to trade by the end, and the broker's `haircut_bps` on what it leaves; on a perp, its `instrument` (the scenario's market when absent) |
-| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at |
+| `scoring` | `reference_pnl_usd`, `informed_pnl_usd`, `reference_max_drawdown_usd`, `informed_max_drawdown_usd`, `bound_usd`, `participation`, `net`, `bound_on`, `stop_out`; on a perp, `close_out`: by market symbol, the `haircut_bps` a broker takes the residual position at. `net` on a perp scores the PnL over holding `assets.start_positions` (the fair path's move where there is one, else the level's), so a bot that holds scores 0; it takes no `order` or `venue_position`, and no funding with a start position; if the scenario has a `market_model.fair_path`, it must end at the level the path ends at (within 0.01%), or it is refused. `bound_on: "fair_path"` values the hindsight bound on `market_model.fair_path` |
 
 `informed_pnl_usd` is what the task's informed bot makes on the scenario
 (`mtx calibrate --informed`): the 1 of scoring v2 (`mtx grade --scoring
@@ -77,9 +77,11 @@ the session values the account there too (`valuation` `oracle`). A start
 position is a real Phoenix fill in setup, against a grader counterparty at
 the start mark, before the start value is measured; a position Phoenix
 won't margin fails the session's setup. Scoring v2 takes a start position only with
-an order, which scores the session against doing nothing, and only on a
-market without the scenario's `funding`: otherwise doing nothing moves with
-the price, or earns or pays the funding, and v2 refuses the grade. A v1
+an order or `scoring.net`, which score the session against doing nothing
+(for `net`, holding the start, so a bot that holds scores 0, v2's nop),
+and only on a market without the scenario's `funding`: otherwise doing
+nothing moves with the price, or earns or pays the funding, and v2 refuses
+the grade. A v1
 grade takes a funded start position as it is: the funding the start earns
 or pays is in the session's PnL, order or not.
 
@@ -205,14 +207,21 @@ separate from the mandate terms above:
 its inventory open, as before, and reports neither.
 
 **The close-out.** After the bot's last turn (and the keeper's) the grader
-cancels the bot's resting orders and sends market orders from the bot's
-account, signed with its key through the grader's own endpoint, each for the
-whole position, limited 4% through the best price (the risk desk's limit), until
-the account is flat or eight have gone. The order is never larger than the
-position, so it only reduces it. It is a real trade against the live book
-(the competitor and Phoenix's makers), so the session's PnL and end value are
-measured after paying the book's impact and the taker fee; a residue the book
-didn't take is valued at the oracle (the decomposition reports it). It is a
+cancels the resting orders of every trader account the bot holds (its
+cross-margin account and any isolated subaccount), then closes each
+account's own position from that account, signed with the bot's key through
+the grader's own endpoint: the cross-margin account with market orders for
+the whole position, limited 4% through the best price (the risk desk's
+limit), until it is flat or eight have gone; a subaccount with one
+reduce-only market order. No order is larger than the position of the account
+it is sent from, so none opens or flips one, and none meets the bot's own
+quotes. It is a real trade against the live book (the competitor and
+Phoenix's makers), so the session's PnL and end value are measured after
+paying the book's impact and the taker fee. A position the close-out leaves
+(a book that took nothing, a margin refusal) is not valued at the oracle for
+free: it is charged what the worst exit the close-out would take costs (4% of
+its value at the level), reported as `residual_charge_usd` and counted in the
+close-out's cost. It is a
 `forced_closes` entry with `reason.kind` `close_out`, and its fills are marked
 `forced` in `making_fills`, so they are the grader's, not the bot's: they
 never count against the mandate's taking rule, and the cost of exiting is not
@@ -235,7 +244,7 @@ session, `q`, `p` and `s` a fill's size, price and sign, +1 a buy):
 | `inventory_jump_usd`, `inventory_walk_usd` | the same inventory counted from the position held just before each move of the level, times the move, split into jumps and the walk (a move more than 4 robust standard deviations from the session's typical move is a jump) |
 | `unexplained_usd` | `inventory_usd` less those two: what the fills' logged prices and fees and the level don't account for in the account's value. Zero to the cent where the exit is small; a few hundredths of a percent of what the exit traded when it went through Phoenix's book |
 | `uptime` | the share of steps it quoted both sides within its obligations' band (with `obligations`) |
-| `close_out` | `fills`, `base` closed, `slippage_usd` (impact against the level), `fees_usd`, `cost_usd`, and the `residual_base` left |
+| `close_out` | `fills`, `base` closed, `slippage_usd` (impact against the level), `fees_usd`, `cost_usd`, the `residual_base` left and the `residual_charge_usd` it was charged |
 | `passive_fills`, `passive_base`, `passive_notional_usd` | the passive volume the spread is earned on |
 
 `S + T - maker_fees_usd + inventory_usd = pnl_usd` by construction. A match

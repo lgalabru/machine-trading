@@ -151,8 +151,16 @@ class Hermes(HarborHermes):
                 f'if [ -e {HERMES_HOME} ] || [ -e "$HOME/.hermes" ]; then '
                 'echo "the image already holds a Hermes home"; exit 1; fi; '
                 f"mkdir -p {HERMES_HOME} && touch {HERMES_HOME}/.no-bundled-skills && "
-                f"curl -fsSL {INSTALLER} | bash -s -- --skip-setup --skip-browser "
-                f"--skip-computer-use --hermes-home {HERMES_HOME} --commit {commit} && "
+                # GitHub throttles anonymous clones when 30 trials start at
+                # once ("could not read Username"); the installer's own three
+                # tries come seconds apart. Up to five, spread over minutes.
+                "for attempt in 1 2 3 4 5; do "
+                f"if curl -fsSL {INSTALLER} | bash -s -- --skip-setup --skip-browser "
+                f"--skip-computer-use --hermes-home {HERMES_HOME} --commit {commit}; then break; fi; "
+                '[ "$attempt" = 5 ] && exit 1; '
+                f"rm -rf {HERMES_HOME}/hermes-agent {HERMES_HOME}/.hermes-clone-*; "
+                'sleep $((attempt * 20 + RANDOM % 20)); '
+                "done && "
                 f'[ "$(git -C {HERMES_HOME}/hermes-agent rev-parse HEAD)" = {commit} ] && '
                 'export PATH="$HOME/.local/bin:$PATH" && '
                 f"export HERMES_HOME={HERMES_HOME} && "

@@ -377,6 +377,36 @@ impl Trader {
         crate::send(&self.rpc, &self.keypair, ixs, "cancel all")
     }
 
+    /// Cancel every order of `account`, one of this wallet's trader
+    /// accounts, in the market.
+    pub async fn cancel_all_in(&self, account: Pubkey) -> Result<Signature> {
+        Ok(self.inner.cancel_all_in(account, &self.keypair).await?)
+    }
+
+    /// A reduce-only market order of `base_units` from `account`, isolated
+    /// subaccount number `subaccount` of this wallet's, limited to
+    /// `limit_usd`.
+    pub async fn reduce_in(
+        &self,
+        account: Pubkey,
+        subaccount: u8,
+        side: Side,
+        base_units: f64,
+        limit_usd: f64,
+    ) -> Result<Signature> {
+        Ok(self
+            .inner
+            .reduce_in(
+                account,
+                subaccount,
+                core_side(side),
+                self.quantity(base_units)?,
+                self.price(side, limit_usd)?,
+                &self.keypair,
+            )
+            .await?)
+    }
+
     /// This trader as an [`ExecutionDriver`](crate::core::ExecutionDriver),
     /// signing with a copy of the bot's keypair.
     pub fn driver(&self) -> Result<crate::protocols::phoenix::eternal::PhoenixDriver<Keypair>> {

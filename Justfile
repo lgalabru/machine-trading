@@ -210,6 +210,24 @@ actors-smoke:
     library actors-desk bots/rfq-desk
     python3 bench/checks/actors/desk.py target/logs/actors-desk.json > /dev/null
     echo "actors-desk: idle $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-desk-idle.json) USD, answering $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-desk.json) USD, both the desk's own"
+    # The pool, the iceberg and the desk scored over the idle desk: noise
+    # and a two-wallet stop hunter draw from four wallets, so some wallet is
+    # in both roles; the iceberg shows slices and never takes; an idle desk
+    # scores 0, and an answering desk what its fills earn.
+    library actors-pooled bots/actors-smoke pooled
+    jq -e '.scenarios[0].actors | ([.actors[] | select(.reacts_to_bot | not) | .actions.failed] | add) == 0
+        and all(.actors[]; .on_chain == .actions.took + .actions.placed + .actions.cancelled)
+        and ([.actors[] | select(.kind == "noise" or .kind == "stop-hunter") | .wallets[]] | (length > (unique | length)))
+        and any(.actors[]; .kind == "iceberg" and .counts.slices > 0 and .actions.took == 0)
+        and any(.actors[]; .kind == "stop-hunter" and .counts.pushes > 0)' target/logs/actors-pooled.json > /dev/null \
+      || { echo "actors-pooled: the pool or the iceberg didn't act as set: $(jq -c '[.scenarios[0].actors.actors[] | {kind, wallets: (.wallets | length), counts}]' target/logs/actors-pooled.json)"; exit 1; }
+    library actors-pooled-idle bots/starter pooled
+    python3 bench/checks/actors/desk.py --idle --over-idle target/logs/actors-pooled-idle.json > /dev/null
+    jq -e '(.scenarios[0].pnl_usd | fabs) < 0.01' target/logs/actors-pooled-idle.json > /dev/null \
+      || { echo "actors-pooled-idle: an idle desk didn't score 0: $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-pooled-idle.json)"; exit 1; }
+    library actors-pooled-desk bots/rfq-desk pooled
+    python3 bench/checks/actors/desk.py --over-idle target/logs/actors-pooled-desk.json > /dev/null
+    echo "actors-pooled: idle $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-pooled-idle.json) USD, answering $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-pooled-desk.json) USD over the idle desk"
     # Answers too small to settle are no answers: a bot that sends nothing
     # else grades (its session isn't voided), and no client acts on them.
     library actors-rfq-dust bots/rfq-dust rfq-dust
@@ -499,7 +517,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     # What the providers say when the account, not the model, is out: a
     # quota, a credit balance or a usage cap. Rate limits are retried by the
     # harnesses and don't stop a batch.
-    refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached'
+    refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached|credits exhausted|no credits remaining'
     run_model() {
       local model="$1"
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"

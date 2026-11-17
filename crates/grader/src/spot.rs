@@ -850,6 +850,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         reopen_slot: None,
         vars: Vec::new(),
         cast,
+        roster: Default::default(),
         cranks: Vec::new(),
         account: Box::new(account),
     })
@@ -1127,7 +1128,8 @@ impl Account for SpotAccount {
             max_drawdown_usd: self
                 .max_drawdown_usd
                 .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
-            notional_breach: None,
+            samples: Default::default(),
+            term_start: Default::default(),
             valuation: "pyth",
             flow: done.actors.flow,
             competitor: done.actors.competitor,
@@ -1221,6 +1223,7 @@ mod tests {
             actors: None,
             takers_pricing: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
@@ -1484,20 +1487,16 @@ mod tests {
         };
         let mut mandate = scenario().mandate;
         mandate.universe[0].min_sell_price = Some(149.0);
-        let observed = Observed {
-            fills: report.observed_fills(),
-            ..Observed::default()
-        };
+        let mut observed = Observed::default();
+        observed.fills = report.observed_fills();
         assert_eq!(mandate.audit(&observed), None);
         let mut bought = report.clone();
         bought.fills.push(SpotFill {
             side: Side::Buy,
             ..sell(150.0)
         });
-        let observed = Observed {
-            fills: bought.observed_fills(),
-            ..Observed::default()
-        };
+        let mut observed = Observed::default();
+        observed.fills = bought.observed_fills();
         assert!(mandate.audit(&observed).is_some());
     }
 

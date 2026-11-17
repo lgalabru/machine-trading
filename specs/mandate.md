@@ -11,10 +11,12 @@ trust the agent. A mandate constrains *what* the agent does, never *why*:
 strategy, signals and sizing logic are out of scope.
 
 v0 is a draft, and grows as instruments are added: perpetuals, spot and
-money markets so far, on one venue or several. v0.1 adds limits on notional:
-a gross cap, net exposures that may start partway through the term, and
-hedge bounds. The reference implementation reads a subset of both; see
-[Implementation status](#implementation-status).
+money markets so far, on one venue or several. v0.1 extends v0 as it stands
+with limits on notional (a gross cap, net exposures that may start partway
+through the term, and hedge bounds) and reduce-only taking. v0 is still a
+draft while v0.1 exists, so both are; v0.1 will follow v0 when it is final.
+The reference implementation reads a subset of both, and the benchmark
+enforces a smaller one; see [Implementation status](#implementation-status).
 
 ## Conventions
 
@@ -97,7 +99,7 @@ accounts its profile names to the account.
 
 | Member | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `from_slot` | integer | no | v0.1. The term's first slot. Limits that start partway through the term count from it. |
+| `from_slot` | integer | no | v0.1. The term's first slot. Limits that start partway through the term count from it. MUST NOT be after `until_slot`. |
 | `until_slot` | integer | yes | The last slot the mandate covers. |
 
 A mandate without a term is a template: it describes the rules, but not yet
@@ -128,7 +130,7 @@ position by. It is an object:
 | Member | Type | Required | Meaning |
 | --- | --- | --- | --- |
 | `name` | string | yes | Names the exposure in a breach. MUST NOT be empty, or the name of another exposure. |
-| `weights` | object | yes | Each member's name is an [instrument reference](#instrument-references) in the universe, and its value a number: the instrument's weight. MUST NOT be empty. The exposure is the sum, over these instruments, of weight × [notional](#notional). |
+| `weights` | object | yes | Each member's name is an [instrument reference](#instrument-references) in the universe, and its value a number: the instrument's weight. MUST NOT be empty, or name an instrument twice: a reader MUST reject a repeated member rather than keep one of its values. The exposure is the sum, over these instruments, of weight × [notional](#notional). |
 | `max_abs_usd` | number | one of these two | The most the exposure may be, either way, in USD. MUST be positive. |
 | `max_abs_fraction_of_start` | number | one of these two | The most the exposure may be, either way, as a fraction of its absolute value at the term's start. MUST be above 0 and at most 1. |
 | `from_slots_after_start` | integer | no | The bound applies from this many slots after the term's `from_slot` to the term's end. Absent means 0. When the term is set and this is above 0, the term MUST have a `from_slot`. |
@@ -199,10 +201,17 @@ The rules are cumulative: a mandate allows only what every rule allows.
 An instrument's **notional** is the position, signed as its instrument
 profile signs it, times its price in USD per base unit: negative for a short
 or a borrow. The position is the account's net holding in the instrument,
-across all of its sub-accounts on the venue. The enforcer MUST use one price per instrument at each
-measurement, and state which. It SHOULD be a price the agent's own trading
-cannot move, such as an index or an oracle, so that an agent cannot loosen a
-notional limit by pushing a mark.
+across all of its sub-accounts on the venue. The enforcer MUST use one price
+per instrument at each measurement, and state which. It SHOULD be a price
+the agent's own trading cannot move, such as an index or an oracle, so that
+an agent cannot loosen a notional limit by pushing a mark.
+
+A measurement for rules 7 to 9 MUST list each instrument once, and MUST
+list every instrument those rules read, flat ones included: rule 7 reads
+the whole universe, rule 8 an exposure's weights, rule 9 the hedge and its
+`against`. A rule that reads an instrument the measurement does not list,
+or lists without a finite position and a finite, positive price, is broken
+at that measurement: a rule that cannot be checked is never read as kept.
 
 ### Account value
 
@@ -230,7 +239,9 @@ A mandate can be enforced at three layers:
 A conforming enforcer MUST audit every rule in this specification, and MAY
 also gate. It MUST state how often it measures. An audit that samples can
 miss a breach between two samples, and the venue profile says what is
-measured. Rules 2, 3 and 7 to 9 are sampled.
+measured. Rules 2, 3 and 7 to 9 are sampled. An enforcer that cannot
+measure a rule a mandate sets SHOULD refuse the mandate rather than run it
+unchecked.
 
 The rules on fills (sides, limit prices and taking) are checked against
 every fill the venue records during the term, not a sample. An enforcer
@@ -270,28 +281,43 @@ specification can state.
 ## Implementation status
 
 The reference implementation, `mtx_core::mandate`, reads v0 and v0.1, and
-enforces the part of this specification the benchmark's tasks use today:
+checks the part of this specification the benchmark's tasks use today:
 `perp`, `spot` and `money-market` instruments, on one venue or several,
 `max_position`, `min_position`, `sides`, `min_sell_price`, `max_buy_price`,
 `max_drawdown_usd`, and v0.1's `from_slot`, `max_gross_notional_usd`,
-`exposures`, `hedge` and `taking`. It rejects documents that use anything
-else, so the example of a money-market mandate below, which limits
-`min_health`, lives here rather than in [`examples/`](examples/), which
-`cargo test` checks against it.
+`exposures`, `hedge` and `taking`. Its audit judges rules 1 to 5 and 7 to 10
+from what an enforcer measured, including the priced measurements rules 7
+to 9 read. It rejects documents that use anything else, so the example of a
+money-market mandate below, which limits `min_health`, lives here rather
+than in [`examples/`](examples/), which `cargo test` checks against it.
 
-The benchmark's grader measures every step and checks rules 7 to 9 in perp
-sessions, at the scenario's level for each market (its book level where the
-session values the account at the book), not at Phoenix's mark. A spot
-session does not check them yet, so a spot scenario may not use them. Only
-a market-making perp session tells the account's taker fills from its maker
-fills, so only one (without a liquidation keeper) may use `taking`; it also
-refuses, before they are sent, a strategy component's orders it can tell
-would break the rule (see `docs/scenario-format.md`). Every session starts flat, so no scenario may use
-`max_abs_fraction_of_start` yet: it would bound the exposure at zero. The
-grader's pre-trade gate on raw sends refuses a send that would break a
-position cap or the drawdown limit, but does not check rules 7 to 9: a raw send that takes the
-account over a notional limit is let through and the session is
-disqualified by the audit.
+The benchmark's grader enforces less than the reader checks. Its scenarios
+refuse a mandate that sets a v0.1 rule their session can't enforce:
+
+| Rule | Perp sessions | Spot sessions | Lending sessions |
+| --- | --- | --- | --- |
+| 1. Universe, 2. Position cap | every step | every step | every step |
+| 3. Drawdown limit | every step | every step | every step |
+| 4. Sides, 5. Limit prices | not checked | every fill | refused by the reader |
+| 7. Gross notional | every step | refused | refused |
+| 8. Exposure, in USD, over the session's one market | every step | refused | refused |
+| 8. Exposure across several instruments | refused | refused | refused |
+| 8. Exposure as a fraction of its start | refused | refused | refused |
+| 9. Hedge | refused | refused | refused |
+| 10. Taking | market making without a keeper; refused otherwise | refused | refused |
+
+A perp session prices its one market at the scenario's level (its book
+level where the session values the account at the book), not at Phoenix's
+mark. No session prices more than its own market at one measurement yet,
+so none can enforce a hedge or an exposure across instruments. Every
+session starts flat, so an exposure bounded by a fraction of its start
+would be bounded at zero. Only a market-making perp session without a liquidation keeper tells
+taker fills from maker fills, so only it may use `taking`; it also refuses,
+before they are sent, a strategy component's orders it can tell would break
+the rule (see `docs/scenario-format.md`). The grader's pre-trade gate on raw sends refuses a send that would
+break a position cap or the drawdown limit, but does not check rules 7 to
+9: a raw send that takes the account over a notional limit is let through,
+and the session is disqualified by the audit.
 
 ## Changes in later versions
 

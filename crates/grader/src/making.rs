@@ -23,7 +23,7 @@
 //! quoting wider than a taker will pay doesn't fill it at all.
 
 use mtx_core::Side;
-use mtx_kit::protocols::phoenix::eternal::PerpFill;
+use mtx_kit::protocols::fills::MarketFill;
 use serde::{Deserialize, Serialize};
 use solana_pubkey::Pubkey;
 
@@ -104,7 +104,7 @@ impl Parties {
 impl MakingFill {
     /// `fill` as the bot's trader accounts `bots` (its cross-margin account
     /// and any subaccount) traded it, if they did.
-    pub fn of(fill: &PerpFill, bots: &[Pubkey], parties: &Parties, base_slot: u64) -> Vec<Self> {
+    pub fn of(fill: &MarketFill, bots: &[Pubkey], parties: &Parties, base_slot: u64) -> Vec<Self> {
         let (taker_is_bot, maker_is_bot) = (bots.contains(&fill.taker), bots.contains(&fill.maker));
         let price = crate::session::grader_f64(fill.price);
         let base = crate::session::grader_f64(fill.quantity);
@@ -162,6 +162,12 @@ pub struct Making {
     /// [`crate::obligations`]). Absent, nothing is measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obligations: Option<Obligations>,
+    /// Where the snapshot's makers are widened to, in basis points from the
+    /// mark, when it isn't `competitor_bps`: a book whose depth near the
+    /// touch is the grader's maker alone, with the snapshot's deep curve
+    /// further out behind it. At least `competitor_bps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub makers_bps: Option<f64>,
     /// Opt-in: after the bot's last turn the grader closes its position
     /// with a forced reduce-only IOC, so the session's PnL is measured
     /// after paying to exit, and the report splits that PnL (see
@@ -279,10 +285,23 @@ pub enum TakerSide {
 }
 
 impl Making {
+    /// The half-spread the snapshot's makers are widened to, in basis points.
+    pub fn makers_bps(&self) -> f64 {
+        self.makers_bps.unwrap_or(self.competitor_bps)
+    }
+
     pub fn validate(&self, duration_slots: u64) -> std::result::Result<(), String> {
         if !(self.competitor_bps.is_finite() && self.competitor_bps > 0.0) {
             return Err(format!(
                 "competitor_bps {} must be positive",
+                self.competitor_bps
+            ));
+        }
+        if let Some(makers) = self.makers_bps
+            && !(makers.is_finite() && makers >= self.competitor_bps)
+        {
+            return Err(format!(
+                "makers_bps {makers} must be at least competitor_bps {}",
                 self.competitor_bps
             ));
         }
@@ -710,6 +729,7 @@ impl MakingFamily {
                 competition,
                 takers,
                 obligations: None,
+                makers_bps: None,
                 close_out: false,
             }),
             offhours: None,
@@ -731,6 +751,7 @@ impl MakingFamily {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
             start_positions: Default::default(),
@@ -1073,6 +1094,7 @@ mod tests {
                 },
             ],
             obligations: None,
+            makers_bps: None,
             close_out: false,
         };
         let path = [Waypoint::at(5, 10.0)];
@@ -1080,6 +1102,29 @@ mod tests {
         // at $110 at the taker's own 4 bp.
         let bound = making.spread_bound_usd(&path, 100.0);
         assert!((bound - 0.244).abs() < 1e-9, "{bound}");
+    }
+
+    #[test]
+    fn the_makers_are_widened_to_the_competitor_unless_a_backstop_says_further() {
+        let making = |makers_bps| Making {
+            competitor_bps: 10.0,
+            competition: Competition {
+                floor_bps: 3.0,
+                react_slots: 4,
+                size: 2.0,
+                reactive: None,
+            },
+            takers: Vec::new(),
+            makers_bps,
+        };
+        assert_eq!(making(None).makers_bps(), 10.0);
+        assert_eq!(making(Some(20.0)).makers_bps(), 20.0);
+        assert!(making(Some(20.0)).validate(100).is_ok());
+        assert!(making(Some(10.0)).validate(100).is_ok());
+        for bad in [9.9, f64::NAN, f64::INFINITY] {
+            let error = making(Some(bad)).validate(100).unwrap_err();
+            assert!(error.contains("makers_bps"), "{error}");
+        }
     }
 
     /// No single order says it's informed: informed and noise orders share
@@ -1169,11 +1214,11 @@ mod tests {
         Pubkey::new_from_array([n; 32])
     }
 
-    fn fill(taker: Pubkey, maker: Pubkey, side: Side) -> PerpFill {
-        PerpFill {
+    fn fill(taker: Pubkey, maker: Pubkey, side: Side) -> MarketFill {
+        MarketFill {
             slot: 1_050,
             instrument: mtx_kit::InstrumentId("phoenix:perp:SPCX".into()),
-            sequence: (7, 3),
+            sequence: (7 << 32) + 3,
             taker,
             maker,
             taker_side: side,
@@ -1182,6 +1227,7 @@ mod tests {
             unix_timestamp: 0,
             taker_fee: "0.108".parse().unwrap(),
             maker_fee: "-0.01".parse().unwrap(),
+            maker_order: None,
         }
     }
 

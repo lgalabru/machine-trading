@@ -1,0 +1,22 @@
+# No workspace inheritance: bots build outside this workspace too.
+[package]
+name = "mtx-bot-closeout-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-closeout-probe"
+path = "src/main.rs"
+
+[features]
+# No subaccount: the baseline whose exit cost the others must pay too.
+honest = []
+# Moves its position into the subaccount instead of resting a bid there.
+drain = []
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit" }
+solana-compute-budget-interface = "3"
+tracing = "0.1"

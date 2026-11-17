@@ -37,7 +37,7 @@ use std::{
 use async_trait::async_trait;
 use mtx_core::{
     Decimal,
-    mandate::{Breach, InstrumentRef, Mandate, Observed, ObservedFill, PositionRange},
+    mandate::{InstrumentRef, Mandate, Observed, ObservedFill, PositionRange, SampleLog},
     turns::{self, Hello, Message, Step},
 };
 use mtx_kit::BotEnv;
@@ -179,10 +179,14 @@ pub struct SessionReport {
     /// The deepest the account's value fell below its running peak while the
     /// bot ran, in USD.
     pub max_drawdown_usd: f64,
-    /// The first of the mandate's notional rules (gross notional,
-    /// exposures, hedges) a measurement broke, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notional_breach: Option<Breach>,
+    /// The account priced at each step, for the mandate's notional rules
+    /// (gross notional, exposures, hedges), and as the term started where
+    /// an exposure is bounded by its start: what [`SessionReport::observed`]
+    /// hands the audit. Empty unless the mandate has such a rule.
+    #[serde(default, skip_serializing_if = "SampleLog::is_empty")]
+    pub samples: SampleLog,
+    #[serde(default, skip_serializing_if = "SampleLog::is_empty")]
+    pub term_start: SampleLog,
     /// The price the account's position was valued at: the `mark`, or for
     /// market making the `oracle` the scenario sets, which a bot's own
     /// quotes can't move.
@@ -403,38 +407,40 @@ pub struct TurnReport {
 impl SessionReport {
     /// What the session measured, in the terms [`Mandate::audit`] checks.
     pub fn observed(&self) -> Observed {
-        Observed {
-            positions: self.positions.clone(),
-            positions_outside_universe: self.positions_outside_universe,
-            max_drawdown_usd: self.audited_drawdown_usd(),
-            fills: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.observed_fills())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(
-                    self.perp_fills
-                        .iter()
-                        .filter(|fill| !fill.forced)
-                        .map(|fill| ObservedFill {
-                            instrument: fill.instrument.clone(),
-                            side: fill.side,
-                            price: fill.price,
-                        }),
-                )
-                .collect(),
-            open_orders: self
-                .spot
-                .as_ref()
-                .map(|spot| spot.open_orders.clone())
-                .unwrap_or_default()
-                .into_iter()
-                .chain(self.perp_open_orders.iter().cloned())
-                .collect(),
-            notional_breach: self.notional_breach.clone(),
-            takes: crate::taking::takes(&self.instrument, self.start_position, &self.making_fills),
-        }
+        let mut observed = Observed::default();
+        observed.positions = self.positions.clone();
+        observed.positions_outside_universe = self.positions_outside_universe;
+        observed.max_drawdown_usd = self.audited_drawdown_usd();
+        observed.fills = self
+            .spot
+            .as_ref()
+            .map(|spot| spot.observed_fills())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(
+                self.perp_fills
+                    .iter()
+                    .filter(|fill| !fill.forced)
+                    .map(|fill| ObservedFill {
+                        instrument: fill.instrument.clone(),
+                        side: fill.side,
+                        price: fill.price,
+                    }),
+            )
+            .collect();
+        observed.open_orders = self
+            .spot
+            .as_ref()
+            .map(|spot| spot.open_orders.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .chain(self.perp_open_orders.iter().cloned())
+            .collect();
+        observed.samples = self.samples.clone();
+        observed.term_start = self.term_start.clone();
+        observed.takes =
+            crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
+        observed
     }
 }
 
@@ -521,6 +527,9 @@ pub(crate) struct Prepared {
     /// session's starting positions and order (see [`crate::perp`]).
     pub vars: Vec<(String, String)>,
     pub cast: Cast,
+    /// Who is who among the session's actors, for the regime the task's
+    /// informed bot is told (see [`crate::latent`]).
+    pub roster: crate::actors::library::Roster,
     /// Upkeep the session's venues need, beyond the options' (see
     /// [`crate::crank`]).
     pub cranks: Vec<Box<dyn crate::crank::VenueCrank>>,
@@ -710,6 +719,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         reopen_slot,
         vars,
         mut cast,
+        roster,
         cranks: kind_cranks,
         mut account,
     } = if scenario.lending.is_some() {
@@ -761,9 +771,12 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     let user = opts.slot.map(|slot| BOT_USERS[slot]);
     // The task's variables (`mtx_kit::SESSION_VARS`): the regime, an off-hours
     // reopen, and what the session's kind adds.
-    let told: Vec<(String, String)> = opts
+    let regime = opts
         .regime
-        .map(|r| ("MTX_REGIME".to_string(), r.to_string()))
+        .map(|r| crate::latent::resolve(r, &roster).map_err(Error::Latent))
+        .transpose()?;
+    let told: Vec<(String, String)> = regime
+        .map(|r| ("MTX_REGIME".to_string(), r))
         .into_iter()
         .chain(reopen_slot.map(|s| ("MTX_REOPEN_SLOT".to_string(), s.to_string())))
         .collect();
@@ -1194,9 +1207,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             Some(_) => Some(crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?),
             None => None,
         };
-        // A cancel sent in the slot an order was placed in leaves it
-        // resting, and the exit would match the bot's own last quotes, so
-        // the close-out goes a slot on.
+        // The close-out's cancel-all is the same transaction as the bot's
+        // own in the slot of its last turn (same key, instruction and
+        // blockhash), which the chain runs once: the grader's never runs and
+        // the bot's last quotes stay to meet the exit. A slot on, it has its
+        // own blockhash.
         let slot = crate::chain::next_slot(surfnet, &rpc).await?;
         let close = account
             .close_out(
