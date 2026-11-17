@@ -1,7 +1,8 @@
-# Design record: flipped-feed-nvda
+# Design record: flipped-feed-tsla
 
 The README will say what the task is; this says why it's built this way,
-and what each version learned. Card C2 of `TASK_CARDS_BATCH6.md`.
+and what each version learned. Card C2 of `TASK_CARDS_BATCH6.md` (`flipped-feed-nvda`), moved to TSLA,
+the card's fallback, after gate 0 failed on NVDA (see Gate 0).
 
 ## Thesis
 
@@ -21,9 +22,10 @@ trades every call the right way round.
 - **Regimes:** which gateway is flipped is drawn per session with even
   odds; the model is right for a whole horizon at a time with chance 0.8;
   paths come in mirrored pairs.
-- **Mandate:** NVDA only, a cap of 4 NVDA either way (the near-touch book),
-  a $150 loss limit, a broker that closes what is left at the index less
-  5 bp, 72 hidden sessions per grade.
+- **Mandate:** TSLA only, a cap of 2 TSLA either way (about $780, near
+  the near-touch book), a $150 loss limit, a broker that closes what is
+  left at the index less 5 bp, 72 hidden sessions per grade. (NVDA: a cap
+  of 4 NVDA, about $640.)
 
 ## The central decision
 
@@ -68,9 +70,10 @@ coin. The frequency is a stated stylisation (checklist 11, 13).
 | Card | Built | Why |
 | --- | --- | --- |
 | One feed whose convention is normal or flipped, 50/50 per session; informed told `feed_convention` | Two gateways carry the model's calls, drawn per call; one reports the model's side and one the opposite, which is drawn 50/50 per session; informed told which gateway wallet is which (roster identity) | Checklist 6: the session's convention is a realised draw and may not be told. Who is who is identity: both gateway kinds are seated every session from fresh wallets, so the roster reveals nothing of the future, as B6's spoofer and iceberg. Each gateway is still flipped on half the sessions. The evidence a call gives is the card's (one bit, which gateway is the model's), and follow-all now nets zero within every session, not only across them |
-| 4,500 slots from 09:31 | 7,200 slots (30 min) from the 09:30 open, gaps off | The engine's slots are 0.25 s; the model's were 0.4 s. Horizons, gaps and holds are the model's times scaled by 1.6 |
+| TSLA 3,000 slots (NVDA 4,500) from 09:31 | TSLA 4,800 slots, 20 min (NVDA 7,200, 30 min), from the 09:30 open, gaps off | The engine's slots are 0.25 s; the model's were 0.4 s. Horizons, gaps and holds are the model's times scaled by 1.6 |
 | Informed: take strong calls, lean quotes on the rest | Takes every call at full size | The feasibility model's informed (taker only), which is conservative for the ratio. The maker lean waits for the full build |
 | Reference: blocked t-test, small maker leans before commit | Bayes per burst (hit 0.75 assumed, commits at 0.95), flat before commit | The model's Bayes-per-block reader (0.32 to 0.33 of informed under per-horizon draws) is the one the card's band wants; the blocked t sat at 0.22 |
+| NVDA, TSLA the fallback | TSLA | Gate 0 on NVDA failed the order (see Gate 0); one rework allowed |
 | Tier 2 (calibrated or overconfident confidence), tier 3 (10:00 release, flat window) | Not built | Tier 3 waits on a measurement of 10:00 releases; tier 2 waits on the base tier passing |
 
 ## No tells
@@ -114,8 +117,45 @@ coin. The frequency is a stated stylisation (checklist 11, 13).
 
 ## Gate 0
 
+Engine runs on runner-2 (`hidden/gate0/`, untracked: `build.sh`,
+`run.sh`, `gate0.py`), every rung a component, one hidden set of 72
+sessions (36 mirrored pairs) drawn from a fresh secret never printed.
+
+### NVDA (failed)
+
+| Rung | Total | Mean | v2-weighted share of informed |
+| --- | --- | --- | --- |
+| fade-all | -544 | -7.55 | -4.74 |
+| follow-all | -483 | -6.71 | -4.22 |
+| follow-first | -411 | -5.71 | -3.90 |
+| twap | -54 | -0.75 | -0.74 |
+| nop | 0 | 0 | 0 |
+| post-move | 74 | 1.03 | 0.28 |
+| reference | 75 | 1.04 | 0.39 |
+| informed | 202 | 2.80 | 1.00 |
+
+- Signal gate: informed / best non-reading (post-move) = 2.72 (need 2),
+  but on only 0.768 of bootstrapped sets.
+- Order `max(non-reading) < reference < informed` on 0.490 of
+  bootstrapped sets (need 0.85): post-move ties the reference.
+- Strength band: reference 0.39 of informed, v2-weighted; per-session
+  Sharpe 0.27.
+- Edge vs costs (16b): informed nets 4.2 bp a call (760 calls, 10.6 a
+  session, median 5); following or fading blind costs 10 to 11 bp a call.
+  Under the card's 5 bp kill line.
+- The reference committed in 26 of 72 sessions.
+- Failed on the order. Post-move made 0.28 of informed against the
+  model's 0.14: the engine's moves carry on after a call more than the
+  model's. The model put post-move at 0.05 or below on TSLA, with 10 bp a
+  call net, so the one rework moves the card there.
+
+### TSLA
+
 To come.
 
 ## Generations
 
-- **Gate 0 prototypes.**
+- **Gate 0 prototypes, NVDA.** Learned: the feed's calls land and read
+  as memos; the reference commits in about a third of sessions; post-move
+  is the binding rung on NVDA, not follow-all.
+- **Rework: TSLA** (the card's fallback), cap 2 TSLA, 4,800 slots.

@@ -132,14 +132,14 @@ pub const GENERATORS: &[Generator] = &[
         name: "flipped-feed",
         practice_drawn: |prefix, count, seed| {
             shaped(
-                FlippedFeedFamily::nvda().draw_set(prefix, count, seed),
+                FlippedFeedFamily::tsla().draw_set(prefix, count, seed),
                 false,
                 flipped_feed_latent,
             )
         },
         hidden: |count, seed, tell| {
             shaped(
-                FlippedFeedFamily::nvda().draw_set("hidden", count, seed),
+                FlippedFeedFamily::tsla().draw_set("hidden", count, seed),
                 tell,
                 flipped_feed_latent,
             )

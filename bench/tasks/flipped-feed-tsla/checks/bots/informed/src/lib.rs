@@ -10,15 +10,16 @@
 //! under the same mandate, costs and latency as any bot.
 //!
 //! From its first call it follows each call from the model's own gateway
-//! and fades each from the other, at full size, until the call's horizon
+//! and fades each from the other, at the mandate's cap, until the call's horizon
 //! has passed.
 
-use mtx_bot_flipped_feed::{Feed, Hold, SIZE, direction, trade_to};
+use mtx_bot_flipped_feed::{Feed, Hold, direction, trade_to};
 use mtx_kit::prelude::*;
 
 /// The strategy.
 #[derive(Default)]
 pub struct Informed {
+    size: f64,
     feed: Feed,
     taker_side: usize,
     hold: Hold,
@@ -32,6 +33,7 @@ fn wallet(told: &str, kind: &str) -> Option<String> {
 
 impl Strategy for Informed {
     fn start(&mut self, session: &Session) -> BotResult {
+        self.size = session.cap;
         self.feed = Feed::from_session(session)?;
         let told = session
             .var("MTX_REGIME")
@@ -52,7 +54,7 @@ impl Strategy for Informed {
             self.hold
                 .take(direction(call, self.taker_side), call.slot + call.horizon);
         }
-        trade_to(market, orders, self.hold.target(market.slot, SIZE));
+        trade_to(market, orders, self.hold.target(market.slot, self.size));
         Ok(())
     }
 }

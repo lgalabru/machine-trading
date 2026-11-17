@@ -1,14 +1,14 @@
-//! The flipped-feed family: NVDA's opening half hour, traded off a house
-//! model's calls, one of whose two gateways reports them the wrong way
-//! round.
+//! The flipped-feed family: an opening window on TSLA (or NVDA, the
+//! card's first market), traded off a house model's calls, one of whose two
+//! gateways reports them the wrong way round.
 //!
-//! - **The price** walks NVDA's market calibration from the 09:30 New York
-//!   open for 30 minutes (7,200 of its 0.25 s slots), at the opening
-//!   window's stated volatility (`vol_mult` 2.4, the opening 1 m sd net of
-//!   jumps over the calibration's) and jumps: 2.75 an hour from 09:31 to
-//!   10:30, median 0.305% and p90 0.533% (`OPEN_*`). Sessions come in
-//!   mirrored pairs: the second of a pair walks the first's path upside
-//!   down.
+//! - **The price** walks the market's calibration from the 09:30 New York
+//!   open, at the opening window's stated volatility (`vol_mult`, the
+//!   opening 1 m sd net of jumps over the calibration's) and jumps, from
+//!   09:31 to 10:30: TSLA 3.91 an hour, median 0.382% and p90 0.652%, for 20
+//!   minutes (4,800 of its 0.25 s slots); NVDA 2.75, 0.305% and 0.533%, for
+//!   30 (7,200). Sessions come in mirrored pairs: the second of a pair walks
+//!   the first's path upside down.
 //! - **The feed** (the library's [`Feed`](crate::actors::library::Feed)):
 //!   the house model sees the level `horizon_slots` ahead and calls its way
 //!   while it is more than `edge_bps` off, right for a whole horizon at a
@@ -50,20 +50,41 @@ use crate::{
     scenario::{Scenario, SplitMix64, VENUE},
 };
 
-/// NVDA's market calibration, built in so hidden sets need no file.
+/// The markets' calibrations, built in so hidden sets need no file.
+const TSLA_CALIBRATION: &str =
+    include_str!("../../../calibration/market/tsla.20261113.8b7bca8e.toml");
 const NVDA_CALIBRATION: &str =
     include_str!("../../../calibration/market/nvda.20261113.903d1120.toml");
 
-/// NVDA's opening window (09:31 to 10:30 New York), measured on the
-/// calibration's own Phoenix 1 m mark candles (2026-06-10 to 2026-11-12, all
-/// days) with its jump rule (5 robust sigmas of the trailing hour).
-pub const OPEN_JUMPS_PER_HOUR: f64 = 2.75;
-pub const OPEN_JUMP_MEDIAN_PCT: f64 = 0.305;
-pub const OPEN_JUMP_P90_PCT: f64 = 0.533;
-/// The opening window's 1 m sd with the jumps' variance taken out (about
-/// 15.7 bp, 09:31 to 10:00) over the calibration's (6.4 bp).
-pub const OPEN_VOL_MULT: f64 = 2.4;
-const OPEN_SOURCE: &str = "NVDA Phoenix 1 m mark, 09:31-10:30 New York, 2026-06-10 to 2026-11-12, the calibration's 5-robust-sigma jump rule (JUMP_REGIME_MEASUREMENT.md, table 2)";
+/// Each market's opening window (09:31 to 10:30 New York), measured on its
+/// calibration's own Phoenix 1 m mark candles (all days) with the
+/// calibration's jump rule (5 robust sigmas of the trailing hour); and the
+/// window's 1 m sd with the jumps' variance taken out (09:31 to 10:00:
+/// TSLA about 19.1 bp, NVDA 15.7) over the calibration's (8.8 and 6.4).
+const TSLA_OPEN: Open = Open {
+    jumps_per_hour: 3.91,
+    jump_median_pct: 0.382,
+    jump_p90_pct: 0.652,
+    vol_mult: 2.2,
+    source: "TSLA Phoenix 1 m mark, 09:31-10:30 New York, 2026-06-17 to 2026-11-12, the calibration's 5-robust-sigma jump rule (JUMP_REGIME_MEASUREMENT.md, table 2)",
+};
+const NVDA_OPEN: Open = Open {
+    jumps_per_hour: 2.75,
+    jump_median_pct: 0.305,
+    jump_p90_pct: 0.533,
+    vol_mult: 2.4,
+    source: "NVDA Phoenix 1 m mark, 09:31-10:30 New York, 2026-06-10 to 2026-11-12, the calibration's 5-robust-sigma jump rule (JUMP_REGIME_MEASUREMENT.md, table 2)",
+};
+
+/// An opening window's stated jumps and volatility.
+#[derive(Debug, Clone, Copy)]
+pub struct Open {
+    pub jumps_per_hour: f64,
+    pub jump_median_pct: f64,
+    pub jump_p90_pct: f64,
+    pub vol_mult: f64,
+    pub source: &'static str,
+}
 
 /// A session's draws beneath its path, feed and tape: what the ladder's
 /// oracles may be told. The informed bot is told only which gateway is
@@ -85,6 +106,7 @@ pub struct FlippedFeedFamily {
     pub symbol: String,
     pub arrival_usd: f64,
     pub calibration: &'static str,
+    pub open: Open,
     pub duration: u64,
     pub waypoint_slots: u64,
     pub trades_per_minute: f64,
@@ -113,12 +135,32 @@ pub struct FlippedFeedFamily {
 }
 
 impl FlippedFeedFamily {
-    /// NVDA perps, `flipped-feed-nvda`.
+    /// TSLA perps, `flipped-feed-tsla`: the card's fallback, where the
+    /// model's calls clear costs by more.
+    pub fn tsla() -> Self {
+        Self {
+            symbol: "TSLA".into(),
+            arrival_usd: 388.95,
+            calibration: TSLA_CALIBRATION,
+            open: TSLA_OPEN,
+            duration: 4_800,
+            trades_per_minute: 1.262,
+            trade_size: 0.008,
+            trade_size_sigma: 1.1,
+            size_mult: 25.0,
+            max_position: 2.0,
+            ..Self::nvda()
+        }
+    }
+
+    /// NVDA perps, the card's first market (gate 0 failed there: see the
+    /// task's design record).
     pub fn nvda() -> Self {
         Self {
             symbol: "NVDA".into(),
             arrival_usd: 159.92,
             calibration: NVDA_CALIBRATION,
+            open: NVDA_OPEN,
             duration: 7_200,
             waypoint_slots: 3,
             trades_per_minute: 1.24,
@@ -153,17 +195,17 @@ impl FlippedFeedFamily {
         MarketModel::new(
             calibration,
             ModelSpec {
-                vol_mult: OPEN_VOL_MULT,
+                vol_mult: self.open.vol_mult,
                 start: Start::Before {
                     kind: "regular".into(),
                     lead_seconds: 0.0,
                 },
                 jumps: true,
-                jump_rate_per_hour: Some(OPEN_JUMPS_PER_HOUR),
+                jump_rate_per_hour: Some(self.open.jumps_per_hour),
                 jump_size: Some(JumpSize {
-                    abs_median_pct: OPEN_JUMP_MEDIAN_PCT,
-                    abs_p90_pct: OPEN_JUMP_P90_PCT,
-                    source: OPEN_SOURCE.into(),
+                    abs_median_pct: self.open.jump_median_pct,
+                    abs_p90_pct: self.open.jump_p90_pct,
+                    source: self.open.source.into(),
                 }),
                 gaps: false,
                 ..ModelSpec::default()
@@ -335,7 +377,7 @@ mod tests {
 
     #[test]
     fn sessions_are_valid_deterministic_and_mirrored_in_pairs() {
-        let family = FlippedFeedFamily::nvda();
+        let family = FlippedFeedFamily::tsla();
         let a = family.draw_set("t", 6, 9);
         let b = family.draw_set("t", 6, 9);
         assert_eq!(
@@ -352,7 +394,7 @@ mod tests {
         for pair in a.chunks(2) {
             let (up, down) = (&pair[0].0, &pair[1].0);
             assert!(pair[1].1.mirrored && !pair[0].1.mirrored);
-            for slot in [600, 3_000, 6_000] {
+            for slot in [600, 2_400, 4_500] {
                 let (u, d) = (level_at(&up.path, slot), level_at(&down.path, slot));
                 let log = |pct: f64| (1.0 + pct / 100.0).ln();
                 assert!((log(u) + log(d)).abs() < 1e-4, "{slot}: {u} {d}");
@@ -364,7 +406,7 @@ mod tests {
     /// pacing: what `calls_per_minute` is tuned to (12 to 15 a session).
     #[test]
     fn the_model_calls_a_dozen_times_a_session() {
-        let family = FlippedFeedFamily::nvda();
+        let family = FlippedFeedFamily::tsla();
         let set = family.draw_set("t", 200, 5);
         let mut calls = Vec::new();
         let mut rng = SplitMix64(17);

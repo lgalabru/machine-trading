@@ -1,4 +1,4 @@
-# The ladder's rungs for flipped-feed-nvda, each a component on
+# The ladder's rungs for flipped-feed-tsla, each a component on
 # wasm32-wasip2 built with its rule (`MTX_NAIVE`) set.
 [package]
 name = "mtx-bot-flipped-feed-naive"

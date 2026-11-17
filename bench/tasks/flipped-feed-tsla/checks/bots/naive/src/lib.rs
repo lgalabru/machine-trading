@@ -14,7 +14,7 @@
 //!
 //! Each trades at the reference's size and costs.
 
-use mtx_bot_flipped_feed::{Feed, Hold, SIZE, direction, trade_to};
+use mtx_bot_flipped_feed::{Feed, Hold, direction, trade_to};
 use mtx_kit::prelude::*;
 
 /// The post-move rung's wait after a call, the least move it follows, in
@@ -27,6 +27,7 @@ pub const POST_MOVE_HOLD: u64 = 240;
 #[derive(Default)]
 pub struct Naive {
     mode: String,
+    size: f64,
     feed: Feed,
     hold: Hold,
     start: u64,
@@ -37,6 +38,7 @@ pub struct Naive {
 
 impl Strategy for Naive {
     fn start(&mut self, session: &Session) -> BotResult {
+        self.size = session.cap;
         self.mode = option_env!("MTX_NAIVE")
             .ok_or("built without MTX_NAIVE")?
             .to_string();
@@ -57,7 +59,7 @@ impl Strategy for Naive {
             } else {
                 2.0 * (1.0 - progress)
             };
-            let target = (SIZE * ramp * 4.0).round() / 4.0;
+            let target = (self.size * ramp * 4.0).round() / 4.0;
             trade_to(market, orders, target);
             return Ok(());
         }
@@ -88,7 +90,7 @@ impl Strategy for Naive {
             }
             other => return Err(format!("no rung {other}").into()),
         }
-        trade_to(market, orders, self.hold.target(market.slot, SIZE));
+        trade_to(market, orders, self.hold.target(market.slot, self.size));
         Ok(())
     }
 }

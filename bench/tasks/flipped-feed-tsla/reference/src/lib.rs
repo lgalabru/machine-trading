@@ -1,4 +1,4 @@
-//! Reference: trade NVDA's open off the house model's calls, once the
+//! Reference: trade TSLA's open off the house model's calls, once the
 //! market has shown which of the feed's two gateways reports them the right
 //! way round.
 //!
@@ -18,8 +18,8 @@
 //!   adds each burst's say to a log-odds, at a hit rate it assumes
 //!   ([`ASSUMED_HIT`]), and commits once the odds reach [`COMMIT_ODDS`].
 //! - **Trading.** Until then it stays flat. After, it follows each new call
-//!   from the gateway it trusts and fades each from the other, at full size,
-//!   until the call's horizon has passed.
+//!   from the gateway it trusts and fades each from the other, at the
+//!   mandate's cap, until the call's horizon has passed.
 //!
 //! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
 //! solution), and a process (`src/main.rs`).
@@ -28,8 +28,6 @@ use std::collections::BTreeSet;
 
 use mtx_kit::{FEED_VAR, log, prelude::*, rpc};
 
-/// The size it trades on a call: the mandate's cap.
-pub const SIZE: f64 = 4.0;
 /// How far from the mark a market order may fill, in basis points.
 pub const SLIPPAGE_BPS: f64 = 15.0;
 /// Calls nearer than this, in slots, are one burst.
@@ -181,7 +179,7 @@ pub fn trade_to(market: &Market, orders: &mut Orders, target: f64) {
         target,
         Execution {
             max_per_step: f64::INFINITY,
-            slice: SIZE,
+            slice: market.cap.max(0.01),
             slippage_bps: SLIPPAGE_BPS,
             min_trade: 0.01,
         },
@@ -267,6 +265,7 @@ impl Weigher {
 /// The strategy.
 #[derive(Default)]
 pub struct Reference {
+    size: f64,
     feed: Feed,
     weigher: Weigher,
     hold: Hold,
@@ -275,6 +274,7 @@ pub struct Reference {
 impl Strategy for Reference {
     fn start(&mut self, session: &Session) -> BotResult {
         self.feed = Feed::from_session(session)?;
+        self.size = session.cap;
         Ok(())
     }
 
@@ -289,7 +289,7 @@ impl Strategy for Reference {
                     .take(direction(call, taker_side), call.slot + call.horizon);
             }
         }
-        trade_to(market, orders, self.hold.target(market.slot, SIZE));
+        trade_to(market, orders, self.hold.target(market.slot, self.size));
         Ok(())
     }
 }

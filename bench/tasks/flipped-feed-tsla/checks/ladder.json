@@ -37,31 +37,31 @@
     },
     {
       "name": "follow-all",
-      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/follow-all"
+      "dir": "bench/tasks/flipped-feed-tsla/checks/bots/naive/rungs/follow-all"
     },
     {
       "name": "fade-all",
-      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/fade-all"
+      "dir": "bench/tasks/flipped-feed-tsla/checks/bots/naive/rungs/fade-all"
     },
     {
       "name": "follow-first",
-      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/follow-first"
+      "dir": "bench/tasks/flipped-feed-tsla/checks/bots/naive/rungs/follow-first"
     },
     {
       "name": "post-move",
-      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/post-move"
+      "dir": "bench/tasks/flipped-feed-tsla/checks/bots/naive/rungs/post-move"
     },
     {
       "name": "twap",
-      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/twap"
+      "dir": "bench/tasks/flipped-feed-tsla/checks/bots/naive/rungs/twap"
     },
     {
       "name": "reference",
-      "dir": "bench/tasks/flipped-feed-nvda/reference"
+      "dir": "bench/tasks/flipped-feed-tsla/reference"
     },
     {
       "name": "informed",
-      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/informed",
+      "dir": "bench/tasks/flipped-feed-tsla/checks/bots/informed",
       "tell_latent": true
     }
   ]
