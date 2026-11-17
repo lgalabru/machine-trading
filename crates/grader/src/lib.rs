@@ -32,6 +32,7 @@ pub mod session;
 pub mod simulated;
 pub mod snapshot;
 pub mod spot;
+pub mod stealth_block;
 pub mod taking;
 pub mod txlayer;
 pub mod venue;

@@ -18,6 +18,7 @@ use crate::{
     error::Result,
     making::MakingFamily,
     scenario::{Scenario, Shape, ShockFamily},
+    stealth_block::{Shape as StealthBlockShape, StealthBlockFamily},
     weekend::{WeekendFamily, WeekendShape},
 };
 
@@ -132,6 +133,23 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "stealth-or-block",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                StealthBlockFamily::tsla().draw_set(prefix, count, seed),
+                false,
+                stealth_block_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                StealthBlockFamily::tsla().draw_set("hidden", count, seed),
+                tell,
+                stealth_block_latent,
             )
         },
     },
@@ -259,6 +277,7 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
+    ("stealth-or-block", "informed_class", Knowable::Process),
 ];
 
 /// The members of a latent state itself, which no shipped practice file may
@@ -400,6 +419,13 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
         "impact_pct": shape.impact_pct,
         "half_life_slots": shape.half_life_slots,
     })
+}
+
+/// Which size class the informed trade in today: a fact of how the
+/// session's flow is drawn. Not the path, the jumps, a side, a wallet or
+/// when anyone trades.
+fn stealth_block_latent(shape: &StealthBlockShape) -> Value {
+    json!({ "informed_class": shape.informed_class })
 }
 
 #[cfg(test)]

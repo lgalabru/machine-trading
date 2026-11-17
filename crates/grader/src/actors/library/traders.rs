@@ -155,6 +155,42 @@ pub struct Decoy {
     pub size_mult: f64,
     #[serde(default = "fifty")]
     pub limit_bps: f64,
+    /// Once faded, trade in bursts on its random views rather than all the
+    /// time: the rhythm the informed keep ahead of moves, so only what the
+    /// price does after a burst tells a faded decoy from them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bursts: Option<Bursts>,
+}
+
+/// A faded decoy's rhythm: a burst of `length_slots` on one side, then a
+/// quiet gap of `gap_slots` before the next, each drawn per burst from its
+/// inclusive range.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Bursts {
+    pub length_slots: [u64; 2],
+    pub gap_slots: [u64; 2],
+}
+
+impl Bursts {
+    fn validate(&self) -> Result<(), String> {
+        for (what, [lo, hi]) in [
+            ("length_slots", self.length_slots),
+            ("gap_slots", self.gap_slots),
+        ] {
+            if lo == 0 || lo > hi {
+                return Err(format!(
+                    "bursts.{what} must be a range of at least 1 slot, low first"
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A slot count drawn from `[lo, hi]`.
+fn draw_slots(rng: &mut Rng, [lo, hi]: [u64; 2]) -> u64 {
+    lo + rng.below((hi - lo + 1) as usize) as u64
 }
 
 impl Decoy {
@@ -171,6 +207,9 @@ impl Decoy {
             .is_none_or(|until| until <= self.informed_for.from)
         {
             return Err("informed_for needs an until after its from".into());
+        }
+        if let Some(bursts) = &self.bursts {
+            bursts.validate()?;
         }
         finite_at_least_zero("edge_bps", self.edge_bps)?;
         finite_positive("intensity_mult", self.intensity_mult)?;
@@ -414,6 +453,8 @@ pub(super) struct DecoyTrader {
     /// view and the slot it holds it until.
     fades: Vec<u64>,
     views: Vec<Option<(Side, u64)>>,
+    /// With bursts, the slot each faded wallet's next burst starts at.
+    next: Vec<Option<u64>>,
     path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
     rng: Rng,
     last: Option<u64>,
@@ -434,12 +475,14 @@ impl DecoyTrader {
             .map(|_| from + rng.below(span as usize) as u64)
             .collect();
         let views = vec![None; wallets.len()];
+        let next = vec![None; wallets.len()];
         Self {
             spec,
             scale,
             wallets,
             fades,
             views,
+            next,
             path,
             rng,
             last: None,
@@ -453,6 +496,34 @@ impl DecoyTrader {
         if now.at < self.fades[wallet] {
             let ahead = (self.path)(now.at + horizon).book_usd;
             return side_of((ahead / now.book_usd - 1.0) * 10_000.0, self.spec.edge_bps);
+        }
+        if let Some(bursts) = self.spec.bursts {
+            if let Some((side, until)) = self.views[wallet]
+                && now.at < until
+            {
+                return Some(side);
+            }
+            let fade = self.fades[wallet];
+            let next = match self.next[wallet] {
+                Some(next) => next,
+                None => {
+                    let first = fade + draw_slots(&mut self.rng, bursts.gap_slots);
+                    self.next[wallet] = Some(first);
+                    first
+                }
+            };
+            if now.at < next {
+                return None;
+            }
+            let side = if self.rng.chance(0.5) {
+                Side::Bid
+            } else {
+                Side::Ask
+            };
+            let until = now.at + draw_slots(&mut self.rng, bursts.length_slots);
+            self.views[wallet] = Some((side, until));
+            self.next[wallet] = Some(until + draw_slots(&mut self.rng, bursts.gap_slots));
+            return Some(side);
         }
         match self.views[wallet] {
             Some((side, until)) if now.at < until => Some(side),
@@ -619,6 +690,7 @@ mod tests {
             intensity_mult: 1.0,
             size_mult: 1.0,
             limit_bps: 50.0,
+            bursts: None,
         };
         let mut decoy = DecoyTrader::new(spec, scale(), vec![wallet], path, Rng::new([6; 32]));
         assert!((150..200).contains(&decoy.fades[0]));
@@ -645,5 +717,63 @@ mod tests {
         // Its view changes at most once a horizon.
         let changes = sides.windows(2).filter(|p| p[0].1 != p[1].1).count();
         assert!(changes <= (2_000 - 210) / 20, "{changes}");
+    }
+
+    #[tokio::test]
+    async fn faded_decoys_with_bursts_trade_one_side_a_burst_and_rest_between() {
+        let (book, log) = Book::new("d", 99.0, 101.0);
+        let (wallet, _) = wallet(book);
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(|s| at(s, 100.0));
+        let spec = Decoy {
+            wallets: 1,
+            horizon_slots: 20,
+            edge_bps: 50.0,
+            informed_for: Window {
+                from: 100,
+                until: Some(101),
+            },
+            intensity_mult: 20.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            bursts: Some(Bursts {
+                length_slots: [20, 20],
+                gap_slots: [100, 200],
+            }),
+        };
+        spec.validate().unwrap();
+        let mut decoy = DecoyTrader::new(spec, scale(), vec![wallet], path, Rng::new([7; 32]));
+        // A flat path: nothing before the fade, and nothing until the first
+        // gap has passed.
+        let mut active = Vec::new();
+        for s in (2..4_000).step_by(2) {
+            decoy.before_blocks(&at(s, 100.0)).await;
+            let step = std::mem::take(&mut *log.lock().unwrap());
+            let buys = step.iter().filter(|l| l.contains("Bid")).count();
+            assert!(buys == 0 || buys == step.len(), "{step:?}");
+            if !step.is_empty() {
+                active.push((s, buys > 0));
+            }
+        }
+        assert!(
+            active.first().is_some_and(|(s, _)| *s >= 200),
+            "{:?}",
+            active.first()
+        );
+        // Bursts of at most 20 slots, at least 100 slots apart: gaps of over
+        // 20 slots between active steps are only between bursts.
+        let starts: Vec<u64> = active
+            .iter()
+            .enumerate()
+            .filter(|(i, (s, _))| *i == 0 || s - active[i - 1].0 > 20)
+            .map(|(_, (s, _))| *s)
+            .collect();
+        assert!(starts.len() >= 10 && starts.len() <= 40, "{}", starts.len());
+        assert!(starts.windows(2).all(|w| w[1] - w[0] >= 100), "{starts:?}");
+        assert!(active.iter().any(|(_, b)| *b) && active.iter().any(|(_, b)| !*b));
+        let bad = Bursts {
+            length_slots: [0, 3],
+            gap_slots: [5, 4],
+        };
+        assert!(bad.validate().is_err());
     }
 }
