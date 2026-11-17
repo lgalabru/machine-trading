@@ -299,7 +299,9 @@ impl Making {
                 return Err("roles: a kind needs a name and an account".into());
             }
             if let Some(a) = accounts.iter().find(|a| **a >= TAKER_ACCOUNTS) {
-                return Err(format!("roles: {kind} names account {a}, of {TAKER_ACCOUNTS}"));
+                return Err(format!(
+                    "roles: {kind} names account {a}, of {TAKER_ACCOUNTS}"
+                ));
             }
         }
         let c = &self.competition;

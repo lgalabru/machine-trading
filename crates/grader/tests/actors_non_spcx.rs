@@ -1700,7 +1700,6 @@ fn reactive_making(bps: f64, floor: f64, react: u64, size: f64) -> Making {
         takers: Vec::new(),
         makers_bps: None,
         roles: Default::default(),
-        roles: Default::default(),
     }
 }
 
