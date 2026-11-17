@@ -523,7 +523,7 @@ pub fn rescore_trials(
                     "noise": v2.gap.noise,
                 },
                 "breached_sessions": v2.breached_sessions,
-                "breach_cap": v2.breach_cap,
+                "breach_penalty": v2.breach_penalty,
                 "risk": v2.risk,
                 "metrics": v2.metrics,
                 "fatal": v2.fatal,
