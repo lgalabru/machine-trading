@@ -614,7 +614,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 if account >= TAKER_ACCOUNTS {
                     return Err(Error::Latent(format!("no taker account {account}")));
                 }
-                let wallet = opts.keys.keypair("taker", u32::from(account)).pubkey().to_string();
+                let wallet = opts
+                    .keys
+                    .keypair("taker", u32::from(account))
+                    .pubkey()
+                    .to_string();
                 if !entry.contains(&wallet) {
                     entry.push(wallet);
                 }
@@ -965,10 +969,7 @@ fn session_vars(scenario: &Scenario) -> Result<Vec<(String, String)>> {
         ));
     }
     if let Some(cap) = &scenario.traded_cap {
-        vars.push((
-            "MTX_TRADED_CAP".to_string(),
-            serde_json::to_string(cap)?,
-        ));
+        vars.push(("MTX_TRADED_CAP".to_string(), serde_json::to_string(cap)?));
     }
     if !scenario.close_out.is_empty() {
         let close_outs = mtx_kit::CloseOuts(

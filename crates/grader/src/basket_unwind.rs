@@ -74,7 +74,8 @@ pub struct MarketSpec {
 
 impl MarketSpec {
     fn model(&self) -> MarketModel {
-        let mut calibration = Calibration::parse(self.calibration).expect("the calibration is valid");
+        let mut calibration =
+            Calibration::parse(self.calibration).expect("the calibration is valid");
         calibration.sha256 = sha256_hex(self.calibration.as_bytes());
         MarketModel::new(
             calibration,
@@ -541,7 +542,9 @@ impl BasketFamily {
         order.sort_by(|&a, &b| {
             let ra = want[a] - want[a].floor();
             let rb = want[b] - want[b].floor();
-            rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal).then(a.cmp(&b))
+            rb.partial_cmp(&ra)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.cmp(&b))
         });
         let mut short = count - quotas.iter().sum::<usize>();
         for c in order {

@@ -35,7 +35,11 @@ impl mtx_kit::Strategy for Informed {
         self.0.start(session)
     }
 
-    fn step(&mut self, market: &mtx_kit::Market, orders: &mut mtx_kit::Orders) -> mtx_kit::BotResult {
+    fn step(
+        &mut self,
+        market: &mtx_kit::Market,
+        orders: &mut mtx_kit::Orders,
+    ) -> mtx_kit::BotResult {
         self.0.step(market, orders)
     }
 }

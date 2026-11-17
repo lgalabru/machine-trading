@@ -223,7 +223,11 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
 /// seats in every session, calm or not. Not which market moves, which way,
 /// when or how far, nor who sends the fake-outs.
 fn basket_latent(shape: &BasketShape) -> Value {
-    let kinds: Vec<String> = shape.informed_accounts.keys().map(|s| informed_kind(s)).collect();
+    let kinds: Vec<String> = shape
+        .informed_accounts
+        .keys()
+        .map(|s| informed_kind(s))
+        .collect();
     json!({ "roster": kinds })
 }
 

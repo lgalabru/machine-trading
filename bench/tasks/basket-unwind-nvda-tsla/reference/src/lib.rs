@@ -257,7 +257,10 @@ impl Unwind {
     /// Each market's oracle, from Phoenix's perp asset map: the median of
     /// its oracles' latest reports.
     fn oracles(&self) -> Vec<Option<f64>> {
-        let data = rpc_account(&self.asset_map).ok().flatten().unwrap_or_default();
+        let data = rpc_account(&self.asset_map)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         let map = PerpAssetMap::try_from_account_bytes(&data).ok();
         self.legs
             .iter()
@@ -322,11 +325,9 @@ impl Strategy for Unwind {
             let instrument: mtx_kit::mandate::InstrumentRef = info.id.parse()?;
             let market = venue.market(&instrument.symbol)?.clone();
             let kind = format!("informed-{}", instrument.symbol.to_lowercase());
-            let informed = regime.as_ref().and_then(|r| {
-                r["wallets"][kind.as_str()][0]
-                    .as_str()
-                    .map(String::from)
-            });
+            let informed = regime
+                .as_ref()
+                .and_then(|r| r["wallets"][kind.as_str()][0].as_str().map(String::from));
             if self.mode == Mode::Informed && informed.is_none() {
                 return Err(format!("the informed bot needs MTX_REGIME's {kind} wallet").into());
             }
@@ -340,9 +341,7 @@ impl Strategy for Unwind {
                 market,
                 start,
                 arrival: 0.0,
-                haircut_bps: close_outs
-                    .haircut(&instrument)
-                    .map_or(0.0, |h| h.0),
+                haircut_bps: close_outs.haircut(&instrument).map_or(0.0, |h| h.0),
                 informed,
                 base_bps: None,
                 held: start,
@@ -398,7 +397,9 @@ impl Strategy for Unwind {
             let oracle = if i == 0 {
                 market.oracle
             } else {
-                oracles[i].or_else(|| Some((bid? + ask?) / 2.0)).unwrap_or(0.0)
+                oracles[i]
+                    .or_else(|| Some((bid? + ask?) / 2.0))
+                    .unwrap_or(0.0)
             };
             // What it sold since the last step counts toward the cap.
             let sold = leg.held - held;
@@ -431,7 +432,14 @@ impl Strategy for Unwind {
         if self.mode.reads() {
             self.read_tapes(now);
             for (leg, view) in self.legs.iter_mut().zip(&views) {
-                update_read(self.mode, leg, view.oracle, now, self.start_slot, self.end_slot);
+                update_read(
+                    self.mode,
+                    leg,
+                    view.oracle,
+                    now,
+                    self.start_slot,
+                    self.end_slot,
+                );
             }
         }
 
@@ -465,7 +473,12 @@ impl Strategy for Unwind {
             };
             match self.mode {
                 Mode::Dump => {
-                    wants.push((i, 2, leg.held.min(URGENT_USD / view.oracle), sweep(view.oracle, leg)));
+                    wants.push((
+                        i,
+                        2,
+                        leg.held.min(URGENT_USD / view.oracle),
+                        sweep(view.oracle, leg),
+                    ));
                 }
                 Mode::TwapEach => {
                     let steps = (self.end_slot.saturating_sub(now) / 2).max(1) as f64;
@@ -552,7 +565,11 @@ impl Strategy for Unwind {
                 if size < leg.lot {
                     continue;
                 }
-                orders.ask(price, size).at(&leg.id).post_only().reduce_only();
+                orders
+                    .ask(price, size)
+                    .at(&leg.id)
+                    .post_only()
+                    .reduce_only();
                 room -= size * price;
                 rooms[i] -= size * price;
             }
@@ -570,7 +587,8 @@ impl Unwind {
         };
         let start = self.start_slot;
         for leg in &mut self.legs {
-            for (slot, wallet, signed) in new_takes(venue, &leg.orderbook, &leg.market, &mut leg.seen)
+            for (slot, wallet, signed) in
+                new_takes(venue, &leg.orderbook, &leg.market, &mut leg.seen)
             {
                 if wallet == self.me {
                     continue;
@@ -610,14 +628,19 @@ fn update_read(mode: Mode, leg: &mut Leg, oracle: f64, now: u64, start: u64, end
 fn read_on(mode: Mode, leg: &mut Leg, oracle: f64, now: u64, start: u64, end: u64) {
     let into = now.saturating_sub(start);
     let burst = leg.burst(into);
-    let progress = |at: u64| at.saturating_sub(start) as f64 / end.saturating_sub(start).max(1) as f64;
+    let progress =
+        |at: u64| at.saturating_sub(start) as f64 / end.saturating_sub(start).max(1) as f64;
     match mode {
         Mode::Informed => {
             // Only the told wallet's burst counts, and it is the move's.
             if leg.read == Read::Calm
                 && let Some((sign, true)) = burst
             {
-                leg.read = if sign < 0.0 { Read::Falling } else { Read::Rising };
+                leg.read = if sign < 0.0 {
+                    Read::Falling
+                } else {
+                    Read::Rising
+                };
                 (leg.watch_from, leg.watch_oracle, leg.low) = (now, oracle, oracle);
             }
         }
@@ -625,7 +648,11 @@ fn read_on(mode: Mode, leg: &mut Leg, oracle: f64, now: u64, start: u64, end: u6
             if leg.read == Read::Calm
                 && let Some((sign, _)) = burst
             {
-                leg.read = if sign < 0.0 { Read::Watch } else { Read::Rising };
+                leg.read = if sign < 0.0 {
+                    Read::Watch
+                } else {
+                    Read::Rising
+                };
                 (leg.watch_from, leg.watch_oracle, leg.watch_sold, leg.low) =
                     (now, oracle, 0.0, oracle);
             }
@@ -635,8 +662,7 @@ fn read_on(mode: Mode, leg: &mut Leg, oracle: f64, now: u64, start: u64, end: u6
                     leg.read = Read::Falling;
                 }
                 Read::Watch | Read::Rising
-                    if now > leg.watch_from + WATCH_SLOTS
-                        && moved.abs() < CONFIRM_BPS =>
+                    if now > leg.watch_from + WATCH_SLOTS && moved.abs() < CONFIRM_BPS =>
                 {
                     leg.read = Read::Calm;
                 }
@@ -756,7 +782,8 @@ fn takes_in(tx: &Value, venue: &PhoenixVenue, market: &ExchangeMarketConfig) -> 
         let Ok(value) = serde_json::to_value(&packet) else {
             continue;
         };
-        let Some((variant, fields)) = value["kind"].as_object().and_then(|o| o.iter().next()) else {
+        let Some((variant, fields)) = value["kind"].as_object().and_then(|o| o.iter().next())
+        else {
             continue;
         };
         if variant.to_ascii_lowercase().contains("post") {
