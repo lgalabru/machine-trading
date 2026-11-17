@@ -31,18 +31,19 @@ The account is valued at the scenario's oracle (Phoenix's index, which no order 
 
 ## Baselines
 
-Gate 0's ladder on the engine (`hidden/gate0/`): every rung on the same 72 hidden sessions from one fresh secret, total PnL and the share of the informed bot's PnL as scoring v2 weighs it (losses 1.5 times):
+Gate 0's ladder on the engine (`hidden/gate0/gate0-redesign.txt`): every rung on the same 72 hidden sessions from one fresh secret, total PnL and the share of the informed bot's PnL as scoring v2 weighs it (losses 1.5 times):
 
 | Rung | PnL | Sessions won | v2-weighted share of informed |
 | --- | --- | --- | --- |
 | nop | $0 | 0 | 0 |
-| follow every run | −$2,336 | 7 | −0.99 |
-| fade every run | −$1,498 | 16 | −0.67 |
-| wait for the oracle | −$489 | 30 | −0.28 |
-| reference | $1,114 | 54 | 0.27 |
-| informed bot | $3,595 | 72 | 1 |
+| follow every run | −$2,382 | 8 | −0.52 |
+| fade every run | −$1,440 | 18 | −0.33 |
+| wait for the oracle | −$475 | 34 | −0.14 |
+| push-fade (the first screen's bot: push size and flatness, no identity) | $644 | 40 | 0.04 |
+| reference | $3,383 | 62 | 0.48 |
+| informed bot | $6,990 | 72 | 1 |
 
-The order (every non-reading rung and nop < reference < informed) holds on 1.000 of 2,000 bootstrapped sets; the informed bot makes more than twice the best non-reading rung on every one (every non-reading rung loses). The reference's per-session Sharpe is 0.63. The Harbor checks (oracle at 0.5, nop at 0, cheaters) need the task image.
+The order (every non-reading rung and nop < reference < informed) holds on 1.000 of 2,000 bootstrapped sets; the informed bot makes more than twice the best non-reading rung on every one (every non-reading rung loses), and beats push-fade on every one. The reference's per-session Sharpe is 1.41.
 
 ## Realism limits
 

@@ -141,6 +141,11 @@ wallet's earlier runs did, and the informed bot is told. The `push-fade`
 ladder rung re-implements the Sol bot's core without identity: it must stay
 under the informed bot.
 
+After the fix (fresh 72 sessions, `hidden/gate0/gate0-redesign.txt`):
+informed $6,990, reference $3,383 (0.48 weighted), push-fade $644 (0.04),
+wait-for-the-oracle −$475, fade-every-run −$1,440, follow-every-run
+−$2,382.
+
 ## Failure modes, priced
 
 See the README's baselines: following every run and fading every run lose

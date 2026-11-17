@@ -16,3 +16,4 @@ secret), then `summary.py` on their reports:
 graded on the same sessions as the other rungs' v1 reports.
 
 `gate0-final.txt` is the full build (main merged, reference as shipped), every rung re-graded on the same 72 sessions as run 1.
+`gate0-redesign.txt` is after the first screen's fix (breakers' sweeps, one wallet each, the identity-learning reference, the informed bot riding pushes), on fresh sessions, with `push-fade`, the first screen's bot re-implemented without identity.
