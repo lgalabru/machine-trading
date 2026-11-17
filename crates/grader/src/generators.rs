@@ -434,6 +434,7 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
     })
 }
 
+#[cfg(feature = "generators")]
 /// Who the informed fund is: its wallets, through the roster. Both funds
 /// are seated in every session, at the same pace and sizes, whichever way
 /// the verdict goes. Not when the headline prints, which way it jumps,
