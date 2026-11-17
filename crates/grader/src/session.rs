@@ -236,6 +236,10 @@ pub struct SessionReport {
     pub perp_fills: Vec<crate::perp::PerpFillRecord>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub perp_open_orders: Vec<(InstrumentRef, mtx_core::Side)>,
+    /// A perp session with a traded cap: the most the bot's fills traded in
+    /// any window, against the cap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traded_cap: Option<crate::orders::TradedCapReport>,
     /// A market-making session: every fill of the bot's, in the order
     /// Phoenix recorded them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

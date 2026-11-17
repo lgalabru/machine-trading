@@ -569,7 +569,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
     let mut rfqs = None;
-    let mut roster = Default::default();
+    let mut roster: crate::actors::library::Roster = Default::default();
     if let Some((library, seats)) = library {
         let path = own.moments();
         // Front-runners read the bot's trading through a seat on its
@@ -602,6 +602,25 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         rfqs = built.rfq;
         roster = built.roster;
     }
+    // Who is who among the takers (`making.roles`), on any market: each
+    // kind's accounts, as the pool's wallets.
+    for market in &markets {
+        let Some(making) = &market.scenario.making else {
+            continue;
+        };
+        for (kind, accounts) in &making.roles {
+            let entry = roster.entry(kind.clone()).or_default();
+            for &account in accounts {
+                if account >= TAKER_ACCOUNTS {
+                    return Err(Error::Latent(format!("no taker account {account}")));
+                }
+                let wallet = opts.keys.keypair("taker", u32::from(account)).pubkey().to_string();
+                if !entry.contains(&wallet) {
+                    entry.push(wallet);
+                }
+            }
+        }
+    }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
     let mandate = scenario.mandate.clone().with_term(base_slot, end_slot);
@@ -619,6 +638,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
     let reads_fills = scenario.order.is_some()
+        || scenario.traded_cap.is_some()
         || scenario.mandate.universe.iter().any(|allowance| {
             allowance.sides.is_some()
                 || allowance.min_sell_price.is_some()
@@ -942,6 +962,12 @@ fn session_vars(scenario: &Scenario) -> Result<Vec<(String, String)>> {
         vars.push((
             mtx_kit::BrokerHaircut::VAR.to_string(),
             mtx_kit::BrokerHaircut(order.haircut_bps).to_var()?,
+        ));
+    }
+    if let Some(cap) = &scenario.traded_cap {
+        vars.push((
+            "MTX_TRADED_CAP".to_string(),
+            serde_json::to_string(cap)?,
         ));
     }
     if !scenario.close_out.is_empty() {
@@ -1926,6 +1952,15 @@ impl Account for PerpAccount {
                 .iter()
                 .any(|m| m.start_position != 0.0 && m.scenario.funding.is_some()),
             close_outs: settled.close_outs,
+            traded_cap: scenario.traded_cap.map(|cap| {
+                let traded: Vec<(u64, f64)> = fills
+                    .fills
+                    .iter()
+                    .filter(|f| !f.forced)
+                    .map(|f| (f.at, f.price * f.base))
+                    .collect();
+                cap.report(&traded)
+            }),
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
             making_fills,

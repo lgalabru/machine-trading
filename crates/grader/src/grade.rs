@@ -1205,6 +1205,8 @@ fn disqualification(session: &SessionReport) -> Option<String> {
         Some(breach.to_string())
     } else if let Some(breach) = session.order.as_ref().and_then(|order| order.breach()) {
         Some(breach)
+    } else if let Some(breach) = session.traded_cap.as_ref().and_then(|cap| cap.breach()) {
+        Some(breach)
     } else if session.liquidatable && session.liquidator.is_none() {
         // With a competing keeper (the scenario's `liquidator`) an account
         // that ends liquidatable was liquidated as far as Phoenix allowed,
@@ -1620,6 +1622,7 @@ mod tests {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            traded_cap: None,
             making_fills: Vec::new(),
             tx_layer: None,
             lending: None,
@@ -1744,6 +1747,7 @@ mod tests {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            traded_cap: None,
         }
     }
 

@@ -259,6 +259,10 @@ pub struct Actors {
     /// `takers_pricing`. One pool of taker accounts trades every market.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub markets: BTreeMap<String, MarketActors>,
+    /// With a competitor: who is who among the taker accounts, by kind
+    /// (see [`Making::roles`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub taker_roles: BTreeMap<String, Vec<u8>>,
 }
 
 /// One market's actors in a session on several markets: as [`Actors`]'
@@ -272,6 +276,8 @@ pub struct MarketActors {
     pub takers: Vec<TakerOrder>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub takers_pricing: Option<crate::actors::Pricing>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub taker_roles: BTreeMap<String, Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -346,6 +352,11 @@ pub struct Scoring {
     /// closing the position through the book, instead of disqualifying.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_out: Option<StopOut>,
+    /// A perp desk's execution capacity: the most notional its fills may
+    /// trade in any window, every market together. Going over it breaks
+    /// the session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traded_cap: Option<crate::orders::TradedCap>,
 }
 
 impl Assets {
@@ -568,9 +579,13 @@ impl Actors {
                 competition: competitor.competition,
                 takers: self.takers.clone(),
                 makers_bps: competitor.makers_bps,
+                roles: self.taker_roles.clone(),
             }
             .validate(duration_slots)
             .map_err(|reason| format!("making: {reason}"));
+        }
+        if !self.taker_roles.is_empty() {
+            return Err("taker_roles need a competitor".into());
         }
         if closed_period {
             return Ok(());
@@ -615,6 +630,9 @@ impl Scoring {
         }
         if let Some(stop_out) = &self.stop_out {
             stop_out.validate()?;
+        }
+        if let Some(cap) = &self.traded_cap {
+            cap.validate()?;
         }
         Ok(())
     }
@@ -1240,6 +1258,7 @@ impl ScenarioV2 {
                 competitor: actors.competitor,
                 takers: actors.takers,
                 takers_pricing: actors.takers_pricing,
+                taker_roles: actors.taker_roles,
                 ..Actors::default()
             }
             .validate(self.duration_slots, false)
@@ -1601,6 +1620,9 @@ impl ScenarioV2 {
         if self.scoring.net.is_some() && self.order.is_some() {
             return Err("net: a net-scored session has no order".into());
         }
+        if self.scoring.traded_cap.is_some() && self.venues.perp.is_none() {
+            return Err("traded_cap: only perp sessions read their fills for it".into());
+        }
         Ok(())
     }
 
@@ -1644,6 +1666,7 @@ impl ScenarioV2 {
             library,
             takers_pricing,
             markets: mut market_actors,
+            taker_roles,
         } = actors;
         let (funding, perp_markets, liquidator) = match venues.perp {
             Some(perp) => (perp.funding, perp.markets, perp.liquidator),
@@ -1661,6 +1684,7 @@ impl ScenarioV2 {
                             makers_bps: c.makers_bps,
                             competition: c.competition,
                             takers: actors.takers,
+                            roles: actors.taker_roles,
                         }),
                         Vec::new(),
                     ),
@@ -1685,6 +1709,7 @@ impl ScenarioV2 {
                     competition: c.competition,
                     takers,
                     makers_bps: c.makers_bps,
+                    roles: taker_roles,
                 }),
                 None,
                 Vec::new(),
@@ -1733,6 +1758,7 @@ impl ScenarioV2 {
             tx_layer: tx.as_ref().and_then(|tx| tx.layer.clone()),
             raw_sends: tx.and_then(|tx| tx.raw_sends),
             stop_out: scoring.stop_out,
+            traded_cap: scoring.traded_cap,
             market_model: record,
             oracles,
             lending: venues.lending,
@@ -1865,6 +1891,11 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 library: v1.actors.clone(),
                 takers_pricing: v1.takers_pricing,
                 markets: market_actors(&v1.markets),
+                taker_roles: v1
+                    .making
+                    .as_ref()
+                    .map(|m| m.roles.clone())
+                    .unwrap_or_default(),
             },
             faults: v1.faults.clone(),
             tx: (v1.raw_sends.is_some() || v1.tx_layer.is_some()).then(|| Tx {
@@ -1884,6 +1915,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 bound_on: v1.bound_on,
                 close_out: v1.close_out.clone(),
                 stop_out: v1.stop_out.clone(),
+                traded_cap: v1.traded_cap,
             },
         })
     }
@@ -1925,11 +1957,13 @@ fn market_actors(markets: &[MarketScenario]) -> BTreeMap<String, MarketActors> {
                     }),
                     takers: making.takers.clone(),
                     takers_pricing: m.takers_pricing,
+                    taker_roles: making.roles.clone(),
                 },
                 None => MarketActors {
                     competitor: None,
                     takers: m.tape.clone(),
                     takers_pricing: m.takers_pricing,
+                    taker_roles: BTreeMap::new(),
                 },
             };
             (m.symbol.clone(), actors)

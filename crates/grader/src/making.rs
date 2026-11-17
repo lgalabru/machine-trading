@@ -157,6 +157,14 @@ pub struct Making {
     /// further out behind it. At least `competitor_bps`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub makers_bps: Option<f64>,
+    /// Who is who among the taker accounts, by kind (`informed`, …): an
+    /// identity fact a task's latent state may tell its informed bot by
+    /// naming the kind in its `roster` (see [`crate::latent`]). The session
+    /// resolves each account to its wallet as it starts. On several markets
+    /// the accounts are one pool, so a kind names its market when that
+    /// matters (`informed-nvda`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub roles: std::collections::BTreeMap<String, Vec<u8>>,
 }
 
 /// The grader's maker (see [`crate::actors::competitor`]).
@@ -287,6 +295,14 @@ impl Making {
                 "makers_bps {makers} must be at least competitor_bps {}",
                 self.competitor_bps
             ));
+        }
+        for (kind, accounts) in &self.roles {
+            if kind.is_empty() || accounts.is_empty() {
+                return Err("roles: a kind needs a name and an account".into());
+            }
+            if let Some(a) = accounts.iter().find(|a| **a >= TAKER_ACCOUNTS) {
+                return Err(format!("roles: {kind} names account {a}, of {TAKER_ACCOUNTS}"));
+            }
         }
         let c = &self.competition;
         if !(c.floor_bps.is_finite() && c.floor_bps > 0.0 && c.floor_bps < self.competitor_bps) {
@@ -709,6 +725,7 @@ impl MakingFamily {
                 competition,
                 takers,
                 makers_bps: None,
+                roles: Default::default(),
             }),
             offhours: None,
             funding: None,
@@ -739,6 +756,7 @@ impl MakingFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            traded_cap: None,
         };
         (scenario, informed, leaks)
     }
@@ -1074,6 +1092,7 @@ mod tests {
                 },
             ],
             makers_bps: None,
+            roles: Default::default(),
         };
         let path = [Waypoint::at(5, 10.0)];
         // 2 at $100 at the competitor's 10 bp (the taker would pay 25), and 1
@@ -1094,6 +1113,7 @@ mod tests {
             },
             takers: Vec::new(),
             makers_bps,
+            roles: Default::default(),
         };
         assert_eq!(making(None).makers_bps(), 10.0);
         assert_eq!(making(Some(20.0)).makers_bps(), 20.0);

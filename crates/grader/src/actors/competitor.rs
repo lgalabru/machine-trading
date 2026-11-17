@@ -426,6 +426,7 @@ mod tests {
             },
             takers: Vec::new(),
             makers_bps: None,
+            roles: Default::default(),
         };
         let seat = Box::new(NotingSeat {
             market: "x".into(),
@@ -561,6 +562,7 @@ mod tests {
             },
             takers: Vec::new(),
             makers_bps: None,
+            roles: Default::default(),
         }
     }
 

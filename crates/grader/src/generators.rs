@@ -14,6 +14,7 @@
 use serde_json::{Value, json};
 
 use crate::{
+    basket_unwind::{BasketFamily, Shape as BasketShape, informed_kind},
     carry::{CarryFamily, Shape as CarryShape},
     error::Result,
     making::MakingFamily,
@@ -73,6 +74,17 @@ pub const GENERATORS: &[Generator] = &[
                 CarryFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 carry_latent,
+            )
+        },
+    },
+    Generator {
+        name: "basket-unwind",
+        practice: |prefix, count, seed| BasketFamily::nvda_tsla().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| {
+            shaped(
+                BasketFamily::nvda_tsla().draw_set("hidden", count, seed),
+                tell,
+                basket_latent,
             )
         },
     },
@@ -206,6 +218,14 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
 ];
+
+/// Who is who: each market's informed trader's wallet, which the session
+/// seats in every session, calm or not. Not which market moves, which way,
+/// when or how far, nor who sends the fake-outs.
+fn basket_latent(shape: &BasketShape) -> Value {
+    let kinds: Vec<String> = shape.informed_accounts.keys().map(|s| informed_kind(s)).collect();
+    json!({ "roster": kinds })
+}
 
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
 /// one draw that makes it, so all of it is the session's future.

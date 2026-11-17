@@ -197,6 +197,13 @@ pub struct Scenario {
     /// ending liquidatable disqualifies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquidator: Option<crate::keeper::Liquidator>,
+    /// Opt-in, on a perp: the desk's execution capacity, the most notional
+    /// the bot's fills may trade in any window of slots, every market
+    /// together, as taker or maker (see [`crate::orders::TradedCap`]).
+    /// Going over it breaks the session. The bot reads it as
+    /// `MTX_TRADED_CAP`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traded_cap: Option<crate::orders::TradedCap>,
 }
 
 /// The grader's risk desk: which mandate limits it enforces by closing the
@@ -1376,6 +1383,7 @@ impl ShockFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            traded_cap: None,
         };
         let shape = Shape {
             direction,
@@ -2081,6 +2089,7 @@ mod tests {
                     tx_layer: None,
                     stop_out: None,
                     liquidator: None,
+                    traded_cap: None,
                     ..marked.clone()
                 },
                 plain
@@ -2174,6 +2183,7 @@ mod tests {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            traded_cap: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -2256,6 +2266,7 @@ mod tests {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            traded_cap: None,
         }
     }
 

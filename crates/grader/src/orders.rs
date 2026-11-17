@@ -243,6 +243,78 @@ pub struct CloseOutReport {
     pub charge_usd: f64,
 }
 
+/// A desk's execution capacity on a perp account: the most notional, in
+/// USD, its fills may trade in any window of `window_slots`, every market
+/// together, as the taker or the maker. Going over it breaks the session.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TradedCap {
+    pub window_slots: u64,
+    pub max_usd: f64,
+}
+
+impl TradedCap {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if self.window_slots == 0 {
+            return Err("traded_cap: the window has no slots".into());
+        }
+        if !(self.max_usd.is_finite() && self.max_usd > 0.0) {
+            return Err(format!(
+                "traded_cap: max_usd {} must be positive",
+                self.max_usd
+            ));
+        }
+        Ok(())
+    }
+
+    /// The most any window traded, from the bot's fills as (slot into the
+    /// session, notional in USD), in any order.
+    pub fn report(&self, fills: &[(u64, f64)]) -> TradedCapReport {
+        let mut fills = fills.to_vec();
+        fills.sort_by_key(|(at, _)| *at);
+        let (mut peak_usd, mut peak_at, mut from, mut sum) = (0.0f64, 0, 0, 0.0);
+        for (i, &(at, usd)) in fills.iter().enumerate() {
+            sum += usd.abs();
+            while fills[from].0 + self.window_slots <= at {
+                sum -= fills[from].1.abs();
+                from += 1;
+            }
+            if sum > peak_usd {
+                (peak_usd, peak_at) = (sum, fills[i].0);
+            }
+        }
+        TradedCapReport {
+            window_slots: self.window_slots,
+            max_usd: self.max_usd,
+            peak_usd,
+            peak_at,
+        }
+    }
+}
+
+/// The most the bot traded in any window, and the cap it is held to.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct TradedCapReport {
+    pub window_slots: u64,
+    pub max_usd: f64,
+    pub peak_usd: f64,
+    /// The slot into the session that window ended at.
+    pub peak_at: u64,
+}
+
+impl TradedCapReport {
+    /// A breach, if a window went over the cap (by more than a cent, for
+    /// rounding in the fills' prices).
+    pub fn breach(&self) -> Option<String> {
+        (self.peak_usd > self.max_usd + 0.01).then(|| {
+            format!(
+                "traded {:.2} USD in the {} slots to slot {}, over the desk's cap of {:.2}",
+                self.peak_usd, self.window_slots, self.peak_at, self.max_usd
+            )
+        })
+    }
+}
+
 /// A limit on the bot's share of a venue's traded volume, priced: base units
 /// over it cost `price_bps` of the price they traded at.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -677,6 +749,36 @@ mod tests {
         // Nobody else trading: the bot is all of it, and 75% is over.
         let alone = [trade("phoenix", 5, 4.0, true)];
         assert_eq!(p.excess(&alone), vec![3.0]);
+    }
+
+    #[test]
+    fn the_traded_cap_reads_the_busiest_window() {
+        let cap = TradedCap {
+            window_slots: 60,
+            max_usd: 1_000.0,
+        };
+        assert_eq!(cap.validate(), Ok(()));
+        // 600 at 0 and 500 at 59 share a window; 500 at 60 doesn't with the
+        // first.
+        let busy = cap.report(&[(59, 500.0), (0, 600.0), (60, 500.0)]);
+        assert_eq!((busy.peak_usd, busy.peak_at), (1_100.0, 59));
+        assert!(busy.breach().unwrap().contains("over the desk's cap"));
+        let spread = cap.report(&[(0, 600.0), (60, 500.0), (120, 999.0)]);
+        assert_eq!(spread.peak_usd, 999.0);
+        assert_eq!(spread.breach(), None);
+        assert_eq!(cap.report(&[]).peak_usd, 0.0);
+        for bad in [
+            TradedCap {
+                window_slots: 0,
+                max_usd: 1.0,
+            },
+            TradedCap {
+                window_slots: 60,
+                max_usd: f64::NAN,
+            },
+        ] {
+            assert!(bad.validate().unwrap_err().contains("traded_cap"));
+        }
     }
 
     #[test]
