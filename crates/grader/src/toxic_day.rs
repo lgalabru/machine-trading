@@ -233,6 +233,8 @@ impl ToxicDayFamily {
                 wallets: fund_wallets,
                 horizon_slots,
                 edge_bps,
+                hit_rate: 0.85,
+                view_noise_bps: 0.0,
                 intensity_mult: fund_intensity,
                 size_mult: self.size_mult,
                 limit_bps: self.limit_bps,
