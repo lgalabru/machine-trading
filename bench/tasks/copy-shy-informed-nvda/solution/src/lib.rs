@@ -14,7 +14,8 @@
 //! comes to a share of them (the shy rule, whose range the instruction
 //! states). So the reference copies each take of a credible wallet at
 //! `share` of its size, under the rule's lowest share, building a position
-//! the fund's way and holding it `hold_slots` past the wallet's last take.
+//! the way their net flow over about a horizon points, never flipping, and
+//! holding it `hold_slots` past the last take it copied.
 //!
 //! The same machinery runs the ladder's rungs ([`Mode`]): the informed bot,
 //! told who the fund is and its exact rule, copies the fund alone just under
@@ -99,6 +100,9 @@ pub struct Params {
     pub share: f64,
     /// Slots a copier waits after a take before copying it.
     pub lag_slots: u64,
+    /// The copied wallets' net flow a copier reads, in slots back: about
+    /// one horizon of the fund's.
+    pub flow_slots: u64,
 }
 
 impl Params {
@@ -115,6 +119,7 @@ impl Params {
             momentum_bps: 8.0,
             share: 0.24,
             lag_slots: 0,
+            flow_slots: 240,
         };
         match mode {
             Mode::Informed => Params {
@@ -192,6 +197,9 @@ pub struct Copier {
     pending: VecDeque<Take>,
     /// Takes to copy once their lag has passed.
     queued: VecDeque<Take>,
+    /// The copied wallets' takes over the last `flow_slots`: slot and side
+    /// times size.
+    flow: VecDeque<(u64, f64)>,
     records: HashMap<String, Record>,
     /// The position it builds, and the slot it holds it until.
     target: f64,
@@ -216,6 +224,7 @@ impl Copier {
             recent: VecDeque::new(),
             pending: VecDeque::new(),
             queued: VecDeque::new(),
+            flow: VecDeque::new(),
             records: HashMap::new(),
             target: 0.0,
             hold_until: 0,
@@ -260,8 +269,12 @@ impl Copier {
         signed * share
     }
 
-    /// A copier's target: each copied take adds its share the take's way,
-    /// up to the cap.
+    /// A copier's target. It reads the copied wallets' net flow over the
+    /// last `flow_slots`: a take adds its share the take's way only when
+    /// that net flow points the same way and the position is flat or already
+    /// that way. It never flips: a take against the position is read, not
+    /// copied, and the position goes flat `hold_slots` after the last take
+    /// it copied.
     fn copy(&mut self, now: u64, cap: f64) {
         while self
             .queued
@@ -269,9 +282,22 @@ impl Copier {
             .is_some_and(|t| t.at + self.params.lag_slots <= now)
         {
             let take = self.queued.pop_front().expect("checked");
+            self.flow.push_back((take.at, take.signed));
+            while self
+                .flow
+                .front()
+                .is_some_and(|(at, _)| at + self.params.flow_slots < take.at)
+            {
+                self.flow.pop_front();
+            }
+            let net: f64 = self.flow.iter().map(|(_, signed)| signed).sum();
+            let way = take.signed.signum();
+            if net * way <= 0.0 || self.target * way < 0.0 {
+                continue;
+            }
             let add = self.copy_size(take.signed);
             self.target = if add.is_infinite() {
-                cap * add.signum()
+                cap * way
             } else {
                 (self.target + add).clamp(-cap, cap)
             };

@@ -21,6 +21,9 @@ fn main() -> mtx_kit::BotResult {
     if let Some(v) = knob("HOLD").and_then(|v| v.parse().ok()) {
         p.hold_slots = v;
     }
+    if let Some(v) = knob("FLOW").and_then(|v| v.parse().ok()) {
+        p.flow_slots = v;
+    }
     if let Some(v) = knob("MIN_SCORE").and_then(|v| v.parse().ok()) {
         p.min_score_bps = v;
     }
