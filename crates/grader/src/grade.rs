@@ -117,12 +117,25 @@ pub struct GradeReport {
     /// score, and `skill` and `reference_ratio` are left out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headline: Option<String>,
+    /// Set when the grade stopped at the bot's first breach
+    /// ([`GradeOptions::stop_on_disqualify`]): `scenarios` is then only the
+    /// sessions up to it, which scoring v2 refuses to score.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<Truncated>,
     pub scenarios: Vec<ScenarioResult>,
     /// The reference's sessions, when the grade ran it: kept out of the
     /// report (its PnL is in [`ScenarioResult::reference_pnl_usd`]), for the
     /// replay check.
     #[serde(skip)]
     pub anchors: Vec<SessionReport>,
+}
+
+/// A grade that stopped at the bot's first breach: how many of its sessions
+/// it graded, of how many it was given.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Truncated {
+    pub graded: usize,
+    pub of: usize,
 }
 
 /// How the bot made its PnL, across sessions. Reported, not scored: with a
@@ -197,6 +210,14 @@ impl GradeReport {
     /// without a reference PnL, a spot session whose starting wallet makes
     /// doing nothing something other than 0, or a ceiling that doesn't fit.
     pub fn score_v2(&mut self, params: &scoring_v2::Params) -> Result<()> {
+        // The set is the sessions up to the first breach: a score over them
+        // would depend on where the breach fell, not on the bot.
+        if let Some(Truncated { graded, of }) = self.truncated {
+            return Err(Error::ScoringV2(format!(
+                "the grade stopped at its first breach, after {graded} of {of} sessions, and \
+                 v2 scores every session: grade without `--stop-on-disqualify`"
+            )));
+        }
         let fatal = self
             .not_graded
             .clone()
@@ -798,7 +819,12 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         }
         write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
     }
+    let graded = sessions.len();
     let mut report = score(sessions.into_iter().zip(&scenarios).collect());
+    report.truncated = (graded < scenarios.len()).then_some(Truncated {
+        graded,
+        of: scenarios.len(),
+    });
     // The reference's drawdowns as this grade measured them, for scoring
     // v2: kept off the scenarios, which the detail files hold.
     for (result, anchor) in report.scenarios.iter_mut().zip(&anchored) {
@@ -877,6 +903,7 @@ pub struct Verdict {
     pub tampered: Option<String>,
     pub not_graded: Option<String>,
     pub eval_seed_sha256: Option<String>,
+    pub truncated: Option<Truncated>,
 }
 
 /// Score a finished grade again from what it wrote, without running a
@@ -894,6 +921,7 @@ pub fn rescore(sessions: Vec<(SessionReport, Scenario)>, verdict: Verdict) -> Gr
         }
     };
     report.eval_seed_sha256 = verdict.eval_seed_sha256;
+    report.truncated = verdict.truncated;
     if let Some(reason) = verdict.tampered {
         report.tamper(reason);
     }
@@ -993,6 +1021,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         markout: total_markout(&scenarios),
         v2: None,
         headline: None,
+        truncated: None,
         scenarios,
         anchors: Vec::new(),
     }

@@ -1895,7 +1895,12 @@ fn v2_scores_every_session(
     stop_on_disqualify: bool,
     v2: Option<&mtx_grader::scoring_v2::Params>,
 ) -> anyhow::Result<()> {
-    let _ = (stop_on_disqualify, v2);
+    if stop_on_disqualify && v2.is_some() {
+        anyhow::bail!(
+            "--stop-on-disqualify ends the grade at the bot's first breach, and scoring v2 \
+             scores every session: drop one of them"
+        );
+    }
     Ok(())
 }
 
