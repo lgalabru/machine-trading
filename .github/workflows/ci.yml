@@ -128,6 +128,8 @@ jobs:
         run: |
           cargo clippy -p mtx-cli --no-default-features --all-targets -- -D warnings
           cargo test -p mtx-cli --no-default-features
+      - name: The informed bot's boundary
+        run: cargo test -p mtx-grader --features generators --test informed_boundary
       - name: Bench harness
         # `just bench` refuses a native harness on a guarded task.
         run: python3 -I bench/harness/test_native_guard.py

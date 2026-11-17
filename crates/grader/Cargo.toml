@@ -67,3 +67,8 @@ wincode = "0.6"
 # The task families' generators (`mtx scenario generate`, `mtx grade --draw`).
 # Off in the agent's `mtx`: it holds only the practice files a task ships.
 generators = []
+
+# Runs the generators, so only with them (CI: --features generators).
+[[test]]
+name = "informed_boundary"
+required-features = ["generators"]

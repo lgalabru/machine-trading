@@ -3,8 +3,6 @@
 //! nothing and can't reach what the informed bot was told, and running it
 //! leaves the bot's sessions as they were.
 
-#![cfg(feature = "generators")]
-
 use std::path::{Path, PathBuf};
 
 use mtx_grader::{

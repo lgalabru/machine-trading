@@ -307,6 +307,7 @@ mod tests {
     /// principle ([`LATENT_FIELDS`]) or a family constant, the same in every
     /// session: a field that changes from session to session and isn't an
     /// actor's identity or the process is one of the session's draws.
+    #[cfg(feature = "generators")]
     #[test]
     fn the_latent_state_is_the_regime_and_never_the_future() {
         for g in GENERATORS {
@@ -370,6 +371,7 @@ mod tests {
 
     /// The check above would catch a draw handed over: a shock's direction
     /// varies from session to session and is classified as nothing.
+    #[cfg(feature = "generators")]
     #[test]
     fn a_shock_s_direction_is_a_draw() {
         let drawn = ShockFamily::spcx().draw_set("hidden", 64, 11);
