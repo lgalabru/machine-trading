@@ -30,12 +30,14 @@ median trade size (and that size's lognormal sigma), from the calibration's
   "chasers": [{ "wallets": 2, "trigger_bps": 10.0, "intensity_mult": 4.0 }],
   "decoys": [{ "horizon_slots": 40, "edge_bps": 30.0, "informed_for": { "from": 60, "until": 160 } }],
   "spoofers": [{ "side": "bid", "distance_ticks": 5, "cancel_ticks": 2, "wall_mult": 8.0, "ahead_slots": 40 }],
+  "icebergs": [{ "side": "bid", "display_mult": 1.0, "parent_mult": 6.0 }],
   "stop_hunters": [{ "level_step_usd": 1.0 }],
   "front_runners": [{ "pattern_steps": 2, "share": 0.5, "on_send": true }],
   "arbitrageur": { "latency_slots": 2, "edge_bps": 5.0 },
   "rfq_clients": { "clients": 6, "informed_share": 0.34, "lead_slots": 40, "desk_base": 5.0, "desk_usdc": 2000.0 },
   "liquidator": {},
-  "refill": { "half_life_slots": [4, 40], "levels": 5 }
+  "refill": { "half_life_slots": [4, 40], "levels": 5 },
+  "pool": { "wallets": 6, "roles": ["noise", "stop_hunters"] }
 }
 ```
 
@@ -46,12 +48,43 @@ median trade size (and that size's lognormal sigma), from the calibration's
 | `chasers` | Takes the way the book moved once it moved over `trigger_bps` in the last `lookback_slots`: directional flow that knows nothing. | `wallets`, `lookback_slots`, `trigger_bps`, `intensity_mult`, `size_mult`, `limit_bps`, `active` |
 | `decoys` | Each wallet trades as the informed do until a slot drawn in `informed_for`, then keeps its pace on a view it draws at random and holds for `horizon_slots`: a record that looks informed, then isn't. | `wallets`, `horizon_slots`, `edge_bps`, `informed_for`, `intensity_mult`, `size_mult`, `limit_bps` |
 | `spoofers` | Rests a wall `distance_ticks` behind the touch and pulls it once the touch comes within `cancel_ticks`, or after `lifetime_slots`; may sell into the other side while it stands (`harvest_mult`). With `ahead_slots`, walls only while it sees the level that far ahead going against the wall (support painted ahead of a fall). One wallet throughout. | `side`, `distance_ticks`, `cancel_ticks`, `wall_mult`, `lifetime_slots`, `harvest_mult`, `ahead_slots`, `active` |
-| `stop_hunters` | Pushes the price through a round level on a `level_step_usd` grid once it comes within `trigger_bps`, and trades back `hold_slots` later. | `level_step_usd`, `trigger_bps`, `push_mult`, `overshoot_ticks`, `hold_slots`, `cooldown_slots`, `limit_bps`, `active` |
+| `icebergs` | A large parent order shown a slice at a time: it rests `display_mult` trade sizes `distance_ticks` behind the touch on its side, and when the slice trades puts the same size back at the same price, until `parent_mult` trade sizes are done. It never pulls on approach, which is how a reader tells it from a spoofer's wall; if the touch moves more than `max_away_ticks` from its slice, it puts the slice up again behind the new touch. One wallet, its own: it reads its fills from the wallet's position. | `side`, `distance_ticks`, `display_mult`, `parent_mult`, `max_away_ticks`, `active` |
+| `stop_hunters` | Pushes the price through a round level on a `level_step_usd` grid once it comes within `trigger_bps`, and trades back `hold_slots` later. With `wallets` over 1, each hunt runs from one wallet it draws, and trades back from that wallet. | `wallets`, `level_step_usd`, `trigger_bps`, `push_mult`, `overshoot_ticks`, `hold_slots`, `cooldown_slots`, `limit_bps`, `active` |
 | `front_runners` | Reads the bot's position step by step; once the bot has traded one way `pattern_steps` steps running, each over `min_mult` trade sizes, trades that way ahead of its next turn (`share` of its last step) and back out after `hold_steps`. With `on_send`, it reads the bot's transactions instead, and front-runs one carrying a trade the pattern's way (an immediate order, or a limit through the touch, of `min_mult` or more) that the chain would run: `share` of that order, just before it lands. At most once a turn, and never more than `max_inventory_mult` trade sizes held. | `min_mult`, `pattern_steps`, `share`, `hold_steps`, `limit_bps`, `max_inventory_mult`, `on_send` |
 | `arbitrageur` | Every `latency_slots`, sells a bid over the reference by `edge_bps` and buys an ask under it. The reference is the market's own index (a perp's), else the scenario's level. | `latency_slots`, `edge_bps`, `size_mult`, `max_inventory_mult` |
-| `rfq_clients` | Ask the bot for quotes on `rfq:<symbol>`; take a quote no worse than their value by their reach: `tolerance_bps` for one trade size, `sqrt(n)` times that for `n`. Informed clients value the asset at the level `lead_slots` ahead, by `correlation`. Fills settle as swaps against the bot's wallet, which starts with `desk_base` of the asset and `desk_usdc` more USDC. | `clients`, `informed_share`, `lead_slots`, `correlation`, `per_100_slots`, `size_mult`, `deadline_slots`, `tolerance_bps`, `two_way_share`, `desk_base`, `desk_usdc` |
+| `rfq_clients` | Ask the bot for quotes on `rfq:<symbol>`; take a quote no worse than their value by their reach: `tolerance_bps` for one trade size, `sqrt(n)` times that for `n`. Informed clients value the asset at the level `lead_slots` ahead, by `correlation`. Fills settle as swaps against the bot's wallet, which starts with `desk_base` of the asset and `desk_usdc` more USDC. | `clients`, `informed_share`, `lead_slots`, `correlation`, `per_100_slots`, `size_mult`, `deadline_slots`, `tolerance_bps`, `two_way_share`, `desk_base`, `desk_usdc`, `over_idle_desk` |
 | `liquidator` | Races the bot for liquidations on a lending venue, best bonus first. Idle until a session has one. | `latency_slots`, `min_bonus_bps` |
 | `refill` | Puts back the depth takers consume. The snapshot's makers are splines that only come back when a path move re-centres them (measured 0% in 60 slots on every market); this rests post-only orders from the old touch back toward the makers' own touch, so a gap halves every half-life, drawn once per session from `half_life_slots`. Never crosses the spread or goes past the makers' touch, stops adding to a side at `max_position_mult` trade sizes, and pulls its orders when the book level moves. Opt-in: without it, depth behaves as before. | `half_life_slots` (`[low, high]`), `levels`, `size_mult`, `react_slots`, `max_position_mult`, `min_gap_ticks`, `active` |
+
+## A shared wallet pool
+
+By default every actor trades from wallets of its own, so an address says who
+acts. With `pool`, `wallets` of them are shared: each actor of a listed role
+(`noise`, `informed`, `chasers`, `decoys`, `stop_hunters`) takes its own
+`wallets` from the pool at random, from its own seed, so a session replays the
+same and two actors may hold one wallet. What a wallet did is then the sum of
+its roles'. An actor can't want more wallets than the pool holds, and the
+pool's roles are the only ones that draw on it. A pooled actor's wallets are
+the pool's, listed first in `Library::wallets` (role `pool`).
+
+## Telling the informed bot who is who
+
+The task's informed bot (scoring v2's 1) may be told the session's identity
+and process facts, never its realised draws (`docs/gates.md`). Who is who is
+the session's own addresses, which come from the grade's secret, so a hidden
+set can't write them down. Its latent state (`mtx_grader::latent::Latent`)
+names the kinds to tell, as `{"roster": ["informed", "decoy"]}`, and the
+session fills in their wallets as it starts, handed over as `MTX_REGIME`:
+`{"wallets": {"informed": ["<pubkey>"], "decoy": ["<pubkey>"]}}`. The kinds are
+the report's actors' (`noise`, `informed`, `chaser`, `decoy`, `spoofer`,
+`iceberg`, `stop-hunter`, …), and `rfq-informed`, the ids of the RFQ clients
+that are informed (`c3` for the requests `c3-0`, `c3-1`, …). The wallets
+are the actors' authorities (signing keys). Phoenix's events and fills name the
+trader account, a PDA of the authority, so a bot must map each with
+`Exchange::trader_account(&authority)` before matching them; unmapped, nothing
+matches and it silently trades uninformed. A kind the
+session doesn't have is an error, not a silent gap. A regime with no `roster`
+is handed over unchanged.
 
 `active` is a window of the session, `{ "from": 100, "until": 300 }` in slots
 into it. `record: true` keeps every action in the report's tape, and counts
@@ -88,7 +121,16 @@ Phoenix's index for the perp. The USDC is in the perp account's metered
 value already, which counts the wallet's USDC; the token is added to it. The
 start value is read once setup has funded the desk, so an idle desk's PnL is
 its token's move at the index, and a fill changes the value by what it
-earns against the index, no more. The report's `actors.desk` gives the
+earns against the index, no more. With `over_idle_desk`, the idle desk's
+earnings come out: the session's PnL and the drawdown its mandate is audited
+by are the desk's less what `desk_base` of the asset would have made held, so a
+desk that quotes nothing scores 0, and a desk that does is scored on its fills
+and the inventory they leave. `over_idle_desk` and `scoring.net` both score over holding the start, but
+differently: `net` values the held start position of the perp (at the fair
+path's move where there is one, else the level's) and takes its own drawdown
+series, while `over_idle_desk` takes the desk's token at Phoenix's index. Use
+`net` for a perp position the bot starts with and `over_idle_desk` for an RFQ
+desk's inventory; a scenario with both is refused. The report's `actors.desk` gives the
 desk's token, USDC and index at the start and the end.
 
 Before each swap, and again after one fails, the grader reads both wallets'

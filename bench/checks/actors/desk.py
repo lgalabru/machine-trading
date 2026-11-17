@@ -15,7 +15,11 @@ check rebuilds both from the tape and the desk's balances:
 With `--idle`, the bot must not have filled at all: its PnL is the index's
 move on the asset it started with, and nothing else.
 
-Usage: desk.py <report.json> [--idle]
+With `--over-idle`, the session is scored over the idle desk
+(`over_idle_desk`): the index's move on the starting asset is not in the PnL,
+so an idle bot's is 0 and a bot's that fills is its fills' alone.
+
+Usage: desk.py <report.json> [--idle] [--over-idle]
 """
 
 import argparse
@@ -48,6 +52,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("report")
     parser.add_argument("--idle", action="store_true")
+    parser.add_argument("--over-idle", action="store_true")
     args = parser.parse_args()
     session = json.load(open(args.report))["scenarios"][0]
     library = session["actors"]
@@ -59,7 +64,7 @@ def main():
     base, usdc = base_units / SCALE, usdc_units / SCALE
     index_move = desk["start_base"] * (desk["end_index_usd"] - desk["start_index_usd"])
     fills_usd = usdc + base * desk["end_index_usd"]
-    expected = index_move + fills_usd
+    expected = fills_usd if args.over_idle else index_move + fills_usd
     found = {
         "fills": len(fills),
         "pnl_usd": round(session["pnl_usd"], 4),
