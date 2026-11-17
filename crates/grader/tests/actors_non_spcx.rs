@@ -1577,6 +1577,7 @@ async fn refill_curve(symbol: &str, half_life: Option<f64>) -> (Vec<(u64, i64)>,
             send_reader: None,
             liquidations: None,
             rpc_url: None,
+            gateways: Vec::new(),
         };
         library.build(
             vec![WalletSeat {

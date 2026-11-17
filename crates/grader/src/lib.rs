@@ -6,6 +6,7 @@ pub mod chain;
 pub mod crank;
 mod error;
 pub mod faults;
+pub mod flipped_feed;
 pub mod generators;
 pub mod grade;
 pub mod guard;

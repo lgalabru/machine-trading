@@ -42,6 +42,7 @@
 //! all (see [`rfq`]).
 
 mod arbitrageur;
+mod feed;
 mod front_runner;
 mod iceberg;
 mod liquidator;
@@ -64,6 +65,7 @@ use solana_transaction::Signature;
 
 pub use self::{
     arbitrageur::Arbitrageur,
+    feed::{Call, Feed, GATEWAY_LAMPORTS, GATEWAYS, MAKER_SIDE, MEMO_PROGRAM, TAKER_SIDE},
     front_runner::FrontRunner,
     iceberg::Iceberg,
     liquidator::{Candidate, Liquidations, Liquidator},
@@ -118,6 +120,10 @@ pub struct Library {
     /// Wallets several of the actors above trade from (see [`Pool`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<Pool>,
+    /// A house model's calls, published through two gateways (see
+    /// [`Feed`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feed: Option<Feed>,
     /// Keep every action in the report's tape (checks and studies: it
     /// grows with the session).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -320,6 +326,9 @@ impl Library {
             refill
                 .validate()
                 .map_err(|e| format!("actors.refill: {e}"))?;
+        }
+        if let Some(feed) = &self.feed {
+            feed.validate().map_err(|e| format!("actors.feed: {e}"))?;
         }
         Ok(())
     }
@@ -564,11 +573,30 @@ impl Library {
                 rng("refill"),
             )));
         }
-        built.roster = roster(&ledger, &built.actors);
+        // The feed reports into the library's report, after the reporter
+        // has written it.
+        let feed: Option<Box<dyn Actor>> = match (&self.feed, &setting.rpc_url) {
+            (Some(spec), Some(url)) if setting.gateways.len() == GATEWAYS as usize => {
+                Some(Box::new(feed::FeedActor::new(
+                    spec.clone(),
+                    setting.gateways.clone(),
+                    url.clone(),
+                    setting.path.clone(),
+                    rng("feed"),
+                )))
+            }
+            (Some(_), _) => {
+                tracing::warn!("actors.feed needs the grader's endpoint and its gateways' keys");
+                None
+            }
+            _ => None,
+        };
+        built.roster = roster(&ledger, built.actors.iter().chain(feed.iter()));
         built.actors.push(Box::new(Reporter {
             ledger,
             rpc_url: setting.rpc_url.filter(|_| self.record),
         }));
+        built.actors.extend(feed);
         built
     }
 }
@@ -591,6 +619,8 @@ pub struct Setting {
     /// The grader's own endpoint: with [`Library::record`], the report
     /// counts each actor's transactions there, as the chain lists them.
     pub rpc_url: Option<String>,
+    /// The feed's gateway wallets, funded for their fees, with a feed.
+    pub gateways: Vec<std::sync::Arc<solana_keypair::Keypair>>,
 }
 
 /// One of the library's wallets, with its seat on the session's market.
@@ -632,7 +662,7 @@ pub type Roster = std::collections::BTreeMap<String, Vec<String>>;
 
 /// The session's roster: each kind's wallets (a wallet in two roles is in
 /// both), and what each actor adds ([`Actor::roster`]).
-fn roster(ledger: &Ledger, actors: &[Box<dyn Actor>]) -> Roster {
+fn roster<'a>(ledger: &Ledger, actors: impl Iterator<Item = &'a Box<dyn Actor>>) -> Roster {
     let mut roster = Roster::new();
     let mut add = |kind: &str, names: &[String]| {
         let entry = roster.entry(kind.to_string()).or_default();
@@ -1323,6 +1353,7 @@ pub(crate) mod tests {
                 send_reader: None,
                 liquidations: None,
                 rpc_url: None,
+                gateways: Vec::new(),
             },
             &|role, n| {
                 let mut seed = [salt; 32];

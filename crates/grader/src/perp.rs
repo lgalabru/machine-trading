@@ -470,6 +470,22 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }
         None => None,
     };
+    // A feed's gateways: wallets of their own, funded for their fees, that
+    // publish its calls as memos. The bot is told where to read them.
+    let gateways: Vec<Arc<Keypair>> = match library.as_ref().and_then(|(l, _)| l.feed.as_ref()) {
+        Some(_) => {
+            let gateways: Vec<Arc<Keypair>> = (0..crate::actors::library::GATEWAYS)
+                .map(|i| Arc::new(opts.keys.keypair("gateway", i)))
+                .collect();
+            for gateway in &gateways {
+                surfnet
+                    .cheatcodes()
+                    .fund_sol(&gateway.pubkey(), crate::actors::library::GATEWAY_LAMPORTS)?;
+            }
+            gateways
+        }
+        None => Vec::new(),
+    };
     // The account's value at the start, once setup has funded everything
     // the bot holds.
     let start_value_usd = grader_f64(
@@ -611,6 +627,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 send_reader,
                 liquidations: None,
                 rpc_url: Some(internal.url().to_string()),
+                gateways: gateways.clone(),
             },
             &|role, n| opts.keys.seed(role, n),
         );
@@ -648,7 +665,14 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             observed.begin(&market.instrument, market.start_position);
         }
     }
-    let vars = session_vars(scenario)?;
+    let mut vars = session_vars(scenario)?;
+    if !gateways.is_empty() {
+        let wallets: Vec<String> = gateways.iter().map(|g| g.pubkey().to_string()).collect();
+        vars.push((
+            mtx_kit::FEED_VAR.to_string(),
+            serde_json::to_string(&wallets)?,
+        ));
+    }
     let bot_trader = meter.trader();
     let making_session = markets[primary].scenario.making.is_some();
     let mut account = PerpAccount {

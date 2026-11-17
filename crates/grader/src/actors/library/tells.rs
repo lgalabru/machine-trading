@@ -130,6 +130,7 @@ impl Drive<'_> {
                 send_reader: None,
                 liquidations: None,
                 rpc_url: None,
+                gateways: Vec::new(),
             },
             &|role, n| {
                 let mut seed = [self.salt; 32];

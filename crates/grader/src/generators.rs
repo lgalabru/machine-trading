@@ -18,6 +18,7 @@ use serde_json::json;
 #[cfg(feature = "generators")]
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
+    flipped_feed::{FlippedFeedFamily, Shape as FlippedFeedShape},
     making::MakingFamily,
     scenario::{Shape, ShockFamily},
     weekend::{WeekendFamily, WeekendShape},
@@ -124,6 +125,23 @@ pub const GENERATORS: &[Generator] = &[
                 CarryFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 carry_latent,
+            )
+        },
+    },
+    Generator {
+        name: "flipped-feed",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                FlippedFeedFamily::nvda().draw_set(prefix, count, seed),
+                false,
+                flipped_feed_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                FlippedFeedFamily::nvda().draw_set("hidden", count, seed),
+                tell,
+                flipped_feed_latent,
             )
         },
     },
@@ -398,6 +416,14 @@ fn carry_latent(shape: &CarryShape) -> Value {
         "cap_pct": shape.cap_pct,
         "noise_pct": shape.noise_pct,
     })
+}
+
+#[cfg(feature = "generators")]
+/// Who is who: which gateway reports the house model's side and which the
+/// opposite. Not the path, nor any call: when it comes, its side or whether
+/// the model is right.
+fn flipped_feed_latent(_: &FlippedFeedShape) -> Value {
+    crate::flipped_feed::latent()
 }
 
 #[cfg(feature = "generators")]
