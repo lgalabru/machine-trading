@@ -994,6 +994,9 @@ impl Mandate {
                 });
             }
         }
+        if observed.takes_unjudged && self.universe.iter().any(|a| a.taking.is_some()) {
+            return Some(Breach::TakesUnjudged);
+        }
         for take in &observed.takes {
             let allowed = self
                 .allowance(&take.instrument)
@@ -1236,6 +1239,10 @@ pub struct Observed {
     /// Every fill the account took liquidity in, for the taking rule, from
     /// an enforcer that tells takers from makers.
     pub takes: Vec<ObservedTake>,
+    /// The enforcer could not tell the account's takes (its fills didn't add
+    /// up to its positions): a mandate that limits taking is then not
+    /// judged kept.
+    pub takes_unjudged: bool,
 }
 
 /// A fill in which the account was the taker: which way, how much in base
@@ -1418,6 +1425,10 @@ pub enum Breach {
     /// The mandate has a notional rule the enforcer never measured: no
     /// samples, or none at the term's start for an exposure bounded by it.
     Unmeasured,
+    /// The mandate allows taking only to reduce, and the enforcer couldn't
+    /// tell its takes: its fills didn't add up to its positions. Never read
+    /// as kept.
+    TakesUnjudged,
 }
 
 impl fmt::Display for Breach {
@@ -1518,6 +1529,9 @@ impl fmt::Display for Breach {
                  could use"
             ),
             Self::Unmeasured => f.write_str("its mandate's notional limits were never measured"),
+            Self::TakesUnjudged => f.write_str(
+                "its reduce-only taking could not be judged: its fills did not add up to its positions",
+            ),
         }
     }
 }
@@ -2730,5 +2744,9 @@ mod tests {
         let json = serde_json::to_value(&breach).unwrap();
         assert_eq!(json["rule"], "taking");
         assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
+        // Takes the enforcer couldn't tell are never read as kept.
+        let mut unjudged = Observed::default();
+        unjudged.takes_unjudged = true;
+        assert_eq!(mandate.audit(&unjudged), Some(Breach::TakesUnjudged));
     }
 }

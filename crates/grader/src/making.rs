@@ -81,7 +81,7 @@ pub struct MakingFill {
     pub self_match: bool,
 }
 
-fn is_false(value: &bool) -> bool {
+pub(crate) fn is_false(value: &bool) -> bool {
     !*value
 }
 
@@ -144,6 +144,58 @@ pub fn uncross_fill(
         forced: false,
         self_match: false,
     })
+}
+
+/// What the leftover between the meter's position and the recorded fills
+/// came to, for one step's scan: `from` is where in `fills` this scan's fills
+/// start, and `uncross_slot` the slot of the last jump uncross in the step,
+/// if it had one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Reconciled {
+    /// The fills add up to the position.
+    Clean,
+    /// An uncross explains the leftover: its fill went in before the scan's
+    /// first fill at or after the uncross's slot.
+    Inserted,
+    /// A leftover with no jump to explain it: the takes can't be told.
+    Unexplained,
+}
+
+/// Reconcile `fills` with the measured `position`: the leftover becomes an
+/// uncross fill at the slot of the step's last uncross, inserted before this
+/// scan's first fill that landed at or after it (a transaction in the
+/// uncross's slot lands after it). With no uncross in the step, nothing is
+/// guessed.
+#[allow(clippy::too_many_arguments)]
+pub fn reconcile(
+    start_position: f64,
+    fills: &mut Vec<MakingFill>,
+    from: usize,
+    position: f64,
+    base_lots_decimals: i8,
+    uncross_slot: Option<u64>,
+    price: f64,
+) -> (Reconciled, Option<usize>) {
+    let Some(fill) = uncross_fill(
+        start_position,
+        fills,
+        position,
+        base_lots_decimals,
+        uncross_slot.unwrap_or(0),
+        price,
+    ) else {
+        return (Reconciled::Clean, None);
+    };
+    let Some(slot) = uncross_slot else {
+        return (Reconciled::Unexplained, None);
+    };
+    let at = from
+        + fills[from.min(fills.len())..]
+            .iter()
+            .position(|f| f.at >= slot)
+            .unwrap_or(fills.len() - from.min(fills.len()));
+    fills.insert(at, fill);
+    (Reconciled::Inserted, Some(at))
 }
 
 impl MakingFill {

@@ -364,6 +364,47 @@ mod tests {
         assert!((takes[1].position_before + 0.329).abs() < 1e-9);
     }
 
+    /// A take that lands after the jump in the same step is judged from the
+    /// position the uncross left: the fill goes in at the uncross's slot,
+    /// before it.
+    #[test]
+    fn a_take_after_the_jump_in_the_same_step_is_judged_after_the_uncross() {
+        use crate::making::{Reconciled, reconcile};
+        // Flat; a resting bid fills at the jump (S = 10) for +1; the bot sells
+        // 1 as a taker in the next slot to reduce. The meter reads flat.
+        let mut fills = vec![fill(11, Side::Sell, "taker", 1.0)];
+        let (result, at) = reconcile(0.0, &mut fills, 0, 0.0, 3, Some(10), 100.0);
+        assert_eq!((result, at), (Reconciled::Inserted, Some(0)));
+        assert_eq!(fills[0].counterparty, crate::making::UNCROSS);
+        assert_eq!((fills[0].at, fills[0].side), (10, Side::Buy));
+        let takes = takes(&spcx(), 0.0, &fills);
+        assert_eq!(takes.len(), 1);
+        assert_eq!(takes[0].position_before, 1.0);
+        let allowance = Allowance::reduce_only_for_test();
+        assert!(allowance.may_take(takes[0].position_before, takes[0].side, takes[0].quantity));
+        // Appended after, as before, the same take is judged from flat: a
+        // sell that opens a short.
+        let appended = [fills[1].clone(), fills[0].clone()];
+        let wrong = super::takes(&spcx(), 0.0, &appended);
+        assert_eq!(wrong[0].position_before, 0.0);
+        // A fill of the bot's before the uncross stays before it.
+        let mut fills = vec![fill(5, Side::Sell, "taker", 1.0), fill(11, Side::Sell, "taker", 1.0)];
+        let (_, at) = reconcile(1.0, &mut fills, 0, 0.0, 3, Some(10), 100.0);
+        assert_eq!(at, Some(1));
+    }
+
+    /// A leftover with no jump in the step isn't guessed at.
+    #[test]
+    fn a_leftover_with_no_jump_is_unexplained() {
+        use crate::making::{Reconciled, reconcile};
+        let mut fills = vec![fill(11, Side::Sell, "taker", 1.0)];
+        let (result, at) = reconcile(0.0, &mut fills, 0, 0.0, 3, None, 100.0);
+        assert_eq!((result, at), (Reconciled::Unexplained, None));
+        assert_eq!(fills.len(), 1);
+        let (clean, _) = reconcile(0.0, &mut fills, 0, -1.0, 3, None, 100.0);
+        assert_eq!(clean, Reconciled::Clean);
+    }
+
     #[test]
     fn takes_carry_the_position_each_found() {
         // Rests and is hit: long 3. Takes 2 to sell (reducing), then buys

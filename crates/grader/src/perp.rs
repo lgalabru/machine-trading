@@ -566,6 +566,22 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .flat_map(|m| m.scenario.overrides(perp_asset_map, m.start_mark_ticks))
             .collect()
     };
+    // Where the bot's market is uncrossed after a jump's steps, in slots:
+    // overrides count from the slot they are registered at.
+    let uncross_slots: Vec<u64> = {
+        let registered_at = rpc.get_slot()?;
+        let symbol = own.scenario.symbol.as_str();
+        let mut slots: Vec<u64> = overrides
+            .iter()
+            .filter(|o| {
+                o.template_id == "phoenix-market-uncross"
+                    && o.values.get("symbol").and_then(|v| v.as_str()) == Some(symbol)
+            })
+            .map(|o| registered_at + o.slot)
+            .collect();
+        slots.sort_unstable();
+        slots
+    };
     chain::register_scenario(&rpc, &scenario.name, overrides)?;
     let oracle_starts = match &scenario.oracles {
         Some(oracles) => crate::oracles::register(
@@ -678,6 +694,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             seen: HashSet::new(),
             fills: Vec::new(),
             keys: Vec::new(),
+            uncross_slots,
+            reconciled_scan: base_slot,
+            reconciled_len: 0,
+            unjudged: false,
         }),
         quotes: match scenario.making.as_ref().and_then(|m| m.obligations) {
             Some(obligations) => Some(QuoteSampler::new(
@@ -1076,6 +1096,14 @@ struct MakingFills {
     fills: Vec<MakingFill>,
     /// Each fill's key in `seen`, to find it again.
     keys: Vec<(u128, bool)>,
+    /// The slots the bot's market is uncrossed at, after each step of a
+    /// jump (absolute, sorted).
+    uncross_slots: Vec<u64>,
+    /// The slot and the fill count at the last reconciliation.
+    reconciled_scan: u64,
+    reconciled_len: usize,
+    /// A leftover appeared in a step with no uncross: takes can't be told.
+    unjudged: bool,
 }
 
 /// A market-making session's samples of what the bot quotes, for its
@@ -1613,15 +1641,41 @@ impl PerpAccount {
         let price = own.moment(at).level_usd;
         let decimals = own.market.base_lots_decimals;
         let start = own.start_position;
+        let base_slot = self.base_slot;
         let Some(read) = self.making_fills.as_mut() else {
             return;
         };
-        if let Some(fill) =
-            crate::making::uncross_fill(start, &read.fills, position, decimals, at, price)
-        {
-            read.fills.push(fill);
-            read.keys.push((u128::MAX - read.keys.len() as u128, false));
+        // The step's last uncross: the fill lands at its slot, before any
+        // fill of the bot's that came after it.
+        let uncross = read
+            .uncross_slots
+            .iter()
+            .copied()
+            .filter(|s| *s > read.reconciled_scan && *s <= slot)
+            .next_back()
+            .map(|s| s.saturating_sub(base_slot));
+        let (result, at_index) = crate::making::reconcile(
+            start,
+            &mut read.fills,
+            read.reconciled_len,
+            position,
+            decimals,
+            uncross,
+            price,
+        );
+        match (result, at_index) {
+            (crate::making::Reconciled::Inserted, Some(i)) => {
+                read.keys
+                    .insert(i, (u128::MAX - read.keys.len() as u128, false));
+            }
+            (crate::making::Reconciled::Unexplained, _) => {
+                tracing::warn!(slot, "the bot's position doesn't match its fills, with no jump in the step: its takes are not judged");
+                read.unjudged = true;
+            }
+            _ => {}
         }
+        read.reconciled_scan = slot;
+        read.reconciled_len = read.fills.len();
     }
 
     /// What the bot's wallet holds for its RFQ desk, and the asset's
@@ -2143,8 +2197,9 @@ impl Account for PerpAccount {
         let making_fills = self
             .making_fills
             .take()
-            .map(|read| read.fills)
+            .map(|read| (read.fills, read.unjudged))
             .unwrap_or_default();
+        let (making_fills, takes_unjudged) = making_fills;
         let obligations = self.quotes.as_ref().map(|quotes| {
             quotes.report(
                 scenario
@@ -2254,6 +2309,7 @@ impl Account for PerpAccount {
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
             making_fills,
+            takes_unjudged,
             obligations,
             tx_layer: None,
             lending: None,
