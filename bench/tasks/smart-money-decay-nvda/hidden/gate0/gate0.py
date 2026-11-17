@@ -22,7 +22,7 @@ import random
 import statistics
 
 K = 1.5
-NON_READING = ["nop", "follow-flow", "fade-flow", "momentum"]
+NON_READING = ["nop", "blind-long", "blind-short", "follow-flow", "fade-flow", "momentum"]
 NAIVE = ["most-active"]
 
 
