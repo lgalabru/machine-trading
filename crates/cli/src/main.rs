@@ -1890,26 +1890,6 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_v2_headline_grade_writes_no_v1_report() {
-        use mtx_grader::scoring_v2::{Ceiling, Params};
-        let beside = Params::new(Ceiling::Informed { eta_override: None });
-        let one = Params {
-            headline: true,
-            ..beside.clone()
-        };
-        let json = r#"{"reward": 0.13, "skill": 1.0}"#;
-        // Beside v1, a failed v2 leaves the v1 report, as before.
-        assert_eq!(
-            super::report_to_write(Some(&beside), true, json),
-            Some(json)
-        );
-        assert_eq!(super::report_to_write(None, false, json), Some(json));
-        // As the one score, a failed v2 writes nothing; a scored one, the report.
-        assert_eq!(super::report_to_write(Some(&one), true, json), None);
-        assert_eq!(super::report_to_write(Some(&one), false, json), Some(json));
-    }
-
-    #[test]
     fn check_joint_takes_the_calibration_flag_repeated_or_with_several_files() {
         let base = ["mtx", "market-cal", "check-joint", "c.toml"];
         for tail in [

@@ -26,7 +26,7 @@
     {
       "name": "informed",
       "dir": "bench/tasks/levered-carry-sizing-spcx/checks/bots/informed",
-      "tell_regime": true
+      "tell_latent": true
     },
     {
       "name": "oracle",

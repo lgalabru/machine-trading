@@ -361,6 +361,7 @@ impl LeveredCarryFamily {
             tx_layer: None,
             liquidator: None,
             start_positions: Default::default(),
+            bound_on: Default::default(),
             close_out: Default::default(),
             stop_out: Some(StopOut {
                 on: vec![StopRule::Drawdown],

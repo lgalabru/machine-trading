@@ -36,13 +36,15 @@
 //!   of the volatility);
 //! - `prem-scaled`: sized by the yield alone, ignoring the volatility;
 //! - `informed`: the informed bot (`checks/bots/informed`, scoring v2's 1),
-//!   told the session's latent state (`MTX_REGIME`) and nothing of its
-//!   future: the cap in calm, flat in stress until the flush has come (it
-//!   acts on the flush only once the book has fallen), flat for the
-//!   rebuild's longest 90 seconds, then the cap in either state; it waits
-//!   15 seconds, as the reference does, for the book to reach its discount;
-//! - `oracle`: the informed bot, told the flush's timing too: flat around
-//!   the flush;
+//!   told the session's process (`MTX_REGIME`: the discount's level and
+//!   each state's volatility level), never its draws. It reads the state
+//!   with a two-state filter on the discount's changes (the stated chain,
+//!   switching at minute marks; the stated targets and jitters), sizes by
+//!   yield over variance inside two sigmas of a minute, holds the full size
+//!   under a 15% chance of stress and nothing over 40%, keeps no gap
+//!   distance, and handles the flush as the reference does;
+//! - `oracle`: a diagnostic, told the session's draws (`tell_regime`): the
+//!   cap in calm, flat in stress and around the flush;
 //! - `stop-in` and `stop-out`, the penalty twins: the cap, flattening
 //!   itself at once (in orders as large as the desk's) at $800 of
 //!   drawdown, or letting the risk desk close it at the limit;
@@ -103,10 +105,28 @@ const STRESS_HOLD_STEPS: u64 = 60;
 /// and the steps held flat after it while the discount rebuilds.
 const FLUSH_DISCOUNT: f64 = 0.001;
 const REBUILD_STEPS: u64 = 120;
-/// The informed bot: its smallest change of target, and the slots it waits
+/// The oracle rung: its smallest change of target, and the slots it waits
 /// after the flush for the discount to rebuild (the stated longest, 90 s).
 const INFORMED_HYSTERESIS: f64 = 0.05;
 const INFORMED_REBUILD_SLOTS: u64 = 360;
+/// The informed bot holds the full size under this probability of stress,
+/// nothing above the second, and scales between.
+const INFORMED_CALM: f64 = 0.15;
+const INFORMED_STRESSED: f64 = 0.4;
+/// The stated state chain: the stressed state's odds at the start, and each
+/// minute's odds of switching, calm to stressed and back.
+const STRESS_PRIOR: f64 = 0.3;
+const TO_STRESS: f64 = 0.085;
+const TO_CALM: f64 = 0.2125;
+const SLOTS_PER_MINUTE: u64 = 240;
+/// The discount's stated dynamics: its pull toward its target (seconds),
+/// its jitter a root-second as a share of its level in calm and in stress,
+/// and the stressed target as a multiple of the level.
+const DISCOUNT_TAU: f64 = 60.0;
+const DISCOUNT_NOISE: [f64; 2] = [0.02, 0.05];
+const STRESSED_WIDENING: f64 = 1.5;
+/// The Student-t's degrees of freedom for the discount's changes.
+const FILTER_NU: f64 = 8.0;
 /// SPCX's calibrated median session: 1.55e-4 a second.
 const MEDIAN_SIGMA: f64 = 1.553e-4;
 
@@ -163,6 +183,8 @@ pub struct LevCarry {
     setup: Option<Setup>,
     rung: Rung,
     told: Option<Told>,
+    /// The informed bot's state filter, from the session's process.
+    filter: Option<Filter>,
     start_slot: u64,
     /// The last book level, and the variance per second of its log changes.
     last_book: Option<f64>,
@@ -204,6 +226,7 @@ impl Default for LevCarry {
             setup: None,
             rung: Rung::Reference,
             told: None,
+            filter: None,
             start_slot: 0,
             last_book: None,
             variance: MEDIAN_SIGMA * MEDIAN_SIGMA,
@@ -334,9 +357,12 @@ impl Strategy for LevCarry {
         ];
         self.rung = Rung::of(session, self.default_rung)?;
         self.told = match self.rung {
-            Rung::Informed | Rung::Oracle => Some(Told::from_session(session)?),
+            Rung::Oracle => Some(Told::from_session(session)?),
             _ => None,
         };
+        if self.rung == Rung::Informed {
+            self.filter = Some(Filter::from_session(session)?);
+        }
         self.start_slot = session.start_slot;
         self.setup = Some(Setup {
             venue,
@@ -419,7 +445,24 @@ impl Strategy for LevCarry {
             }
             Rung::Fixed => 0.3,
             Rung::PremScaled => (0.25 * yield_per_second / 1.2e-5).min(1.0),
-            Rung::Informed | Rung::Oracle => {
+            Rung::Informed => {
+                let filter = self
+                    .filter
+                    .as_mut()
+                    .ok_or("the informed bot needs MTX_REGIME")?;
+                let p = filter.update(discount, at, step.k);
+                let sigma = MEDIAN_SIGMA * (p * filter.levels[1] + (1.0 - p) * filter.levels[0]);
+                let stop = room / (full * STOP_SIGMAS * sigma * STOP_HORIZON_SECONDS.sqrt());
+                let sized = (K * yield_per_second / (sigma * sigma)).min(1.0).min(stop);
+                if rebuilding {
+                    0.0
+                } else if flushed {
+                    sized
+                } else {
+                    sized * ((INFORMED_STRESSED - p) / (INFORMED_STRESSED - INFORMED_CALM)).clamp(0.0, 1.0)
+                }
+            }
+            Rung::Oracle => {
                 let told = self
                     .told
                     .as_ref()
@@ -451,7 +494,7 @@ impl Strategy for LevCarry {
         }
         let warm = self.steps > WARMUP_STEPS
             || matches!(self.rung, Rung::MaxLever | Rung::StopIn | Rung::StopOut);
-        let informed = matches!(self.rung, Rung::Informed | Rung::Oracle);
+        let informed = self.rung == Rung::Oracle;
         let mut target = if warm { share * setup.cap } else { 0.0 };
         let held = r.position;
         let hysteresis = if informed {
@@ -552,9 +595,78 @@ impl Crowd {
     }
 }
 
-/// What the informed rungs are told: the session's volatility states, each
+/// The informed bot's read of the volatility state: a two-state filter on
+/// the discount's changes, told the session's process (`MTX_REGIME`, the
+/// latent state the verifier hands it): the discount's level and each
+/// state's volatility level. The state path itself is never told: the
+/// filter reads it, switching only at minute marks, as the instruction says.
+struct Filter {
+    /// The discount's level, a share of the index, and each state's
+    /// volatility level (a multiple of the calibration's median session).
+    level: f64,
+    levels: [f64; 2],
+    /// The probability of the stressed state, the minute it was carried to,
+    /// and the last discount seen and its step.
+    p: f64,
+    minute: u64,
+    last: Option<(f64, u64)>,
+}
+
+impl Filter {
+    fn from_session(session: &Session) -> BotResult<Self> {
+        let latent = session
+            .var("MTX_REGIME")
+            .ok_or("the informed bot needs MTX_REGIME")?;
+        let latent: serde_json::Value = serde_json::from_str(latent)?;
+        let level = latent["discount_pct"]
+            .as_f64()
+            .ok_or("no discount_pct")?
+            / 100.0;
+        let vol = |i: usize| latent["regime_vol"][i].as_f64().ok_or("no regime_vol");
+        Ok(Self {
+            level,
+            levels: [vol(0)?, vol(1)?],
+            p: STRESS_PRIOR,
+            minute: 0,
+            last: None,
+        })
+    }
+
+    /// The probability of stress after this step's discount, at `at` slots
+    /// into the session and step `k`.
+    fn update(&mut self, discount: f64, at: u64, k: u64) -> f64 {
+        let minute = at / SLOTS_PER_MINUTE;
+        while self.minute < minute {
+            self.p = self.p * (1.0 - TO_CALM) + (1.0 - self.p) * TO_STRESS;
+            self.minute += 1;
+        }
+        match self.last {
+            Some((last, _)) if last == discount => {}
+            Some((last, at_k)) if k > WARMUP_STEPS => {
+                let dt = (k.saturating_sub(at_k)).max(1) as f64 * STEP_SECONDS;
+                let pull = (dt / DISCOUNT_TAU).min(1.0);
+                let like = |target: f64, noise: f64| {
+                    let sd = noise * self.level * dt.sqrt();
+                    let z = (discount - last - (target - last) * pull) / sd;
+                    -sd.ln() - (FILTER_NU + 1.0) / 2.0 * (1.0 + z * z / FILTER_NU).ln()
+                };
+                let calm = like(self.level, DISCOUNT_NOISE[0]);
+                let stressed = like(self.level * STRESSED_WIDENING, DISCOUNT_NOISE[1]);
+                let top = calm.max(stressed);
+                let (a, b) = (self.p * (stressed - top).exp(), (1.0 - self.p) * (calm - top).exp());
+                self.p = (a / (a + b)).clamp(1e-4, 1.0 - 1e-4);
+                self.last = Some((discount, k));
+            }
+            _ => self.last = Some((discount, k)),
+        }
+        self.p
+    }
+}
+
+/// What the oracle rung is told: the session's volatility states, each
 /// state's level and its flush, in slots from the session's start, from
-/// `MTX_REGIME`. The informed bot reads only the present and the past of it.
+/// `MTX_REGIME` (`tell_regime`): the session's draws, so a diagnostic rung,
+/// never an anchor.
 struct Told {
     /// The slot each state starts at, and whether it is the stressed one.
     states: Vec<(u64, bool)>,

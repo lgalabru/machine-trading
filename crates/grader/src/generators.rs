@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
     error::Result,
-    levcarry::LeveredCarryFamily,
+    levcarry::{LeveredCarryFamily, Shape as LevCarryShape},
     making::MakingFamily,
     scenario::{Scenario, Shape, ShockFamily},
     weekend::{WeekendFamily, WeekendShape},
@@ -86,6 +86,7 @@ pub const GENERATORS: &[Generator] = &[
             shaped(
                 LeveredCarryFamily::spcx().draw_set("hidden", count, seed),
                 tell,
+                levcarry_latent,
             )
         },
     },
@@ -207,6 +208,10 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("funding-carry", "funding", Knowable::Process),
     ("funding-carry", "cap_pct", Knowable::Process),
     ("funding-carry", "noise_pct", Knowable::Process),
+    ("levered-carry", "discount_pct", Knowable::Process),
+    ("levered-carry", "regime_vol", Knowable::Process),
+    ("levered-carry", "funding", Knowable::Process),
+    ("levered-carry", "cap_pct", Knowable::Process),
     ("weekend-gap", "informed", Knowable::Identity),
     ("weekend-gap", "informed_account", Knowable::Identity),
     ("weekend-gap", "worker", Knowable::Identity),
@@ -233,6 +238,19 @@ fn carry_latent(shape: &CarryShape) -> Value {
         "funding": shape.funding,
         "cap_pct": shape.cap_pct,
         "noise_pct": shape.noise_pct,
+    })
+}
+
+/// The session's process: the crowd's discount level, the volatility
+/// level each state runs at, and funding's settings and cap. Not the state
+/// path (which state the session is in, and when it switches) or the flush
+/// (whether, when and how far): those are the session's draws.
+fn levcarry_latent(shape: &LevCarryShape) -> Value {
+    json!({
+        "discount_pct": shape.discount_pct,
+        "regime_vol": shape.regime_vol,
+        "funding": shape.funding,
+        "cap_pct": shape.cap_pct,
     })
 }
 
@@ -352,6 +370,11 @@ mod tests {
                 .latent
         };
         assert!(latent("flash-crash").iter().all(|l| l == "{}"));
+        assert!(
+            latent("levered-carry")
+                .iter()
+                .all(|l| !l.contains("regimes") && !l.contains("flush"))
+        );
         assert!(
             latent("weekend-gap")
                 .iter()
