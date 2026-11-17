@@ -1,5 +1,6 @@
-//! The ladder's rungs that trade without reading who owns a wall, picked by
-//! `MTX_NAIVE`:
+//! The ladder's rungs that trade without reading who owns a wall. A
+//! component has no environment, so each rung is its own build, its rule
+//! set by `MTX_NAIVE` at build time:
 //!
 //! - `dump`: sells the whole order at once.
 //! - `twap`: sells evenly over the session, crossing.
@@ -17,7 +18,7 @@ use mtx_bot_spoof_or_iceberg_exit::{
 use mtx_kit::prelude::*;
 
 #[derive(Default)]
-struct Naive {
+pub struct Naive {
     mode: String,
     order: Order,
     book: BookReader,
@@ -27,7 +28,7 @@ struct Naive {
 
 impl Strategy for Naive {
     fn start(&mut self, session: &Session) -> BotResult {
-        self.mode = std::env::var("MTX_NAIVE").map_err(|_| "set MTX_NAIVE")?;
+        self.mode = option_env!("MTX_NAIVE").ok_or("built without MTX_NAIVE")?.to_string();
         self.order = Order::from_session(session)?;
         self.book = BookReader::new(session)?;
         Ok(())
@@ -100,6 +101,5 @@ impl Strategy for Naive {
     }
 }
 
-fn main() -> BotResult {
-    mtx_kit::run(Naive::default())
-}
+#[cfg(target_arch = "wasm32")]
+mtx_kit::export!(Naive);

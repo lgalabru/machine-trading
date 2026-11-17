@@ -1,5 +1,5 @@
-# The ladder's naive rungs and exploit bots for spoof-or-iceberg-exit-qqq, one
-# process picked by MTX_NAIVE (the ladder sets it per rung).
+# The ladder's rungs for spoof-or-iceberg-exit-qqq, each a component on
+# wasm32-wasip2 built with its rule (`MTX_NAIVE`) set.
 [package]
 name = "mtx-bot-spoof-or-iceberg-exit-naive"
 edition = "2024"
@@ -7,10 +7,15 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
-[[bin]]
-name = "mtx-spoof-or-iceberg-exit-naive"
-path = "src/main.rs"
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
 
 [dependencies]
-mtx-bot-spoof-or-iceberg-exit = { path = "../../../reference" }
+mtx-bot-spoof-or-iceberg-exit = { path = "../../../reference", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../../../../../crates/kit", default-features = false, features = ["component", "venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mtx-kit = { path = "../../../../../../crates/kit" }

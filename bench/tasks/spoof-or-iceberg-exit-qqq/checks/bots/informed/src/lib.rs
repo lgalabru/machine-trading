@@ -126,3 +126,6 @@ impl Strategy for Informed {
         Ok(())
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+mtx_kit::export!(Informed);

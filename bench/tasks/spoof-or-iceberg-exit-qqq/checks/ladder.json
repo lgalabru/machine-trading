@@ -37,38 +37,23 @@
     },
     {
       "name": "dump",
-      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
-      "env": {
-        "MTX_NAIVE": "dump"
-      }
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive/rungs/dump"
     },
     {
       "name": "twap",
-      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
-      "env": {
-        "MTX_NAIVE": "twap"
-      }
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive/rungs/twap"
     },
     {
       "name": "late",
-      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
-      "env": {
-        "MTX_NAIVE": "late"
-      }
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive/rungs/late"
     },
     {
       "name": "trust-depth",
-      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
-      "env": {
-        "MTX_NAIVE": "trust-depth"
-      }
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive/rungs/trust-depth"
     },
     {
       "name": "fade-walls",
-      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
-      "env": {
-        "MTX_NAIVE": "fade-walls"
-      }
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive/rungs/fade-walls"
     },
     {
       "name": "reference",

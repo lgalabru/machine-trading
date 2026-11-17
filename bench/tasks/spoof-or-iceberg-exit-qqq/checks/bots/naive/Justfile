@@ -1,16 +1,15 @@
-# A process bot: `just build` builds it into bin/bot, and the grader starts
-# it with `just run`. Build before grading.
+# `just build` builds each rung's component into rungs/<rung>/bot.wasm: the
+# rule is set at build time, since a component has no environment. The
+# grader builds nothing: build before grading.
 
-# Build the bot into bin/bot.
+# Build every rung.
 build:
     #!/usr/bin/env bash
     set -euo pipefail
-    exe="$(cargo build --release --bin mtx-spoof-or-iceberg-exit-naive --message-format=json-render-diagnostics \
-      | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
-    mkdir -p bin
-    cp "$exe" bin/bot
-    echo "built bin/bot from $exe"
-
-# Start the bot: what the grader runs.
-run:
-    @exec ./bin/bot
+    for rung in dump twap late trust-depth fade-walls probe; do
+      wasm="$(MTX_NAIVE=$rung cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+        | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+      mkdir -p "rungs/$rung"
+      cp "$wasm" "rungs/$rung/bot.wasm"
+      echo "built rungs/$rung/bot.wasm"
+    done
