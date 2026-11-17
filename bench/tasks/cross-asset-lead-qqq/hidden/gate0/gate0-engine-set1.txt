@@ -1,0 +1,25 @@
+72 sessions, 7 rungs
+rung                 total     mean       sd   win%       v2w
+follow-qqq-flow      -3825   -53.12    22.88      0     -5737
+momentum             -3080   -42.78    16.11      1     -4641
+follow-nvda-flow      -783   -10.88    16.17     19     -1249
+twap                  -751   -10.42    21.95     36     -1279
+nop                      0     0.00     0.00      0         0
+reference              125     1.73    12.18     36        18
+informed              1968    27.33    18.35     96      1964
+
+signal gate: informed 1968 / best non-reading (nop) 0 = inf (need >= 2)
+strength band: reference v2-weighted / informed's = 0.01 (band 0.2-0.7); raw 0.06
+reference per-session Sharpe 0.14 (need >= 0.25)
+  reference v2-weighted share of informed: 0.01
+  nop v2-weighted share of informed: 0.00
+  follow-qqq-flow v2-weighted share of informed: -2.92
+  momentum v2-weighted share of informed: -2.36
+  twap v2-weighted share of informed: -0.65
+  follow-nvda-flow v2-weighted share of informed: -0.64
+
+on 2000 bootstrapped 72-session sets:
+  order max(nop, follow-nvda-flow, follow-qqq-flow, momentum, twap) < reference < informed holds on 0.902 (need >= 0.85)
+  informed >= 2x best non-reading on 1.000
+  both on 0.902
+set 1 (reference $125): nop 0.00, follow-nvda-flow -6.27, follow-qqq-flow -30.63, momentum -24.66, twap -6.01, reference 1.00, informed 15.76, hindsight 71.43
