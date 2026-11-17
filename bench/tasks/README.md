@@ -42,8 +42,8 @@ and its **informed bot** 1. The informed bot knows everything the task's data
 could tell in principle but not the session's future randomness, and trades
 under the same costs and limits, so 1 is reachable. Losses count 1.5 times,
 drawing down far deeper than the anchor costs a near-breach charge, a breach
-scores at least the whole loss limit lost and caps the run (one at 0.5, two
-or more at 0), and a refused call or tampering scores −1. The agent is told
+scores at least the whole loss limit lost and costs the run 1.25 times its
+breach rate (0.0125 a point of rate), and a refused call or tampering scores −1. The agent is told
 all of it: `mtx task sync` writes the rules into the task's
 `instruction.md` from the grader's settings (between its `mtx:scoring`
 markers). How and why, with worked examples: [grading](../../docs/grading.md).

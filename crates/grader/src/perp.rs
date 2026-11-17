@@ -198,7 +198,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let mut parties = Parties::default();
     let takers = match (&scenario.making, &scenario.offhours) {
         (Some(making), _) => Some((
-            widen(making.competitor_bps)?,
+            widen(making.makers_bps())?,
             &making.takers,
             scenario.takers_pricing.unwrap_or(Pricing::Level),
         )),
@@ -416,6 +416,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
     let mut rfqs = None;
+    let mut roster = Default::default();
     if let Some((library, seats)) = library {
         let (path, start) = (scenario.path.clone(), start_mark_usd);
         let fair_path = scenario.fair_path.clone();
@@ -455,6 +456,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             cast.add(actor);
         }
         rfqs = built.rfq;
+        roster = built.roster;
     }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
@@ -570,6 +572,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .map(|off| base_slot + off.reopen_slot),
         vars,
         cast,
+        roster,
         cranks: keeper
             .map(|keeper| Box::new(keeper) as Box<dyn crate::crank::VenueCrank>)
             .into_iter()
@@ -873,6 +876,8 @@ struct RfqDesk {
     base: Token,
     quote: Token,
     rpc_url: String,
+    /// Score over the idle desk (see [`RfqClients::over_idle_desk`]).
+    over_idle: bool,
 }
 
 /// What the bot's wallet holds for its RFQ desk at one moment: the asset
@@ -887,6 +892,12 @@ struct DeskHoldings {
 impl DeskHoldings {
     fn base_usd(&self) -> f64 {
         self.base * self.index_usd
+    }
+
+    /// The asset's value over an idle desk's: less what the `start`'s
+    /// asset gained since, at the index.
+    fn base_usd_over_idle(&self, start: &DeskHoldings) -> f64 {
+        self.base_usd() - start.base * (self.index_usd - start.index_usd)
     }
 }
 
@@ -988,6 +999,7 @@ fn fund_rfq(
         base,
         quote,
         rpc_url: rpc_url.to_string(),
+        over_idle: setup.rfq.over_idle_desk,
     };
     Ok((Arc::new(swaps), desk))
 }
@@ -1170,7 +1182,17 @@ impl PerpAccount {
         Ok(self
             .desk_holdings()
             .await?
-            .map_or(0.0, |held| held.base_usd()))
+            .map_or(0.0, |held| self.desk_value(&held)))
+    }
+
+    /// What `held` adds to the account's value: the asset at the index, and
+    /// with the scenario's `over_idle_desk`, less what the desk's starting
+    /// asset gained since.
+    fn desk_value(&self, held: &DeskHoldings) -> f64 {
+        match (&self.desk, &self.desk_start) {
+            (Some(desk), Some(start)) if desk.over_idle => held.base_usd_over_idle(start),
+            _ => held.base_usd(),
+        }
     }
 
     async fn mark_ticks(&self) -> Result<u64> {
@@ -1450,7 +1472,7 @@ impl Account for PerpAccount {
         let end_value_usd = self
             .value(grader_f64(end.value_usd), end_position, done.end_slot)
             .await?
-            + end_desk.map_or(0.0, |held| held.base_usd());
+            + end_desk.map_or(0.0, |held| self.desk_value(&held));
         let positions_outside_universe = self.positions_outside_universe.max(end.outside_universe);
         let liquidatable = self.meter.liquidatable().await?;
         let instrument = scenario.instrument();
@@ -1810,6 +1832,35 @@ mod tests {
             base,
             forced: false,
         }
+    }
+
+    #[test]
+    fn an_idle_desk_over_the_idle_desk_is_worth_what_it_started_with() {
+        let start = DeskHoldings {
+            base: 5.0,
+            usdc: 1_000.0,
+            index_usd: 100.0,
+        };
+        // Idle through a 10% rise: the asset is worth $550 and the idle desk
+        // gained $50 on it, so nothing is left over it.
+        let idle = DeskHoldings {
+            index_usd: 110.0,
+            ..start
+        };
+        assert_eq!(idle.base_usd(), 550.0);
+        assert_eq!(idle.base_usd_over_idle(&start), 500.0);
+        // Sold 2 at 115 with the index at 110: $5 over it each, $10 over what
+        // the idle desk made.
+        let sold = DeskHoldings {
+            base: 3.0,
+            usdc: 1_000.0 + 230.0,
+            index_usd: 110.0,
+        };
+        let net = |held: &DeskHoldings| held.base_usd_over_idle(&start) + held.usdc;
+        assert_eq!(net(&sold) - net(&start), 10.0);
+        assert_eq!(net(&idle) - net(&start), 0.0);
+        // The index is where it started: the same either way.
+        assert_eq!(start.base_usd_over_idle(&start), start.base_usd());
     }
 
     #[test]
