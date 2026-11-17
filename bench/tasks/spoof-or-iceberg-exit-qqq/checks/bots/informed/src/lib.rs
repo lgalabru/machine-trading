@@ -12,11 +12,13 @@
 //! owner by the slot the wall was placed in: the told wallet that sent a
 //! transaction in that slot (read off the wallet's signatures). A spoofer's
 //! bid or an iceberg's ask is a fall coming, and it sells the rest at once;
-//! a spoofer's ask or an iceberg's bid is a rise, and it holds. Otherwise
-//! it sells late, as the reference does.
+//! a spoofer's ask or an iceberg's bid is a rise, and it holds, with nothing
+//! resting, until the jump lands. Otherwise
+//! it works the order as the reference does: an ask at the touch, and what
+//! is left sold late.
 
 use mtx_bot_spoof_or_iceberg_exit::{
-    BookReader, Kind, Order, Rest, sell_late, sell_now, sign_of, walls_in,
+    BookReader, JumpWatch, Kind, Order, Rest, sell_now, sign_of, walls_in, work,
 };
 use mtx_kit::{log, prelude::*};
 
@@ -30,6 +32,9 @@ pub struct Informed {
     /// Slots each told wallet sent a transaction in.
     sent: Vec<Vec<u64>>,
     selling: bool,
+    /// A rise is coming: hold, with nothing resting, until it lands.
+    rising: bool,
+    jump: JumpWatch,
 }
 
 /// The first wallet listed under `kind` in the told state.
@@ -100,6 +105,7 @@ impl Strategy for Informed {
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         orders.cancel_all();
+        self.jump.update(market.slot, market.oracle);
         if !self.selling {
             let book = self.book.read();
             self.watch();
@@ -110,11 +116,14 @@ impl Strategy for Informed {
                 log(&format!("slot {}: a fall is coming; selling", market.slot));
                 self.selling = true;
             }
+            if signal.is_some_and(|s| s > 0.0) && !self.jump.landed {
+                self.rising = true;
+            }
         }
         if self.selling {
             sell_now(market, orders, market.position.size);
-        } else {
-            sell_late(market, orders, &self.order);
+        } else if !(self.rising && !self.jump.landed) {
+            work(market, orders, &self.order);
         }
         Ok(())
     }

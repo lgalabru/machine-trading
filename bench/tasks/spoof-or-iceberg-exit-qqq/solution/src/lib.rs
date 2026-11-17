@@ -15,9 +15,11 @@
 //!   walls a session, one a side, so knowing one names the other.
 //! - **Acting on a known wall.** A spoofer's bid or an iceberg's ask says
 //!   the price is about to fall: it sells the rest at once. A spoofer's ask
-//!   or an iceberg's bid says it is about to rise: it holds.
-//! - **Otherwise** it holds, and sells in the last part of the session
-//!   while the bid, less the taker fee, beats the broker's price.
+//!   or an iceberg's bid says it is about to rise: it holds, with nothing
+//!   resting, until the jump lands.
+//! - **Otherwise** it rests an ask at the best ask for a maker's fill, and
+//!   sells what is left in the last part of the session while the bid, less
+//!   the taker fee, beats the broker's price.
 //!
 //! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
 //! solution), and a process (`src/main.rs`), the anchor hidden sets are
@@ -42,6 +44,8 @@ pub const SLICE: f64 = 4.0;
 pub const SELL_DEPTH_BPS: f64 = 8.0;
 /// From here on, in share of the session, it sells what is left.
 pub const LATE: f64 = 0.9;
+/// The most it rests at the best ask at a time, in QQQ.
+pub const ASK_SIZE: f64 = 2.0;
 
 /// The order, from the session.
 #[derive(Debug, Clone, Copy, Default)]
@@ -320,6 +324,54 @@ pub fn sell_late(market: &Market, orders: &mut Orders, order: &Order) {
     }
 }
 
+/// What the desk does when the walls say nothing it should act on: rests an
+/// ask at the best ask, for a maker's fill, and late in the session sells
+/// what is left while the bid, less the fee, beats the broker's price.
+pub fn work(market: &Market, orders: &mut Orders, order: &Order) {
+    let held = market.position.size;
+    if held <= 1e-3 {
+        return;
+    }
+    let broker = market.oracle * (1.0 - order.haircut_bps / 10_000.0);
+    let late = order.progress(market.slot) >= LATE;
+    if late
+        && market
+            .best_bid
+            .is_some_and(|b| b * (1.0 - TAKER_FEE_BPS / 10_000.0) > broker)
+    {
+        sell_now(market, orders, held);
+        return;
+    }
+    let size = round_lots(held.min(ASK_SIZE));
+    if let Some(ask) = market.best_ask
+        && size > 0.0
+    {
+        orders.ask(ask, size).post_only();
+    }
+}
+
+/// Whether the session's jump has landed: the oracle moved more than
+/// `JUMP` within `JUMP_SLOTS`.
+#[derive(Debug, Clone, Default)]
+pub struct JumpWatch {
+    seen: Vec<(u64, f64)>,
+    pub landed: bool,
+}
+
+/// A move this large, as a share, within this many slots is the jump.
+pub const JUMP: f64 = 0.0015;
+pub const JUMP_SLOTS: u64 = 10;
+
+impl JumpWatch {
+    pub fn update(&mut self, slot: u64, oracle: f64) {
+        self.seen.retain(|(s, _)| s + JUMP_SLOTS >= slot);
+        if self.seen.iter().any(|(_, o)| (oracle / o - 1.0).abs() > JUMP) {
+            self.landed = true;
+        }
+        self.seen.push((slot, oracle));
+    }
+}
+
 pub fn round_lots(size: f64) -> f64 {
     (size * 1000.0).floor() / 1000.0
 }
@@ -335,6 +387,9 @@ pub struct Reference {
     book: BookReader,
     walls: Walls,
     selling: bool,
+    /// A rise is coming: hold, with nothing resting, until it lands.
+    rising: bool,
+    jump: JumpWatch,
 }
 
 impl Strategy for Reference {
@@ -354,14 +409,19 @@ impl Strategy for Reference {
             market.best_ask,
             market.slot,
         );
-        if !self.selling && self.walls.signal() < 0.0 {
+        self.jump.update(market.slot, market.oracle);
+        let signal = self.walls.signal();
+        if !self.selling && signal < 0.0 {
             log(&format!("slot {}: a fall is coming; selling", market.slot));
             self.selling = true;
         }
+        if signal > 0.0 && !self.jump.landed {
+            self.rising = true;
+        }
         if self.selling {
             sell_now(market, orders, market.position.size);
-        } else {
-            sell_late(market, orders, &self.order);
+        } else if !(self.rising && !self.jump.landed) {
+            work(market, orders, &self.order);
         }
         Ok(())
     }

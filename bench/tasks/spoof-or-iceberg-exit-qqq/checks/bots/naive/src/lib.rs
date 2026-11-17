@@ -14,7 +14,9 @@
 //!
 //! Each sells what is left late, as the reference does.
 
-use mtx_bot_spoof_or_iceberg_exit::{BookReader, Order, round_lots, sell_late, sell_now, walls_in};
+use mtx_bot_spoof_or_iceberg_exit::{
+    BookReader, Order, round_lots, sell_late, sell_now, walls_in, work,
+};
 use mtx_kit::prelude::*;
 
 #[derive(Default)]
@@ -51,11 +53,8 @@ impl Strategy for Naive {
             }
             "late" => {}
             "passive" => {
-                if let Some(ask) = market.best_ask
-                    && held > 0.01
-                {
-                    orders.ask(ask, round_lots(held.min(2.0))).post_only();
-                }
+                work(market, orders, &self.order);
+                return Ok(());
             }
             "trust-depth" | "fade-walls" if !self.decided => {
                 let book = self.book.read();
