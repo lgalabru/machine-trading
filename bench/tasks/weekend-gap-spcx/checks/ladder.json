@@ -86,5 +86,18 @@
   },
   "probes": {
     "exempt": "the probe rungs aren't wired for this task yet (follow-up)"
+  },
+  "zoo": {
+    "enforce": false,
+    "why": "one of the four tasks that predate the zoo: what it finds is reported, and the task's grading is unchanged",
+    "skip": {
+      "twap": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "random-twap": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "dump": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "late": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "front-load": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "wait-close": "the task hands no order, so a pacing rung has no job and trades nothing"
+    },
+    "hybrid_exempt": "the informed rung, told, is the reference run with MTX_RUNG set; it is not yet a strategy library a hybrid crate can wrap"
   }
 }

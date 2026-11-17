@@ -67,5 +67,18 @@
   },
   "probes": {
     "exempt": "market making is excluded: its redesign has its own probes"
+  },
+  "zoo": {
+    "enforce": false,
+    "why": "one of the four tasks that predate the zoo: what it finds is reported, and the task's grading is unchanged",
+    "skip": {
+      "twap": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "random-twap": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "dump": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "late": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "front-load": "the task hands no order, so a pacing rung has no job and trades nothing",
+      "wait-close": "the task hands no order, so a pacing rung has no job and trades nothing"
+    },
+    "hybrid_exempt": "the informed rung, flow-oracle, is a binary of the shared ladder rungs, not a strategy library a hybrid crate can wrap"
   }
 }
