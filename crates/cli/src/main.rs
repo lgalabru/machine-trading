@@ -1891,8 +1891,7 @@ fn eval_seed() -> anyhow::Result<(u64, String, SessionKeys)> {
 /// session's name unless the grade's secret salts it, and a name says which
 /// session of a drawn set it is.
 fn grade_keys(keys: SessionKeys, drawn: bool, v2_sessions: bool) -> SessionKeys {
-    let _ = drawn;
-    if v2_sessions {
+    if drawn || v2_sessions {
         keys.salt_strategy_seeds()
     } else {
         keys
@@ -1937,9 +1936,7 @@ fn report_to_write<'a>(
 #[cfg(test)]
 mod tests {
     use clap::Parser;
-    use mtx_grader::scenario::ShockFamily;
-
-    use mtx_grader::keys::SessionKeys;
+    use mtx_grader::{keys::SessionKeys, scenario::ShockFamily};
 
     use super::{
         Cli, grade_keys, keep_other_anchors, save_anchors, set_anchors, v2_scores_every_session,
@@ -1947,7 +1944,11 @@ mod tests {
 
     #[test]
     fn a_drawn_grade_salts_what_its_bots_seed_says_of_their_session() {
-        let seed = |keys: &SessionKeys| keys.role("bot").session(2, "hidden-3").strategy_seed("hidden-3");
+        let seed = |keys: &SessionKeys| {
+            keys.role("bot")
+                .session(2, "hidden-3")
+                .strategy_seed("hidden-3")
+        };
         let named = mtx_core::turns::scenario_seed("hidden-3");
         let fresh = || SessionKeys::from_eval_seed(b"a batch secret of at least 32 bytes..");
         assert_ne!(seed(&grade_keys(fresh(), true, false)), named);
@@ -1967,7 +1968,9 @@ mod tests {
         let v2 = mtx_grader::scoring_v2::Params::new(mtx_grader::scoring_v2::Ceiling::Informed {
             eta_override: None,
         });
-        let refused = v2_scores_every_session(true, Some(&v2)).unwrap_err().to_string();
+        let refused = v2_scores_every_session(true, Some(&v2))
+            .unwrap_err()
+            .to_string();
         assert!(refused.contains("--stop-on-disqualify"), "{refused}");
         assert!(v2_scores_every_session(false, Some(&v2)).is_ok());
         // Under v1 the flag is the verifiers' own.
