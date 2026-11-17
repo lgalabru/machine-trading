@@ -21,6 +21,9 @@
 //! - **A buy burst** holds the name: it sells nothing there until the rise
 //!   has landed (0.3% over its low and no new high for 80 slots). A watch
 //!   whose price never moved 15 bp its way within 400 slots was a fake-out.
+//! - **A move under way** confirms itself, burst or none: 15 bp over 200
+//!   slots with the market's net flow the same way holds a rising name and
+//!   makes a falling one urgent.
 //! - **Otherwise** it works each name passively: an ask a tick inside the
 //!   maker's, and behind a back-loaded floor it crosses, but only while the
 //!   bid beats the broker's price after the fee. What costs more than the
@@ -66,6 +69,9 @@ const BURST_ONE_WAY: f64 = 0.8;
 const CONFIRM_BPS: f64 = 15.0;
 const FLOW_SLOTS: u64 = 120;
 const WATCH_SLOTS: u64 = 400;
+/// A move this long that gets `CONFIRM_BPS` with the flow behind it opens a
+/// read on its own, burst or none.
+const MOVE_SLOTS: u64 = 200;
 /// The share of a name it sells on watch, before a fall is confirmed.
 const WATCH_SHARE: f64 = 0.3;
 /// A rise has landed this far over its low, with no new high for a while.
@@ -156,6 +162,10 @@ struct Leg {
     /// The share of the session from which a calm floor counts.
     from: f64,
     takes: VecDeque<(u64, String, f64)>,
+    /// The oracle over the last `MOVE_SLOTS`, and the slot before which a
+    /// move can't open a read (one just ended).
+    marks: VecDeque<(u64, f64)>,
+    quiet_until: u64,
     seen: HashSet<String>,
 }
 
@@ -354,6 +364,8 @@ impl Strategy for Unwind {
                 low: f64::INFINITY,
                 from: 0.0,
                 takes: VecDeque::new(),
+                marks: VecDeque::new(),
+                quiet_until: 0,
                 seen: HashSet::new(),
             });
         }
@@ -656,6 +668,19 @@ fn read_on(mode: Mode, leg: &mut Leg, oracle: f64, now: u64, start: u64, end: u6
                 (leg.watch_from, leg.watch_oracle, leg.watch_sold, leg.low) =
                     (now, oracle, 0.0, oracle);
             }
+            // A move under way with the flow behind it confirms itself.
+            leg.marks.push_back((now, oracle));
+            while leg.marks.front().is_some_and(|(at, _)| at + MOVE_SLOTS < now) {
+                leg.marks.pop_front();
+            }
+            let first = leg.marks.front().map_or(oracle, |(_, p)| *p);
+            let run = (oracle / first - 1.0) * 1e4;
+            let flow = leg.net_flow(into);
+            if leg.read == Read::Calm && now >= leg.quiet_until && run.abs() >= CONFIRM_BPS && run * flow > 0.0 {
+                let low = leg.marks.iter().map(|(_, p)| *p).fold(oracle, f64::min);
+                leg.read = if run < 0.0 { Read::Falling } else { Read::Rising };
+                (leg.watch_from, leg.watch_oracle, leg.watch_sold, leg.low) = (now, first, 0.0, low);
+            }
             let moved = (oracle / leg.watch_oracle.max(1e-9) - 1.0) * 1e4;
             match leg.read {
                 Read::Watch if moved <= -CONFIRM_BPS && leg.net_flow(into) < 0.0 => {
@@ -675,6 +700,7 @@ fn read_on(mode: Mode, leg: &mut Leg, oracle: f64, now: u64, start: u64, end: u6
         if leg.high > leg.low * (1.0 + LANDED) && now >= leg.high_at + SETTLE_SLOTS {
             leg.read = Read::Calm;
             leg.from = progress(now);
+            leg.quiet_until = now + MOVE_SLOTS;
         }
     }
 }
