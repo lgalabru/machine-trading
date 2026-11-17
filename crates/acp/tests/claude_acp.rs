@@ -3,10 +3,12 @@
 //! sends Claude, and the ACP it sends the client, compared with what Zed's
 //! `claude-code-acp` 0.16.2 sends for the same conversation.
 
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
+use std::{
+    io::{BufRead, BufReader, Write},
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::mpsc::{self, Receiver},
+    time::Duration,
+};
 
 use serde_json::{Value, json};
 

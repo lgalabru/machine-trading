@@ -27,11 +27,14 @@
 //! are its reports. The reply then holds only what no progress report
 //! carried, plus the turn's cost, so nothing is counted twice.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
+
+use serde_json::{Value, json};
 
 use crate::pricing;
-use serde_json::{Value, json};
 
 /// One of a plan's usage windows, as harnesses report them. (Axel's
 /// `axel_store::LimitWindow`.)

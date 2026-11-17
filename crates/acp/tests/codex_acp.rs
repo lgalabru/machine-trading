@@ -1,11 +1,13 @@
 //! `axel codex-acp` end to end, against `fake_codex` (`codex app-server`'s
 //! JSON-RPC, faked): what it asks Codex for, and the ACP it sends the client.
 
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
-use std::time::Duration;
+use std::{
+    io::{BufRead, BufReader, Write},
+    path::Path,
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::mpsc::{self, Receiver},
+    time::Duration,
+};
 
 use serde_json::{Value, json};
 

@@ -29,19 +29,25 @@
 
 pub mod tools;
 
-use std::collections::{HashMap, HashSet};
-use std::io::BufReader;
-use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    io::BufReader,
+    path::{Path, PathBuf},
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver, Sender},
+    },
+    time::Duration,
+};
 
 use serde_json::{Value, json};
 
-use crate::agent_rpc::{Client, Lines, RpcError, RpcResult, bounded_lines};
-use crate::usage::{CodexMeter, codex_limits, limits_params};
+use crate::{
+    agent_rpc::{Client, Lines, RpcError, RpcResult, bounded_lines},
+    usage::{CodexMeter, codex_limits, limits_params},
+};
 
 /// codex-acp's `/init` prompt.
 const INIT_PROMPT: &str = include_str!("init_prompt.md");

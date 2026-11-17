@@ -1,11 +1,15 @@
 //! The plumbing the built-in ACP agents share (`claude`, `codex`): JSON
 //! lines on a pipe, the ACP client on our stdout, and JSON-RPC errors.
 
-use std::collections::HashMap;
-use std::io::{self, BufRead, Write};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Sender};
+use std::{
+    collections::HashMap,
+    io::{self, BufRead, Write},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Sender},
+    },
+};
 
 use serde_json::{Value, json};
 
