@@ -1,5 +1,6 @@
 //! What a task may tell a perp session's bot beyond the runtime contract,
-//! as typed values: the positions it starts with ([`StartPositions`]), an
+//! as typed values: the markets it trades from one account
+//! ([`PerpMarkets`]), the positions it starts with ([`StartPositions`]), an
 //! order to work ([`SessionOrder`]) and the broker's haircut on what it
 //! leaves undone ([`BrokerHaircut`]), and the markets a broker closes out
 //! ([`CloseOuts`]).
@@ -7,7 +8,8 @@
 //! Each travels as one of the session's variables ([`SESSION_VARS`]), as
 //! JSON, and has a constant naming it, a `parse` for the variable's text and
 //! a `to_var` that writes it: the grader writes them with `to_var`, and a
-//! bot reads them with [`Session::start_positions`], [`Session::order`],
+//! bot reads them with [`Session::perp_markets`],
+//! [`Session::start_positions`], [`Session::order`],
 //! [`Session::broker_haircut`] and [`Session::close_outs`]. Markets are
 //! named as the mandate names them, by [`InstrumentRef`]
 //! (`phoenix:perp:NVDA`), so two venues' markets of one symbol stay apart;
@@ -48,6 +50,65 @@ impl SessionVarError {
             var,
             detail: detail.into(),
         }
+    }
+}
+
+/// The perp markets a session trades from its one cross-margin account, its
+/// own market first: `MTX_MARKETS`, written
+/// `["phoenix:perp:NVDA", "phoenix:perp:SPCX"]`. The task sets it only for
+/// a session on several markets; [`Session::perp_markets`] gives the full
+/// list either way. Each is a perp, given once.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct PerpMarkets(pub Vec<InstrumentRef>);
+
+impl PerpMarkets {
+    /// The variable it travels in.
+    pub const VAR: &'static str = "MTX_MARKETS";
+
+    /// Reads the variable's text: at least one market, each a perp named
+    /// `<venue>:perp:<symbol>`, none twice.
+    #[inline]
+    pub fn parse(text: &str) -> Result<Self, SessionVarError> {
+        let markets: Self = from_json(Self::VAR, text)?;
+        markets.check()?;
+        Ok(markets)
+    }
+
+    /// The variable's text: an error if the list is empty, names a market
+    /// twice or a market that isn't a perp.
+    #[inline]
+    pub fn to_var(&self) -> Result<String, SessionVarError> {
+        self.check()?;
+        Ok(to_json(self))
+    }
+
+    /// The session's own market: the first.
+    #[inline]
+    pub fn own(&self) -> Option<&InstrumentRef> {
+        self.0.first()
+    }
+
+    #[inline]
+    fn check(&self) -> Result<(), SessionVarError> {
+        if self.0.is_empty() {
+            return Err(SessionVarError::new(Self::VAR, "no market"));
+        }
+        for (i, market) in self.0.iter().enumerate() {
+            if market.kind != crate::mandate::Kind::Perp {
+                return Err(SessionVarError::new(
+                    Self::VAR,
+                    format!("{market} is not a perp"),
+                ));
+            }
+            if self.0[..i].contains(market) {
+                return Err(SessionVarError::new(
+                    Self::VAR,
+                    format!("{market} is given twice"),
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -286,6 +347,34 @@ impl<'de> Visitor<'de> for ByInstrument {
 }
 
 impl Session {
+    /// The perp markets the session trades from its one account, its own
+    /// market first: `MTX_MARKETS` when the task sets it (a session on
+    /// several markets), otherwise the session's own market alone, the
+    /// first of [`Session::venues`]. Either way the full list. An error if
+    /// the variable doesn't read, or doesn't start with the session's own
+    /// market.
+    #[inline]
+    pub fn perp_markets(&self) -> Result<PerpMarkets, SessionVarError> {
+        let own = self.venues.first().and_then(|v| {
+            v.id.split('@')
+                .next()
+                .and_then(|id| id.parse::<InstrumentRef>().ok())
+        });
+        match self.var(PerpMarkets::VAR) {
+            Some(text) => {
+                let markets = PerpMarkets::parse(text)?;
+                match (&own, markets.own()) {
+                    (Some(own), Some(first)) if own != first => Err(SessionVarError::new(
+                        PerpMarkets::VAR,
+                        format!("starts with {first}, not the session's own market {own}"),
+                    )),
+                    _ => Ok(markets),
+                }
+            }
+            None => Ok(PerpMarkets(own.into_iter().collect())),
+        }
+    }
+
     /// The positions the session starts the account with: none if the
     /// task sets none.
     #[inline]
@@ -455,6 +544,57 @@ mod tests {
         }
         let s = session(&[(SessionOrder::VAR, "{")]);
         assert!(s.order().is_err());
+    }
+
+    #[test]
+    fn a_sessions_perp_markets_are_its_own_first_and_each_once() {
+        let markets = PerpMarkets(vec![
+            market("phoenix:perp:NVDA"),
+            market("phoenix:perp:SPCX"),
+        ]);
+        let text = markets.to_var().unwrap();
+        assert_eq!(text, r#"["phoenix:perp:NVDA","phoenix:perp:SPCX"]"#);
+        let own = |id: &str| crate::VenueInfo {
+            id: id.into(),
+            kind: crate::MarketKind::Perp,
+            address: None,
+            tradable: true,
+        };
+        let mut s = session(&[(PerpMarkets::VAR, &text)]);
+        s.venues = vec![own("phoenix:perp:NVDA")];
+        assert_eq!(s.perp_markets().unwrap(), markets);
+        assert_eq!(markets.own(), Some(&market("phoenix:perp:NVDA")));
+        // Unset: the session's own market alone, so the list is always
+        // the full one.
+        let mut alone = session(&[]);
+        alone.venues = vec![own("phoenix:perp:NVDA")];
+        assert_eq!(
+            alone.perp_markets().unwrap(),
+            PerpMarkets(vec![market("phoenix:perp:NVDA")])
+        );
+        // A list that doesn't start with the session's own market.
+        s.venues = vec![own("phoenix:perp:SPCX")];
+        assert_eq!(s.perp_markets().unwrap_err().var, PerpMarkets::VAR);
+        for bad in [
+            "[]",
+            r#"["phoenix:perp:NVDA","phoenix:perp:NVDA"]"#,
+            r#"["phoenix:spot:NVDA"]"#,
+            r#"["NVDA"]"#,
+            r#"[""]"#,
+            "NVDA,SPCX",
+        ] {
+            assert_eq!(
+                PerpMarkets::parse(bad).unwrap_err().var,
+                PerpMarkets::VAR,
+                "{bad}"
+            );
+        }
+        assert!(PerpMarkets(Vec::new()).to_var().is_err());
+        assert!(
+            PerpMarkets(vec![market("phoenix:spot:SOL-USDC")])
+                .to_var()
+                .is_err()
+        );
     }
 
     #[test]
