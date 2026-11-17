@@ -18,7 +18,9 @@
 //!   hand; the ladder's exploit check needs a hindsight bound, which an RFQ
 //!   desk's sessions don't have).
 
-use mtx_bot_rfq_client_tiering::{Answer, Ask, Desk, EPS_BP, Policy, TOLERANCE, Tag, View, reach_bp};
+use mtx_bot_rfq_client_tiering::{
+    Answer, Ask, Desk, EPS_BP, Policy, TOLERANCE, Tag, View, reach_bp,
+};
 use mtx_kit::prelude::*;
 
 #[derive(Default)]
