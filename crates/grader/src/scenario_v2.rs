@@ -1939,17 +1939,16 @@ mod tests {
             permanent_share: 0.5,
             half_life_slots: 8.0,
             max_bps: 150.0,
+            probe: 10.0,
         };
         let mut s = shock();
         assert_eq!(s.clone().into_scenario().unwrap().valuation(), "mark");
         s.venues.perp.get_or_insert_with(Default::default).impact = Some(impact);
         assert_eq!(s.validate(), Ok(()));
         let text = serde_json::to_string(&s).unwrap();
-        assert!(
-            text.contains(
-                r#""impact":{"permanent_share":0.5,"half_life_slots":8.0,"max_bps":150.0}"#
-            )
-        );
+        assert!(text.contains(
+            r#""impact":{"permanent_share":0.5,"half_life_slots":8.0,"max_bps":150.0,"probe":10.0}"#
+        ));
         let v1 = s.clone().into_scenario().unwrap();
         assert_eq!(v1.impact, Some(impact));
         assert_eq!(v1.valuation(), "book");

@@ -11,6 +11,9 @@
 #     path's level at once, and no step carries an impact.
 #   - bots/starter never trades: with impact and without, the book is the
 #     same from the path's first move on, and the impact is 0 throughout.
+#   - the same bot on noisy.json, four times: other traders trade around it,
+#     differently each run. An odd lot they leave at the touch must not hide
+#     the bot's sale: the book is below the level after it, every time.
 #   bench/checks/impact/run.sh <mtx> <snapshot> <out>
 # The bots must be built (just --justfile bots/<bot>/Justfile build). The
 # snapshot is snapshots/phoenix-spcx-2026-10-29.
@@ -32,6 +35,7 @@ grade trade first-strategy smoke --replay 2
 grade control first-strategy control
 grade idle starter smoke
 grade idle-control starter control
+for run in 1 2 3 4; do grade "noisy-$run" first-strategy noisy; done
 python3 -I - "$out" <<'PY'
 import glob, gzip, json, sys
 out = sys.argv[1]
@@ -104,5 +108,14 @@ for a, b in zip(idle[first_move:], plain[first_move:]):
         f"step {a['k']}: the idle book differs with impact: {a} against {b}"
 assert compared >= len(plain) - first_move - 2, "the scheduled book stayed crossed"
 assert session("idle")["pnl_usd"] == 0 == session("idle-control")["pnl_usd"]
+# Other traders around the bot: its trades still leave their impact.
+for run in (1, 2, 3, 4):
+    noisy = steps(f"noisy-{run}")
+    held = next(i for i, s in enumerate(noisy) if s["position"] > 0)
+    flat = next(i for i, s in enumerate(noisy) if i > held and s["position"] == 0)
+    print(f"noisy {run}: impact after the buy", noisy[held]["impact_bps"], "after the sale", noisy[flat]["impact_bps"])
+    assert noisy[held]["impact_bps"] > 5, "the buy left no impact among other traders"
+    assert noisy[flat]["impact_bps"] < -5, "the sale left no impact among other traders"
+    assert noisy[flat]["best_bid_usd"] < noisy[flat]["level_usd"], "the book is not below the level after the sale"
 print("IMPACT_SMOKE_OK")
 PY

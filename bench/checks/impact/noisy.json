@@ -1,0 +1,56 @@
+{
+  "schema": 2,
+  "name": "impact-smoke-noisy",
+  "description": "impact-smoke with other traders: their odd lots rest at the touch and hide a walk from anything that reads the best bid and ask",
+  "duration_slots": 160,
+  "assets": {
+    "symbol": "SPCX"
+  },
+  "venues": {
+    "perp": {
+      "impact": {
+        "permanent_share": 0.5,
+        "half_life_slots": 10
+      }
+    }
+  },
+  "market_model": {
+    "path": [
+      {
+        "slot": 20,
+        "level_pct": -2.0
+      },
+      {
+        "slot": 90,
+        "level_pct": 0.5
+      }
+    ]
+  },
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 700.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 20000.0
+    }
+  },
+  "actors": {
+    "library": {
+      "scale": {
+        "trades_per_minute": 1.5,
+        "trade_size": 0.6,
+        "trade_size_sigma": 0.6
+      },
+      "noise": [
+        {
+          "wallets": 3,
+          "flow_mult": 40.0
+        }
+      ]
+    }
+  }
+}

@@ -398,6 +398,8 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             let state = opts.keys.keypair("impact", 0).pubkey();
             let script = impact.script(&crate::impact::ScriptSetup {
                 symbol: &scenario.symbol,
+                trader,
+                probe_lots: phoenix.base_units_to_lots(&market, impact.probe).max(1),
                 start_mark_ticks,
                 overrides: &overrides,
                 state,

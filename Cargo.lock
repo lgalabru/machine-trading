@@ -11544,7 +11544,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surfpool-core"
 version = "1.7.0"
-source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#ca9cb7a2d40763892deac9222428b483b9ccd944"
+source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#a72b166d960a24c6a51a9ffdb5125d101e774d36"
 dependencies = [
  "agave-feature-set",
  "agave-geyser-plugin-interface",
@@ -11646,7 +11646,7 @@ dependencies = [
 [[package]]
 name = "surfpool-db"
 version = "1.7.0"
-source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#ca9cb7a2d40763892deac9222428b483b9ccd944"
+source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#a72b166d960a24c6a51a9ffdb5125d101e774d36"
 dependencies = [
  "diesel",
  "diesel-dynamic-schema",
@@ -11658,7 +11658,7 @@ dependencies = [
 [[package]]
 name = "surfpool-sdk"
 version = "1.7.0"
-source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#ca9cb7a2d40763892deac9222428b483b9ccd944"
+source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#a72b166d960a24c6a51a9ffdb5125d101e774d36"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -11688,7 +11688,7 @@ dependencies = [
 [[package]]
 name = "surfpool-types"
 version = "1.7.0"
-source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#ca9cb7a2d40763892deac9222428b483b9ccd944"
+source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#a72b166d960a24c6a51a9ffdb5125d101e774d36"
 dependencies = [
  "agave-feature-set",
  "anchor-lang-idl",

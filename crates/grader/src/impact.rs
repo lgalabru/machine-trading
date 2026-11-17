@@ -7,10 +7,11 @@
 //! does moves the price it trades at next.
 //!
 //! With a scenario's `impact`, the path is played by a Surfpool scenario
-//! script instead of a schedule of overrides. Each slot, on the surfnet, the
-//! script looks at the book's touch. Where the best ask sits further from
-//! the makers' centre than their untouched quotes do, trades walked the
-//! asks up by that many ticks (and the same for the bids, down). The script
+//! script instead of a schedule of overrides. Each step, on the surfnet, the
+//! script asks Phoenix what a market order of a set size (the `probe`)
+//! would fill for, each side. Where a buy fills further from the makers'
+//! centre than it did on their untouched quotes, trades walked the asks up
+//! by that much (and the same for a sale and the bids, down). The script
 //! then centres the makers on the path's book level plus what the walking
 //! left:
 //!
@@ -25,9 +26,9 @@
 //! the book by more than the trade walked would pay a bot to push it.
 //!
 //! Every taker's trades count, the bot's and the scenario's takers' alike:
-//! the script reads the book, not an account. Trades that take less than
-//! the size at the touch leave the touch where it is, and count for
-//! nothing until the touch is gone.
+//! the script reads the book, not an account. It reads it at a size, not at
+//! the touch: an odd lot resting at the best bid moves the best bid and
+//! hides a walk behind it, where what the probe fills for hardly moves.
 //!
 //! The script works in pairs of slots, as a session's steps are. On the
 //! first slot of a pair it reads what trades did since the last pair, and
@@ -66,6 +67,10 @@ fn default_max_bps() -> f64 {
     150.0
 }
 
+fn default_probe() -> f64 {
+    10.0
+}
+
 /// The most the makers' centre moves in one slot, as a share of where it
 /// is: under the 4% steps a planned move is cut into, so Phoenix takes the
 /// oracle reports that go with it. What is left lands on the next slots.
@@ -91,6 +96,12 @@ pub struct Impact {
     /// the book's level.
     #[serde(default = "default_max_bps")]
     pub max_bps: f64,
+    /// The size, in base units, the script prices the book at: where the
+    /// book is, each side, is what a market order of this size would fill
+    /// for on average. Larger than the odd lots that rest at the touch, and
+    /// small beside the makers' depth.
+    #[serde(default = "default_probe")]
+    pub probe: f64,
 }
 
 impl Impact {
@@ -111,6 +122,12 @@ impl Impact {
             return Err(format!(
                 "impact: max_bps is between 1 and {MAX_IMPACT_BPS}, not {}",
                 self.max_bps
+            ));
+        }
+        if !self.probe.is_finite() || self.probe <= 0.0 {
+            return Err(format!(
+                "impact: probe is a size above 0, in base units, not {}",
+                self.probe
             ));
         }
         Ok(())
@@ -221,6 +238,12 @@ fn plan(overrides: &[Override]) -> Vec<(u64, u8, u64)> {
 /// What a session gives the script.
 pub struct ScriptSetup<'a> {
     pub symbol: &'a str,
+    /// A trader account for the script's quotes: Phoenix's quote reads one,
+    /// and trades nothing in it.
+    pub trader: Pubkey,
+    /// The probe: the size, in base lots, whose fill price is where the
+    /// book is ([`Impact::probe`]).
+    pub probe_lots: u64,
     pub start_mark_ticks: u64,
     /// The scenario's path, as the overrides a session without impact
     /// would have registered.
@@ -244,7 +267,8 @@ impl Impact {
             .join(",");
         format!(
             r#"-- mtx: the scenario's path, and the impact trades leave on the book.
-local SYMBOL, STATE = "{symbol}", "{state}"
+local SYMBOL, STATE, TRADER = "{symbol}", "{state}", "{trader}"
+local PROBE_LOTS = {probe_lots}
 local SHARE, DECAY, MAX_BPS = {share}, {decay}, {max_bps}
 local MAX_STEP, DUST = {max_step}, {dust}
 -- The path: {{slot, kind, ticks}}; kind 1 moves the book and the oracles, 2 the oracles.
@@ -260,10 +284,15 @@ local counted_up, counted_down = 0, 0
 local permanent, transient = 0.0, 0.0
 local calls, published = 0, nil
 
--- The best bid and ask, in ticks. A global, so a test can replace it.
+-- Where the book is, each side, in ticks: what a market order of the probe
+-- size would fill for on average, not the best bid and ask. A sliver of
+-- liquidity at the touch moves the touch and hardly moves this. A book too
+-- thin to fill the probe is not read. A global, so a test can replace it.
 function read_touch(ctx)
-  local bbo = ctx.phoenix.bbo(SYMBOL)
-  return bbo.bid_ticks, bbo.ask_ticks
+  local sell = ctx.phoenix.quote(SYMBOL, "sell", PROBE_LOTS, TRADER)
+  local buy = ctx.phoenix.quote(SYMBOL, "buy", PROBE_LOTS, TRADER)
+  if not (sell.filled and buy.filled) then error("the book can't fill the probe") end
+  return sell.avg_ticks, buy.avg_ticks
 end
 
 local function publish(ctx)
@@ -366,6 +395,8 @@ end
 "#,
             symbol = setup.symbol,
             state = setup.state,
+            trader = setup.trader,
+            probe_lots = setup.probe_lots,
             share = lua_number(self.permanent_share),
             decay = lua_number(self.decay()),
             max_bps = lua_number(self.max_bps),
@@ -403,6 +434,7 @@ mod tests {
         permanent_share: 0.5,
         half_life_slots: 8.0,
         max_bps: 150.0,
+        probe: 10.0,
     };
     const START: u64 = 143_050;
     /// The lab's makers: their untouched quotes, in ticks from their centre.
@@ -441,6 +473,8 @@ mod tests {
             let state = Pubkey::new_unique();
             let setup = ScriptSetup {
                 symbol: "SPCX",
+                trader: Pubkey::new_unique(),
+                probe_lots: 1_000,
                 start_mark_ticks: START,
                 overrides,
                 state,
@@ -821,6 +855,8 @@ mod tests {
         let overrides = path(&[(4, -2.0)]);
         let setup = ScriptSetup {
             symbol: "SPCX",
+            trader: Pubkey::new_unique(),
+            probe_lots: 1_000,
             start_mark_ticks: START,
             overrides: &overrides,
             state: Pubkey::new_unique(),
@@ -888,6 +924,13 @@ mod tests {
                     ..IMPACT
                 },
                 "max_bps",
+            ),
+            (
+                Impact {
+                    probe: 0.0,
+                    ..IMPACT
+                },
+                "probe",
             ),
         ] {
             let error = impact.validate().unwrap_err();

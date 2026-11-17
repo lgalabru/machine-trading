@@ -177,7 +177,7 @@ the book back where it was. A scenario can keep the book where trades leave
 it instead:
 
 ```json
-"venues": { "perp": { "impact": { "permanent_share": 0.5, "half_life_slots": 10, "max_bps": 150 } } }
+"venues": { "perp": { "impact": { "permanent_share": 0.5, "half_life_slots": 10, "max_bps": 150, "probe": 10 } } }
 ```
 
 - `permanent_share`: of the distance trades walked the book, the share that
@@ -185,11 +185,16 @@ it instead:
 - `half_life_slots`: slots the fading part takes to halve.
 - `max_bps`: the most the impact moves the book either way, in basis points
   of the book's level (150 when absent, 190 at most).
+- `probe`: the size, in base units, the book is priced at (10 when absent):
+  where the book is, each side, is what a market order of this size would
+  fill for on average. Larger than the odd lots that rest at the touch, and
+  small beside the makers' depth.
 
 The path is then played by a Surfpool scenario script, not a schedule of
 overrides (`surfnet_registerScenario`'s `scripts`). On the first slot of
-each step it reads the touch: a best ask further from the makers' centre
-than their own quotes is depth taken, and the same for the bids. It centres
+each step it asks Phoenix what a market order of the probe size would fill
+for, each side: a buy that fills further from the makers' centre than it
+did on their own quotes is depth taken, and the same for a sale. It centres
 the makers on the path's book level plus what was walked, at once in full,
 and lets the fading part decay. On the step's second slot it reads the
 makers' quotes as the move left them, which the next step's trades are
@@ -201,8 +206,9 @@ What this means for a session:
 - **The impact is never more than the trade moved the book**, so a round
   trip costs the spread at least: a bot is not paid to push the price.
 - **Every taker's trades count**: the bot's, the tape's and the actors'.
-  A trade smaller than the size at the touch leaves the touch, and counts
-  for nothing until the touch is gone.
+  The book is read at the probe's size, not at the best bid and ask: an odd
+  lot resting at the touch moves the touch and would hide a walk behind it.
+  A book too thin to fill the probe is not read, and leaves no impact.
 - **Only the book moves.** The oracles stay on the scenario's index, and
   the account is valued at the scenario's book level (`valuation` `book`),
   not at the price trades pushed the book to.
