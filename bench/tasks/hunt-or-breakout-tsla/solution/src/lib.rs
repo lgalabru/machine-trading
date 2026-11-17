@@ -6,15 +6,17 @@
 //! run through a level is then classified from three things:
 //!
 //! - **The leader.** One account that took a large clip in a single step
-//!   just before the run, and nobody else leaning that way, is a pusher. An
-//!   account seen earlier in the session pushing and then trading straight
-//!   back out is a known hunter.
+//!   just before the run is a pusher. An account seen earlier in the
+//!   session pushing and then trading straight back out is a known hunter.
 //! - **The crowd.** Two or more accounts that built a position the run's
-//!   way over the minute before it are informed flow.
-//! - **The oracle.** A hunter can push the book but not the oracle. If
-//!   neither of the above settles it, the bot waits up to 30 slots: an
-//!   oracle that follows means a break, one that stays put while the book
-//!   is still through the level means a hunt.
+//!   way over the half-minute before it (before anyone chasing the run
+//!   could) are informed flow.
+//! - **The oracle.** A hunter can push the book but not the oracle. When a
+//!   pusher and a crowd both lead, the bot waits up to 30 slots: an oracle
+//!   that follows means a break, one that stays put while the book is still
+//!   through the level means a hunt.
+//!
+//! A run nobody led (the walk drifting through a level) isn't traded.
 //!
 //! A hunt is faded with the cap and covered once the book comes back to the
 //! level (or the hold has clearly passed); a break is followed with the cap
@@ -205,6 +207,22 @@ impl Watch {
         now.iter().zip(then).map(|(a, b)| a - b).collect()
     }
 
+    /// Each account's change from `from` slots ago to `to` slots ago
+    /// (`from` > `to`), at the reads nearest each.
+    pub fn changes_between(&self, from: u64, to: u64) -> Vec<f64> {
+        let Some((slot, now)) = self.history.back() else {
+            return Vec::new();
+        };
+        let at = |back: u64| {
+            self.history
+                .iter()
+                .find(|(s, _)| s + back >= *slot)
+                .map_or(now, |(_, p)| p)
+        };
+        let (then, later) = (at(from), at(to));
+        later.iter().zip(then).map(|(a, b)| a - b).collect()
+    }
+
     /// Each account's change over the last read.
     pub fn last_changes(&self) -> Vec<f64> {
         let n = self.history.len();
@@ -287,6 +305,9 @@ const PUSH_UNITS: f64 = 1.2;
 /// `CROWD_SLOTS`, in base units.
 const CROWD_UNITS: f64 = 0.4;
 const CROWD_SLOTS: u64 = 80;
+/// The crowd is read up to this many slots before the run, before chasers
+/// can have reacted to it.
+const CROWD_BEFORE_SLOTS: u64 = 4;
 /// How long it waits on the oracle, and how far it must move.
 const ORACLE_SLOTS: u64 = 30;
 const ORACLE_BPS: f64 = 6.0;
@@ -298,6 +319,9 @@ struct Pending {
     level: f64,
     at: u64,
     oracle: f64,
+    /// Who led it, read as it ran.
+    pusher: Option<usize>,
+    crowd: usize,
 }
 
 /// The strategy.
@@ -328,22 +352,25 @@ impl Reference {
             .next()
     }
 
-    fn classify(&mut self, run: Pending, slot: u64, oracle: f64, mid: f64) -> Option<Bet> {
-        let pusher = self.pusher(run.dir, slot);
+    /// Who led a run through a level the mid just crossed `dir`.
+    fn leaders(&self, dir: f64, slot: u64) -> (Option<usize>, usize) {
+        let pusher = self.pusher(dir, slot);
         let crowd = self
             .watch
-            .changes(CROWD_SLOTS)
+            .changes_between(CROWD_SLOTS, CROWD_BEFORE_SLOTS)
             .iter()
             .enumerate()
-            .filter(|(i, c)| Some(*i) != pusher && run.dir * **c >= CROWD_UNITS)
+            .filter(|(i, c)| Some(*i) != pusher && dir * **c >= CROWD_UNITS)
             .count();
-        if let Some(p) = pusher {
-            if self.hunters.contains(&p) || crowd == 0 {
-                return Some(Bet::Fade);
-            }
-        }
-        if crowd >= 2 && pusher.is_none() {
-            return Some(Bet::Follow);
+        (pusher, crowd)
+    }
+
+    fn classify(&mut self, run: Pending, slot: u64, oracle: f64, mid: f64) -> Option<Bet> {
+        match (run.pusher, run.crowd >= 2) {
+            (None, false) => return None,
+            (None, true) => return Some(Bet::Follow),
+            (Some(p), crowd) if self.hunters.contains(&p) || !crowd => return Some(Bet::Fade),
+            _ => {}
         }
         let moved = run.dir * (oracle / run.oracle - 1.0) * 10_000.0;
         if moved >= ORACLE_BPS {
@@ -413,11 +440,14 @@ impl Strategy for Reference {
                 .last_level
                 .is_some_and(|(l, at)| (l - level).abs() < 1e-6 && at + 300 > slot);
             if !again && self.pending.is_none() {
+                let (pusher, crowd) = self.leaders(dir, slot);
                 self.pending = Some(Pending {
                     dir,
                     level,
                     at: slot,
                     oracle,
+                    pusher,
+                    crowd,
                 });
             }
         }
@@ -429,7 +459,9 @@ impl Strategy for Reference {
                     self.last_level = Some((run.level, slot));
                     self.pending = None;
                 }
-                None if slot >= run.at + ORACLE_SLOTS => self.pending = None,
+                None if slot >= run.at + ORACLE_SLOTS || (run.pusher.is_none() && run.crowd < 2) => {
+                    self.pending = None
+                }
                 None => {}
             }
         }
