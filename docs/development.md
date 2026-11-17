@@ -133,7 +133,14 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      pinned in the Justfile, `bench/harness/mtx_hermes.py`), so no model is
      helped or hurt by its harness. Its trials are labelled
      `gpt-6.1-sol · hermes`, apart from 0.11.0 and earlier, which ran in
-     each provider's own harness; `native:<model>` still runs one that way.
+     each provider's own harness; `native:<model>` still runs one that way,
+     on unguarded tasks only: a native harness can't be guarded (its
+     provider's API, which its network must allow, can fetch the web for
+     it), so `just bench` refuses it on a guarded task. `MTX_UNGUARDED=1`
+     allows it for a screen: the batch is stamped `guarded: false` before
+     its first trial, and is not for publication. A direct `harbor run` of
+     a native harness on a guarded task is unguarded too: Harbor opens the
+     harness's provider host itself.
      Its token counts come from Hermes's session; a cost only when Hermes
      knows the model's price. `effort` (left empty, each harness keeps its
      default) sets one reasoning effort for every harness; cross-family
@@ -233,7 +240,8 @@ for the cheap checks, `mtx gates <task>` for the full set (see
 ```sh
 just ladder <task>                     # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
-just leak-audit                        # the agent's image holds no answer
+just leak-audit <task>                 # the agent's image holds no answer (a guarded task's mtx can't draw)
+just network-probe <task>              # a guarded task's agent can't reach ghcr.io or github.com
 just keypair-probe                     # a bot can't read the grader's keypairs
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```
@@ -310,7 +318,13 @@ instruction. `mtx task status <name>` says which steps are done;
    (`guide anchors`).
 5. **Calibrate.** Draw the practice scenarios, then calibrate them with the
    reference (`just calibrate`) and with the informed bot
-   (`mtx calibrate --informed --v2-sessions`): every practice file carries
+   (`mtx calibrate --informed --v2-sessions --practice <family>
+   --practice-seed <seed> --out <practice dir>`, which redraws the set and
+   tells the informed bot each session's latent state host-side; the files
+   keep only its PnL and a neutral description, since the generator's own
+   states the draw in prose; `mtx gates` fails a v2 task's practice file that
+   is not a scenario, holds a latent or roster member, or has the generator's
+   description, and warns for a v1 task's): every practice file carries
    both anchors' PnL, since `mtx-practice` scores practice by v2 too
    (`guide practice`). `mtx task sync` writes the verifier's scoring flags
    into the task's `environment/Dockerfile` (`MTX_PRACTICE_SCORING`), which

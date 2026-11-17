@@ -79,6 +79,7 @@ pub fn heap_fills(
         let o = HEAP_NODES + node * NODE_LEN;
         let e = o + 8;
         if data[e] == FILL {
+            let price = market.price_lots_to_price(i64_at(data, e + 104));
             fills.push(MarketFill {
                 slot,
                 instrument: market.id().clone(),
@@ -86,7 +87,8 @@ pub fn heap_fills(
                 taker: key_at(data, e + 64),
                 maker: key_at(data, e + 24),
                 taker_side: taker_side(data[e + 1]),
-                price: market.price_lots_to_price(i64_at(data, e + 104)),
+                price,
+                worst_price: price,
                 quantity: market.base_lots_to_quantity(i64_at(data, e + 120)),
                 unix_timestamp: u64_at(data, e + 8) as i64,
                 taker_fee: Decimal::ZERO,
@@ -116,7 +118,7 @@ pub fn fill_log(data: &[u8], market: &OpenBookV2Market, slot: u64) -> Option<Mar
     let taker = key_at(data, o);
     // The taker's client order id and fee.
     o += 32 + 16;
-    let price = i64_at(data, o);
+    let price = market.price_lots_to_price(i64_at(data, o));
     let quantity = i64_at(data, o + 8);
     Some(MarketFill {
         slot,
@@ -125,7 +127,8 @@ pub fn fill_log(data: &[u8], market: &OpenBookV2Market, slot: u64) -> Option<Mar
         taker,
         maker,
         taker_side: taker_side(side),
-        price: market.price_lots_to_price(price),
+        price,
+        worst_price: price,
         quantity: market.base_lots_to_quantity(quantity),
         unix_timestamp: timestamp as i64,
         taker_fee: Decimal::ZERO,

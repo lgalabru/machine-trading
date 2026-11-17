@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
 
-use super::{Rng, Scale, Wallet, Window, finite_positive};
+use super::{JITTER, Rng, Scale, Wallet, Window, finite_positive, jittered, sized, within};
 use crate::actors::{Actor, ActorsReport, Moment};
 
 fn ten() -> f64 {
@@ -36,6 +36,10 @@ fn one_wallet() -> u32 {
     1
 }
 
+fn jitter() -> f64 {
+    JITTER
+}
+
 fn is_one(wallets: &u32) -> bool {
     *wallets == 1
 }
@@ -55,12 +59,17 @@ pub struct StopHunter {
     /// pushes.
     #[serde(default = "ten")]
     pub trigger_bps: f64,
-    /// Its push, in market trade sizes.
+    /// Its push, in market trade sizes: the median of what it draws each
+    /// time, lognormally at `size_sigma` (by default 0.3, about 50 to
+    /// 80 percent either way at two sigmas).
     #[serde(default = "ten")]
     pub push_mult: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_sigma: Option<f64>,
     /// How far through the level the push may fill.
     #[serde(default = "three_ticks")]
     pub overshoot_ticks: u64,
+    /// How long it holds before trading back, drawn each hunt.
     #[serde(default = "twenty_slots")]
     pub hold_slots: u64,
     /// Slots after a reversal before it hunts again.
@@ -75,6 +84,10 @@ pub struct StopHunter {
     /// How far past the price its reversal may fill, in basis points.
     #[serde(default = "fifty")]
     pub limit_bps: f64,
+    /// How far its overshoot, hold and cooldown vary from their settings
+    /// each hunt, as a share of each either way: 0 holds them fixed.
+    #[serde(default = "jitter")]
+    pub jitter: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<Window>,
 }
@@ -90,6 +103,10 @@ impl StopHunter {
         if self.at_slots.windows(2).any(|w| w[0] >= w[1]) {
             return Err("at_slots must be ascending, each once".into());
         }
+        if let Some(sigma) = self.size_sigma {
+            within("size_sigma", sigma, 0.0, 3.0)?;
+        }
+        within("jitter", self.jitter, 0.0, 0.9)?;
         finite_positive("limit_bps", self.limit_bps)
     }
 }
@@ -102,7 +119,10 @@ enum State {
     Pushed {
         side: Side,
         size: f64,
-        at: u64,
+        /// The wallet's position before the push, to trade back what filled.
+        before: Option<f64>,
+        /// The slot it trades back at.
+        until: u64,
         wallet: usize,
     },
 }
@@ -148,10 +168,11 @@ impl Hunter {
             State::Pushed {
                 side,
                 size,
-                at,
+                before,
+                until,
                 wallet,
             } => {
-                if now.at < at + self.spec.hold_slots {
+                if now.at < until {
                     return;
                 }
                 let back = side.opposite();
@@ -161,10 +182,29 @@ impl Hunter {
                     Side::Ask => now.book_usd * (1.0 - reach),
                 };
                 let wallet = &self.wallets[wallet];
-                wallet.take(now.at, back, size, limit).await;
+                // What the push filled, when the seat says: a push cut by its
+                // limit is traded back as far as it went, not as far as drawn.
+                let filled = match (before, wallet.seat().position().await) {
+                    (Some(before), Ok(now)) => (now - before).abs(),
+                    _ => size,
+                };
+                let size = if filled.is_finite() {
+                    filled.min(size)
+                } else {
+                    size
+                };
+                if size > 0.0 {
+                    wallet.take(now.at, back, size, limit).await;
+                }
                 wallet.count("reversals", 1);
+                let cooldown = jittered(
+                    &mut self.rng,
+                    self.spec.cooldown_slots,
+                    self.spec.jitter,
+                    self.spec.cooldown_slots.min(1),
+                );
                 self.state = State::Waiting {
-                    from: now.at + self.spec.cooldown_slots,
+                    from: now.at + cooldown,
                 };
             }
             State::Waiting { from } => {
@@ -181,7 +221,13 @@ impl Hunter {
                 let above = below + step;
                 let near =
                     |level: f64| (mid - level).abs() / mid * 10_000.0 <= self.spec.trigger_bps;
-                let overshoot = self.spec.overshoot_ticks as f64 * tick;
+                let overshoot = jittered(
+                    &mut self.rng,
+                    self.spec.overshoot_ticks,
+                    self.spec.jitter,
+                    1,
+                ) as f64
+                    * tick;
                 // The nearer level, if near enough: push through it.
                 let (side, limit) = if mid - below <= above - mid {
                     if !near(below) {
@@ -194,20 +240,33 @@ impl Hunter {
                     }
                     (Side::Bid, above + overshoot)
                 };
-                let size = self.scale.trade_size * self.spec.push_mult;
+                let size = sized(
+                    &self.scale,
+                    &mut self.rng,
+                    self.spec.push_mult,
+                    self.spec.size_sigma,
+                );
                 let wallet = match self.wallets.len() {
                     1 => 0,
                     n => self.rng.below(n),
                 };
+                let before = self.wallets[wallet].seat().position().await.ok();
                 if self.wallets[wallet].take(now.at, side, size, limit).await {
                     self.wallets[wallet].count("pushes", 1);
                     if !self.spec.at_slots.is_empty() {
                         self.spent += 1;
                     }
+                    let hold = jittered(
+                        &mut self.rng,
+                        self.spec.hold_slots,
+                        self.spec.jitter,
+                        self.spec.hold_slots.min(1),
+                    );
                     self.state = State::Pushed {
                         side,
                         size,
-                        at: now.at,
+                        before,
+                        until: now.at + hold,
                         wallet,
                     };
                 }
@@ -240,11 +299,13 @@ mod tests {
             level_step_usd: 1.0,
             trigger_bps: 10.0,
             push_mult: 10.0,
+            size_sigma: Some(0.0),
             overshoot_ticks: 3,
             hold_slots: 10,
             cooldown_slots: 100,
             at_slots: Vec::new(),
             limit_bps: 50.0,
+            jitter: 0.0,
             active: None,
         };
         let mut hunter = Hunter::new(spec, scale(), vec![wallet], Rng::new([1; 32]));
@@ -266,6 +327,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn it_trades_back_what_the_push_filled_not_what_it_drew() {
+        let (book, log) = Book::new("h", 100.20, 100.30);
+        let top = book.top.clone();
+        let position = book.position.clone();
+        let (wallet, _) = wallet(book);
+        let spec = StopHunter {
+            wallets: 1,
+            level_step_usd: 1.0,
+            trigger_bps: 10.0,
+            push_mult: 10.0,
+            size_sigma: Some(0.0),
+            overshoot_ticks: 3,
+            hold_slots: 10,
+            cooldown_slots: 100,
+            at_slots: Vec::new(),
+            limit_bps: 50.0,
+            jitter: 0.0,
+            active: None,
+        };
+        let mut hunter = Hunter::new(spec, scale(), vec![wallet], Rng::new([1; 32]));
+        *top.lock().unwrap() = (Some(100.04), Some(100.08));
+        hunter.after_blocks(&at(4, 100.0)).await;
+        // The book gave it a quarter of the 10 it asked for.
+        *position.lock().unwrap() = -2.5;
+        hunter.after_blocks(&at(14, 99.9)).await;
+        assert_eq!(
+            log.lock().unwrap().last().unwrap(),
+            "h take Bid 2.500 at 100.40"
+        );
+    }
+
+    #[tokio::test]
     async fn with_a_schedule_it_hunts_once_from_each_slot_and_skips_a_passed_one() {
         let (book, log) = Book::new("h", 100.04, 100.08);
         let (wallet, _) = wallet(book);
@@ -274,11 +367,13 @@ mod tests {
             level_step_usd: 1.0,
             trigger_bps: 10.0,
             push_mult: 1.0,
+            size_sigma: Some(0.0),
             overshoot_ticks: 3,
             hold_slots: 2,
             cooldown_slots: 0,
             at_slots: vec![10, 30, 34, 60],
             limit_bps: 50.0,
+            jitter: 0.0,
             active: None,
         };
         let mut hunter = Hunter::new(spec, scale(), vec![wallet], Rng::new([1; 32]));
@@ -327,11 +422,13 @@ mod tests {
             level_step_usd: 1.0,
             trigger_bps: 10.0,
             push_mult: 1.0,
+            size_sigma: Some(0.0),
             overshoot_ticks: 3,
             hold_slots: 2,
             cooldown_slots: 0,
             at_slots: Vec::new(),
             limit_bps: 50.0,
+            jitter: 0.0,
             active: None,
         };
         let mut hunter = Hunter::new(spec, scale(), vec![a, b], Rng::new([9; 32]));

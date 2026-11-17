@@ -658,6 +658,19 @@ impl RawSender {
         // The held sends go first, as if they had landed: a held one that
         // fails now would change nothing, so it is left out.
         let mut held: Vec<&Held> = self.held.iter().collect();
+        // Under a taking rule, the position as the held sends leave it is
+        // read just before the new transaction, to judge what it takes.
+        let taking = self
+            .mandate
+            .allowance(&self.instrument)
+            .filter(|allowance| allowance.taking.is_some());
+        let before_view = match taking {
+            Some(_) => view_transactions(&self.phoenix, &self.symbol, &self.authority, false)?
+                .into_iter()
+                .next(),
+            None => None,
+        };
+        let pre = usize::from(before_view.is_some());
         let (results, ahead) = loop {
             let mut keys: Vec<Pubkey> = Vec::new();
             for key in held.iter().flat_map(|h| &h.writable).chain(&writable) {
@@ -667,9 +680,12 @@ impl RawSender {
             }
             let watch = self.worth_watching(&keys).await?;
             let mut bundle: Vec<String> = held.iter().map(|h| h.wire.clone()).collect();
+            bundle.extend(before_view.clone());
             bundle.push(encode(&wire));
             bundle.extend(self.views()?);
-            let results = self.simulate_bundle(&bundle, &watch, held.len()).await?;
+            let results = self
+                .simulate_bundle(&bundle, &watch, held.len() + pre)
+                .await?;
             match results
                 .iter()
                 .take(held.len())
@@ -681,8 +697,9 @@ impl RawSender {
                 None => break (results, watch),
             }
         };
+        let at = held.len() + pre;
         let result = results
-            .get(held.len())
+            .get(at)
             .ok_or("the simulation returned nothing for the transaction")?;
         let logs: Vec<String> = result["logs"]
             .as_array()
@@ -711,12 +728,18 @@ impl RawSender {
         }
         let delta = wallet_change(&self.authority, &ahead, before, after_tx)?;
         let wallet_after = u64::try_from(i128::from(wallet) + delta).unwrap_or(0);
-        let after = self.measured(&results[held.len() + 1..], wallet_after)?;
+        let after = self.measured(&results[at + 1..], wallet_after)?;
         let drawdown = self.account.map_or(0.0, |a| a.drawdown_usd);
-        match audit(&self.mandate, &self.instrument, drawdown, start, &after) {
-            Some(breach) => Err(format!("it would breach the mandate: {breach}")),
-            None => Ok(()),
+        if let Some(breach) = audit(&self.mandate, &self.instrument, drawdown, start, &after) {
+            return Err(format!("it would breach the mandate: {breach}"));
         }
+        // A send's resting orders fill later, by others' trades, so what
+        // moves the position in the simulation is what it takes.
+        if let Some(allowance) = taking {
+            let before = position_of(&self.phoenix, &self.symbol, &results[held.len()])?;
+            crate::taking::judge(allowance, before, after.position)?;
+        }
+        Ok(())
     }
 
     /// Of `keys`, a send's writable accounts, the ones the audit reads
@@ -813,30 +836,7 @@ impl RawSender {
     /// simulate after another: its position in the market (with the
     /// market's mark), and its margin.
     fn views(&self) -> Result<Vec<String>, String> {
-        let builder = self.phoenix.tx();
-        let market = self
-            .phoenix
-            .exact_market(&self.symbol)
-            .map_err(|e| e.to_string())?;
-        let trader = self.phoenix.trader_account(&self.authority);
-        let views = [
-            builder.build_hawkeye_view_margin_for_asset(self.authority, 0, 0, market.asset_id),
-            builder.build_hawkeye_view_margin_for_trader(trader),
-        ];
-        views
-            .into_iter()
-            .map(|view| {
-                let mut instructions = vec![compute_limit(VIEW_COMPUTE_UNITS)];
-                instructions.extend(view.map_err(|e| format!("Phoenix's views: {e}"))?);
-                let tx = VersionedTransaction::from(Transaction::new_with_payer(
-                    &instructions,
-                    Some(&self.authority),
-                ));
-                Ok(encode(
-                    &wincode::serialize(&tx).map_err(|e| format!("encoding: {e}"))?,
-                ))
-            })
-            .collect()
+        view_transactions(&self.phoenix, &self.symbol, &self.authority, true)
     }
 
     /// The account from the results of [`RawSender::views`], with `wallet`
@@ -892,73 +892,185 @@ impl RawSender {
         watch: &[Pubkey],
         after: usize,
     ) -> Result<Vec<Value>, String> {
-        let accounts = |at: usize, config: Value| {
-            let mut configs = vec![Value::Null; bundle.len()];
-            if let Some(slot) = configs.get_mut(at) {
-                *slot = config;
-            }
-            configs
-        };
-        let watched = (!watch.is_empty()).then(|| {
-            json!({
-                "encoding": "base64",
-                "addresses": watch.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            })
-        });
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "simulateBundle",
-            "params": [
-                { "encodedTransactions": bundle },
-                {
-                    "preExecutionAccountsConfigs": accounts(0, watched.clone().unwrap_or(Value::Null)),
-                    "postExecutionAccountsConfigs": accounts(after, watched.unwrap_or(Value::Null)),
-                    "transactionEncoding": "base64",
-                    "skipSigVerify": true,
-                    "replaceRecentBlockhash": true,
-                },
-            ],
-        });
-        let infra = |e: String| format!("couldn't simulate it: {e}");
-        let answer = self
-            .http
-            .post(&self.rpc_url)
-            .timeout(crate::session::INTERNAL_RPC_TIMEOUT)
-            .header("content-type", "application/json")
-            .body(body.to_string())
-            .send()
-            .await
-            .map_err(|e| infra(e.to_string()))?
-            .text()
-            .await
-            .map_err(|e| infra(e.to_string()))?;
-        let answer: Value = serde_json::from_str(&answer).map_err(|e| infra(e.to_string()))?;
-        if let Some(error) = answer.get("error").filter(|e| !e.is_null()) {
-            return Err(infra(
-                error["message"].as_str().unwrap_or("error").to_string(),
-            ));
-        }
-        let value = &answer["result"]["value"];
-        let results = value["transactionResults"]
-            .as_array()
-            .ok_or_else(|| infra("no results".into()))?;
-        // A failed transaction stops the bundle: what follows it is empty.
-        // A held send's or the new one's own error says why; a view's means
-        // the account couldn't be measured.
-        if !value["summary"].is_string()
-            && results
-                .iter()
-                .take(after + 1)
-                .all(|result| result["err"].is_null())
-        {
-            return Err(infra(format!("{}", value["summary"])));
-        }
-        Ok(results.clone())
+        simulate_bundle(&self.http, &self.rpc_url, bundle, watch, after).await
     }
 }
 
-/// A send's status, for the next step's market.
+/// `simulateBundle` on the grader's endpoint `rpc_url`, skipping signatures
+/// and replacing blockhashes, with the `watch` accounts before the first
+/// transaction and after the one at `after`: each transaction's result.
+pub(crate) async fn simulate_bundle(
+    http: &reqwest::Client,
+    rpc_url: &str,
+    bundle: &[String],
+    watch: &[Pubkey],
+    after: usize,
+) -> Result<Vec<Value>, String> {
+    let accounts = |at: usize, config: Value| {
+        let mut configs = vec![Value::Null; bundle.len()];
+        if let Some(slot) = configs.get_mut(at) {
+            *slot = config;
+        }
+        configs
+    };
+    let watched = (!watch.is_empty()).then(|| {
+        json!({
+            "encoding": "base64",
+            "addresses": watch.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        })
+    });
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "simulateBundle",
+        "params": [
+            { "encodedTransactions": bundle },
+            {
+                "preExecutionAccountsConfigs": accounts(0, watched.clone().unwrap_or(Value::Null)),
+                "postExecutionAccountsConfigs": accounts(after, watched.unwrap_or(Value::Null)),
+                "transactionEncoding": "base64",
+                "skipSigVerify": true,
+                "replaceRecentBlockhash": true,
+            },
+        ],
+    });
+    let infra = |e: String| format!("couldn't simulate it: {e}");
+    let answer = http
+        .post(rpc_url)
+        .timeout(crate::session::INTERNAL_RPC_TIMEOUT)
+        .header("content-type", "application/json")
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| infra(e.to_string()))?
+        .text()
+        .await
+        .map_err(|e| infra(e.to_string()))?;
+    let answer: Value = serde_json::from_str(&answer).map_err(|e| infra(e.to_string()))?;
+    if let Some(error) = answer.get("error").filter(|e| !e.is_null()) {
+        return Err(infra(
+            error["message"].as_str().unwrap_or("error").to_string(),
+        ));
+    }
+    let value = &answer["result"]["value"];
+    let results = value["transactionResults"]
+        .as_array()
+        .ok_or_else(|| infra("no results".into()))?;
+    // A failed transaction stops the bundle: what follows it is empty.
+    // A held send's or the new one's own error says why; a view's means
+    // the account couldn't be measured.
+    if !value["summary"].is_string()
+        && results
+            .iter()
+            .take(after + 1)
+            .all(|result| result["err"].is_null())
+    {
+        return Err(infra(format!("{}", value["summary"])));
+    }
+    Ok(results.clone())
+}
+
+/// Phoenix's views of `authority`'s main trader account in `symbol`, as
+/// transactions to simulate after another: its position in the market (with
+/// the market's mark) and, with `margin`, its margin.
+pub(crate) fn view_transactions(
+    phoenix: &mtx_kit::Phoenix,
+    symbol: &str,
+    authority: &Pubkey,
+    margin: bool,
+) -> Result<Vec<String>, String> {
+    let builder = phoenix.tx();
+    let market = phoenix.exact_market(symbol).map_err(|e| e.to_string())?;
+    let trader = phoenix.trader_account(authority);
+    let mut views =
+        vec![builder.build_hawkeye_view_margin_for_asset(*authority, 0, 0, market.asset_id)];
+    if margin {
+        views.push(builder.build_hawkeye_view_margin_for_trader(trader));
+    }
+    views
+        .into_iter()
+        .map(|view| {
+            let mut instructions = vec![compute_limit(VIEW_COMPUTE_UNITS)];
+            instructions.extend(view.map_err(|e| format!("Phoenix's views: {e}"))?);
+            let tx = VersionedTransaction::from(Transaction::new_with_payer(
+                &instructions,
+                Some(authority),
+            ));
+            Ok(encode(
+                &wincode::serialize(&tx).map_err(|e| format!("encoding: {e}"))?,
+            ))
+        })
+        .collect()
+}
+
+/// The best bid and ask on Phoenix's book, in USD, with every order of
+/// `authority`'s cancelled: one `simulateBundle` of a cancel-all and
+/// Phoenix's view of the best bid and offer. Phoenix's own liquidity (its
+/// splines) counts, and the bot's own orders never do. `None` where the
+/// cancel fails (the bot has nothing resting, or the book can't say).
+pub(crate) async fn touch_without(
+    http: &reqwest::Client,
+    rpc_url: &str,
+    phoenix: &mtx_kit::Phoenix,
+    symbol: &str,
+    authority: &Pubkey,
+) -> Result<Option<crate::taking::Touch>, String> {
+    let trader =
+        mtx_kit::PhoenixTrader::new(phoenix.exchange().clone(), symbol, *authority, rpc_url)
+            .map_err(|e| e.to_string())?;
+    let plan = trader.plan_cancel_all().map_err(|e| e.to_string())?;
+    let step = plan.steps.first().ok_or("no cancel")?;
+    let mut cancel = vec![compute_limit(step.compute_unit_limit)];
+    cancel.extend(step.instructions.iter().cloned());
+    let mut bbo = vec![compute_limit(VIEW_COMPUTE_UNITS)];
+    bbo.extend(
+        phoenix
+            .tx()
+            .build_hawkeye_view_bbo(symbol)
+            .map_err(|e| format!("Phoenix's views: {e}"))?,
+    );
+    let bundle = [cancel, bbo]
+        .iter()
+        .map(|instructions| {
+            let tx = VersionedTransaction::from(Transaction::new_with_payer(
+                instructions,
+                Some(authority),
+            ));
+            Ok(encode(
+                &wincode::serialize(&tx).map_err(|e| format!("encoding: {e}"))?,
+            ))
+        })
+        .collect::<Result<Vec<String>, String>>()?;
+    let results = simulate_bundle(http, rpc_url, &bundle, &[], 0).await?;
+    if results.first().is_none_or(|r| !r["err"].is_null()) {
+        return Ok(None);
+    }
+    let Some(result) = results.get(1) else {
+        return Ok(None);
+    };
+    let bbo: phoenix_rise::ix::hawkeye::ViewBboReturn = view(result, "view_bbo")?;
+    let config = phoenix.market(symbol).map_err(|e| e.to_string())?;
+    let usd = |ticks| phoenix.ticks_to_usd(config, ticks);
+    Ok(Some(crate::taking::Touch {
+        bid: bbo.best_bid_ticks().map(usd),
+        ask: bbo.best_ask_ticks().map(usd),
+    }))
+}
+
+/// The position in base units, from the result of the asset view.
+pub(crate) fn position_of(
+    phoenix: &mtx_kit::Phoenix,
+    symbol: &str,
+    result: &Value,
+) -> Result<f64, String> {
+    let asset: ViewAssetReturn = view(result, "view_margin_for_asset")?;
+    let market = phoenix.exact_market(symbol).map_err(|e| e.to_string())?;
+    Ok(grader_f64(
+        Holding::Perp(market.position(asset.base_lots, asset.entry_price_quote_lots_per_base_lot))
+            .position(),
+    ))
+}
+
 fn status(step: u64, id: u32, state: SendState) -> SendStatus {
     SendStatus {
         step,
@@ -1195,7 +1307,10 @@ fn usdc_of(owner: &Pubkey, state: &Value) -> i128 {
 /// One Hawkeye view's return data, from a bundle result: its
 /// `returnData`, or, where the node leaves that out of a bundle's results,
 /// the `Program return:` line the runtime logs for it.
-fn view<T: bytemuck::Pod + Copy>(result: &Value, kind: &'static str) -> Result<T, String> {
+pub(crate) fn view<T: bytemuck::Pod + Copy>(
+    result: &Value,
+    kind: &'static str,
+) -> Result<T, String> {
     let fail = |why: &str| format!("couldn't measure the account after it: {kind}: {why}");
     if !result["err"].is_null() {
         return Err(fail(&result["err"].to_string()));
@@ -1980,6 +2095,168 @@ mod tests {
         // transactions, the same signatures.
         let again = world().await;
         assert_eq!(scripted_step(&again).await, (results, statuses));
+    }
+
+    /// A Phoenix market order for `units` of SPCX, signed by `owner`, as a
+    /// process bot would send it: its wire bytes.
+    async fn signed_market(world: &World, owner: &Keypair, units: i64) -> Vec<u8> {
+        let trader = mtx_kit::PhoenixTrader::new(
+            world.phoenix.exchange().clone(),
+            SPCX,
+            owner.pubkey(),
+            world._internal.url(),
+        )
+        .unwrap();
+        let side = if units > 0 {
+            mtx_kit::core::Side::Buy
+        } else {
+            mtx_kit::core::Side::Sell
+        };
+        let plan = trader
+            .plan(&mtx_kit::PhoenixOrder::Market {
+                side,
+                quantity: Decimal::from(units.abs()),
+                worst_price: None,
+                all_or_none: false,
+            })
+            .await
+            .unwrap();
+        let step = &plan.steps[0];
+        let mut instructions = vec![compute_limit(step.compute_unit_limit)];
+        instructions.extend(step.instructions.iter().cloned());
+        let tx = Transaction::new_signed_with_payer(
+            &instructions,
+            Some(&owner.pubkey()),
+            &[owner],
+            world.rpc.get_latest_blockhash().unwrap(),
+        );
+        wincode::serialize(&VersionedTransaction::from(tx)).unwrap()
+    }
+
+    /// The RPC guard's check on a process bot's transactions, against a real
+    /// chain: a market order from flat, or one that adds or flips, is
+    /// refused; one that reduces goes.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_take_gate_judges_a_transaction_by_the_position_it_would_take() {
+        let world = world().await;
+        let exchange = mtx_kit::load_exchange(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../snapshots/phoenix-spcx-2026-10-29/exchange.json"),
+        )
+        .unwrap();
+        let mandate = Mandate::perp("phoenix", SPCX, 5.0, 50.0);
+        let mut allowance = mandate.universe[0].clone();
+        allowance.taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        let gate = crate::taking::TakeGate::new(
+            &allowance,
+            exchange,
+            SPCX,
+            world.bot.pubkey(),
+            world._internal.url(),
+        )
+        .unwrap();
+        // Flat: buying or selling would open.
+        let refused = gate
+            .check(&[signed_market(&world, &world.bot, 2).await])
+            .await
+            .unwrap_err();
+        assert!(
+            refused.contains("as a taker from a position of 0"),
+            "{refused}"
+        );
+        assert!(
+            gate.check(&[signed_market(&world, &world.bot, -2).await])
+                .await
+                .is_err()
+        );
+        assert_eq!(gate.refused(), 2);
+        // A send that fails its own simulation is left to fail.
+        assert_eq!(gate.check(&[vec![0u8; 8]]).await, Ok(()));
+
+        // Long 2, put on through the sender (which doesn't gate).
+        let program = world.market_order(&world.bot, 1).await.instructions[1]
+            .program
+            .parse::<Pubkey>()
+            .unwrap();
+        let mut sender = world.sender(vec![program, SYSTEM, TOKEN, ASSOCIATED_TOKEN], mandate);
+        sender.begin(0, None).await;
+        sender
+            .take(world.market_order(&world.bot, 2).await)
+            .await
+            .unwrap();
+        let statuses = sender.flush(&world.bot).await;
+        assert!(
+            matches!(statuses[0].state, SendState::Landed(_)),
+            "{statuses:?}"
+        );
+        assert!((world.position().await - 2.0).abs() < 1e-9);
+        // Selling to reduce or flatten goes; adding or flipping doesn't.
+        for units in [-1, -2] {
+            assert_eq!(
+                gate.check(&[signed_market(&world, &world.bot, units).await])
+                    .await,
+                Ok(())
+            );
+        }
+        for units in [1, -3] {
+            assert!(
+                gate.check(&[signed_market(&world, &world.bot, units).await])
+                    .await
+                    .is_err(),
+                "{units}"
+            );
+        }
+        assert_eq!(gate.refused(), 4);
+    }
+
+    /// A component's raw send under a taking rule: one whose simulated
+    /// fills would open, add to or flip the position is refused (not sent),
+    /// one that reduces goes.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_raw_send_that_takes_to_open_is_refused_under_a_taking_rule() {
+        let world = world().await;
+        let plain = Mandate::perp("phoenix", SPCX, 5.0, 50.0);
+        let mut reduce_only = plain.clone();
+        reduce_only.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        let program = world.market_order(&world.bot, 1).await.instructions[1]
+            .program
+            .parse::<Pubkey>()
+            .unwrap();
+        let programs = vec![program, SYSTEM, TOKEN, ASSOCIATED_TOKEN];
+        let taking = |reason: String| reason.contains("allows taking only to reduce");
+        // Flat: buying would open.
+        let mut sender = world.sender(programs.clone(), reduce_only.clone());
+        sender.begin(0, None).await;
+        let refused = sender
+            .take(world.market_order(&world.bot, 2).await)
+            .await
+            .unwrap_err();
+        assert!(taking(refused.clone()), "{refused}");
+        // The same send without the rule lands.
+        let mut sender = world.sender(programs.clone(), plain);
+        sender.begin(0, None).await;
+        sender
+            .take(world.market_order(&world.bot, 2).await)
+            .await
+            .unwrap();
+        let statuses = sender.flush(&world.bot).await;
+        assert!(
+            matches!(statuses[0].state, SendState::Landed(_)),
+            "{statuses:?}"
+        );
+        assert!((world.position().await - 2.0).abs() < 1e-9);
+        // Long 2: selling to reduce goes, adding or flipping doesn't.
+        for (units, goes) in [(-1, true), (1, false), (-3, false)] {
+            let mut sender = world.sender(programs.clone(), reduce_only.clone());
+            sender.begin(0, None).await;
+            let sent = sender
+                .take(world.market_order(&world.bot, units).await)
+                .await;
+            assert_eq!(sent.is_ok(), goes, "{units}: {sent:?}");
+            if let Err(reason) = sent {
+                assert!(taking(reason.clone()), "{reason}");
+            }
+        }
     }
 
     /// Programs off the list are refused, at the top level or run by a

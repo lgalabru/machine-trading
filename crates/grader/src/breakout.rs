@@ -57,6 +57,9 @@ use crate::{
 const TSLA_CALIBRATION: &str =
     include_str!("../../../calibration/market/tsla.20261113.8b7bca8e.toml");
 
+/// How often an informed trader's view is right: the library's default.
+const INFORMED_HIT_RATE: f64 = 0.85;
+
 /// Slots before the run that the hunter is due: it pushes into the book as
 /// it stands, and the run follows.
 const HUNTER_EARLY_SLOTS: u64 = 2;
@@ -512,11 +515,13 @@ impl BreakoutFamily {
             level_step_usd: self.level_step_usd,
             trigger_bps,
             push_mult,
+            size_sigma: None,
             overshoot_ticks: 100,
             hold_slots,
             cooldown_slots: 0,
             at_slots,
             limit_bps: 80.0,
+            jitter: crate::actors::library::JITTER,
             active: None,
         };
         Library {
@@ -534,6 +539,8 @@ impl BreakoutFamily {
                 edge_bps: self.informed_edge_bps,
                 sees: Sees::Level,
                 sweeps: Some(push(sweep_mult, sweep_hold_slots, pushes("break"))),
+                hit_rate: INFORMED_HIT_RATE,
+                view_noise_bps: 0.0,
                 intensity_mult: self.informed_intensity,
                 size_mult: self.informed_size,
                 limit_bps: 80.0,

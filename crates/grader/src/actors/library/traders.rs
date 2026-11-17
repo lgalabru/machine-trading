@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
 
-use super::{Rng, Scale, Wallet, Window, finite_at_least_zero, finite_positive};
+use super::{Rng, Scale, Wallet, Window, finite_at_least_zero, finite_positive, within};
 use crate::actors::{Actor, ActorsReport, Moment};
 
 fn one() -> f64 {
@@ -30,6 +30,10 @@ fn one_wallet() -> u32 {
 
 fn fifty() -> f64 {
     50.0
+}
+
+fn most() -> f64 {
+    0.85
 }
 
 /// Noise traders: Poisson arrivals at `flow_mult` times the market's trade
@@ -86,7 +90,10 @@ impl Sees {
 /// Informed traders: they see the scenario's book (or, with `sees`, its
 /// level) `horizon_slots` ahead and, while it is more than `edge_bps` from
 /// where it is now, take its way at `intensity_mult` times the market's
-/// trade rate.
+/// trade rate. Their view is not perfect: it is off by `view_noise_bps` (a
+/// normal draw's sigma) at each look, and for one `horizon_slots` in
+/// `1 - hit_rate` of them it is wrong outright and they trade the other way
+/// (see [`View`]).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Informed {
@@ -104,6 +111,10 @@ pub struct Informed {
     /// by the wallet having been flat, only by who sent it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sweeps: Option<super::StopHunter>,
+    #[serde(default = "most")]
+    pub hit_rate: f64,
+    #[serde(default)]
+    pub view_noise_bps: f64,
     #[serde(default = "one")]
     pub intensity_mult: f64,
     #[serde(default = "one")]
@@ -123,6 +134,8 @@ impl Informed {
             return Err("horizon_slots must be at least 1".into());
         }
         finite_at_least_zero("edge_bps", self.edge_bps)?;
+        within("hit_rate", self.hit_rate, 0.5, 1.0)?;
+        finite_at_least_zero("view_noise_bps", self.view_noise_bps)?;
         finite_positive("intensity_mult", self.intensity_mult)?;
         finite_positive("size_mult", self.size_mult)?;
         if let Some(sweeps) = &self.sweeps {
@@ -170,7 +183,8 @@ impl Chaser {
 }
 
 /// Decoys: each wallet trades as an informed trader does (it sees the
-/// level `horizon_slots` ahead) until a slot drawn per session in
+/// level `horizon_slots` ahead, as imperfectly, by `hit_rate` and
+/// `view_noise_bps`) until a slot drawn per session in
 /// `informed_for`, and from then on keeps trading one way at the same
 /// pace, on a view it draws at random and holds for `horizon_slots`: a
 /// record that looks informed, and then isn't.
@@ -181,6 +195,10 @@ pub struct Decoy {
     pub wallets: u32,
     pub horizon_slots: u64,
     pub edge_bps: f64,
+    #[serde(default = "most")]
+    pub hit_rate: f64,
+    #[serde(default)]
+    pub view_noise_bps: f64,
     /// The window its wallets stop seeing ahead in, in slots into the
     /// session.
     pub informed_for: Window,
@@ -208,9 +226,55 @@ impl Decoy {
             return Err("informed_for needs an until after its from".into());
         }
         finite_at_least_zero("edge_bps", self.edge_bps)?;
+        within("hit_rate", self.hit_rate, 0.5, 1.0)?;
+        finite_at_least_zero("view_noise_bps", self.view_noise_bps)?;
         finite_positive("intensity_mult", self.intensity_mult)?;
         finite_positive("size_mult", self.size_mult)?;
         finite_positive("limit_bps", self.limit_bps)
+    }
+}
+
+/// What a trader that sees ahead makes of it. Its view is off by a normal
+/// draw at each look, and once a `horizon_slots` it is wrong altogether
+/// with chance `1 - hit_rate`, until the next draw: it takes the move it
+/// sees the wrong way, as a trader whose read of the market is mistaken
+/// does, and not a step at a time. Right on average, then, and not always.
+#[derive(Debug, Clone, Copy)]
+struct View {
+    horizon: u64,
+    edge_bps: f64,
+    hit_rate: f64,
+    noise_bps: f64,
+    wrong: bool,
+    /// The slot the current draw of right or wrong lasts to.
+    until: u64,
+}
+
+impl View {
+    fn new(horizon: u64, edge_bps: f64, hit_rate: f64, noise_bps: f64) -> Self {
+        Self {
+            horizon,
+            edge_bps,
+            hit_rate,
+            noise_bps,
+            wrong: false,
+            until: 0,
+        }
+    }
+
+    /// The side it trades at `at`, given the move ahead in bps.
+    fn side(&mut self, rng: &mut Rng, at: u64, ahead_bps: f64) -> Option<Side> {
+        if at >= self.until {
+            self.wrong = self.hit_rate < 1.0 && !rng.chance(self.hit_rate);
+            self.until = at + self.horizon;
+        }
+        let seen = if self.noise_bps > 0.0 {
+            ahead_bps + self.noise_bps * rng.normal()
+        } else {
+            ahead_bps
+        };
+        let side = side_of(seen, self.edge_bps)?;
+        Some(if self.wrong { side.opposite() } else { side })
     }
 }
 
@@ -319,6 +383,8 @@ pub(super) struct InformedTrader {
     wallets: Vec<Wallet>,
     path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
     rng: Rng,
+    /// One view a wallet, as a decoy's: the wallets err on their own.
+    views: Vec<View>,
     last: Option<u64>,
 }
 
@@ -330,24 +396,34 @@ impl InformedTrader {
         path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
         rng: Rng,
     ) -> Self {
+        let views = vec![
+            View::new(
+                spec.horizon_slots,
+                spec.edge_bps,
+                spec.hit_rate,
+                spec.view_noise_bps
+            );
+            wallets.len()
+        ];
         Self {
             spec,
             scale,
             wallets,
             path,
             rng,
+            views,
             last: None,
         }
     }
 
-    /// The side it trades `at`, if the move ahead is past its edge.
-    fn side(&self, now: &Moment) -> Option<Side> {
+    /// The side `wallet` trades `at`, if the move it sees ahead is past its edge.
+    fn side(&mut self, wallet: usize, now: &Moment) -> Option<Side> {
         let ahead = (self.path)(now.at + self.spec.horizon_slots);
         let (ahead, here) = match self.spec.sees {
             Sees::Book => (ahead.book_usd, now.book_usd),
             Sees::Level => (ahead.level_usd, now.level_usd),
         };
-        side_of((ahead / here - 1.0) * 10_000.0, self.spec.edge_bps)
+        self.views[wallet].side(&mut self.rng, now.at, (ahead / here - 1.0) * 10_000.0)
     }
 }
 
@@ -359,26 +435,26 @@ impl Actor for InformedTrader {
         if !Window::holds(&self.spec.active, last.at) {
             return;
         }
-        let Some(side) = self.side(last) else {
-            return;
-        };
-        let n = self
-            .rng
-            .poisson(self.scale.per_slot() * self.spec.intensity_mult * slots as f64);
-        for _ in 0..n {
-            let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult);
-            take_one(
-                &self.wallets,
-                &mut self.rng,
-                last.at,
-                side,
-                size,
-                last.book_usd,
-                self.spec.limit_bps,
-            )
-            .await;
+        let rate = self.scale.per_slot() * self.spec.intensity_mult / self.wallets.len() as f64;
+        let mut stepped = false;
+        for wallet in 0..self.wallets.len() {
+            let Some(side) = self.side(wallet, last) else {
+                continue;
+            };
+            stepped = true;
+            for _ in 0..self.rng.poisson(rate * slots as f64) {
+                let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult);
+                let reach = self.spec.limit_bps / 10_000.0;
+                let limit = match side {
+                    Side::Bid => last.book_usd * (1.0 + reach),
+                    Side::Ask => last.book_usd * (1.0 - reach),
+                };
+                self.wallets[wallet].take(last.at, side, size, limit).await;
+            }
         }
-        self.wallets[0].count("informed_steps", 1);
+        if stepped {
+            self.wallets[0].count("informed_steps", 1);
+        }
     }
 
     async fn report(&mut self, _: &mut ActorsReport) {}
@@ -453,6 +529,8 @@ pub(super) struct DecoyTrader {
     /// view and the slot it holds it until.
     fades: Vec<u64>,
     views: Vec<Option<(Side, u64)>>,
+    /// Each wallet's read of the path while it still sees ahead.
+    reads: Vec<View>,
     path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
     rng: Rng,
     last: Option<u64>,
@@ -473,12 +551,22 @@ impl DecoyTrader {
             .map(|_| from + rng.below(span as usize) as u64)
             .collect();
         let views = vec![None; wallets.len()];
+        let reads = vec![
+            View::new(
+                spec.horizon_slots,
+                spec.edge_bps,
+                spec.hit_rate,
+                spec.view_noise_bps
+            );
+            wallets.len()
+        ];
         Self {
             spec,
             scale,
             wallets,
             fades,
             views,
+            reads,
             path,
             rng,
             last: None,
@@ -491,7 +579,11 @@ impl DecoyTrader {
         let horizon = self.spec.horizon_slots;
         if now.at < self.fades[wallet] {
             let ahead = (self.path)(now.at + horizon).book_usd;
-            return side_of((ahead / now.book_usd - 1.0) * 10_000.0, self.spec.edge_bps);
+            return self.reads[wallet].side(
+                &mut self.rng,
+                now.at,
+                (ahead / now.book_usd - 1.0) * 10_000.0,
+            );
         }
         match self.views[wallet] {
             Some((side, until)) if now.at < until => Some(side),
@@ -551,6 +643,8 @@ mod tests {
             edge_bps: 50.0,
             sees: Sees::Book,
             sweeps: None,
+            hit_rate: 1.0,
+            view_noise_bps: 0.0,
             intensity_mult: 10.0,
             size_mult: 1.0,
             limit_bps: 50.0,
@@ -593,6 +687,8 @@ mod tests {
             edge_bps: 50.0,
             sees: Sees::Level,
             sweeps: None,
+            hit_rate: 1.0,
+            view_noise_bps: 0.0,
             intensity_mult: 10.0,
             size_mult: 1.0,
             limit_bps: 50.0,
@@ -699,6 +795,8 @@ mod tests {
             wallets: 1,
             horizon_slots: 20,
             edge_bps: 50.0,
+            hit_rate: 1.0,
+            view_noise_bps: 0.0,
             informed_for: Window {
                 from: 150,
                 until: Some(200),
