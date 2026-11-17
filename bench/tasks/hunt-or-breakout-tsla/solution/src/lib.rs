@@ -2,12 +2,17 @@
 //! then fade a stop hunt back to the level or follow a real break.
 //!
 //! Every Phoenix trader account is on chain, so the bot lists them once
-//! (`getProgramAccounts`) and reads each one's TSLA position every step. A
-//! run through a level is then classified from three things:
+//! (`getProgramAccounts`) and reads each one's TSLA position every step. It
+//! reads only the takers that came into this session: an account that held
+//! TSLA before the session started is the snapshot's, and one whose
+//! position moves against the book step after step is providing liquidity,
+//! not leading anything. A run through a level is then classified from
+//! three things:
 //!
 //! - **The leader.** One account that took a large clip in a single step
-//!   just before the run is a pusher. An account seen earlier in the
-//!   session pushing and then trading straight back out is a known hunter.
+//!   just before the run is a pusher. An account that pushed a run earlier
+//!   in the session and then traded straight back out of it is a known
+//!   hunter: a run it leads is faded whoever else joins.
 //! - **The crowd.** Two or more accounts that built a position the run's
 //!   way over the half-minute before it (before anyone chasing the run
 //!   could) are informed flow.
@@ -113,6 +118,8 @@ pub struct Watch {
     /// Each account's position at each step read, newest last.
     history: VecDeque<(u64, Vec<f64>)>,
     keep_slots: u64,
+    /// Each account's position at the first read.
+    pub first: Vec<f64>,
 }
 
 impl Watch {
@@ -124,6 +131,7 @@ impl Watch {
             lot: venue.lots_to_base_units(market, 1),
             history: VecDeque::new(),
             keep_slots,
+            first: Vec::new(),
         })
     }
 
@@ -181,6 +189,9 @@ impl Watch {
             for data in rpc_accounts(&refs)? {
                 now.push(data.map_or(0.0, |d| self.position(&d)));
             }
+        }
+        if self.first.is_empty() {
+            self.first = now.clone();
         }
         self.history.push_back((slot, now));
         while self
@@ -332,8 +343,14 @@ pub struct Reference {
     watch: Watch,
     /// Pushes seen, by account: the slot and the way.
     pushes: BTreeMap<usize, (u64, f64)>,
-    /// Accounts seen pushing and then trading back out.
+    /// Accounts seen pushing a run and then trading back out.
     hunters: Vec<usize>,
+    /// Pushes that led a run, by account: the slot, awaiting a trade back.
+    led: BTreeMap<usize, (u64, f64)>,
+    /// Steps each account's position moved with the book, and against it.
+    with_book: Vec<u32>,
+    against_book: Vec<u32>,
+    last_mid: Option<f64>,
     pending: Option<Pending>,
     trade: Option<Trade>,
     /// The last level traded, and when: a run back through it soon after
@@ -347,9 +364,18 @@ impl Reference {
     fn pusher(&self, dir: f64, slot: u64) -> Option<usize> {
         self.pushes
             .iter()
-            .filter(|(_, (at, way))| *way == dir && at + 12 >= slot)
+            .filter(|(i, (at, way))| *way == dir && at + 12 >= slot && self.taker(**i))
             .map(|(i, _)| *i)
             .next()
+    }
+
+    /// Whether an account is one of the session's takers: new this session
+    /// (no TSLA before it), and not one whose position keeps moving against
+    /// the book, as a maker's does.
+    fn taker(&self, i: usize) -> bool {
+        let new = self.watch.first.get(i).is_some_and(|p| p.abs() < 1e-9);
+        let (with, against) = (self.with_book[i], self.against_book[i]);
+        new && !(against >= 4 && against > 3 * with)
     }
 
     /// Who led a run through a level the mid just crossed `dir`.
@@ -360,7 +386,7 @@ impl Reference {
             .changes_between(CROWD_SLOTS, CROWD_BEFORE_SLOTS)
             .iter()
             .enumerate()
-            .filter(|(i, c)| Some(*i) != pusher && dir * **c >= CROWD_UNITS)
+            .filter(|(i, c)| Some(*i) != pusher && self.taker(*i) && dir * **c >= CROWD_UNITS)
             .count();
         (pusher, crowd)
     }
@@ -382,24 +408,45 @@ impl Reference {
         None
     }
 
-    fn learn(&mut self, slot: u64) {
-        for (i, c) in self.watch.last_changes().into_iter().enumerate() {
+    fn learn(&mut self, slot: u64, mid: Option<f64>) {
+        let changes = self.watch.last_changes();
+        if self.with_book.len() != changes.len() {
+            self.with_book = vec![0; changes.len()];
+            self.against_book = vec![0; changes.len()];
+        }
+        let moved = match (self.last_mid, mid) {
+            (Some(a), Some(b)) => b - a,
+            _ => 0.0,
+        };
+        if mid.is_some() {
+            self.last_mid = mid;
+        }
+        for (i, c) in changes.into_iter().enumerate() {
+            if c.abs() >= 0.05 && moved != 0.0 {
+                if c.signum() == moved.signum() {
+                    self.with_book[i] += 1;
+                } else {
+                    self.against_book[i] += 1;
+                }
+            }
             if c.abs() < PUSH_UNITS {
                 continue;
             }
             let way = c.signum();
-            match self.pushes.get(&i).copied() {
-                Some((at, before)) if before == -way && at + 120 >= slot => {
+            if let Some((at, led)) = self.led.get(&i).copied() {
+                if led == -way && at + 120 >= slot {
                     if !self.hunters.contains(&i) {
-                        log(&format!("slot {slot}: account {} pushed and came back", self.watch.accounts[i]));
+                        log(&format!(
+                            "slot {slot}: account {} pushed a run and came back",
+                            self.watch.accounts[i]
+                        ));
                         self.hunters.push(i);
                     }
-                    self.pushes.remove(&i);
-                }
-                _ => {
-                    self.pushes.insert(i, (slot, way));
+                    self.led.remove(&i);
+                    continue;
                 }
             }
+            self.pushes.insert(i, (slot, way));
         }
     }
 }
@@ -424,8 +471,9 @@ impl Strategy for Reference {
         let slot = market.slot;
         orders.cancel_all();
         self.watch.read(slot)?;
-        self.learn(slot);
-        let Some(mid) = mid(market) else {
+        let now = mid(market);
+        self.learn(slot, now);
+        let Some(mid) = now else {
             return Ok(());
         };
         let oracle = market.oracle;
@@ -441,6 +489,9 @@ impl Strategy for Reference {
                 .is_some_and(|(l, at)| (l - level).abs() < 1e-6 && at + 300 > slot);
             if !again && self.pending.is_none() {
                 let (pusher, crowd) = self.leaders(dir, slot);
+                if let Some(p) = pusher {
+                    self.led.insert(p, (slot, dir));
+                }
                 self.pending = Some(Pending {
                     dir,
                     level,
