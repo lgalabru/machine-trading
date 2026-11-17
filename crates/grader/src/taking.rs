@@ -388,7 +388,8 @@ mod tests {
     }
 
     fn guard(position: f64) -> TakingGuard {
-        let mut allowance = mtx_core::Mandate::perp("phoenix", "SPCX", 20.0, 250.0).universe[0].clone();
+        let mut allowance =
+            mtx_core::Mandate::perp("phoenix", "SPCX", 20.0, 250.0).universe[0].clone();
         allowance.taking = Some(Taking::ReduceOnly);
         let mut guard = TakingGuard::new(&allowance).unwrap();
         guard.position = position;
