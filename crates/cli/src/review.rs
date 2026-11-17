@@ -299,6 +299,7 @@ pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Valu
             &crate::publish::repo_root(),
             &root.path,
             &discover(&root.path),
+            false,
         )?;
     }
     let state = AppState {

@@ -103,71 +103,124 @@ pub(crate) fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Whether a task's agent starts from the base's `-agent` image (see
-/// `bench/image/Dockerfile`): its network is an allowlist.
-fn guarded_task(root: &Path, task: &str) -> bool {
-    std::fs::read_to_string(
-        root.join("bench/tasks")
-            .join(task)
-            .join("environment/Dockerfile"),
-    )
-    .is_ok_and(|text| {
-        text.lines().any(|line| {
-            line.strip_prefix("FROM ").is_some_and(|image| {
-                image
-                    .split(['@', ' '])
-                    .next()
-                    .is_some_and(|name| name.ends_with("-agent"))
-            })
-        })
-    })
+/// Whether a task.toml's `[agent]` limits its network to an allowlist.
+fn allowlisted(task_toml: &str) -> bool {
+    let mut in_agent = false;
+    for line in task_toml.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_agent = line == "[agent]";
+        } else if in_agent
+            && line
+                .split_once('=')
+                .is_some_and(|(k, v)| k.trim() == "network_mode" && v.trim() == "\"allowlist\"")
+        {
+            return true;
+        }
+    }
+    false
 }
 
-/// The trials in `trials` that ran a native harness (Claude Code, Codex) on a
-/// task whose agent is guarded, or on one `root` doesn't hold (so can't be
-/// shown unguarded). Native harnesses can't be guarded: a provider's API
-/// must stay open to them, and Harbor opens it itself when asked nothing.
-fn native_on_guarded(root: &Path, trials: &[PathBuf]) -> Vec<String> {
+/// Whether a trial's task ran with its agent guarded, as it ran: from the
+/// `task.toml` the release archive keeps beside the trial (`tasks/<task>/`),
+/// else the one its config names, else the checkout's. None when none is
+/// found (a task since renamed or retired).
+fn ran_guarded(root: &Path, trial: &Path, task: &str) -> Option<bool> {
+    let from_archive = trial
+        .ancestors()
+        .skip(1)
+        .take(6)
+        .map(|d| d.join("tasks").join(task).join("task.toml"));
+    let from_config = std::fs::read_to_string(trial.join("config.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|c| c["task"]["path"].as_str().map(PathBuf::from))
+        .map(|p| root.join(p).join("task.toml"));
+    let from_checkout = root.join("bench/tasks").join(task).join("task.toml");
+    from_archive
+        .chain(from_config)
+        .chain(Some(from_checkout))
+        .find_map(|path| std::fs::read_to_string(path).ok())
+        .map(|text| allowlisted(&text))
+}
+
+/// Whether `ip` is a private, loopback or link-local IPv4 address: where the
+/// bench's key proxy listens, never a provider.
+fn private_host(host: &str) -> bool {
+    let Ok(ip) = host.parse::<std::net::Ipv4Addr>() else {
+        return false;
+    };
+    ip.is_private() || ip.is_loopback() || ip.is_link_local()
+}
+
+/// Whether a trial is the bench's guarded Hermes: `mtx_hermes:Hermes` (exactly),
+/// reaching its model through the key proxy's private address with the proxy's
+/// token variable, and allowed no host but private ones. Anything else (every
+/// other agent, a plain `hermes`, any casing) holds a real key and has its
+/// provider's host opened by Harbor.
+fn bench_hermes(result: &Value) -> bool {
+    let agent = &result["config"]["agent"];
+    let host = agent["base_url"]
+        .as_str()
+        .and_then(|u| u.split_once("://"))
+        .map(|(_, rest)| rest.split(['/', ':']).next().unwrap_or(""));
+    agent["name"].as_str() == Some("mtx_hermes:Hermes")
+        && agent["model_api_key_name"].as_str() == Some("MTX_PROXY_TOKEN")
+        && host.is_some_and(private_host)
+        && agent["extra_allowed_hosts"]
+            .as_array()
+            .is_some_and(|hosts| hosts.iter().all(|h| h.as_str().is_some_and(private_host)))
+}
+
+/// The trials in `trials` that ran on a guarded task with anything but the
+/// bench's Hermes, or whose result or task can't be read. A task no `task.toml`
+/// can be found for counts as guarded when `unknown_is_guarded` (publishing
+/// something new), not when it is already published.
+fn unguarded_trials(root: &Path, trials: &[PathBuf], unknown_is_guarded: bool) -> Vec<String> {
     let mut found = Vec::new();
     for trial in trials {
-        let Some(result) = std::fs::read_to_string(trial.join("result.json"))
+        let result = std::fs::read_to_string(trial.join("result.json"))
             .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        else {
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+        let task = result
+            .as_ref()
+            .and_then(|r| r["task_name"].as_str())
+            .and_then(|n| n.rsplit('/').next())
+            .filter(|t| !t.is_empty() && *t != "." && *t != "..");
+        let (Some(result), Some(task)) = (&result, task) else {
+            found.push(format!("{} (result or task unreadable)", trial.display()));
             continue;
         };
-        let agent = result["agent_info"]["name"].as_str().unwrap_or("");
-        if !matches!(agent, "codex" | "claude-code") {
-            continue;
-        }
-        let task = result["task_name"]
-            .as_str()
-            .unwrap_or("")
-            .rsplit('/')
-            .next()
-            .unwrap_or("");
-        let known = root.join("bench/tasks").join(task).is_dir();
-        if !known || guarded_task(root, task) {
+        let guarded = ran_guarded(root, trial, task).unwrap_or(unknown_is_guarded);
+        if guarded && !bench_hermes(result) {
+            let agent = result["agent_info"]["name"].as_str().unwrap_or("?");
             found.push(format!("{} ({agent} on {task})", trial.display()));
         }
     }
     found
 }
 
-/// Refuse what ran unguarded: a marked batch, or any trial of a native
-/// harness on a guarded task, wherever the trial sits and whatever it was
-/// copied with. Checked by `publish` and `export`.
-pub(crate) fn refuse_unguarded(root: &Path, dir: &Path, trials: &[PathBuf]) -> Result<()> {
+/// Refuse what ran unguarded: a marked batch, or any trial on a guarded task
+/// that isn't the bench's Hermes (a native harness, or any agent Harbor opens
+/// a provider host for), wherever the trial sits and whatever it was copied
+/// with. `publish` (`new`) also refuses a task it can't find a task.toml for;
+/// `export` of releases already published doesn't.
+pub(crate) fn refuse_unguarded(
+    root: &Path,
+    dir: &Path,
+    trials: &[PathBuf],
+    new: bool,
+) -> Result<()> {
     if let Some(why) = marked_unguarded(dir) {
         bail!("{why}: it was not guarded and can't be published");
     }
-    let native = native_on_guarded(root, trials);
-    if !native.is_empty() {
+    let bad = unguarded_trials(root, trials, new);
+    if !bad.is_empty() {
         bail!(
-            "{} trial{} ran a native harness on a guarded task, which can't be guarded (its provider's API is open to it): {}",
-            native.len(),
-            if native.len() == 1 { "" } else { "s" },
-            native.into_iter().take(3).collect::<Vec<_>>().join(", ")
+            "{} trial{} ran on a guarded task with an agent that isn't the bench's key-proxy Hermes (its provider's API is open to it, or it can't be read): {}",
+            bad.len(),
+            if bad.len() == 1 { "" } else { "s" },
+            bad.into_iter().take(3).collect::<Vec<_>>().join(", ")
         );
     }
     Ok(())
@@ -324,7 +377,7 @@ pub fn publish(
     }
     // A batch run with MTX_UNGUARDED, or a native harness's trial on a
     // guarded task, whichever way it got here.
-    refuse_unguarded(&repo_root(), &batch, &trials)?;
+    refuse_unguarded(&repo_root(), &batch, &trials, true)?;
     let pending: Vec<String> = trials
         .iter()
         .filter(|t| !t.join("result.json").is_file())
@@ -1162,7 +1215,7 @@ mod tests {
         std::fs::write(trial.join("config.json"), r#"{"trial_name":"task__a"}"#).unwrap();
         std::fs::write(
             trial.join("result.json"),
-            r#"{"trial_name":"task__a","config":{"task":{"name":"o/task"}}}"#,
+            r#"{"trial_name":"task__a","task_name":"o/task","agent_info":{"name":"hermes"},"config":{"task":{"name":"o/task"},"agent":{"name":"mtx_hermes:Hermes","model_api_key_name":"MTX_PROXY_TOKEN","base_url":"http://10.0.0.1:1/x","extra_allowed_hosts":[]}}}"#,
         )
         .unwrap();
         std::fs::write(trial.join("verifier/report.json"), "{}").unwrap();
@@ -1305,47 +1358,136 @@ mod tests {
     }
 
     #[test]
-    fn a_native_harness_on_a_guarded_task_is_refused_wherever_the_trial_sits() {
+    fn a_guarded_task_accepts_only_the_bench_hermes_wherever_the_trial_sits() {
         let tmp = std::env::temp_dir().join(format!("mtx-native-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-        let task = |name: &str, from: &str| {
-            let env = tmp.join("bench/tasks").join(name).join("environment");
-            std::fs::create_dir_all(&env).unwrap();
+        let task = |name: &str, guarded: bool| {
+            let dir = tmp.join("bench/tasks").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            let net = if guarded {
+                "network_mode = \"allowlist\"\n"
+            } else {
+                ""
+            };
             std::fs::write(
-                env.join("Dockerfile"),
-                format!("FROM ghcr.io/x/machine-trading:{from}\n"),
+                dir.join("task.toml"),
+                format!("[agent]\nuser = \"agent\"\n{net}[environment]\nx = 1\n"),
             )
             .unwrap();
         };
-        task("guarded-spcx", "0.12.0-agent");
-        task("plain-spcx", "0.12.0");
+        task("guarded-spcx", true);
+        task("plain-spcx", false);
         let trial = |dir: &str, agent: &str, task: &str| {
             let t = tmp.join("runs").join(dir);
             std::fs::create_dir_all(&t).unwrap();
+            let config = json!({"name": agent, "model_api_key_name": "MTX_PROXY_TOKEN",
+                "base_url": "http://10.200.0.1:38265/x", "extra_allowed_hosts": []});
             std::fs::write(
                 t.join("result.json"),
-                json!({"trial_name": dir, "task_name": format!("solana-foundation/{task}"), "agent_info": {"name": agent}}).to_string(),
+                json!({"trial_name": dir, "task_name": format!("solana-foundation/{task}"),
+                    "agent_info": {"name": "hermes"}, "config": {"agent": config}})
+                .to_string(),
             )
             .unwrap();
             t
         };
-        let hermes = trial("a", "hermes", "guarded-spcx");
-        let codex = trial("b", "codex", "guarded-spcx");
-        let claude = trial("c", "claude-code", "guarded-spcx");
-        let plain = trial("d", "codex", "plain-spcx");
-        let unknown = trial("e", "codex", "elsewhere-spcx");
+        let hermes = trial("a", "mtx_hermes:Hermes", "guarded-spcx");
         let run = tmp.join("runs");
-        assert!(refuse_unguarded(&tmp, &run, &[hermes.clone(), plain]).is_ok());
-        for bad in [codex, claude, unknown] {
-            let error = refuse_unguarded(&tmp, &bad, &[hermes.clone(), bad.clone()]).unwrap_err();
-            assert!(error.to_string().contains("native harness"), "{error}");
+        let check = |trials: &[PathBuf], new: bool| refuse_unguarded(&tmp, &run, trials, new);
+        // The bench's Hermes on a guarded task, anything on an unguarded one.
+        assert!(check(&[hermes.clone(), trial("d", "codex", "plain-spcx")], true).is_ok());
+        // Every other agent on a guarded task, in any casing.
+        for (i, agent) in [
+            "codex",
+            "Codex",
+            "CODEX",
+            "claude-code",
+            "Claude-Code",
+            "claude_code",
+            "gemini-cli",
+            "opencode",
+            "cursor-cli",
+            "terminus-2",
+            "hermes",
+            "mtx_hermes:hermes",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let bad = trial(&format!("x{i}"), agent, "guarded-spcx");
+            let error = check(&[hermes.clone(), bad], true).unwrap_err();
+            assert!(
+                error.to_string().contains("isn't the bench's"),
+                "{agent}: {error}"
+            );
+        }
+        // The bench's Hermes with a public host, or the real key's name, is refused.
+        for patch in [
+            json!({"base_url": "https://api.openai.com/v1"}),
+            json!({"model_api_key_name": "OPENAI_API_KEY"}),
+            json!({"extra_allowed_hosts": ["api.openai.com"]}),
+            json!({"base_url": null}),
+        ] {
+            let bad = trial("h", "mtx_hermes:Hermes", "guarded-spcx");
+            let mut result: Value =
+                serde_json::from_str(&std::fs::read_to_string(bad.join("result.json")).unwrap())
+                    .unwrap();
+            for (k, v) in patch.as_object().unwrap() {
+                result["config"]["agent"][k] = v.clone();
+            }
+            std::fs::write(bad.join("result.json"), result.to_string()).unwrap();
+            assert!(check(&[bad], true).is_err(), "{patch}");
+        }
+        // What can't be read is refused: a broken result, no task, "." as the task.
+        let broken = trial("b1", "mtx_hermes:Hermes", "guarded-spcx");
+        std::fs::write(broken.join("result.json"), "{not json").unwrap();
+        assert!(check(&[broken], true).is_err());
+        assert!(check(&[trial("b2", "mtx_hermes:Hermes", "")], true).is_err());
+        assert!(check(&[trial("b3", "mtx_hermes:Hermes", ".")], true).is_err());
+        // A task no task.toml is found for: guarded when publishing, not when
+        // exporting what is already published (a renamed or retired task).
+        let gone = trial("g", "claude-code", "retired-spcx");
+        assert!(check(std::slice::from_ref(&gone), true).is_err());
+        assert!(check(&[gone], false).is_ok());
+        // A release archive's own task.toml says how the task ran: guarded
+        // there means refused, whatever the checkout holds.
+        let release = tmp.join("release");
+        let archived = release.join("tasks/old-spcx");
+        std::fs::create_dir_all(&archived).unwrap();
+        std::fs::write(
+            archived.join("task.toml"),
+            "[agent]\nnetwork_mode = \"allowlist\"\n",
+        )
+        .unwrap();
+        let unguarded_old = release.join("tasks/older-spcx");
+        std::fs::create_dir_all(&unguarded_old).unwrap();
+        std::fs::write(
+            unguarded_old.join("task.toml"),
+            "[agent]\nuser = \"agent\"\n",
+        )
+        .unwrap();
+        for (name, task, ok) in [("t1", "old-spcx", false), ("t2", "older-spcx", true)] {
+            let t = release.join("job").join(name);
+            std::fs::create_dir_all(&t).unwrap();
+            std::fs::write(
+                t.join("result.json"),
+                json!({"trial_name": name, "task_name": task,
+                "agent_info": {"name": "claude-code"}})
+                .to_string(),
+            )
+            .unwrap();
+            assert_eq!(
+                refuse_unguarded(&tmp, &release, &[t], false).is_ok(),
+                ok,
+                "{task}"
+            );
         }
         // A marker above a job is found from inside it.
         let job = tmp.join("batch/job");
         std::fs::create_dir_all(&job).unwrap();
-        assert!(refuse_unguarded(&tmp, &job, &[]).is_ok());
+        assert!(refuse_unguarded(&tmp, &job, &[], true).is_ok());
         std::fs::write(tmp.join("batch/.unguarded"), "").unwrap();
-        let error = refuse_unguarded(&tmp, &job, &[]).unwrap_err();
+        let error = refuse_unguarded(&tmp, &job, &[], true).unwrap_err();
         assert!(error.to_string().contains("not guarded"), "{error}");
         std::fs::remove_dir_all(&tmp).unwrap();
     }

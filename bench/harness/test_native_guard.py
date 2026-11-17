@@ -83,7 +83,15 @@ class NativeGuard(unittest.TestCase):
         # The task's own instruction and a local chain aren't attempts.
         self.assertEqual(models.fetch_flags("curl http://localhost:8899 -d x"), [])
         steps = json.dumps({"steps": [{"source": "user", "message": "curl https://github.com/x"}, {"source": "agent", "message": "cargo build"}]})
-        self.assertEqual(models.fetch_flags(models.agent_text(steps)), [])
+        self.assertEqual(models.trajectory_flags(steps), [])
+        # A client call counts with an outside URL in the SAME call, not elsewhere.
+        def traj(*calls):
+            return json.dumps({"steps": [{"source": "agent", "tool_calls": [{"function_name": "bash", "arguments": {"command": c}} for c in calls]}]})
+        self.assertEqual(models.trajectory_flags(traj("curl -s http://127.0.0.1:8899", "sed -n 1,5p note # see https://github.com/a/b/issues/1")), ["github"])
+        self.assertIn("curl", models.trajectory_flags(traj("curl -s https://example.org/x")))
+        # What came back isn't what the agent did.
+        observed = json.dumps({"steps": [{"source": "agent", "tool_calls": [{"function_name": "bash", "arguments": {"command": "ls ~/.codex"}}], "observation": "auth.json -> /x https://github.com/y"}]})
+        self.assertEqual(models.trajectory_flags(observed), [])
 
 
 if __name__ == "__main__":

@@ -251,14 +251,26 @@ def fetch_flags(text: str) -> list[str]:
     ]
 
 
-def agent_text(raw: str) -> str:
-    """A trajectory's agent side: its steps but the task's own instruction and
-    system text, which name curl and the hosts the task allows."""
+def trajectory_flags(raw: str) -> list[str]:
+    """A trajectory's fetch flags, from what the agent did: each of its tool
+    calls on its own (a client call counts only with an outside URL in the same
+    call), so the task's text, the files it printed and what came back don't
+    count. The server-side web tools that ran are read from the whole step."""
     try:
         steps = json.loads(raw)["steps"]
     except (ValueError, KeyError, TypeError):
-        return raw
-    return json.dumps([s for s in steps if not isinstance(s, dict) or s.get("source") not in ("user", "system")])
+        return fetch_flags(raw)
+    flags: set[str] = set()
+    for step in steps:
+        if not isinstance(step, dict) or step.get("source") in ("user", "system"):
+            continue
+        if re.search(FETCH_PATTERNS["web search/fetch ran"], json.dumps(step)):
+            flags.add("web search/fetch ran")
+        calls = step.get("tool_calls")
+        units = [json.dumps(c) for c in calls] if calls else [json.dumps({k: v for k, v in step.items() if k != "observation"})]
+        for unit in units:
+            flags.update(fetch_flags(unit))
+    return [name for name in FETCH_PATTERNS if name in flags]
 
 
 def fetch_scan(batch: Path) -> dict[str, list[str]]:
@@ -266,7 +278,7 @@ def fetch_scan(batch: Path) -> dict[str, list[str]]:
     into batch.json's `fetch_flags`, for a run that wasn't guarded."""
     found = {}
     for trajectory in sorted(batch.glob("**/agent/trajectory.json")):
-        flags = fetch_flags(agent_text(trajectory.read_text(errors="replace")))
+        flags = trajectory_flags(trajectory.read_text(errors="replace"))
         if flags:
             found[str(trajectory.relative_to(batch))] = flags
     (batch / ".fetch-scan.json").write_text(json.dumps(found, indent=2))
