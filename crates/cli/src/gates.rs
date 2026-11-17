@@ -2757,7 +2757,13 @@ mod tests {
         let practice = root.join("bench/tasks/t/environment/practice");
         std::fs::create_dir_all(&practice).unwrap();
         let g = generators::generator("weekend-gap").unwrap();
-        let mut scenario = g.practice("practice", 6, 5).remove(0);
+        // A session where an informed trader traded: the set holds some, in
+        // whatever order it was shuffled.
+        let mut scenario = g
+            .practice("practice", 6, 5)
+            .into_iter()
+            .find(|s| s.description.contains("account"))
+            .unwrap();
         assert!(
             scenario.description.contains("account"),
             "{}",

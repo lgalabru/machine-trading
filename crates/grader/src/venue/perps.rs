@@ -372,6 +372,17 @@ impl Seat for PerpSeat {
             .parse()
             .unwrap_or(f64::NAN)
     }
+
+    fn lot(&self) -> f64 {
+        self.trader
+            .inner
+            .market()
+            .instrument
+            .lot_size
+            .to_string()
+            .parse()
+            .unwrap_or(0.0)
+    }
 }
 
 /// A [`PerpSeat`] whose transactions are each unique among its own: a
@@ -497,6 +508,10 @@ impl Seat for UniquePerpSeat {
 
     fn tick(&self) -> f64 {
         self.seat.tick()
+    }
+
+    fn lot(&self) -> f64 {
+        self.seat.lot()
     }
 
     async fn index(&self) -> SeatResult<Option<f64>> {

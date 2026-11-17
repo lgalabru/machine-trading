@@ -229,6 +229,12 @@ pub trait Seat: Send + Sync {
         0.0
     }
 
+    /// The market's lot, in base units: the smallest size an order can
+    /// have; 0 where the seat has none.
+    fn lot(&self) -> f64 {
+        0.0
+    }
+
     /// The price the market itself refers to, where it has one: a perp's
     /// index.
     async fn index(&self) -> SeatResult<Option<f64>> {
