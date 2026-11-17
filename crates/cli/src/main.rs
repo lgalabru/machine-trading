@@ -1414,6 +1414,7 @@ async fn run() -> Result<()> {
             // A drawn set's session keys come from the batch's secret, so
             // every grade of it signs the same; otherwise from a fresh one.
             let mut keys = SessionKeys::random();
+            let draw_family = draw.clone();
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
                     let (seed, hash, batch_keys) = eval_seed()?;
@@ -1442,10 +1443,7 @@ async fn run() -> Result<()> {
             if let Some(path) = &reward {
                 remove_if_present(path)?;
             }
-            // Under v2's rules a bot's seed can't name its session.
-            if v2_sessions {
-                keys = keys.salt_strategy_seeds();
-            }
+            keys = grade_keys(keys, draw_family.is_some(), v2_sessions);
             let options = |jobs: usize, anchor_jobs: usize| GradeOptions {
                 snapshot_dir: &sessions.snapshot,
                 bot_dir: &sessions.bot,
@@ -1889,6 +1887,18 @@ fn eval_seed() -> anyhow::Result<(u64, String, SessionKeys)> {
     ))
 }
 
+/// The keys a grade runs its sessions with: a bot's seed is a hash of its
+/// session's name unless the grade's secret salts it, and a name says which
+/// session of a drawn set it is.
+fn grade_keys(keys: SessionKeys, drawn: bool, v2_sessions: bool) -> SessionKeys {
+    let _ = drawn;
+    if v2_sessions {
+        keys.salt_strategy_seeds()
+    } else {
+        keys
+    }
+}
+
 /// Scoring v2 scores every session of the set: a grade that stops at the
 /// bot's first breach would leave it a truncated one.
 fn v2_scores_every_session(
@@ -1929,7 +1939,28 @@ mod tests {
     use clap::Parser;
     use mtx_grader::scenario::ShockFamily;
 
-    use super::{Cli, keep_other_anchors, save_anchors, set_anchors, v2_scores_every_session};
+    use mtx_grader::keys::SessionKeys;
+
+    use super::{
+        Cli, grade_keys, keep_other_anchors, save_anchors, set_anchors, v2_scores_every_session,
+    };
+
+    #[test]
+    fn a_drawn_grade_salts_what_its_bots_seed_says_of_their_session() {
+        let seed = |keys: &SessionKeys| keys.role("bot").session(2, "hidden-3").strategy_seed("hidden-3");
+        let named = mtx_core::turns::scenario_seed("hidden-3");
+        let fresh = || SessionKeys::from_eval_seed(b"a batch secret of at least 32 bytes..");
+        assert_ne!(seed(&grade_keys(fresh(), true, false)), named);
+        assert_ne!(seed(&grade_keys(fresh(), true, true)), named);
+        assert_ne!(seed(&grade_keys(fresh(), false, true)), named);
+        // Scenario files graded by hand keep the seed their name gives.
+        assert_eq!(seed(&grade_keys(fresh(), false, false)), named);
+        // And a drawn set's salt is the batch's: the same in every grade.
+        assert_eq!(
+            seed(&grade_keys(fresh(), true, false)),
+            seed(&grade_keys(fresh(), true, true))
+        );
+    }
 
     #[test]
     fn v2_grades_every_session_so_it_refuses_a_grade_that_stops_at_the_first_breach() {

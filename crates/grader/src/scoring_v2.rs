@@ -1450,6 +1450,56 @@ mod tests {
     }
 
     #[test]
+    fn v2_refuses_anchors_that_are_nearly_the_same() {
+        // Reference 899.94 over six sessions, informed 900: a 0.007% gap, so
+        // 0.1% of PnL would move the score by about 0.5.
+        let close = [149.99; 6];
+        let refused = score(&set(&[100.0; 6], &close), &informed(), None, None)
+            .unwrap_err();
+        assert!(refused.contains("apart"), "{refused}");
+        // Reference at 95% of the informed bot: the least gap that scores.
+        let wide = [142.5 - 1e-9; 6];
+        assert!(score(&set(&[100.0; 6], &wide), &informed(), None, None).is_ok());
+        let inside = [143.0; 6];
+        assert!(score(&set(&[100.0; 6], &inside), &informed(), None, None).is_err());
+    }
+
+    #[test]
+    fn v2_refuses_anchors_that_are_not_numbers() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut informed_nan = set(&REFERENCE, &REFERENCE);
+            informed_nan[0].informed_pnl_usd = Some(bad);
+            let refused = score(&informed_nan, &informed(), None, None).unwrap_err();
+            assert!(refused.contains("hidden-0") && refused.contains("finite"), "{bad}: {refused}");
+            let mut reference = set(&REFERENCE, &REFERENCE);
+            reference[1].reference_pnl_usd = bad;
+            let refused = score(&reference, &informed(), None, None).unwrap_err();
+            assert!(refused.contains("hidden-1") && refused.contains("finite"), "{bad}: {refused}");
+            let mut hindsight = without_informed(set(&REFERENCE, &REFERENCE));
+            hindsight[2].hindsight_ceiling_usd = Some(bad);
+            let refused = score(&hindsight, &Params::new(Ceiling::Informed { eta_override: None }), None, None)
+                .unwrap_err();
+            assert!(refused.contains("hidden-2") && refused.contains("finite"), "{bad}: {refused}");
+        }
+    }
+
+    #[test]
+    fn a_breach_is_floored_even_when_the_limit_is_zero() {
+        // A session that breaches a limit of 0 and made money anyway: its
+        // floor is the worst loss it could have made, here the bound.
+        let mut sessions = set(&[150.0; 6], &REFERENCE);
+        sessions[0].worst_loss_usd = 0.0;
+        sessions[0].breach = Some("drew down past its limit".into());
+        let breached = score(&sessions, &informed(), None, None).unwrap();
+        let floor = -breached.loss_weight * sessions[0].bound_usd;
+        assert!(
+            breached.sessions[0].bot_usd <= floor + 1e-9,
+            "{} against a floor of {floor}",
+            breached.sessions[0].bot_usd
+        );
+    }
+
+    #[test]
     fn the_informed_bot_scores_one_and_beating_it_more() {
         let at = score(&set(&[150.0; 6], &REFERENCE), &informed(), None, None).unwrap();
         assert!((at.raw - 1.0).abs() < 1e-12, "{}", at.raw);
