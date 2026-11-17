@@ -1,0 +1,16 @@
+# The ladder's non-reading rungs for event-follow-through-tsla, one process
+# picked by MTX_NAIVE (the ladder sets it per rung).
+[package]
+name = "mtx-bot-event-follow-through-naive"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-event-follow-through-naive"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-event-follow-through = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }
