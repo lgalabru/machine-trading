@@ -1,5 +1,36 @@
 # Design record: smart-money-decay-nvda
 
+**Status: RETIRED (2026-11-17).** Michael's decision: the benchmark targets
+desk mandates (checklist item 0), where the read is graded through a duty
+the desk must meet (an order to work, a hedge to hold, quotes to keep). This
+card is an alpha card: a prop flow book with limits, whose only job is to
+make money off the tape. It passed Gate 0 (two fresh 72-session sets,
+informed wallets right 85% of horizons, voting bots: informed +$36 a
+session, every non-reading rung losing, the reference 0.36 of the informed
+bot, the order holding on 0.993 of bootstrapped sets), so it was retired for
+its framing, not its numbers. The branch is kept.
+
+**Lessons for the cards that follow.**
+- **Antithetic sets.** With independent fair coins for each move, a blind
+  direction's 72-session total still swings about $400 either way (set A's
+  blind-long made +$359 at z +0.86, set B's lost $382), and that luck alone
+  took one set's order odds to 0.82. Drawing hidden and practice sets as
+  mirrored twins (the same draws with the whole log-path, and so the
+  informed actors' future, mirrored; one twin per session the bot sees)
+  makes every blind direction net to about zero per pair, so the order test
+  measures the read rather than the blind rung's luck. Don't balance signs
+  within a session: that leaks the remaining moves' direction.
+- **Fallible informed actors (#114, hit_rate 0.85).** A wrong horizon can't
+  be seen in the price before its burst ends; bots that follow single
+  informed takes, or flip, lose most of the edge. Voting across trusted
+  wallets (enter when two agree, hold without flips) recovers it.
+- **Probe ladders.** Every rung must be graded with v2 in the same pass:
+  reusing core reports graded without it leaves the probe gate with no v2
+  to judge.
+- **Faded decoys** should keep the informed rhythm (bursts, not continuous
+  flow), or their activity alone is a tell.
+
+
 Written to `skills/trading-task-design/references/design-record.md`. The
 README says what the task is; this says why it's built this way, and what
 each version learned. It is card B2 of the second Phoenix perps batch
