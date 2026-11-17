@@ -99,7 +99,9 @@ mod tx;
 
 #[cfg(feature = "phoenix")]
 pub use bot::*;
-pub use inputs::{BrokerHaircut, CloseOuts, SessionOrder, SessionVarError, StartPositions};
+pub use inputs::{
+    BrokerHaircut, CloseOuts, PerpMarkets, SessionOrder, SessionVarError, StartPositions,
+};
 #[cfg(unix)]
 pub use mtx_core::Turns;
 pub use mtx_core::{
@@ -119,8 +121,8 @@ pub use strategy::{
     LiquidityPosition, LiquidityShape, MAX_TARGET_ORDERS, Market, MarketKind, OpenOrder, Orders,
     OwnFill, Planned, Position, PriceRange, RPC_METHODS, Reports, Rfq, Role, Route, SESSION_VARS,
     SendSource, SendState, SendStatus, Session, Side, Strategy, TimeInForce, TxOptions, VenueInfo,
-    VenueView, log, phoenix_market_address, plan, plan_sheet, plan_sheet_with, resting_after, rpc,
-    rpc_account, rpc_accounts, step_offline, venue_views,
+    VenueView, log, phoenix_market_address, plan, plan_sheet, plan_sheet_under, plan_sheet_with,
+    resting_after, rpc, rpc_account, rpc_accounts, step_offline, venue_views,
 };
 
 #[cfg(feature = "phoenix")]

@@ -438,8 +438,11 @@ impl WeekendFamily {
             reference_max_drawdown_usd: None,
             informed_max_drawdown_usd: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,
@@ -452,7 +455,7 @@ impl WeekendFamily {
 
     /// `count` scenarios named `<prefix>-<n>`, each mix of informed trader and
     /// worker in proportion to its odds (largest remainder). Seeds derive
-    /// from `seed`; scenarios keep their draw order.
+    /// from `seed`; the scenarios are then shuffled.
     pub fn draw_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<(Scenario, WeekendShape)> {
         let mut cells: Vec<((bool, bool), usize, f64)> =
             [(true, true), (true, false), (false, true), (false, false)]
@@ -477,9 +480,9 @@ impl WeekendFamily {
         for &i in by_remainder.iter().take(short) {
             cells[i].1 += 1;
         }
-        let mut scenarios = Vec::with_capacity(count);
+        let mut drawn = Vec::with_capacity(count);
         let mut draw = 0u64;
-        while scenarios.len() < count {
+        while drawn.len() < count {
             draw += 1;
             let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(draw);
             let kind = self.kind(draw_seed);
@@ -488,10 +491,13 @@ impl WeekendFamily {
                 continue;
             }
             cell.1 -= 1;
-            let name = format!("{prefix}-{}", scenarios.len() + 1);
-            scenarios.push(self.draw(&name, draw_seed));
+            drawn.push(draw_seed);
         }
-        scenarios
+        crate::scenario::shuffled(drawn, seed)
+            .into_iter()
+            .enumerate()
+            .map(|(i, draw_seed)| self.draw(&format!("{prefix}-{}", i + 1), draw_seed))
+            .collect()
     }
 
     pub fn sample_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<Scenario> {

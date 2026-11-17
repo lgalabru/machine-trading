@@ -75,6 +75,10 @@ fn half() -> f64 {
     0.5
 }
 
+fn most() -> f64 {
+    0.85
+}
+
 /// RFQ clients' settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -89,6 +93,11 @@ pub struct RfqClients {
     pub lead_slots: u64,
     #[serde(default = "one")]
     pub correlation: f64,
+    /// How often an informed client's request follows what it sees: the
+    /// rest of the time its read of the path is mistaken, and it asks, and
+    /// values the asset, the other way.
+    #[serde(default = "most")]
+    pub hit_rate: f64,
     /// Requests per 100 slots, over all clients.
     #[serde(default = "one")]
     pub per_100_slots: f64,
@@ -113,6 +122,15 @@ pub struct RfqClients {
     pub desk_base: f64,
     #[serde(default)]
     pub desk_usdc: f64,
+    /// Score the desk over the idle desk: the session's PnL, and the
+    /// drawdown its mandate is audited by, leave out what `desk_base` of
+    /// the asset would have made held through the session, its move at the
+    /// reference price. The desk's earnings from its fills and from the
+    /// inventory they leave stay in. A desk that quotes nothing then scores
+    /// exactly 0. By default the asset the desk starts with counts as the
+    /// session's value, and its move is the desk's PnL.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub over_idle_desk: bool,
 }
 
 impl Default for RfqClients {
@@ -122,6 +140,7 @@ impl Default for RfqClients {
             informed_share: 0.0,
             lead_slots: 0,
             correlation: one(),
+            hit_rate: most(),
             per_100_slots: one(),
             size_mult: one(),
             deadline_slots: eight(),
@@ -129,6 +148,7 @@ impl Default for RfqClients {
             two_way_share: half(),
             desk_base: 0.0,
             desk_usdc: 0.0,
+            over_idle_desk: false,
         }
     }
 }
@@ -147,6 +167,9 @@ impl RfqClients {
         };
         share("informed_share", self.informed_share)?;
         share("correlation", self.correlation)?;
+        if !(0.5..=1.0).contains(&self.hit_rate) {
+            return Err("hit_rate must be between 0.5 and 1".into());
+        }
         share("two_way_share", self.two_way_share)?;
         if self.informed_share > 0.0 && self.lead_slots == 0 {
             return Err("informed clients need lead_slots".into());
@@ -174,6 +197,9 @@ struct Request {
     size: f64,
     /// The last slot a response is taken at, on the chain's clock.
     deadline_slot: u64,
+    /// Whether its client's read of the path is mistaken: it values the
+    /// asset the other way from the move it sees.
+    mistaken: bool,
 }
 
 /// A response the bot gave.
@@ -698,6 +724,15 @@ pub(super) struct Clients {
 }
 
 impl Clients {
+    /// The clients that are informed, by the ids their requests carry
+    /// (`c<n>-<k>` is the `k`th request of `c<n>`).
+    fn informed_ids(&self) -> Vec<String> {
+        (0..self.informed.len())
+            .filter(|i| self.informed[*i])
+            .map(|i| format!("c{i}"))
+            .collect()
+    }
+
     pub fn new(
         spec: RfqClients,
         scale: Scale,
@@ -743,13 +778,15 @@ impl Clients {
         self
     }
 
-    /// What `client` thinks the asset is worth `at`.
-    fn value(&self, client: usize, now: &Moment) -> f64 {
+    /// What `client` thinks the asset is worth `at`: on the path ahead if
+    /// it is informed, and `mistaken` the other way.
+    fn value(&self, client: usize, mistaken: bool, now: &Moment) -> f64 {
         if !self.informed[client] {
             return now.level_usd;
         }
         let ahead = (self.path)(now.at + self.spec.lead_slots).level_usd;
-        now.level_usd + self.spec.correlation * (ahead - now.level_usd)
+        let seen = self.spec.correlation * (ahead - now.level_usd);
+        now.level_usd + if mistaken { -seen } else { seen }
     }
 
     /// How far past its value a client pays for `size`, as a fraction.
@@ -766,7 +803,8 @@ impl Clients {
         let mut new = Vec::new();
         for _ in 0..n {
             let client = self.rng.below(self.wallets.len());
-            let value = self.value(client, now);
+            let mistaken = self.informed[client] && !self.rng.chance(self.spec.hit_rate);
+            let value = self.value(client, mistaken, now);
             let wants = if self.informed[client] && value != now.level_usd {
                 if value > now.level_usd {
                     Side::Bid
@@ -788,6 +826,7 @@ impl Clients {
                 wants,
                 size,
                 deadline_slot: self.base_slot + now.at + self.spec.deadline_slots,
+                mistaken,
             });
         }
         if let Some(first) = self.wallets.first() {
@@ -847,7 +886,7 @@ impl Clients {
         };
         let wallet = &self.wallets[request.client];
         let size = response.size.map_or(request.size, |s| s.min(request.size));
-        let value = self.value(request.client, now);
+        let value = self.value(request.client, request.mistaken, now);
         let reach = self.reach(size);
         let (price, suits) = match request.wants {
             Side::Bid => match response.ask {
@@ -908,6 +947,10 @@ impl Actor for Clients {
 
     async fn after_blocks(&mut self, now: &Moment) {
         self.send_requests(now);
+    }
+
+    fn roster(&self) -> Vec<(String, Vec<String>)> {
+        vec![("rfq-informed".to_string(), self.informed_ids())]
     }
 
     async fn report(&mut self, _: &mut ActorsReport) {}
@@ -1398,6 +1441,7 @@ mod tests {
                 informed_share: 0.3,
                 lead_slots: 40,
                 correlation: 0.5,
+                hit_rate: 1.0,
                 ..RfqClients::default()
             },
             scale(),
@@ -1408,9 +1452,16 @@ mod tests {
             Rng::new([1; 32]),
         );
         assert_eq!(clients.informed.iter().filter(|i| **i).count(), 3);
+        let told = clients.roster();
+        assert_eq!(told[0].0, "rfq-informed");
+        assert_eq!(told[0].1.len(), 3);
+        assert!(told[0].1.iter().all(|id| {
+            let i: usize = id[1..].parse().unwrap();
+            clients.informed[i]
+        }));
         let informed = clients.informed.iter().position(|i| *i).unwrap();
         let plain = clients.informed.iter().position(|i| !*i).unwrap();
-        assert_eq!(clients.value(informed, &at(20, 100.0)), 101.0);
-        assert_eq!(clients.value(plain, &at(20, 100.0)), 100.0);
+        assert_eq!(clients.value(informed, false, &at(20, 100.0)), 101.0);
+        assert_eq!(clients.value(plain, false, &at(20, 100.0)), 100.0);
     }
 }

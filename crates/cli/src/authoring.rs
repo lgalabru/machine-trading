@@ -7,6 +7,14 @@
 //! need the image. This module scaffolds a task from the closest existing one,
 //! and reads a task's files to say which steps are done and what to do next.
 //! Nothing here keeps state of its own: the files are the state.
+//!
+//! A new task is scored by v2 from the start (GRADING_DECISIONS D1): its
+//! `[metadata.mtx]` says `headline = "v2"`, its verifier grades with
+//! `--scoring v2-headline` (Harbor's `reward` is v2's clamped score, with no
+//! v1 score beside it), its ladder names the two anchors (the reference, 0.5, and
+//! an informed bot, 1, in `checks/bots/informed`) and opts into the probe
+//! gate, and its instruction carries the scoring rules in plain words
+//! ([`crate::scoring_text`]).
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +24,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::tasks;
+use crate::{scoring_text, tasks};
 
 /// The task an author starts from: the closest existing one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, ValueEnum)]
@@ -276,10 +284,28 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         &format!("description = {}", toml_string(&spec.summary)),
     );
     let toml = replace_section(&toml, "[metadata.mtx]", &metadata(spec, &family, base));
-    std::fs::write(&toml_path, toml)?;
+    let toml = retarget_images(&toml, base.task(), name);
+    std::fs::write(&toml_path, guard_task_toml(&toml))?;
+    // The agent starts from the base's agent image: its `mtx` can't draw
+    // scenarios from the family, and its network is closed to the registries
+    // that hold the full one (the base's own four tasks keep the dev image).
+    let dockerfile_path = to.join("environment/Dockerfile");
+    std::fs::write(
+        &dockerfile_path,
+        guard_dockerfile(&std::fs::read_to_string(&dockerfile_path)?),
+    )?;
 
     let test_path = to.join("tests/test.sh");
-    let test = std::fs::read_to_string(&test_path)?;
+    // The verifier's 0.5 is this task's reference, which the image builds
+    // under the family's anchor name.
+    let test = v2_verifier(
+        &std::fs::read_to_string(&test_path)?,
+        &format!("{family}-informed"),
+    )
+    .replace(
+        &format!("--reference /opt/mtx/anchors/{} ", base.generator()),
+        &format!("--reference /opt/mtx/anchors/{family} "),
+    );
     let test = test.replacen(
         "set -euo pipefail\n",
         &format!(
@@ -288,7 +314,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         ),
         1,
     );
-    std::fs::write(&test_path, test)?;
+    std::fs::write(&test_path, &test)?;
 
     let canary = std::fs::read_to_string(from.join("instruction.md"))?
         .lines()
@@ -301,9 +327,10 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         .find("## The bot contract")
         .map(|i| &contract[i..])
         .unwrap_or("");
+    let settings = scoring_text::Settings::of_verifier(&test)?;
     std::fs::write(
         to.join("instruction.md"),
-        instruction(spec, &canary, contract),
+        instruction(spec, &canary, contract, &settings),
     )?;
     std::fs::write(to.join("README.md"), readme(spec))?;
     std::fs::write(to.join("DESIGN.md"), design(spec))?;
@@ -331,6 +358,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         &format!("--bin {new_bin}"),
     );
     std::fs::write(bot_to.join("Justfile"), justfile)?;
+    rename_crate(&bot_to, &base_task.reference.package, &new_package)?;
     std::fs::create_dir_all(to.join("solution/src"))?;
     for name in strategy_sources(&bot_to) {
         std::fs::copy(
@@ -340,6 +368,52 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
     }
     written.push(format!(
         "bench/tasks/{name}/reference (package {new_package}; run `cargo update -w` to lock it)"
+    ));
+
+    // The checks: the informed bot's slot, the ladder with both anchors,
+    // and the probe gate.
+    let informed = to.join("checks/bots/informed");
+    copy_dir(&bot_to, &informed, &["bin", "target", "bot.wasm"])?;
+    let informed_package = format!("{new_package}-informed");
+    let informed_bin = format!("{new_bin}-informed");
+    let cargo = std::fs::read_to_string(informed.join("Cargo.toml"))?
+        .replace(
+            &format!("\"{new_package}\""),
+            &format!("\"{informed_package}\""),
+        )
+        .replace(&format!("\"{new_bin}\""), &format!("\"{informed_bin}\""))
+        // Two levels deeper than reference/.
+        .replace("path = \"../../../../", "path = \"../../../../../../");
+    std::fs::write(informed.join("Cargo.toml"), cargo)?;
+    let justfile = std::fs::read_to_string(informed.join("Justfile"))?.replace(
+        &format!("--bin {new_bin}"),
+        &format!("--bin {informed_bin}"),
+    );
+    std::fs::write(informed.join("Justfile"), justfile)?;
+    rename_crate(&informed, &new_package, &informed_package)?;
+    let lib = informed.join("src/lib.rs");
+    let source = std::fs::read_to_string(&lib)?;
+    std::fs::write(
+        &lib,
+        format!(
+            "//! {INFORMED_TODO}: this is a copy of the reference. Make it the task's informed\n//! bot, scoring v2's 1: it reads every fact the task's data could tell in\n//! principle (`MTX_REGIME`: the session's latent state, which the verifier\n//! and the ladder's `tell_latent` hand it) but not the session's future,\n//! and trades under the same costs, mandate and latency. Then drop this\n//! paragraph.\n//!\n{source}"
+        ),
+    )?;
+    let probes = probe_rungs(
+        root,
+        base.task(),
+        name,
+        &family,
+        &base_task.reference.package,
+        &new_package,
+    )?;
+    std::fs::write(
+        to.join("checks/ladder.json"),
+        serde_json::to_string_pretty(&ladder(name, base.generator(), &probes, sessions(spec)))?
+            + "\n",
+    )?;
+    written.push(format!(
+        "bench/tasks/{name}/checks: ladder.json (both anchors, the probe gate), the informed bot's slot (package {informed_package})"
     ));
 
     // Everything that lists the task is written from its task.toml.
@@ -353,7 +427,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
 /// the author's exists.
 fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
     format!(
-        "generator = {}\nanchor = {}\nemoji = \"🆕\"\nmarket = {}\nsummary = {}\nskill = {}\nleak_needles = []\n",
+        "generator = {}\nanchor = {}\nemoji = \"🆕\"\nmarket = {}\nsummary = {}\nskill = {}\nleak_needles = []\nheadline = \"v2\"\n",
         toml_string(base.generator()),
         toml_string(family),
         toml_string(&format!(
@@ -363,6 +437,216 @@ fn metadata(spec: &TaskSpec, family: &str, base: Base) -> String {
         toml_string(&spec.thesis),
         toml_string(&spec.thesis),
     )
+}
+
+/// The instruction's `mtx-practice` line for a v2 task.
+const PRACTICE_LINE: &str = "- `mtx-practice`: grades `/app/bot` on the practice scenarios in `/opt/mtx/practice` by the same rules and settings as the hidden scenarios (scoring v2, each scenario against the reference's and the informed bot's PnL on it), and prints a JSON report: your `reward` (the v2 score), the `v2` block that explains it, and each session's PnL. Bot logs go to `/tmp/mtx-practice-logs/`. It runs three sessions at a time (`MTX_JOBS=1` for one).";
+/// The instruction's `mtx` line for a v2 task: its agent's `mtx` holds no
+/// generator (the task is guarded: see [`guard_dockerfile`]).
+const MTX_LINE: &str = "- `mtx`: the grader itself. `mtx grade --bot /app/bot --snapshot \"$MTX_SNAPSHOT\" FILE...` plays your bot on scenario files, as `mtx-practice` does for the practice set. There is no way to draw more scenarios from the family: the practice scenarios in `/opt/mtx/practice` are the only ones you have, so the bot has to learn what it can from them.";
+
+/// What a guarded task adds to its `[agent]`: an agent that can reach
+/// ghcr.io or github.com can pull the full `mtx` (with the generator) and the
+/// reference bots, so its network is its model's (the bench adds the key
+/// proxy's address) and the crates registry.
+const GUARDED_NETWORK: &str = "# While it works, the agent reaches its model (the bench adds the key proxy's\n# address) and the crates registry, and nothing else: ghcr.io and github.com\n# hold the full grader and the reference bots. The install before it runs\n# keeps [environment]'s network. `just network-probe` checks it.\nnetwork_mode = \"allowlist\"\nallowed_hosts = [\"crates.io\", \"index.crates.io\", \"static.crates.io\"]\n";
+
+/// A task environment's Dockerfile, started from the base's agent image
+/// (`<tag>-agent`) instead of its dev image: the `mtx` in it can't draw
+/// scenarios from the task's family. The digest is dropped; `just pin-image`
+/// pins the agent image's.
+pub fn guard_dockerfile(text: &str) -> String {
+    text.replace(
+        "The dev image (bench/image/Dockerfile, target dev)",
+        "The agent image (bench/image/Dockerfile, target agent)",
+    )
+    .lines()
+    .map(|l| match l.strip_prefix("FROM ") {
+        Some(image) if image.contains("/machine-trading:") => {
+            let image = image.split_whitespace().next().unwrap_or("");
+            let image = image.split('@').next().unwrap_or("");
+            if image.ends_with("-agent") {
+                format!("FROM {image}")
+            } else {
+                format!("FROM {image}-agent")
+            }
+        }
+        _ => l.to_string(),
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n"
+}
+
+/// A task.toml whose `docker_image`s (the task's, and its verifier's) are the
+/// new task's own, `<registry>/<image>:<tag>-<name>` and `-<name>-verifier`:
+/// Harbor runs those, not the Dockerfile, so keeping the base's would run the
+/// agent in the base's unguarded image. Unpinned, for `just image` to build
+/// and `just pin-image` to pin.
+pub fn retarget_images(toml: &str, base_task: &str, name: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in toml.lines() {
+        let retargeted = line
+            .strip_prefix("docker_image = \"")
+            .and_then(|rest| rest.strip_suffix('"'))
+            .map(|image| {
+                let image = image.split('@').next().unwrap_or("");
+                match image.strip_suffix("-verifier") {
+                    Some(own) => (own, "-verifier"),
+                    None => (image, ""),
+                }
+            })
+            .and_then(|(image, suffix)| {
+                let stem = image.strip_suffix(&format!("-{base_task}"))?;
+                Some(format!("docker_image = \"{stem}-{name}{suffix}\""))
+            });
+        out.push(retargeted.unwrap_or_else(|| line.to_string()));
+    }
+    out.join("\n") + "\n"
+}
+
+/// A task.toml with the agent's network limited to [`GUARDED_NETWORK`].
+pub fn guard_task_toml(toml: &str) -> String {
+    if toml.contains("[agent]") && !toml.contains("allowed_hosts") {
+        toml.replacen(
+            "user = \"agent\"\n",
+            &format!("user = \"agent\"\n{GUARDED_NETWORK}"),
+            1,
+        )
+    } else {
+        toml.to_string()
+    }
+}
+
+/// Point a copied bot's process entry (`src/main.rs`) at its own library,
+/// renamed from `from` to `to` (packages, as Cargo.toml names them).
+fn rename_crate(dir: &Path, from: &str, to: &str) -> Result<()> {
+    let main = dir.join("src/main.rs");
+    if let Ok(source) = std::fs::read_to_string(&main) {
+        let ident = |package: &str| format!("{}::", package.replace('-', "_"));
+        std::fs::write(&main, source.replace(&ident(from), &ident(to)))?;
+    }
+    Ok(())
+}
+
+/// What marks the informed bot's slot until it is written.
+pub const INFORMED_TODO: &str = "TODO(informed)";
+
+/// A verifier script graded by scoring v2 alone: `--scoring v2-headline` and
+/// `--v2-sessions`, every session graded (no stop at the first breach: v2
+/// scores each one, D9), and the task's informed bot, which the image builds
+/// into `/opt/mtx/anchors/<informed_anchor>`, run on the same hidden set as
+/// v2's 1.
+fn v2_verifier(script: &str, informed_anchor: &str) -> String {
+    let v2 = "  --scoring v2-headline \\\n  --v2-sessions \\\n";
+    let script = if script.contains("  --stop-on-disqualify \\\n") {
+        script.replacen("  --stop-on-disqualify \\\n", v2, 1)
+    } else if scoring_text::has_flag(script, "--scoring") {
+        script.to_string()
+    } else {
+        script.replacen("mtx grade \\\n", &format!("mtx grade \\\n{v2}"), 1)
+    };
+    if scoring_text::has_flag(&script, "--informed") {
+        return script;
+    }
+    let script = script.replacen(
+        "\nmtx grade \\\n",
+        "\n# The informed bot, v2's 1, runs on the same sessions after the reference,\n# told each session's latent state (never its future); the bot is told\n# nothing.\nmtx grade \\\n",
+        1,
+    );
+    script.replacen(
+        "mtx grade \\\n",
+        &format!("mtx grade \\\n  --informed /opt/mtx/anchors/{informed_anchor} \\\n"),
+        1,
+    )
+}
+
+/// The base task's probe rungs (the probe gate's, `bench/checks/probes`),
+/// rewritten for the new task, and its `probes` section; the probe crate that
+/// wraps the base's reference is copied too. A base without them gives
+/// none, and an empty `probes`: the task still opts in.
+fn probe_rungs(
+    root: &Path,
+    base: &str,
+    name: &str,
+    family: &str,
+    base_package: &str,
+    new_package: &str,
+) -> Result<(Vec<Value>, Value)> {
+    let ladder: Value = std::fs::read_to_string(
+        root.join("bench/tasks")
+            .join(base)
+            .join("checks/ladder.json"),
+    )
+    .ok()
+    .and_then(|t| serde_json::from_str(&t).ok())
+    .unwrap_or_default();
+    let own = format!("bench/tasks/{base}/checks/rungs/probe");
+    let mut rungs = Vec::new();
+    for rung in ladder["rungs"].as_array().into_iter().flatten() {
+        let dir = rung["dir"].as_str().unwrap_or_default();
+        if dir.starts_with("bench/checks/probes") {
+            rungs.push(rung.clone());
+        } else if dir == own {
+            let mut rung = rung.clone();
+            rung["dir"] = json!(format!("bench/tasks/{name}/checks/rungs/probe"));
+            rungs.push(rung);
+        }
+    }
+    let from = root.join(&own);
+    if from.join("Cargo.toml").is_file() {
+        let to = root
+            .join("bench/tasks")
+            .join(name)
+            .join("checks/rungs/probe");
+        copy_dir(&from, &to, &["bin", "target"])?;
+        let cargo = replace_line(
+            &std::fs::read_to_string(to.join("Cargo.toml"))?,
+            "name = \"mtx-probe-",
+            &format!("name = \"mtx-probe-{family}\""),
+        )
+        .replace(
+            &format!("{base_package} = {{ path"),
+            &format!("{base_package} = {{ package = \"{new_package}\", path"),
+        );
+        std::fs::write(to.join("Cargo.toml"), cargo)?;
+    }
+    let probes = match &ladder["probes"] {
+        Value::Object(p) if !p.contains_key("exempt") => Value::Object(p.clone()),
+        _ => json!({}),
+    };
+    Ok((rungs, probes))
+}
+
+/// A new task's `checks/ladder.json`: doing nothing, the blind bets, the
+/// reference and the informed bot, the order between them, both anchors,
+/// and the probe gate's rungs and section.
+fn ladder(name: &str, family: &str, probes: &(Vec<Value>, Value), count: u32) -> Value {
+    let mut rungs = vec![
+        json!({ "name": "nop", "dir": "bots/starter" }),
+        json!({ "name": "blind-long", "dir": "bench/checks/ladder/blind-long", "may_breach": true }),
+        json!({ "name": "blind-short", "dir": "bench/checks/ladder/blind-short", "may_breach": true }),
+        json!({ "name": "reference", "dir": format!("bench/tasks/{name}/reference") }),
+        json!({ "name": "informed", "dir": format!("bench/tasks/{name}/checks/bots/informed"), "tell_latent": true }),
+    ];
+    rungs.extend(probes.0.iter().cloned());
+    json!({
+        "family": family,
+        "count": count,
+        "min_rule_odds": 0.85,
+        "rungs": rungs,
+        "anchors": { "reference": "reference", "informed": "informed" },
+        "gates": {
+            "informed": ["informed"],
+            "non_reading": ["nop", "blind-long", "blind-short"]
+        },
+        "rules": [
+            "max(blind-long, blind-short) < reference",
+            "reference < informed < hindsight"
+        ],
+        "exploits": { "bots": [], "max_profitable": 0.75, "below": "informed" },
+        "probes": probes.1,
+    })
 }
 
 /// `text` with the body of the table `header` replaced.
@@ -429,7 +713,44 @@ fn sessions(spec: &TaskSpec) -> u32 {
     spec.hidden_sessions.unwrap_or(72)
 }
 
-fn instruction(spec: &TaskSpec, canary: &str, contract: &str) -> String {
+fn instruction(
+    spec: &TaskSpec,
+    canary: &str,
+    contract: &str,
+    settings: &scoring_text::Settings,
+) -> String {
+    // The base's contract, with a Scoring section of v2's rules in place of
+    // the base's.
+    let scoring = format!(
+        "## Scoring\n\nYour bot is graded on {sessions} hidden scenarios, drawn from the family for each batch of runs from a secret the grader never writes down: no file anywhere holds them. Every session is graded, a breached one too. <!-- {TODO}: how the hidden set splits by regime, how the account is valued, and anything else this task's grade adds. The rest of this contract came from the base task: make every line describe scoring v2 only (no reward over the hindsight bound, no skill). -->\n\n{block}\n\nThe report also gives your return on capital, your per-session Sharpe ratio, your drawdowns against the loss limit, the share of sessions that made money and your worst session. These explain the score; they aren't scored.\n\n",
+        sessions = sessions(spec),
+        block = scoring_text::block(settings),
+    );
+    // The base's tool lines describe v1 practice: under v2, mtx-practice
+    // scores by the verifier's v2 settings, and only calibrated scenarios.
+    let contract = contract
+        .lines()
+        .map(|l| {
+            if l.starts_with("- `mtx-practice`") {
+                PRACTICE_LINE.to_string()
+            } else if l.starts_with("- `mtx`:") {
+                MTX_LINE.to_string()
+            } else {
+                l.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + if contract.ends_with('\n') { "\n" } else { "" };
+    let contract = contract.as_str();
+    let contract = match contract.find("\n## Scoring\n") {
+        Some(i) => {
+            let rest = &contract[i + 1..];
+            let end = rest[1..].find("\n## ").map_or(rest.len(), |j| j + 2);
+            format!("{}{scoring}{}", &contract[..=i], &rest[end..])
+        }
+        None => format!("{contract}\n{scoring}"),
+    };
     format!(
         "{canary}\n{summary}\n\n**You have an hour** (at the standard time limit). When time is up you're stopped, and whatever is in `/app/bot` is graded as it stands, with the `bin/bot` it last built. Keep a working, built bot there all along, and replace it only with a version you've checked is better: an experiment or a parameter sweep still running when time runs out counts for nothing.\n\n## Where it trades\n\n<!-- {TODO}: the market, the snapshot, and the scenario family the hidden sessions are drawn from: every range and odd the grader uses, as distributions, not structure. Regimes: {regimes} -->\n\n{contract}",
         summary = spec.summary.trim(),
@@ -440,7 +761,7 @@ fn instruction(spec: &TaskSpec, canary: &str, contract: &str) -> String {
 fn readme(spec: &TaskSpec) -> String {
     let name = spec.name.trim();
     format!(
-        "# solana-foundation/{name}\n\n{summary}\n\n| | |\n| --- | --- |\n| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29 |\n| Sessions | {sessions} hidden per grade; <!-- {TODO}: how they split by regime --> practice |\n| Mandate | {cap} position cap; {limit} loss limit |\n| Bound | <!-- {TODO}: what the reward divides by --> |\n| Reference | <!-- {TODO}: its reward, and what it does in one line --> |\n\nHow every task is scored, and how risk is enforced, is in the\n[dataset README](../README.md#how-a-bot-is-judged).\n\n## The skill\n\nA good bot profits here because it {thesis}\n\n- **Wins:** {wins}\n- **Loses:** {loses}\n\n## The market\n\n<!-- {TODO}: the scenario family: what moves, how often, what the agent can observe. Regimes: {regimes} -->\n\n## Scoring\n\n<!-- {TODO}: only what's specific to this task: the bound, valuation, extra void or disqualifying conditions. -->\n\n## Baselines\n\n<!-- {TODO}: the check table (oracle, nop, cheater, sneaky), the ladder, the reference's numbers on fresh sets. -->\n\n## Realism limits\n\n<!-- {TODO}: what the simulation doesn't model. -->\n\n## More\n\n- [DESIGN.md](DESIGN.md): the design record.\n- [instruction.md](instruction.md): what the agent is told.\n",
+        "# solana-foundation/{name}\n\n{summary}\n\n| | |\n| --- | --- |\n| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29 |\n| Sessions | {sessions} hidden per grade; <!-- {TODO}: how they split by regime --> practice |\n| Mandate | {cap} position cap; {limit} loss limit |\n| Bound | <!-- {TODO}: what the reward divides by --> |\n| Reference | <!-- {TODO}: its reward, and what it does in one line --> |\n| Anchors | Scoring v2: 0.5 the reference; 1 the informed bot, <!-- {TODO}: what it knows, in one line --> |\n\nHow every task is scored, and how risk is enforced, is in the\n[dataset README](../README.md#how-a-bot-is-judged).\n\n## The skill\n\nA good bot profits here because it {thesis}\n\n- **Wins:** {wins}\n- **Loses:** {loses}\n\n## The market\n\n<!-- {TODO}: the scenario family: what moves, how often, what the agent can observe. Regimes: {regimes} -->\n\n## Scoring\n\n<!-- {TODO}: only what's specific to this task: the bound, valuation, extra void or disqualifying conditions. -->\n\n## Baselines\n\n<!-- {TODO}: the check table (oracle, nop, cheater, sneaky), the ladder, the reference's numbers on fresh sets. -->\n\n## Realism limits\n\n<!-- {TODO}: what the simulation doesn't model. -->\n\n## More\n\n- [DESIGN.md](DESIGN.md): the design record.\n- [instruction.md](instruction.md): what the agent is told.\n",
         summary = spec.summary.trim(),
         sessions = sessions(spec),
         cap = cap(spec),
@@ -641,7 +962,7 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
             format!("test.sh draws `{family}`")
         },
         format!(
-            "Either reuse a registered generator ({}) or write the `{own}` family in crates/grader (task_guide step=family) and register it in `GENERATORS` (crates/grader/src/generators.rs). Then set `generator` in bench/tasks/{task}/task.toml, make tests/test.sh draw it with `--draw`, point --reference at /opt/mtx/anchors/{anchor}, and drop the TODO there.",
+            "Either reuse a registered generator ({}) or write the `{own}` family in crates/grader (task_guide step=family) and register it in `GENERATORS` (crates/grader/src/generators.rs). Then set `generator` in bench/tasks/{task}/task.toml, make tests/test.sh draw it with `--draw`, point --reference at /opt/mtx/anchors/{anchor} (and --informed at /opt/mtx/anchors/{anchor}-informed), and drop the TODO there.",
             mtx_grader::generators::names().join(", ")
         ),
     ));
@@ -665,6 +986,13 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         },
         "Write the reference strategy in reference/ (task_guide step=reference), then `mtx task sync` to copy it into the oracle.".into(),
     ));
+
+    let v2 = meta
+        .as_ref()
+        .is_some_and(|t| t.mtx.headline == tasks::Headline::V2);
+    if v2 {
+        steps.push(anchors_step(root, task));
+    }
 
     let anchored = meta.is_some() && !generated.iter().any(|p| p.ends_with("anchors.txt"));
     steps.push(Step::new(
@@ -694,7 +1022,25 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
             .is_some_and(|(k, v)| k.trim() == "practice_reference" && v.trim() == "false")
     });
     let plural = if practice.len() == 1 { "" } else { "s" };
-    steps.push(if hidden {
+    // v2 scores practice as it scores the hidden set, against both anchors:
+    // every practice file carries the reference's and the informed bot's PnL.
+    let informed = practice
+        .iter()
+        .filter(|p| read(p).contains("\"informed_pnl_usd\""))
+        .count();
+    steps.push(if v2 {
+        Step::new(
+            "practice",
+            "Practice scenarios, calibrated with both anchors",
+            !hidden && !practice.is_empty() && calibrated == practice.len() && informed == practice.len(),
+            if hidden {
+                "the task hides its reference from practice (`practice_reference = false`), but scoring v2 scores practice against it".to_string()
+            } else {
+                format!("{} practice scenario{plural}: {calibrated} with the reference's PnL, {informed} with the informed bot's", practice.len())
+            },
+            format!("Draw a practice set from the family (`mtx scenario generate --family {family} --out bench/tasks/{task}/environment/practice --prefix practice --count 6 --seed <any number>`), then `just calibrate bench/tasks/{task}/reference <files>` and `mtx calibrate --informed --v2-sessions --snapshot snapshots/<snapshot> --bot bench/tasks/{task}/checks/bots/informed --practice {family} --practice-seed <the seed> --practice-count 6 --out bench/tasks/{task}/environment/practice` (it redraws the same set host-side so the informed bot is told each session's latent state, and the files keep only its PnL and a neutral description); a v2 task keeps no `practice_reference = false`."),
+        )
+    } else if hidden {
         Step::new(
             "practice",
             "Practice scenarios, no reference baseline",
@@ -728,6 +1074,11 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
             "Write bench/tasks/{task}/instruction.md as a contract (task_guide step=instruction)."
         ),
     ));
+
+    if v2 {
+        steps.push(scoring_step(task, &test, &instr));
+        steps.push(probes_step(root, task));
+    }
 
     let readme = read(&dir.join("README.md"));
     let sections = [
@@ -813,10 +1164,299 @@ pub fn status(root: &Path, task: &str) -> Result<Vec<Step>> {
         state: "manual",
         detail: "needs the image and real runs; can't be read from files".into(),
         next: format!(
-            "`just image && just harbor-checks` (oracle at skill 1, nop/cheater/sneaky 0), `just ladder {task}`, `just leak-audit`, `harbor check bench/tasks/{task}`, then real agents (task_guide step=verify)."
+            "`just image && just harbor-checks` (oracle at skill 1, or at v2's 0.5 before the near-breach charge; nop/cheater/sneaky 0), `just ladder {task}`, `just leak-audit`, `harbor check bench/tasks/{task}`, then real agents (task_guide step=verify)."
         ),
     });
     Ok(steps)
+}
+
+/// A task's `checks/ladder.json`, or null.
+fn ladder_file(root: &Path, task: &str) -> Value {
+    serde_json::from_str(&read(
+        &root
+            .join("bench/tasks")
+            .join(task)
+            .join("checks/ladder.json"),
+    ))
+    .unwrap_or_default()
+}
+
+/// Where a task's anchors must live, from the repository's root: the
+/// reference is its own `reference/` crate (what the image builds into
+/// `/opt/mtx/anchors/<anchor>` for the verifier), the informed bot its
+/// `checks/bots/informed`.
+pub fn anchor_dirs(task: &str) -> (String, String) {
+    (
+        format!("bench/tasks/{task}/reference"),
+        format!("bench/tasks/{task}/checks/bots/informed"),
+    )
+}
+
+/// What's wrong with the rungs a v2 task's ladder names as its anchors,
+/// from the ladder file alone: each must be a rung, never `may_breach`, the
+/// reference the task's own reference crate, run as it is (no `env`, not
+/// told), and the
+/// informed bot the task's informed crate, told the session's latent state
+/// (`tell_latent`, what the verifier's `--informed` tells it) and not the
+/// whole regime (`tell_regime`, which holds the session's future), so
+/// neither a better-tuned bot that reads nothing nor an oracle can pose as
+/// the 1.
+pub fn anchor_rung_problems(ladder: &Value, task: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let (reference_dir, informed_dir) = anchor_dirs(task);
+    let norm = |d: &str| d.trim_start_matches("./").trim_end_matches('/').to_string();
+    for (role, scale, want) in [
+        ("reference", "0.5", reference_dir),
+        ("informed", "1", informed_dir),
+    ] {
+        let Some(name) = ladder["anchors"][role].as_str() else {
+            problems.push(format!(
+                "ladder.json's `anchors.{role}` names no rung (the {scale})"
+            ));
+            continue;
+        };
+        let Some(rung) = ladder["rungs"]
+            .as_array()
+            .and_then(|rungs| rungs.iter().find(|r| r["name"] == name))
+        else {
+            problems.push(format!(
+                "`anchors.{role}` is `{name}`, which isn't a rung in ladder.json"
+            ));
+            continue;
+        };
+        let dir = rung["dir"].as_str().map(norm).unwrap_or_default();
+        if dir != want {
+            problems.push(format!(
+                "the {role} anchor `{name}` runs {dir}, not the task's {role} bot, {want}"
+            ));
+        }
+        if rung.get("env").is_some_and(|e| !e.is_null()) {
+            problems.push(format!(
+                "the {role} anchor `{name}` sets `env`: an anchor runs as it is"
+            ));
+        }
+        // The ladder leaves a `may_breach` rung's breaches out of its clean-run
+        // list, which the strength band reads: an anchor never may.
+        if rung["may_breach"] == Value::Bool(true) {
+            problems.push(format!(
+                "the {role} anchor `{name}` is `may_breach`: an anchor stays inside its mandate, and the ladder must report it if it doesn't"
+            ));
+        }
+        let latent = rung["tell_latent"] == Value::Bool(true);
+        let regime = rung["tell_regime"] == Value::Bool(true);
+        match role {
+            "reference" if latent || regime => problems.push(format!(
+                "the reference anchor `{name}` is told the session (`tell_latent` or `tell_regime`): the 0.5 reads the market as a bot does"
+            )),
+            "informed" if regime => problems.push(format!(
+                "the informed anchor `{name}` is told the whole regime (`tell_regime`), the session's future too: that is an oracle, not the 1; tell it the latent state (`tell_latent: true`), as the verifier does"
+            )),
+            "informed" if !latent => problems.push(format!(
+                "the informed anchor `{name}` isn't told the latent state (`tell_latent: true`): without what the verifier tells it, it isn't the 1"
+            )),
+            _ => {}
+        }
+    }
+    problems
+}
+
+/// The anchors a v2 task's ladder names: the task's own bots, the informed
+/// one told the latent state and no longer the scaffold's copy of the reference,
+/// and the verifier grading against the anchor the image builds from the
+/// reference crate. What's wrong, if anything.
+pub fn anchor_problems(root: &Path, task: &str) -> Vec<String> {
+    let ladder = ladder_file(root, task);
+    if ladder.is_null() {
+        return vec!["checks/ladder.json is missing or isn't JSON".into()];
+    }
+    let mut problems = anchor_rung_problems(&ladder, task);
+    let (reference, informed) = anchor_dirs(task);
+    for (role, dir) in [("reference", &reference), ("informed", &informed)] {
+        if !root.join(dir).join("Cargo.toml").is_file() {
+            problems.push(format!("the {role} anchor's crate, {dir}, doesn't exist"));
+        }
+    }
+    let unwritten = std::fs::read_dir(root.join(&informed).join("src"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|e| read(&e.path()).contains(INFORMED_TODO));
+    if unwritten {
+        problems.push(format!(
+            "{informed} is still the scaffold's copy of the reference ({INFORMED_TODO})"
+        ));
+    }
+    // The verifier's 0.5 is the image's build of the reference crate.
+    if let Ok(meta) = tasks::load_one(root, task.to_string()) {
+        let want = format!("/opt/mtx/anchors/{}", meta.mtx.anchor());
+        let test = read(&root.join("bench/tasks").join(task).join("tests/test.sh"));
+        if scoring_text::flag_value(&test, "--reference").as_deref() != Some(want.as_str()) {
+            problems.push(format!(
+                "tests/test.sh doesn't grade against `--reference {want}`, the image's build of {reference}"
+            ));
+        }
+    }
+    problems
+}
+
+fn anchors_step(root: &Path, task: &str) -> Step {
+    let problems = anchor_problems(root, task);
+    Step::new(
+        "anchors",
+        "Scoring v2's anchors: reference (0.5) and informed bot (1)",
+        problems.is_empty(),
+        if problems.is_empty() {
+            "ladder.json names both anchors, and both bots exist".into()
+        } else {
+            problems.join("; ")
+        },
+        format!(
+            "Write the informed bot in bench/tasks/{task}/checks/bots/informed and name both anchors in checks/ladder.json's `anchors` (task_guide step=anchors)."
+        ),
+    )
+}
+
+/// What a v2 task's verifier and instruction lack: the verifier grades with
+/// `--scoring v2-headline` and `--v2-sessions` and every session, and the
+/// instruction carries the current scoring rules.
+pub fn scoring_problems(test: &str, instruction: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    if scoring_text::flag_value(test, "--scoring").as_deref() != Some("v2-headline") {
+        problems.push(
+            "tests/test.sh doesn't grade with `--scoring v2-headline` (v2 as the one score)"
+                .to_string(),
+        );
+    }
+    if !scoring_text::has_flag(test, "--v2-sessions") {
+        problems.push("tests/test.sh doesn't pass `--v2-sessions`".to_string());
+    }
+    if scoring_text::has_flag(test, "--stop-on-disqualify") {
+        problems.push(
+            "tests/test.sh stops at the first breach (`--stop-on-disqualify`): v2 grades every session"
+                .to_string(),
+        );
+    }
+    for flag in ["--ceiling", "--eta"] {
+        if scoring_text::has_flag(test, flag) {
+            problems.push(format!(
+                "tests/test.sh passes `{flag}`: a v2 task's 1 is its informed bot, never a given or proxy ceiling"
+            ));
+        }
+    }
+    let leftovers = v1_wording(instruction);
+    if !leftovers.is_empty() {
+        problems.push(format!(
+            "instruction.md still describes v1 scoring ({}): a v2 task has one score",
+            leftovers.join(", ")
+        ));
+    }
+    match scoring_text::Settings::of_verifier(test) {
+        Err(e) => problems.push(format!("{e:#}")),
+        Ok(settings) => match scoring_text::with_block(instruction, &settings) {
+            Ok(None) => problems.push("instruction.md has no `mtx:scoring` block".to_string()),
+            Ok(Some(text)) if text != instruction => problems.push(
+                "instruction.md's scoring rules are stale (`mtx task sync` rewrites them)"
+                    .to_string(),
+            ),
+            Ok(Some(_)) => {}
+            Err(e) => problems.push(format!("instruction.md: {e:#}")),
+        },
+    }
+    problems
+}
+
+/// The v1 scoring words an instruction holds outside its scoring block:
+/// `skill`, the hindsight bound, `reference_ratio`.
+pub fn v1_wording(instruction: &str) -> Vec<&'static str> {
+    let outside = match (
+        instruction.find("<!-- mtx:scoring begin"),
+        instruction.find(scoring_text::END),
+    ) {
+        (Some(b), Some(e)) if e > b => {
+            format!("{}{}", &instruction[..b], &instruction[e..])
+        }
+        _ => instruction.to_string(),
+    }
+    .to_lowercase();
+    let word = |w: &str| {
+        outside.match_indices(w).any(|(i, _)| {
+            let before = outside[..i].chars().next_back();
+            let after = outside[i + w.len()..].chars().next();
+            let edge = |c: Option<char>| c.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+            edge(before) && edge(after)
+        })
+    };
+    [
+        ("skill", "`skill`"),
+        ("hindsight bound", "the hindsight bound"),
+        ("reference_ratio", "`reference_ratio`"),
+    ]
+    .into_iter()
+    .filter(|(w, _)| word(w))
+    .map(|(_, label)| label)
+    .collect()
+}
+
+fn scoring_step(task: &str, test: &str, instruction: &str) -> Step {
+    let problems = scoring_problems(test, instruction);
+    Step::new(
+        "scoring",
+        "Scored by v2, and the agent told how",
+        problems.is_empty(),
+        if problems.is_empty() {
+            "the verifier grades by v2, and instruction.md states its rules".into()
+        } else {
+            problems.join("; ")
+        },
+        format!(
+            "In bench/tasks/{task}: grade with `--scoring v2-headline --v2-sessions` and without `--stop-on-disqualify` in tests/test.sh; put the `mtx:scoring` markers in instruction.md's Scoring section and run `mtx task sync` (task_guide step=scoring)."
+        ),
+    )
+}
+
+/// The probe gate (bench/checks/probes): a v2 task's ladder declares a
+/// `probes` section, `{}` or `{"exempt": "why"}`; once the gate is in the
+/// repository, a task that doesn't opt out runs its probe rungs.
+pub fn probe_problems(root: &Path, task: &str) -> Vec<String> {
+    let ladder = ladder_file(root, task);
+    let Some(probes) = ladder["probes"].as_object() else {
+        return vec!["ladder.json has no `probes` section".into()];
+    };
+    if let Some(why) = probes.get("exempt") {
+        return if why.as_str().is_some_and(|w| !w.trim().is_empty()) {
+            Vec::new()
+        } else {
+            vec!["ladder.json's `probes.exempt` gives no reason".into()]
+        };
+    }
+    let gate = root.join("bench/checks/probes/Cargo.toml").is_file();
+    let runs = ladder["rungs"].as_array().into_iter().flatten().any(|r| {
+        r["dir"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("bench/checks/probes"))
+    });
+    if gate && !runs {
+        vec!["ladder.json opts into the probe gate but lists none of its rungs (bench/checks/probes/README.md)".into()]
+    } else {
+        Vec::new()
+    }
+}
+
+fn probes_step(root: &Path, task: &str) -> Step {
+    let problems = probe_problems(root, task);
+    Step::new(
+        "probes",
+        "The probe gate",
+        problems.is_empty(),
+        if problems.is_empty() {
+            "ladder.json opts into the probe gate".into()
+        } else {
+            problems.join("; ")
+        },
+        format!(
+            "Add `\"probes\": {{}}` to bench/tasks/{task}/checks/ladder.json, and the probe rungs once bench/checks/probes is in the repository (task_guide step=probes)."
+        ),
+    )
 }
 
 /// The first step not done, if any.
@@ -862,6 +1502,15 @@ pub fn guide(step: &str) -> Option<&'static str> {
         "reference" => {
             "The reference sets the 1.0 line: a reasonable, simple strategy, not an optimum, sized to the cap and inside the loss limit on every session. Avoid mechanical biases (a bid always placed before the ask). It runs on the same hidden sessions in every grade, so hidden sets need no calibration; practice scenarios do. Keep the oracle identical: `just solution`. Then build the ladder: nop, a blind bet, a naive strategy, the reference, a ceiling, as strict inequalities (`just ladder <family>`). Deeper: SKILL.md step 3, references/ladder-and-ceilings.md."
         }
+        "anchors" => {
+            "Scoring v2 has three anchors: doing nothing (0), the reference (0.5) and the informed bot (1). The informed bot is a bot, not a hindsight figure: it knows every fact the task's data could tell in principle (the regime, the informed wallets, the fair-value model, the funding process, the cost curves) but not the session's future randomness, and it trades the same market under the same costs, mandate and latency. What it is told is the session's latent state, which the family's generator picks and classifies (`LATENT_FIELDS` in crates/grader/src/generators.rs: actor identities and the process, never a session's realised draws, so flash-crash's shock tells it nothing): the verifier hands it as MTX_REGIME with `mtx grade --informed`, on the same hidden set as the bot, and the ladder's informed rung gets the same through `tell_latent`. The bot is told nothing. The scaffold puts a copy of the reference in checks/bots/informed, marked TODO(informed): rewrite it, drop the marker, and keep both named in checks/ladder.json's `anchors` ({\"reference\": \"reference\", \"informed\": \"informed\"}). Freeze both before any model run. Calibrate the practice scenarios with each: `just calibrate` for the reference, then `mtx calibrate --informed --v2-sessions --practice <family> --practice-seed <seed> --out <practice dir>` for the informed bot: it is told each practice session's latent state host-side, and the practice files, which ship in the agent's image, carry its PnL, a neutral description (the generator's states the draw in prose) and never the latent state or a roster (`mtx gates` checks every file, subdirectories too). The strength band (`mtx gates`): on the ladder's sets the informed bot beats the reference, the reference's weighted PnL is between 0.2 and 0.7 of the informed bot's (`anchors.band` overrides), so it's never `anchor_floored`, and its per-session Sharpe is at least 0.25 (`anchors.min_sharpe`)."
+        }
+        "scoring" => {
+            "A v2 task's verifier grades with `--scoring v2-headline --v2-sessions`, so Harbor's `reward` is v2's clamped score and no v1 score is reported, and it grades every session (no `--stop-on-disqualify`). It runs the task's informed bot on the same hidden set with `--informed /opt/mtx/anchors/<anchor>-informed` (the image builds it there from the crate the ladder's `anchors.informed` names, listed in bench/image/anchors.txt by `mtx task sync`): one more bot run per session, after the reference's. The grade fails rather than fall back to the hindsight ceiling when a session lacks the informed bot's PnL; `--loss-weight`, `--risk-weight` and `--anchor-floor` only if the task needs other settings than the grader's. The agent is told the rules (D5): instruction.md's Scoring section holds the `mtx:scoring` markers, and `mtx task sync` writes the rules between them from the grader's settings and test.sh's flags. `mtx task check` fails when they're stale. Write only what's specific to the task around them: the hidden set's size and split, the valuation."
+        }
+        "probes" => {
+            "The probe gate (bench/checks/probes, D7) grades bots with no skill or a known small amount (gamblers, naive holds, a martingale, levered references, an occasional breacher, honest-but-noisy bots) and fails the task if v2 pays any of them more than it should. A new task opts in: `\"probes\": {}` in checks/ladder.json, which the scaffold writes. Once the gate is in the repository, add its rungs (the scaffold copies them from the base task when it has them; otherwise follow bench/checks/probes/README.md, \"A task opts in\"). A task that can't run them says why: `\"probes\": {\"exempt\": \"why\"}`."
+        }
         "anchor" => {
             "The verifier grades the reference itself on each hidden set, from /opt/mtx/anchors/<family> in the runtime image. `mtx task sync` lists the task's reference in bench/image/anchors.txt, which the image build reads. Rebuild with `just image`."
         }
@@ -881,7 +1530,7 @@ pub fn guide(step: &str) -> Option<&'static str> {
             "`harbor lint bench/tasks/<task> --select ALL --ignore unpinned-image` checks the task's files against Harbor's rules; images are pinned at release."
         }
         "verify" => {
-            "On the image: `just image && just harbor-checks` (oracle at skill 1, nop 0, cheater 0, sneaky 0), `just ladder <task>` (the order rule on fresh hidden sets), `just leak-audit` (the agent's image holds no answer), `harbor check bench/tasks/<task>` (an LLM review against Harbor's rubric). Then real agents, k runs each, and `harbor analyze`. Read the winning bots: agents state their edge in doc comments. Treat a too-clean risk profile (worst session near 0, 90%+ profitable) as a leak. Target: the best model's mean reward between 0.2 and 0.7. Deeper: SKILL.md steps 7 and 8."
+            "On the image: `just image && just harbor-checks` (oracle at skill 1, or for a v2 task at 0.5 before the near-breach charge; nop 0, cheater 0, sneaky 0), `just ladder <task>` (the order rule on fresh hidden sets), `just leak-audit` (the agent's image holds no answer), `harbor check bench/tasks/<task>` (an LLM review against Harbor's rubric). Then real agents, k runs each, and `harbor analyze`. Read the winning bots: agents state their edge in doc comments. Treat a too-clean risk profile (worst session near 0, 90%+ profitable) as a leak. Target: the best model's mean reward between 0.2 and 0.7. Deeper: SKILL.md steps 7 and 8."
         }
         _ => return None,
     })
@@ -891,9 +1540,12 @@ pub const STEPS: &[&str] = &[
     "design",
     "family",
     "reference",
+    "anchors",
     "anchor",
     "practice",
     "instruction",
+    "scoring",
+    "probes",
     "readme",
     "registry",
     "lint",
@@ -936,8 +1588,9 @@ mod tests {
         assert!(spec().problems(&root).is_empty());
     }
 
-    #[test]
-    fn a_scaffold_is_a_task_whose_status_points_at_the_family() {
+    /// A scratch repository holding flash-crash-spcx (without its checks)
+    /// and the files the task lists are written into.
+    fn scratch_repo() -> PathBuf {
         let real = repo_root();
         let root =
             std::env::temp_dir().join(format!("mtx-author-{}", uuid::Uuid::new_v4().simple()));
@@ -956,6 +1609,20 @@ mod tests {
             std::fs::copy(real.join(file), root.join(file)).unwrap();
         }
         std::fs::create_dir_all(root.join("bench/image")).unwrap();
+        root
+    }
+
+    fn state_of(steps: &[Step], id: &str) -> (&'static str, String) {
+        let step = steps
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap_or_else(|| panic!("no step {id}"));
+        (step.state, step.detail.clone())
+    }
+
+    #[test]
+    fn a_scaffold_is_a_task_whose_status_points_at_the_family() {
+        let root = scratch_repo();
         let out = scaffold(&root, &spec()).unwrap();
         let task = root.join("bench/tasks/funding-squeeze-spcx");
         assert!(
@@ -1006,6 +1673,369 @@ mod tests {
         let family = steps.iter().find(|s| s.id == "family").unwrap();
         assert_eq!(family.state, "done", "{}", family.detail);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The template end to end: a dummy task scaffolded, checked step by
+    /// step and gated, so the scaffold can't rot.
+    #[test]
+    fn a_new_task_is_scaffolded_ready_for_scoring_v2() {
+        let root = scratch_repo();
+        scaffold(&root, &spec()).unwrap();
+        let name = "funding-squeeze-spcx";
+        let task = root.join("bench/tasks").join(name);
+
+        // v2 is its headline, and its verifier grades by v2, every session.
+        let meta = tasks::load_one(&root, name.into()).unwrap();
+        assert_eq!(meta.mtx.headline, tasks::Headline::V2);
+        let test = read(&task.join("tests/test.sh"));
+        assert!(
+            test.contains("  --scoring v2-headline \\\n  --v2-sessions \\\n"),
+            "{test}"
+        );
+        assert!(!test.contains("--stop-on-disqualify"));
+        // The informed bot runs on the same hidden set, from where the image
+        // builds it, which anchors.txt lists.
+        assert!(
+            test.contains(
+                "mtx grade \\\n  --informed /opt/mtx/anchors/funding-squeeze-informed \\\n"
+            ),
+            "{test}"
+        );
+        assert_eq!(meta.informed_anchor(), "funding-squeeze-informed");
+        assert!(read(&root.join("bench/image/anchors.txt")).contains(&format!(
+            "funding-squeeze-informed mtx-bot-funding-squeeze-informed mtx-funding-squeeze-informed bench/tasks/{name}/checks/bots/informed"
+        )));
+
+        // The instruction states v2's rules, as the grader's settings write
+        // them, in place of the base's v1 Scoring section.
+        let instruction = read(&task.join("instruction.md"));
+        let settings = scoring_text::Settings::of_verifier(&test).unwrap();
+        assert!(scoring_text::is_current(&instruction, &settings));
+        assert!(instruction.contains("## Scoring\n\nYour bot is graded on 72 hidden scenarios"));
+        assert!(instruction.contains("**Losses count 1.5 times.**"));
+        assert!(
+            !instruction.contains("sum of the hindsight bounds"),
+            "v1's text is gone"
+        );
+        assert_eq!(instruction.matches("## Scoring").count(), 1);
+        assert!(instruction.contains("## What's in your environment"));
+        // Practice is v2's too: the image grades it with the verifier's
+        // scoring, and the instruction says so, with no v1 practice line.
+        assert!(instruction.contains(PRACTICE_LINE) && instruction.contains(MTX_LINE));
+        assert!(!instruction.contains("scenario generate"));
+
+        // Guarded: the agent starts from the agent image, with an allowlist
+        // for its network; the verifier keeps none.
+        let dockerfile = read(&task.join("environment/Dockerfile"));
+        assert!(
+            dockerfile.lines().any(|l| l.starts_with("FROM ")
+                && l.contains("/machine-trading:")
+                && l.ends_with("-agent")),
+            "{dockerfile}"
+        );
+        assert!(dockerfile.contains("target agent"));
+        let toml = read(&task.join("task.toml"));
+        let agent = toml.split("[agent]").nth(1).unwrap();
+        let agent = agent.split("\n[").next().unwrap();
+        assert!(agent.contains("network_mode = \"allowlist\""), "{agent}");
+        assert!(agent.contains("\"index.crates.io\""));
+        let hosts = agent
+            .lines()
+            .find(|l| l.starts_with("allowed_hosts"))
+            .unwrap();
+        assert!(!hosts.contains("github.com") && !hosts.contains("ghcr.io"));
+        assert!(!hosts.contains("anthropic") && !hosts.contains("openai"));
+        // Harbor runs task.toml's docker_image, not the Dockerfile: it is the
+        // task's own image, and the verifier's, not the base's.
+        let images: Vec<&str> = toml
+            .lines()
+            .filter_map(|l| l.strip_prefix("docker_image = "))
+            .collect();
+        assert_eq!(images.len(), 2, "{toml}");
+        assert!(
+            images.iter().any(|i| i.ends_with(&format!("-{name}\""))),
+            "{images:?}"
+        );
+        assert!(
+            images
+                .iter()
+                .any(|i| i.ends_with(&format!("-{name}-verifier\""))),
+            "{images:?}"
+        );
+        assert!(
+            images
+                .iter()
+                .all(|i| !i.contains('@') && !i.contains("flash-crash-spcx")),
+            "{images:?}"
+        );
+        assert!(!instruction.contains("the reward needs no reference"));
+        assert!(
+            read(&task.join("environment/Dockerfile"))
+                .contains("ENV MTX_PRACTICE_SCORING=\"--scoring v2-headline --v2-sessions\"")
+        );
+        let (practice, detail) = state_of(&status(&root, name).unwrap(), "practice");
+        assert_eq!(practice, "todo");
+        assert!(detail.contains("with the informed bot's"), "{detail}");
+        assert!(read(&task.join("README.md")).contains("| Anchors | Scoring v2"));
+
+        // Both anchors' slots, and the ladder naming them.
+        let informed = task.join("checks/bots/informed");
+        let cargo = read(&informed.join("Cargo.toml"));
+        assert!(
+            cargo.contains("name = \"mtx-bot-funding-squeeze-informed\""),
+            "{cargo}"
+        );
+        assert!(
+            cargo.contains("name = \"mtx-funding-squeeze-informed\""),
+            "{cargo}"
+        );
+        assert!(
+            cargo.contains("path = \"../../../../../../crates/kit\""),
+            "{cargo}"
+        );
+        assert!(read(&informed.join("Justfile")).contains("--bin mtx-funding-squeeze-informed"));
+        // Each process entry runs its own crate's strategy.
+        assert!(
+            read(&informed.join("src/main.rs")).contains("mtx_bot_funding_squeeze_informed::"),
+            "{}",
+            read(&informed.join("src/main.rs"))
+        );
+        assert!(read(&task.join("reference/src/main.rs")).contains("mtx_bot_funding_squeeze::"));
+        assert_eq!(
+            meta.check_bots,
+            vec![format!("bench/tasks/{name}/checks/bots/informed")]
+        );
+        let ladder: Value = serde_json::from_str(&read(&task.join("checks/ladder.json"))).unwrap();
+        assert_eq!(ladder["family"], "flash-crash");
+        assert_eq!(
+            ladder["anchors"],
+            json!({ "reference": "reference", "informed": "informed" })
+        );
+        assert_eq!(ladder["probes"], json!({}));
+        let names: Vec<&str> = ladder["rungs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            ["nop", "blind-long", "blind-short", "reference", "informed"]
+        );
+        // The ladder's informed rung is told what the verifier tells it.
+        assert_eq!(ladder["rungs"][4]["tell_latent"], true);
+        assert!(ladder["rungs"][4].get("tell_regime").is_none());
+        let gate: crate::gates::SignalGate =
+            serde_json::from_value(ladder["gates"].clone()).unwrap();
+        assert_eq!(gate.informed, ["informed"]);
+
+        // Everything generated is current, the scoring rules included.
+        assert!(tasks::stale(&root).unwrap().is_empty());
+
+        // Status: the informed bot is still the reference's copy.
+        let steps = status(&root, name).unwrap();
+        let (anchors, detail) = state_of(&steps, "anchors");
+        assert_eq!(anchors, "todo");
+        assert!(detail.contains(INFORMED_TODO), "{detail}");
+        // The base's contract still mentions v1's scores: flagged until the
+        // author rewrites those lines for v2.
+        let (scoring, detail) = state_of(&steps, "scoring");
+        assert_eq!(scoring, "todo");
+        assert!(detail.contains("still describes v1 scoring"), "{detail}");
+        let rewritten: String = instruction
+            .lines()
+            .filter(|l| {
+                let l = l.to_lowercase();
+                !l.contains("hindsight bound") && !l.contains("skill")
+            })
+            .map(|l| format!("{l}\n"))
+            .collect();
+        std::fs::write(task.join("instruction.md"), &rewritten).unwrap();
+        let steps = status(&root, name).unwrap();
+        let live = crate::gates::informed_on_hidden_sets(&root, name, &test);
+        assert_eq!(live.status, crate::gates::Status::Fail);
+        assert!(live.detail.contains(INFORMED_TODO), "{}", live.detail);
+        assert_eq!(
+            state_of(&steps, "scoring").0,
+            "done",
+            "{}",
+            state_of(&steps, "scoring").1
+        );
+        assert_eq!(state_of(&steps, "probes").0, "done");
+
+        // Written, it is an anchor.
+        let lib = informed.join("src/lib.rs");
+        let source = read(&lib);
+        let body = source.split_once("//!\n").unwrap().1;
+        std::fs::write(&lib, body).unwrap();
+        assert!(anchor_problems(&root, name).is_empty());
+        let steps = status(&root, name).unwrap();
+        assert_eq!(
+            state_of(&steps, "anchors").0,
+            "done",
+            "{}",
+            state_of(&steps, "anchors").1
+        );
+        // And the verifier runs it on hidden sets: the gate passes.
+        let live = crate::gates::informed_on_hidden_sets(&root, name, &test);
+        assert_eq!(live.status, crate::gates::Status::Pass, "{}", live.detail);
+        // Without it, or from another path, or letting the bot be a process
+        // (which could read files), it doesn't.
+        for broken in [
+            test.replace(
+                "  --informed /opt/mtx/anchors/funding-squeeze-informed \\\n",
+                "",
+            ),
+            test.replace("anchors/funding-squeeze-informed", "anchors/flash-crash"),
+            test.replace("  --components-only \\\n", ""),
+        ] {
+            let live = crate::gates::informed_on_hidden_sets(&root, name, &broken);
+            assert_eq!(live.status, crate::gates::Status::Fail, "{broken}");
+        }
+
+        // The anchors are the task's own bots, or none: a `reference` that
+        // runs a blind bet, an informed bot that isn't told the regime, or a
+        // verifier grading against another anchor is refused.
+        let ladder_path = task.join("checks/ladder.json");
+        let tamper = |edit: &dyn Fn(&mut Value)| {
+            let mut l = ladder.clone();
+            edit(&mut l);
+            std::fs::write(&ladder_path, l.to_string()).unwrap();
+            let problems = anchor_problems(&root, name);
+            std::fs::write(&ladder_path, ladder.to_string()).unwrap();
+            problems.join("; ")
+        };
+        let blind = tamper(&|l| l["anchors"]["reference"] = json!("blind-long"));
+        assert!(blind.contains("not the task's reference bot"), "{blind}");
+        let elsewhere =
+            tamper(&|l| l["rungs"][3]["dir"] = json!("bench/tasks/flash-crash-spcx/reference"));
+        assert!(
+            elsewhere.contains("not the task's reference bot"),
+            "{elsewhere}"
+        );
+        let untold = tamper(&|l| l["rungs"][4]["tell_latent"] = json!(false));
+        assert!(untold.contains("isn't told"), "{untold}");
+        let oracle = tamper(&|l| l["rungs"][4]["tell_regime"] = json!(true));
+        assert!(oracle.contains("future"), "{oracle}");
+        let tuned = tamper(&|l| l["rungs"][4]["env"] = json!({ "EDGE": "2" }));
+        assert!(tuned.contains("sets `env`"), "{tuned}");
+        for i in [3, 4] {
+            let breaching = tamper(&|l| l["rungs"][i]["may_breach"] = json!(true));
+            assert!(breaching.contains("`may_breach`"), "{breaching}");
+        }
+        assert!(
+            test.contains("--reference /opt/mtx/anchors/funding-squeeze "),
+            "{test}"
+        );
+        std::fs::write(
+            task.join("tests/test.sh"),
+            test.replace(
+                "/opt/mtx/anchors/funding-squeeze ",
+                "/opt/mtx/anchors/flash-crash ",
+            ),
+        )
+        .unwrap();
+        let verifier = anchor_problems(&root, name).join("; ");
+        assert!(
+            verifier.contains("--reference /opt/mtx/anchors/funding-squeeze"),
+            "{verifier}"
+        );
+        std::fs::write(task.join("tests/test.sh"), &test).unwrap();
+        assert!(anchor_problems(&root, name).is_empty());
+
+        // A verifier setting changed: the rules are stale until synced.
+        std::fs::write(
+            task.join("tests/test.sh"),
+            test.replace(
+                "  --v2-sessions \\\n",
+                "  --v2-sessions \\\n  --loss-weight 2 \\\n",
+            ),
+        )
+        .unwrap();
+        let stale = tasks::stale(&root).unwrap();
+        assert_eq!(
+            stale,
+            [
+                PathBuf::from(format!("bench/tasks/{name}/environment/Dockerfile")),
+                PathBuf::from(format!("bench/tasks/{name}/instruction.md")),
+            ]
+        );
+        let (scoring, detail) = state_of(&status(&root, name).unwrap(), "scoring");
+        assert_eq!(scoring, "todo");
+        assert!(detail.contains("stale"), "{detail}");
+        tasks::sync(&root).unwrap();
+        assert!(read(&task.join("instruction.md")).contains("**Losses count 2 times.**"));
+        assert!(read(&task.join("environment/Dockerfile")).contains(
+            "ENV MTX_PRACTICE_SCORING=\"--scoring v2-headline --loss-weight 2 --v2-sessions\""
+        ));
+        assert_eq!(state_of(&status(&root, name).unwrap(), "scoring").0, "done");
+
+        // The gates: a reference in the band passes; v1's untouched.
+        let summary: crate::gates::LadderSummary = serde_json::from_value(json!({
+            "sessions": 4,
+            "totals": [{ "reference": 75.0, "informed": 190.0 }],
+            "pnls": [{ "reference": [40.0, -10.0, 25.0, 20.0], "informed": [90.0, 30.0, -20.0, 90.0] }],
+            "rules": [], "exploits": [], "disqualified": []
+        }))
+        .unwrap();
+        let checks = crate::gates::v2_checks(
+            &root,
+            name,
+            meta.mtx.headline,
+            &ladder,
+            Some(&summary),
+            &read(&task.join("tests/test.sh")),
+            false,
+        );
+        assert_eq!(checks[0].id, "strength-band");
+        assert_eq!(
+            checks[0].status,
+            crate::gates::Status::Pass,
+            "{}",
+            checks[0].detail
+        );
+        assert_eq!(checks[1].id, "informed-on-hidden-sets");
+        assert_eq!(
+            checks[1].status,
+            crate::gates::Status::Pass,
+            "{}",
+            checks[1].detail
+        );
+
+        // Opting out of the probe gate takes a reason.
+        let mut out = ladder.clone();
+        out["probes"] = json!({ "exempt": "" });
+        std::fs::write(task.join("checks/ladder.json"), out.to_string()).unwrap();
+        assert_eq!(probe_problems(&root, name).len(), 1);
+        out["probes"] = json!({ "exempt": "no probe crate for spot yet" });
+        std::fs::write(task.join("checks/ladder.json"), out.to_string()).unwrap();
+        assert!(probe_problems(&root, name).is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn v1_wording_is_found_outside_the_scoring_block_only() {
+        let block = scoring_text::block(&scoring_text::Settings::default());
+        assert!(
+            v1_wording(&block).is_empty(),
+            "the generated rules are v2's"
+        );
+        let text = format!("Intro.\n\n{block}\n\nA skillful bot; `skill_x` too.\n");
+        assert!(v1_wording(&text).is_empty());
+        let text =
+            format!("Your `skill` is PnL over the reference's.\n{block}\nThe Hindsight Bound.\n");
+        assert_eq!(v1_wording(&text), ["`skill`", "the hindsight bound"]);
+        let test = "mtx grade --scoring v2-headline --v2-sessions --ceiling c.json";
+        let problems = scoring_problems(test, &block).join("; ");
+        assert!(problems.contains("`--ceiling`"), "{problems}");
+    }
+
+    #[test]
+    fn a_v1_task_has_no_v2_steps() {
+        let steps = status(&repo_root(), "flash-crash-spcx").unwrap();
+        for id in ["anchors", "scoring", "probes"] {
+            assert!(steps.iter().all(|s| s.id != id), "{id}");
+        }
     }
 
     #[test]

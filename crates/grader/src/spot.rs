@@ -29,7 +29,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc};
 use async_trait::async_trait;
 use mtx_core::{
     Decimal, Holding, Holdings, Side,
-    mandate::{InstrumentRef, Kind, Mandate, Observed, ObservedFill, PositionRange, Term},
+    mandate::{InstrumentRef, Kind, Mandate, Observed, ObservedFill, PositionRange},
     turns::{self, BookLevels, Role, Step, Trade},
 };
 use mtx_kit::{
@@ -161,6 +161,7 @@ impl SpotReport {
                 instrument: fill.instrument.clone(),
                 side: fill.side,
                 price: fill.price,
+                worst_price: fill.price,
             })
             .collect()
     }
@@ -783,12 +784,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;
     let end_slot = base_slot + scenario.duration_slots;
-    let mandate = Mandate {
-        term: Some(Term {
-            until_slot: end_slot,
-        }),
-        ..scenario.mandate.clone()
-    };
+    let mandate = scenario.mandate.clone().with_term(base_slot, end_slot);
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
         keypair_path: workdir.keypair_path(),
@@ -855,6 +851,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         reopen_slot: None,
         vars: Vec::new(),
         cast,
+        roster: Default::default(),
         cranks: Vec::new(),
         account: Box::new(account),
     })
@@ -888,6 +885,16 @@ struct SpotAccount {
 }
 
 impl SpotAccount {
+    /// What holding the start wallet's base would have gained by the time the
+    /// price is `price_usd`, in a net-scored session; 0 otherwise.
+    fn hold_usd(&self, price_usd: f64) -> f64 {
+        if self.scenario.net.is_some() {
+            self.start.wallet.base * (price_usd - self.start_price_usd)
+        } else {
+            0.0
+        }
+    }
+
     fn note(&mut self, reading: &Reading) {
         for instrument in &self.instruments {
             self.observed.record(instrument, reading.wallet.base);
@@ -948,8 +955,13 @@ impl Account for SpotAccount {
             0
         };
         let value_usd = now.wallet.value_usd;
-        self.peak_value_usd = self.peak_value_usd.max(value_usd);
-        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        // A net-scored session scores against holding the start wallet, and
+        // takes what holding gained off the drawdown.
+        let hold_usd = self.hold_usd(now.wallet.price_usd);
+        self.peak_value_usd = self.peak_value_usd.max(value_usd - hold_usd);
+        self.max_drawdown_usd = self
+            .max_drawdown_usd
+            .max(self.peak_value_usd - (value_usd - hold_usd));
         let record = StepRecord {
             k,
             at,
@@ -964,9 +976,11 @@ impl Account for SpotAccount {
             position: now.wallet.base,
             value_usd,
             pnl_usd: value_usd - self.start_value_usd,
+            hold_usd,
             turn_ms: None,
             answered: None,
             fair_usd: None,
+            markets: Vec::new(),
         };
         self.last = Some(now);
         Ok(record)
@@ -1071,6 +1085,7 @@ impl Account for SpotAccount {
         let start = &self.start;
         let (start_value_usd, start_price_usd) = (self.start_value_usd, self.start_price_usd);
         let end_value_usd = end.wallet.value_usd;
+        let end_hold_usd = self.hold_usd(end.wallet.price_usd);
         let order = scenario.order.as_ref().map(|order| {
             let own: Vec<(Side, f64)> = fills.iter().map(|f| (f.side, f.base)).collect();
             order.report(
@@ -1131,9 +1146,12 @@ impl Account for SpotAccount {
             instrument,
             positions: observed.positions,
             positions_outside_universe: 0,
-            max_drawdown_usd: self
-                .max_drawdown_usd
-                .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            max_drawdown_usd: self.max_drawdown_usd.max(
+                self.peak_value_usd.max(end_value_usd - end_hold_usd)
+                    - (end_value_usd - end_hold_usd),
+            ),
+            samples: Default::default(),
+            term_start: Default::default(),
             valuation: "pyth",
             flow: done.actors.flow,
             competitor: done.actors.competitor,
@@ -1154,12 +1172,15 @@ impl Account for SpotAccount {
             close_outs: Vec::new(),
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
+            making_fills: Vec::new(),
+            obligations: None,
             tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
             liquidator: done.liquidator,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
+            markets: Vec::new(),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1171,6 +1192,7 @@ impl Account for SpotAccount {
                 transactions: done.transactions,
                 calls: done.calls,
                 taker_orders: done.actors.taker_orders,
+                market_taker_orders: Default::default(),
             },
         })
     }
@@ -1224,8 +1246,11 @@ mod tests {
             actors: None,
             takers_pricing: None,
             fair_path: None,
+            bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,
@@ -1488,20 +1513,16 @@ mod tests {
         };
         let mut mandate = scenario().mandate;
         mandate.universe[0].min_sell_price = Some(149.0);
-        let observed = Observed {
-            fills: report.observed_fills(),
-            ..Observed::default()
-        };
+        let mut observed = Observed::default();
+        observed.fills = report.observed_fills();
         assert_eq!(mandate.audit(&observed), None);
         let mut bought = report.clone();
         bought.fills.push(SpotFill {
             side: Side::Buy,
             ..sell(150.0)
         });
-        let observed = Observed {
-            fills: bought.observed_fills(),
-            ..Observed::default()
-        };
+        let mut observed = Observed::default();
+        observed.fills = bought.observed_fills();
         assert!(mandate.audit(&observed).is_some());
     }
 

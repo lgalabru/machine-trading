@@ -38,11 +38,13 @@ Doing nothing makes $0 in every session.
 
 The three anchors are measured on the same sessions as the bot, not guessed.
 
-- **0** is the `nop` bot, which makes $0. v2 assumes a flat start with no carry, so doing nothing is $0. A session that starts holding something would need a measured nop run, which v2 does not do yet, and it refuses such a grade.
+- **0** is the `nop` bot, which makes $0. On a flat start with no carry doing nothing is $0. A perp start position is scored against holding it (`scoring.net` or an order), so holding it makes 0, and v2 refuses one that is not. An RFQ desk that starts with the asset, unless it is scored over the idle desk, makes or loses the asset's move without quoting: such a session is also run by a bot that does nothing, under `--v2-sessions`, and that run's PnL is the 0 there (`nop_pnl_usd` in the report).
 - **0.5** is the task's reference bot. Its PnL on every session is stored in the scenario (`reference_pnl_usd`), or measured by running it first on a fresh hidden set.
 - **1** is the informed bot (`informed_pnl_usd` on the scenario). Reaching it is possible by definition: it is a strategy anyone could write who knew the task's model. A gap to it is a skill gap.
 
-**While a task has no informed bot**, the 1 falls back to the cost-aware hindsight bound. This is what a trader with perfect foresight could make after paying the venue's taker fee and half-spread on every trade (8.5 bp together by default). It uses the reference's price marks, never the bot's own, so a bot cannot lower its own ceiling by jittering its marks. It has no free parameter and no model run in it. It cannot be reached, so it is an interim 1, and the report says `ceiling: "hindsight"`. A grade with no reference session cannot use it, and v2 refuses such a grade.
+**While a task has no informed bot**, the 1 falls back to the cost-aware hindsight bound. This is what a trader with perfect foresight could make after paying the venue's taker fee and half-spread on every trade (8.5 bp together by default). It uses the reference's price marks, never the bot's own, so a bot cannot lower its own ceiling by jittering its marks. It has no free parameter and no model run in it. It cannot be reached, so it is an interim 1, and the report says `ceiling: "hindsight"`. A grade with no reference session cannot use it, and v2 refuses such a grade. It reads one market's marks and cap, so a session on several markets needs the informed bot (or a given ceiling), and v2 refuses the hindsight fallback there.
+
+Two things are checked before a score is taken. The reference and the 1 must be at least 5% of the 1 apart, or a cent of PnL moves the score by many points, and v2 refuses a set whose anchors are closer. And every anchor must be a finite number.
 
 The map from dollars to score is two straight lines. With `E` the weighted sum of PnL (next section):
 
@@ -119,7 +121,11 @@ A **breach** is a session that breaks its mandate or its order, ends liquidatabl
 
 The stop-out is how a drawdown breach is priced instead. When a session's drawdown goes past the mandate's limit, the risk desk closes the position at market and the session ends. The close pays the book's impact and the taker fee. The PnL is the account's value after the close. See `scoring.stop_out` in [scenario-format.md](scenario-format.md).
 
-A breached session counts at least as the worst loss the mandate allows, weighted. It counts its real weighted loss when that is worse:
+Drawdown is read at the steps: the values the bot is shown and the risk desk reads, so the audit and the stop-out never see a breach the bot could not. Positions are still audited at every slot under `--v2-sessions`. In a net-scored session the drawdown is on the account's value less what holding the start would have gained, so a bot that holds draws down nothing, as it scores nothing.
+
+A grade that stops at the bot's first breach (`--stop-on-disqualify`) holds only the sessions up to it, so v2 refuses it, and `mtx grade` refuses the two flags together.
+
+A breached session counts at least as the worst loss the mandate allows, weighted (the session's bound, when the limit is 0). It counts its real weighted loss when that is worse:
 
 ```text
 Xw_s = min(−k · L, w(X_s))
@@ -127,18 +133,31 @@ Xw_s = min(−k · L, w(X_s))
 
 So a breach never beats complying, and never caps a loss. In the example, a session with PnL −$250 and `L = $100` counts `min(−150, −375) = −375`. A compliant session that lost the full limit would count −150.
 
-On top of that, a breach caps the whole run:
+On top of that, breaches cost the whole run in proportion to how often they happen. The run's `raw` loses `c` times its breach rate:
 
-- **One breach** caps the run's `raw` at **0.5**, the reference's score.
-- **Two or more** cap it at **0**.
+```text
+raw  −=  c · (breached sessions / sessions)          c = 1.25
+```
 
-Without the cap, a bot that breached now and then could beat its own compliant twin. Breaching on purpose and winning big elsewhere paid. The run cap closes that.
+So each 1% of sessions breached costs 0.0125 of score. Three breaches in 100 sessions cost 0.0375, and so do three in any 100 or six in 200: the same rate costs the same. Every breach costs the same `c / n`, so there is no cliff and no point where one more breach is free. The rate, not the count, is what is charged, so the cost doesn't change with how many sessions the task has. `raw` is still floored at −1. The grade reports the points taken as `breach_penalty` and `c` as `breach_rate_weight`; the gap report adds them to `risk`.
 
-**A keeper liquidation is not a breach.** If a scenario has a liquidation keeper, a liquidation is priced into the PnL like any other loss: the account value after it is what counts. It is not counted as a breach and does not trigger the cap. With no keeper, ending the session liquidatable is a breach.
+Why a penalty on top of the floor: with the floor alone, a bot that levers past its limit and is stopped out now and then can beat its own compliant twin, because it earns more in every session it isn't stopped out. In the offline tests (TUNE2's N1) that happened on two flash-crash tasks.
+
+Why this shape and this `c` (scoring_v2/TUNE3_breach_rate.md):
+
+- **Linear in the rate.** Breaching is charged per session, like the rest of the score, and its marginal cost is constant. Two other shapes were tested. A square-root penalty charges the first breaches so hard that an honest Sharpe-0.2 bot, which is stopped out about once in 130 sessions, falls below doing nothing at every value that stops the breacher. A squared penalty barely charges occasional breaches, so it needs a larger constant and still leaves the breacher a thinner margin than linear does for the same cost to honest bots.
+- **`c = 1.25`.** The probes set a window. Below about 0.82, the reference levered to 11 times its size on 0.11's flash-crash, stopped out in 4% of sessions, still beats its compliant twin. Above about 1.5 to 1.7 (it depends on the simulation seed), the honest Sharpe-0.2 bot on 0.12's funding-carry falls below nop. The fit-only rule (the smallest `c` that holds the breacher below its twin on 0.10 and 0.11) gives 1.0, which also passes on the held-out tasks; 1.25 was chosen nearer the middle, using the upper edge seen on held-out 0.12. It was checked on session sets of 24, 48, 72 and 100, with the constant fitted on 0.10 and 0.11 and validated on 0.12. Across breach rates of 1.4% to 20%, the occasional breacher scores at least 0.012 below its twin on the fit tasks and 0.017 below on the held-out ones.
+- **What it costs a competent bot.** For a bot at the reference's level, stopped out in 1%, 2% or 3% of 100 sessions, the penalty is 0.0125, 0.025 or 0.0375. The floor is the larger cost: on these tasks it takes about 0.06 per 1% of sessions. A 3% stop-out rate takes a reference-level bot from 0.5 to about 0.27 on average. Under the old cap, it went to 0.
+
+One limit. The penalty makes breaching lose in expectation, not in every run. A heavily levered bot that happens to be stopped out once in 100 sessions, where it would usually be stopped out four times, beat its twin in that run by 0.04 in the worst case we tested. That is not a bound: it grows with leverage, and the worst case sits at the edge of the tested lever range (12 times the reference). Closing that would take `c` of about 6, which would push honest Sharpe-0.2 bots below nop and cost a 3% stop-out rate 0.18 more. Headlines average several runs, which is where this luck averages out.
+
+The run cap this replaces held `raw` to 0.5 after one breach and to 0 after two. It was fitted on 72-session runs. At 100 sessions, a 2–3% stop-out rate, which a competent desk can have, zeroed the run: in card 8's pilot every graded bot (3–5 breaches in 100) scored 0, where this rule gives them 0.44 to 0.48.
+
+**A keeper liquidation is not a breach.** If a scenario has a liquidation keeper, a liquidation is priced into the PnL like any other loss: the account value after it is what counts. It is not counted as a breach and adds nothing to the breach penalty. With no keeper, ending the session liquidatable is a breach.
 
 Breaches are checked on intra-session equity, marked to market each step. The report keeps `breached_sessions` and `breaches_per_100_sessions`.
 
-In the example, if Bot X had the −$250 session instead of its −$40 one, `E_bot` would be −10, and `raw` would be −0.02: the breach alone took it from 0.58 to below nothing.
+In the example, if Bot X had the −$250 session instead of its −$40 one, `E_bot` would be −10, `raw` before the penalty −0.02, and after it (one breach in 8 sessions, 1.25 / 8 = 0.16) −0.18: the breach alone took it from 0.58 to below nothing.
 
 ## Fatal runs score −1
 
@@ -191,7 +210,7 @@ This table may still change.
 | Informed bot | The top anchor | Exactly 1 |
 | Levered reference | Leverage does not pay by itself | A leveraged bot that breaches never pays; levered by m never scores more than m times the reference's weighted PnL |
 | Stop-lotto (coin-flip entry, tight trailing stop) | A trick that looks like risk control | To be confirmed |
-| Occasional breacher | A bot that breaches now and then beats its compliant twin | Never beats its compliant twin |
+| Occasional breacher | A bot that breaches now and then beats its compliant twin | The breach penalty binds (it takes `c · b / n` at b = 1, 2 and 3 breaches), and the breacher scores below its compliant twin |
 | Crash-when-losing (fatal) | Failing on purpose when behind | Scores −1, so never above the bot it wraps |
 | Crash-when-losing (graceful) | Flattening and stopping when behind | Reported, not gated: this is a stop-loss, a real risk control |
 | Short-vol and long-vol pair | Equal mean and spread, different tails | Long-vol is not below short-vol |
@@ -220,7 +239,7 @@ A known residual: a coin-flip entry with a trailing stop has a weak but real edg
 
 - Many RL benchmarks report scores normalised between a random policy and a reference. Our 0 and 0.5 are the same idea, with a fixed, never-graded bot at each end. The anchors come from fixed bots, not from the models being graded.
 - `rliable` (Agarwal et al.) recommends interval estimates, the interquartile mean and performance profiles instead of a bare mean. We report intervals and keep the raw mean so negatives show, and will add the IQM.
-- Prop-trading firms already work this way. They cap drawdown, stop traders out on a breach and judge consistency, not just totals. The stop-out and the run cap copy that.
+- Prop-trading firms already work this way. They cap drawdown, stop traders out on a breach and judge consistency, not just totals. The stop-out and the breach-rate penalty copy that.
 
 Two honest limits. First, k is a choice, and it makes some profitable but noisy strategies score under nop. We publish the break-even Sharpe so nobody has to guess. Second, a 72-session run cannot always tell a lucky bot at the anchor's own level of risk from a skilled one. The interval is what flags that.
 
@@ -229,8 +248,9 @@ Two honest limits. First, k is a choice, and it makes some profitable but noisy 
 **Merged:**
 
 - The anchor map, k = 1.5, the anchor floor, and the fatal floor at −1.
-- The near-breach charge (λ = 1), stop-out breaches and the run cap.
+- The near-breach charge (λ = 1), stop-out breaches and the breach-rate penalty (`c` = 1.25), which replaced the run cap.
 - The cost-aware hindsight fallback and the informed-bot ceiling.
+- The informed bot run on the hidden set it anchors (`mtx grade --informed`): told each session's latent state: facts knowable in principle (who the actors are, the funding process, the impact curve), never the session's realised draws, with nothing of it reaching the bot. One more bot run per session.
 - The single-run interval, and the paired hierarchical comparison with tie groups.
 - Raw metrics and the gap report (`wrong_read`, `missed`, `execution`, `risk`, `noise`).
 - The break-even Sharpe, reported with every score.

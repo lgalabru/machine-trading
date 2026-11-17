@@ -34,6 +34,13 @@ pub enum Scoring {
     /// session and capping the run, and a charge for drawing down far more
     /// than the anchor. Report-only: `reward` and `skill` don't change.
     V2,
+    /// Scoring v2 as the grade's one score, what a released task grades by:
+    /// `reward` is v2's clamped score, `skill` and `reference_ratio` are
+    /// left out, and the 1 must be the task's informed bot: a grade without
+    /// it on every session fails rather than fall back to the hindsight
+    /// ceiling. `--eta` and `--ceiling` are refused.
+    #[value(name = "v2-headline")]
+    V2Headline,
 }
 
 /// How a grade is scored: `mtx grade`, `mtx rescore` and `mtx bench rescore`.
@@ -79,6 +86,10 @@ impl ScoringArgs {
             }
             return Ok(None);
         }
+        let headline = self.scoring == Scoring::V2Headline;
+        if headline && (!self.eta.is_empty() || self.ceiling.is_some()) {
+            bail!("--eta and --ceiling replace the 1, and a v2 headline takes the informed bot's");
+        }
         let ceiling = match &self.ceiling {
             Some(path) => Ceiling::Given(
                 serde_json::from_slice::<BTreeMap<String, f64>>(
@@ -96,6 +107,7 @@ impl ScoringArgs {
             hindsight_cost: self.ceiling_cost_bps / 1e4,
             risk_weight: per_task("--risk-weight", &self.risk_weight, task)?
                 .unwrap_or(scoring_v2::RISK_WEIGHT),
+            headline,
             ..Params::new(ceiling)
         }))
     }
@@ -156,6 +168,21 @@ pub fn rescore(
     .with_context(|| report.display().to_string())?;
     let verdict: Verdict = serde_json::from_value(original.clone())
         .with_context(|| format!("{}: not a grade's report", report.display()))?;
+    // A grade headlined by v2 is scored again as one: its own settings when
+    // no scoring is asked for, never v1 or v2 beside v1.
+    let kept;
+    let v2 = match (original["headline"].as_str(), v2) {
+        (Some("v2"), None) => {
+            kept = headline_params(&original)
+                .with_context(|| format!("{}: its v2 settings", report.display()))?;
+            Some(&kept)
+        }
+        (Some("v2"), Some(params)) if !params.headline => bail!(
+            "{}: the grade's one score is v2: rescore it with `--scoring v2-headline`, or with no --scoring to keep its settings",
+            report.display()
+        ),
+        (_, v2) => v2,
+    };
     let sessions = original["scenarios"]
         .as_array()
         .into_iter()
@@ -176,6 +203,19 @@ pub fn rescore(
             Ok((session, scenario))
         })
         .collect::<Result<Vec<_>>>()?;
+    if v2.is_some() {
+        // A report from before `truncated` was recorded: the reference's
+        // sessions, which a grade runs in full, show the bot's stopped short.
+        let reference = graded_sessions(&details.join("reference"));
+        if reference > sessions.len() {
+            bail!(
+                "{}: the report holds {} of the reference's {reference} sessions: the grade \
+                 stopped at its first breach, and v2 scores every session",
+                report.display(),
+                sessions.len()
+            );
+        }
+    }
     let mut report = grade::rescore(sessions, verdict);
     if let Some(params) = v2 {
         // The cost-aware hindsight ceiling reads the reference's sessions,
@@ -237,6 +277,38 @@ pub fn rescore(
     Ok(Rescored {
         report,
         differences,
+    })
+}
+
+/// How many sessions `dir` holds detail files of: none, when it isn't there.
+fn graded_sessions(dir: &Path) -> usize {
+    std::fs::read_dir(dir).map_or(0, |entries| {
+        entries
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".json.gz"))
+            .count()
+    })
+}
+
+/// A v2-headline grade's own scoring settings, from its `v2` block: `k`,
+/// `φ`, `λ`, the hindsight cost and the resamples, the 1 its informed bot.
+fn headline_params(original: &Value) -> Result<Params> {
+    let v2 = &original["v2"];
+    let number = |value: &Value, name: &str| {
+        value
+            .as_f64()
+            .with_context(|| format!("no `v2.{name}` in the report"))
+    };
+    Ok(Params {
+        loss_weight: number(&v2["loss_weight"], "loss_weight")?,
+        anchor_floor: Some(number(&v2["anchor_floor"], "anchor_floor")?),
+        risk_weight: number(&v2["risk"]["weight"], "risk.weight")?,
+        hindsight_cost: number(&v2["hindsight_cost"], "hindsight_cost")?,
+        resamples: v2["resamples"]
+            .as_u64()
+            .context("no `v2.resamples` in the report")? as usize,
+        headline: true,
+        ..Params::new(Ceiling::Informed { eta_override: None })
     })
 }
 
@@ -435,7 +507,7 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
                     "noise": v2.gap.noise,
                 },
                 "breached_sessions": v2.breached_sessions,
-                "breach_cap": v2.breach_cap,
+                "breach_penalty": v2.breach_penalty,
                 "risk": v2.risk,
                 "metrics": v2.metrics,
                 "fatal": v2.fatal,
@@ -457,7 +529,7 @@ pub fn rescore_trials(root: &Root, scoring: &ScoringArgs) -> Result<Value> {
         "failed": failed,
         "rescored": rows,
     });
-    if scoring.scoring == Scoring::V2 {
+    if scoring.scoring != Scoring::V1 {
         summary["v2_comparison"] = compare_models(&graded, scoring)?;
         for (task, models) in &unscored {
             let entry = &mut summary["v2_comparison"][task];
@@ -588,6 +660,60 @@ mod tests {
         let counted = &summary["v2_comparison"]["flash-crash-spcx"]["not_rescored"];
         assert_eq!(counted["gpt-6-astra"], json!({ "skipped": 1, "failed": 1 }));
         assert_eq!(counted["gpt-6.1-sol"], json!({ "failed": 1 }));
+    }
+
+    #[test]
+    fn detail_files_are_counted_by_session() {
+        let dir = std::env::temp_dir().join(format!("mtx-count-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(graded_sessions(&dir.join("absent")), 0);
+        for name in ["a.json.gz", "b.json.gz", "notes.txt"] {
+            std::fs::write(dir.join(name), "").unwrap();
+        }
+        assert_eq!(graded_sessions(&dir), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_v2_headline_grade_is_rescored_as_one() {
+        let original = json!({
+            "headline": "v2",
+            "reward": 0.5,
+            "scenarios": [],
+            "v2": {
+                "loss_weight": 2.0, "anchor_floor": 0.1, "hindsight_cost": 8.5e-4,
+                "resamples": 500, "risk": { "weight": 0.5 }
+            }
+        });
+        let kept = headline_params(&original).unwrap();
+        assert!(kept.headline);
+        assert_eq!(
+            (
+                kept.loss_weight,
+                kept.anchor_floor,
+                kept.risk_weight,
+                kept.resamples
+            ),
+            (2.0, Some(0.1), 0.5, 500)
+        );
+        assert_eq!(kept.ceiling, Ceiling::Informed { eta_override: None });
+        // Asked to score it beside v1 instead: refused before anything is read.
+        let dir =
+            std::env::temp_dir().join(format!("mtx-rescore-hl-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let report = dir.join("report.json");
+        std::fs::write(&report, original.to_string()).unwrap();
+        let beside = args(Scoring::V2, &[]).params(None).unwrap().unwrap();
+        let refused = rescore(&report, &dir, None, Some(&beside)).err().unwrap();
+        assert!(
+            format!("{refused:#}").contains("v2-headline"),
+            "{refused:#}"
+        );
+        // `--ceiling` can't stand in for the informed bot under the headline.
+        let mut handed = args(Scoring::V2Headline, &[]);
+        handed.ceiling = Some(dir.join("ceiling.json"));
+        assert!(handed.params(None).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

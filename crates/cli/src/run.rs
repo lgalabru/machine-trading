@@ -86,6 +86,7 @@ pub async fn run(options: Run<'_>) -> Result<String> {
         jobs: 1,
         first_bot_user: 0,
         reference_dir: None,
+        informed: None,
         anchor_jobs: 1,
         regimes: None,
         stop_on_disqualify: false,

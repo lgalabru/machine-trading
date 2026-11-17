@@ -35,11 +35,15 @@ pub struct ForcedClose {
     /// The account's value once the close settled: at the session's end,
     /// which is the step the account was flat at, or its last step.
     pub value_after_usd: f64,
-    /// The position when it triggered, in base units (positive is long).
+    /// The position when it triggered, in base units (positive is long):
+    /// the primary market's, in a session on several, with each market's
+    /// in `positions_before`, by symbol.
     pub position_before: f64,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub positions_before: std::collections::BTreeMap<String, f64>,
     /// The close's own orders, apart from the bot's.
     pub orders: Vec<CloseOrder>,
-    /// Whether the account was flat at the session's end.
+    /// Whether the account was flat at the session's end, on every market.
     pub flat: bool,
 }
 
@@ -70,6 +74,10 @@ pub enum LiquidatedBy {
 pub struct CloseOrder {
     /// Slots into the session it was sent at.
     pub at: u64,
+    /// Its market, in a session on several markets; a session on one
+    /// trades only its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market: Option<mtx_core::mandate::InstrumentRef>,
     /// `buy` or `sell`, in base units.
     pub side: String,
     pub size: f64,
@@ -89,7 +97,8 @@ pub struct CloseOrder {
 /// What one step of closing did.
 pub(crate) struct Closing {
     pub orders: Vec<CloseOrder>,
-    /// The position after them, in base units.
+    /// The position after them, in base units: on several markets, the
+    /// largest one left.
     pub position: f64,
 }
 
@@ -115,8 +124,10 @@ mod tests {
             peak_usd: 10_000.0,
             value_after_usd: 8_900.0,
             position_before: 700.0,
+            positions_before: Default::default(),
             orders: vec![CloseOrder {
                 at: 26,
+                market: None,
                 side: "sell".into(),
                 size: 700.0,
                 limit_usd: 137.0,
@@ -144,6 +155,7 @@ mod tests {
             peak_usd: 10_000.0,
             value_after_usd: 3_036.0,
             position_before: 900.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: false,
         };

@@ -35,10 +35,15 @@ def trials(batch):
             continue
         agent = (result.get("config") or {}).get("agent") or {}
         info = result.get("agent_info") or {}
-        model = agent.get("model_name") or info.get("name")
-        # A model run outside its provider's own harness is its own row. An
-        # agent given by import path has no name in the config: it says it.
-        harness = agent.get("name") or info.get("name")
+        # The model without its route (`custom/openai/gpt-6.1-sol` through a
+        # router), as the review page and the published tables name it.
+        model = (agent.get("model_name") or info.get("name") or "").split("/")[-1]
+        # A model run outside its provider's own harness is its own row, by
+        # the name the harness gives itself (`hermes`, not the import path
+        # `mtx_hermes:Hermes` the config holds).
+        harness = info.get("name") or agent.get("name")
+        if harness:
+            harness = harness.split(":")[-1].lower()
         if harness not in (None, "claude-code", "codex"):
             model = f"{model} · {harness}"
         task = (result.get("task_name") or "").split("/")[-1]
@@ -89,6 +94,13 @@ def main():
     parser.add_argument("batch")
     parser.add_argument("--json")
     args = parser.parse_args()
+    try:
+        with open(os.path.join(args.batch, "batch.json")) as f:
+            unguarded = json.load(f).get("guarded") is False
+    except (OSError, ValueError):
+        unguarded = False
+    if unguarded:
+        print("\nNOT GUARDED: native harnesses ran on guarded tasks (guarded: false); a screen, not for publication")
 
     runs = defaultdict(lambda: defaultdict(list))
     void = []
@@ -149,7 +161,7 @@ def main():
         print("\nvoid (no reward; re-run, don't score): " + ", ".join(void))
     if args.json:
         with open(args.json, "w") as f:
-            json.dump({"tasks": summary, "void": void}, f, indent=2)
+            json.dump({"tasks": summary, "void": void, **({"guarded": False} if unguarded else {})}, f, indent=2)
 
 
 if __name__ == "__main__":
