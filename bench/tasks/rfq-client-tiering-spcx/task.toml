@@ -52,6 +52,12 @@ MTX_EVAL_SEED = "${MTX_EVAL_SEED:-}"
 timeout_sec = 3600.0
 # Created in the base image; owns /app, the shared target dir and its cargo home.
 user = "agent"
+# While it works, the agent reaches its model (the bench adds the key proxy's
+# address) and the crates registry, and nothing else: ghcr.io and github.com
+# hold the full grader and the reference bots. The install before it runs
+# keeps [environment]'s network. `just network-probe` checks it.
+network_mode = "allowlist"
+allowed_hosts = ["crates.io", "index.crates.io", "static.crates.io"]
 
 [verifier.environment]
 # The verifier's image, built by `just image` from tests/: the runtime

@@ -23,7 +23,7 @@ A good bot profits here because it prices each client to its reach and declines 
 
 ## The market
 
-Sessions of 1,200 to 2,000 slots on SPCX's fitted price model (regular hours, its jumps included). 10 to 16 clients ask for one-sided prices, each 3 to 10 times a session on one Poisson schedule, in sizes lognormal around 0.75 SPCX; 15% to 45% of them, redrawn every session, see the level 45 to 120 slots ahead and ask its way. A client takes a price within its reach of its value: 0.8 to 1.6 bp a lot of 0.25 SPCX, times the square root of the size in lots, the same for every client. Requests, fills and the index are all the bot sees; ids name the client and nothing else.
+Sessions of 1,200 to 2,000 slots on SPCX's fitted price model (regular hours, its jumps included). 10 to 16 clients ask for one-sided prices, each 3 to 10 times a session on one Poisson schedule, in sizes lognormal around 0.75 SPCX; 15% to 45% of them, redrawn every session, see the level 45 to 120 slots ahead and ask its way, right on 85% of their requests and backwards on the rest. A client takes a price within its reach of its value: 0.8 to 1.6 bp a lot of 0.25 SPCX, times the square root of the size in lots, the same for every client. Requests, fills and the index are all the bot sees; ids name the client and nothing else.
 
 ## Scoring
 
