@@ -1866,7 +1866,10 @@ mod tests {
     #[test]
     fn a_report_from_before_the_lot_size_rewrites_the_same() {
         let current = serde_json::to_value(session(1.0)).unwrap();
-        assert!(current.get("base_lots_decimals").is_none(), "3 isn't written");
+        assert!(
+            current.get("base_lots_decimals").is_none(),
+            "3 isn't written"
+        );
         let old = current.clone();
         let read: SessionReport = serde_json::from_value(old.clone()).unwrap();
         assert_eq!(read.base_lots_decimals, 3);

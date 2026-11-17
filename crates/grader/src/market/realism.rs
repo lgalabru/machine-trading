@@ -100,6 +100,18 @@ pub struct SessionPath {
     /// sizes or scheduled events: the short-session checks judge it against
     /// those, not against the calibration's all-day rates.
     pub stated: Option<ModelSpec>,
+    /// Where a stated spec's background jumps landed: the jump checks judge
+    /// them, so the 1 s volatility leaves those seconds out. Empty where the
+    /// spec states none.
+    pub jump_slots: Vec<u64>,
+}
+
+fn jump_slots(events: &[super::model::Event]) -> Vec<u64> {
+    events
+        .iter()
+        .filter(|e| e.kind == EventKind::Jump)
+        .map(|e| e.slot)
+        .collect()
 }
 
 impl SessionPath {
@@ -123,10 +135,13 @@ impl SessionPath {
                 .map(|e| e.slot)
                 .collect(),
             gaps_pct: gaps.iter().map(|e| e.pct).collect(),
-            stated: scenario
+            stated: scenario.market_model.as_ref().and_then(|m| m.stated_spec()),
+            jump_slots: scenario
                 .market_model
                 .as_ref()
-                .and_then(|m| m.stated_spec()),
+                .filter(|m| m.stated_spec().is_some())
+                .map(|m| jump_slots(&m.events))
+                .unwrap_or_default(),
         }
     }
 
@@ -142,6 +157,11 @@ impl SessionPath {
                 .collect(),
             gaps_pct: gaps.iter().map(|e| e.pct).collect(),
             stated: path.record.stated_spec(),
+            jump_slots: path
+                .record
+                .stated_spec()
+                .map(|_| jump_slots(events))
+                .unwrap_or_default(),
         }
     }
 }
@@ -1130,23 +1150,31 @@ pub fn short_session_checks(
         tick(session.log_levels[slot].exp(), realism.price_tick_rel)
     };
     // Sessions' 1 s volatility.
-    let mut sds = Vec::new();
-    for session in sessions {
-        let slots = session.log_levels.len().saturating_sub(1);
-        let returns: Vec<f64> = (0..slots / per_second)
-            .filter(|i| {
-                let (from, to) = (i * per_second, (i + 1) * per_second);
-                !session
-                    .masked_slots
-                    .iter()
-                    .any(|m| (from as u64..=to as u64).contains(m))
-            })
-            .map(|i| (price(session, (i + 1) * per_second) / price(session, i * per_second)).ln())
-            .collect();
-        if returns.len() >= 10 {
-            sds.push(moments(&returns).sd);
+    let second_sds = |sessions: &[SessionPath]| {
+        let mut sds = Vec::new();
+        for session in sessions {
+            let slots = session.log_levels.len().saturating_sub(1);
+            let returns: Vec<f64> = (0..slots / per_second)
+                .filter(|i| {
+                    let (from, to) = (i * per_second, (i + 1) * per_second);
+                    !session
+                        .masked_slots
+                        .iter()
+                        .chain(&session.jump_slots)
+                        .any(|m| (from as u64..=to as u64).contains(m))
+                })
+                .map(|i| {
+                    (price(session, (i + 1) * per_second) / price(session, i * per_second)).ln()
+                })
+                .collect();
+            if returns.len() >= 10 {
+                sds.push(moments(&returns).sd);
+            }
         }
-    }
+        sds
+    };
+    let sds = second_sds(sessions);
+    let stated = sessions.iter().any(|s| s.stated.is_some());
     let mut checks = Vec::new();
     if sds.len() < MIN_SHORT_SESSIONS {
         checks.push(Check::skipped(
@@ -1157,7 +1185,16 @@ pub fn short_session_checks(
             ),
         ));
     } else {
-        let real = real_1s;
+        // Stated jumps feed the volatility they cluster into, so a session
+        // drawn with them is judged against sessions drawn with the same
+        // departures at the calibration's own volatility: `vol_mult` is
+        // still judged against the calibration.
+        let unit = stated
+            .then(|| reference_sessions(calibration, realism, sessions, true))
+            .flatten()
+            .map(|reference| second_sds(&reference))
+            .filter(|sds| sds.len() >= MIN_SHORT_SESSIONS);
+        let real = unit.as_ref().map_or(real_1s, |sds| median(sds));
         let logs: Vec<f64> = sds.iter().map(|v| v.max(1e-300).ln()).collect();
         let own = median_se(&logs);
         let spread = realism.spread.log_sd.vol_level
@@ -1171,16 +1208,21 @@ pub fn short_session_checks(
         let held = nulls.iter().find(|v| (1.0 / w..=w).contains(&(**v / real)));
         let mut check = gate("short_vol_1s", real, median(&sds), band, held.copied());
         check.detail = format!(
-            "{} sessions; {}, and {SCALING_SLACK}x for the scaling (real: the reference windows' volatility over {} s, scaled to 1 s)",
+            "{} sessions; {}, and {SCALING_SLACK}x for the scaling (real: {} over {} s, scaled to 1 s)",
             sds.len(),
             check.detail,
+            if unit.is_some() {
+                "sessions drawn with the same stated jumps at the calibration's volatility, from the reference windows' volatility"
+            } else {
+                "the reference windows' volatility"
+            },
             realism.bar_seconds * realism.vol_bars as f64
         );
         checks.push(check);
     }
     // Jumps: whole minutes.
     let threshold = JUMP_SIGMAS * real_1s * JUMP_BAR_SECONDS.sqrt();
-    let reference = reference_sessions(calibration, realism, sessions);
+    let reference = reference_sessions(calibration, realism, sessions, false);
     let (bars, jumps) = minute_jumps(sessions, per_bar, threshold, &price);
     let hours = bars as f64 * JUMP_BAR_SECONDS / 3_600.0;
     let jumping = &calibration.fair_value.jumps;
@@ -1223,7 +1265,13 @@ pub fn short_session_checks(
             let (bars, jumps) = minute_jumps(reference, per_bar, threshold, &price);
             jumps.len() as f64 / (bars.max(1) as f64 * JUMP_BAR_SECONDS / 3_600.0)
         });
-        let rate = calibrated_rate.max(model_rate.unwrap_or(0.0));
+        // A stated rate is the spec's, and the minute rule counts only the
+        // jumps it sizes past its threshold: the model drawn with the same
+        // spec says how many that is.
+        let rate = match (stated, model_rate) {
+            (true, Some(model_rate)) => model_rate,
+            _ => calibrated_rate.max(model_rate.unwrap_or(0.0)),
+        };
         let expected = rate * hours;
         let slack = (sigmas * (JUMP_DISPERSION * expected).sqrt() + 1.0) / hours;
         let band = Band {
@@ -1279,6 +1327,7 @@ fn reference_sessions(
     calibration: &Calibration,
     realism: &Realism,
     sessions: &[SessionPath],
+    unit_vol: bool,
 ) -> Option<Vec<SessionPath>> {
     let mut default = ModelSpec::default();
     if let Some(kind) = &realism.session_kind {
@@ -1292,7 +1341,13 @@ fn reference_sessions(
         // A session drawn with stated departures is drawn again with them,
         // from where it started.
         let stated = match &session.stated {
-            Some(spec) => Some(MarketModel::new(calibration.clone(), spec.clone()).ok()?),
+            Some(spec) => {
+                let mut spec = spec.clone();
+                if unit_vol {
+                    spec.vol_mult = 1.0;
+                }
+                Some(MarketModel::new(calibration.clone(), spec).ok()?)
+            }
             None => None,
         };
         let model = stated.as_ref().unwrap_or(&default_model);
@@ -1888,6 +1943,7 @@ mod tests {
                     masked_slots: vec![],
                     gaps_pct: vec![],
                     stated: None,
+                    jump_slots: vec![],
                 }
             })
             .collect();
@@ -2015,16 +2071,20 @@ mod tests {
             }
         }
         // The default spec on the same calibration still passes, and a
-        // stated rate far from the one drawn still fails.
+        // session drawn at three times the rate it states still fails.
         let sessions = short_model_sessions(&cal, &ModelSpec::default(), 300, (80.0, 400.0), 1);
         assert!(sessions.iter().all(|s| s.stated.is_none()));
         assert_eq!(
             report(&cal, "default", &sessions, SLOT_SECONDS, None).verdict,
             Verdict::Pass
         );
-        let mut mislabelled = short_model_sessions(&cal, &spec, 300, (80.0, 400.0), 1);
+        let fast = ModelSpec {
+            jump_rate_per_hour: Some(12.0),
+            ..spec.clone()
+        };
+        let mut mislabelled = short_model_sessions(&cal, &fast, 300, (80.0, 400.0), 1);
         for s in &mut mislabelled {
-            s.stated.as_mut().unwrap().jump_rate_per_hour = Some(0.3);
+            s.stated.as_mut().unwrap().jump_rate_per_hour = Some(3.9);
         }
         let report = report(&cal, "mislabelled", &mislabelled, SLOT_SECONDS, None);
         assert_eq!(status(&report, "short_jump_rate"), Status::Fail);

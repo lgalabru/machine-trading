@@ -272,7 +272,9 @@ impl MarketModelRecord {
     /// like it. `None` where the spec states none of them: such a session
     /// is the calibration's.
     pub fn stated_spec(&self) -> Option<ModelSpec> {
-        if self.jump_rate_per_hour.is_none() && self.jump_size.is_none() && self.scheduled.is_empty()
+        if self.jump_rate_per_hour.is_none()
+            && self.jump_size.is_none()
+            && self.scheduled.is_empty()
         {
             return None;
         }

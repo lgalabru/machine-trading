@@ -458,10 +458,7 @@ mod tests {
             for (step, uncross) in stepped.iter().zip(&uncrosses) {
                 assert_eq!(uncross.slot, step.slot, "{to}: uncross slot");
             }
-            assert_eq!(
-                moves.last().unwrap().template_id,
-                "phoenix-market-uncross"
-            );
+            assert_eq!(moves.last().unwrap().template_id, "phoenix-market-uncross");
             assert_eq!(at, last_step, "{to}: returned slot");
             assert_eq!(last_step, 40 + (steps - 1) * SLOTS_BETWEEN_STEPS);
         }

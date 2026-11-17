@@ -1556,6 +1556,28 @@ impl PerpAccount {
         Ok(())
     }
 
+    /// Record what moved the bot's position with no fill event behind it:
+    /// a jump's uncross fills the orders the move crossed in an account
+    /// override, not in a transaction, so [`Self::scan_making`] never sees
+    /// it. The leftover is a maker fill of the uncross, so the fills still
+    /// add up to the position (the taking audit counts from them).
+    fn reconcile_making(&mut self, slot: u64, position: f64) {
+        let at = slot.saturating_sub(self.base_slot);
+        let own = self.own();
+        let price = own.moment(at).level_usd;
+        let decimals = own.market.base_lots_decimals;
+        let start = own.start_position;
+        let Some(read) = self.making_fills.as_mut() else {
+            return;
+        };
+        if let Some(fill) =
+            crate::making::uncross_fill(start, &read.fills, position, decimals, at, price)
+        {
+            read.fills.push(fill);
+            read.keys.push((u128::MAX - read.keys.len() as u128, false));
+        }
+    }
+
     /// What the bot's wallet holds for its RFQ desk, and the asset's
     /// reference price, Phoenix's index for the perp. Nothing without a
     /// desk. The wallet holds what its token accounts of each mint hold, as
@@ -1780,27 +1802,6 @@ impl Account for PerpAccount {
 
     fn moment(&self, at: u64) -> Moment {
         self.own().moment(at)
-    }
-
-    /// Record what moved the bot's position with no fill event behind it:
-    /// a jump's uncross fills the orders the move crossed in an account
-    /// override, not in a transaction, so [`Self::scan_making`] never sees
-    /// it. The leftover is a maker fill of the uncross, so the fills still
-    /// add up to the position (the taking audit counts from them).
-    fn reconcile_making(&mut self, slot: u64, position: f64) {
-        let at = slot.saturating_sub(self.base_slot);
-        let own = self.own();
-        let price = own.moment(at).level_usd;
-        let decimals = own.market.base_lots_decimals;
-        let start = own.start_position;
-        let Some(read) = self.making_fills.as_mut() else {
-            return;
-        };
-        if let Some(fill) = crate::making::uncross_fill(start, &read.fills, position, decimals, at, price)
-        {
-            read.fills.push(fill);
-            read.keys.push((u128::MAX - read.keys.len() as u128, false));
-        }
     }
 
     async fn step(&mut self, k: u64, slot: u64, at: u64) -> Result<StepRecord> {
