@@ -79,7 +79,11 @@ impl Strategy for Informed {
         let wallets = |kind: &str| -> Vec<String> {
             told["wallets"][kind]
                 .as_array()
-                .map(|l| l.iter().filter_map(|w| w.as_str().map(String::from)).collect())
+                .map(|l| {
+                    l.iter()
+                        .filter_map(|w| w.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         let informed = wallets("skewer-informed");

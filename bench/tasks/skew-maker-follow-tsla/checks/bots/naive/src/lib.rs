@@ -34,7 +34,9 @@ pub struct Naive {
 
 impl Strategy for Naive {
     fn start(&mut self, session: &Session) -> BotResult {
-        self.mode = option_env!("MTX_NAIVE").ok_or("built without MTX_NAIVE")?.to_string();
+        self.mode = option_env!("MTX_NAIVE")
+            .ok_or("built without MTX_NAIVE")?
+            .to_string();
         self.book = BookReader::new(session)?;
         // Three makers' mean is a third of one's lean, and two leaning
         // together reach the others' thresholds' half: the best of 0.1 to
@@ -106,7 +108,10 @@ impl Strategy for Naive {
                 let ask = round_lots((market.cap + held).clamp(0.0, LEAN_SIZE));
                 if index > 0.0 {
                     if bid >= 0.001 {
-                        orders.bid(round_down_cents(index * (1.0 - NEUTRAL_BPS / 10_000.0)), bid);
+                        orders.bid(
+                            round_down_cents(index * (1.0 - NEUTRAL_BPS / 10_000.0)),
+                            bid,
+                        );
                     }
                     if ask >= 0.001 {
                         orders.ask(round_up_cents(index * (1.0 + NEUTRAL_BPS / 10_000.0)), ask);

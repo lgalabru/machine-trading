@@ -19,7 +19,7 @@ category = "trading"
 snapshot = "phoenix-perps-2026-11-13"
 
 [metadata.mtx]
-generator = "flash-crash"
+generator = "skew-maker"
 anchor = "skew-maker-follow"
 emoji = "🆕"
 market = "Phoenix TSLA perp"

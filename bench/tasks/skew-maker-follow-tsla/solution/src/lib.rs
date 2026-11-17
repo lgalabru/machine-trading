@@ -314,18 +314,27 @@ impl Follower {
         let size = round_lots(gap.abs().min(SLICE));
         if size >= 0.001 && index > 0.0 {
             if gap > 0.0 {
-                orders.buy(size, round_up_cents(index * (1.0 + TAKE_DEPTH_BPS / 10_000.0)));
+                orders.buy(
+                    size,
+                    round_up_cents(index * (1.0 + TAKE_DEPTH_BPS / 10_000.0)),
+                );
             } else {
-                orders.sell(size, round_down_cents(index * (1.0 - TAKE_DEPTH_BPS / 10_000.0)));
+                orders.sell(
+                    size,
+                    round_down_cents(index * (1.0 - TAKE_DEPTH_BPS / 10_000.0)),
+                );
             }
             return;
         }
         // A partial lean: rest the favoured side only, inside the cap.
         if strength >= self.follow.lean && index > 0.0 {
-            let room = round_lots((cap - held * way).max(0.0).min(LEAN_SIZE));
+            let room = round_lots((cap - held * way).clamp(0.0, LEAN_SIZE));
             if room >= 0.001 {
                 if way > 0.0 {
-                    orders.bid(round_down_cents(index * (1.0 - LEAN_IN_BPS / 10_000.0)), room);
+                    orders.bid(
+                        round_down_cents(index * (1.0 - LEAN_IN_BPS / 10_000.0)),
+                        room,
+                    );
                 } else {
                     orders.ask(round_up_cents(index * (1.0 + LEAN_IN_BPS / 10_000.0)), room);
                 }
