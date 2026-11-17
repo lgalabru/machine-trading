@@ -119,16 +119,18 @@ own cap and start mark, summed. A session's report lists each market
 (`markets`: start and end marks, positions, valuation, flow), and each step
 records each market (`markets` in the timeline's steps).
 
+Net scoring (`scoring.net`) works per market: each market's start position is held to that market's fair close (else its level), and the holds are summed, so a bot that holds every market scores 0. `scoring.bound_on` works on several markets too.
+
 What a session on several markets doesn't do yet:
 
 - **Library actors** (`actors.library`) trade the primary market only.
+- **Making fills** (`making_fills`) record the primary market's fills only.
 - **Markout:** the grade's markout, luck and residual split is a
   one-market split; a session on several markets reports none, whatever
   fair paths it has.
 - **Raw sends** (`tx.raw_sends`) are refused: their pre-check audits one
   market's position and value.
 - **Closed periods** stay a one-market scenario's.
-- **Net scoring** (`scoring.net`) and `scoring.bound_on` are refused: the hold baseline and the fair-path bound are one market's.
 - **The liquidation keeper** (`venues.perp.liquidator`) is refused: it
   liquidates the scenario's market only.
 - **Process bots** built on `mtx_kit::run` trade the primary market only:
