@@ -30,6 +30,7 @@ pub mod scenario_v2;
 pub mod scoring_v2;
 pub mod session;
 pub mod simulated;
+pub mod skew_maker;
 pub mod snapshot;
 pub mod spot;
 pub mod taking;

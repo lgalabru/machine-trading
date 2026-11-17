@@ -20,6 +20,7 @@ use crate::{
     carry::{CarryFamily, Shape as CarryShape},
     making::MakingFamily,
     scenario::{Shape, ShockFamily},
+    skew_maker::{Shape as SkewMakerShape, SkewMakerFamily},
     weekend::{WeekendFamily, WeekendShape},
 };
 use crate::{error::Result, scenario::Scenario};
@@ -141,6 +142,23 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "skew-maker",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                SkewMakerFamily::tsla().draw_set(prefix, count, seed),
+                false,
+                skew_maker_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                SkewMakerFamily::tsla().draw_set("hidden", count, seed),
+                tell,
+                skew_maker_latent,
             )
         },
     },
@@ -414,6 +432,13 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
         "impact_pct": shape.impact_pct,
         "half_life_slots": shape.half_life_slots,
     })
+}
+
+#[cfg(feature = "generators")]
+/// Who is who: the informed skewer's wallet and the decoys'. Not a view, a
+/// window, when the price jumps or which way.
+fn skew_maker_latent(_: &SkewMakerShape) -> Value {
+    json!({ "roster": ["skewer-informed", "skewer-decoy"] })
 }
 
 #[cfg(test)]
