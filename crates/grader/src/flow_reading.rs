@@ -10,8 +10,9 @@
 //!   see the path `horizon_slots` ahead and take its way while it is more
 //!   than `edge_bps` off: a burst before each move, and little else.
 //! - **Decoys** trade exactly as the informed do until a slot each draws in
-//!   `fade_share` of the session, and from then on on random views of their
-//!   own, at the same pace: a record that is right, then isn't.
+//!   `fade_share` of the session, and from then on in bursts on random views
+//!   of their own, at the same pace, as long and as often as the informed's
+//!   bursts ahead of moves: a record that is right, then isn't.
 //! - **Chasers** take the way the book moved once it moved over
 //!   `trigger_bps`: they trade with every move, after it.
 //! - **Noise** takes at random, and **a refill** puts back the depth takes
@@ -22,6 +23,8 @@
 //! only the counts, the horizon, the edge and the fades are drawn. Who is
 //! who is the session's latent identity ([`Shape::roster`]), told to the
 //! informed bot as wallets (`crate::latent`), never the moves themselves.
+
+use std::collections::BTreeMap;
 
 use mtx_core::mandate::Mandate;
 use serde::Serialize;
@@ -34,6 +37,7 @@ use crate::{
         calibration::sha256_hex,
         model::{ModelPath, Start},
     },
+    orders::CloseOut,
     scenario::{Scenario, SplitMix64, VENUE},
 };
 
@@ -110,6 +114,10 @@ pub struct FlowFamily {
     /// The mandate: position cap in base units and loss limit in USD.
     pub max_position: f64,
     pub max_drawdown_usd: f64,
+    /// What the desk's broker charges to close a position left at the end,
+    /// past the oracle, in basis points. With it, every session values the
+    /// account at the oracle, which no order can push.
+    pub close_haircut_bps: f64,
 }
 
 impl FlowFamily {
@@ -145,6 +153,7 @@ impl FlowFamily {
             refill_half_life: (4.0, 40.0),
             max_position: 30.0,
             max_drawdown_usd: 500.0,
+            close_haircut_bps: 5.0,
         }
     }
 
@@ -222,6 +231,9 @@ impl FlowFamily {
         let fade_until = (self.fade_share.1 * duration as f64) as u64;
         let trigger_bps = round2(rng.range_f64(self.trigger_bps));
         let half_life = round2(rng.range_f64(self.refill_half_life));
+        // A faded decoy bursts as often as the moves come, for as long as
+        // the informed trade ahead of one: a horizon.
+        let quiet = stretch.saturating_sub(horizon_slots).max(2);
 
         // Every wallet of a pace-sharing role trades at the same pace: the
         // informed and the decoys split theirs among their wallets, noise
@@ -261,6 +273,10 @@ impl FlowFamily {
                 "horizon_slots": horizon_slots,
                 "edge_bps": edge_bps,
                 "informed_for": { "from": fade_from, "until": fade_until },
+                "bursts": {
+                    "length_slots": [horizon_slots, horizon_slots],
+                    "gap_slots": [quiet / 2, quiet * 3 / 2],
+                },
                 "intensity_mult": self.informed_mult * f64::from(decoys),
                 "size_mult": size,
                 "limit_bps": limit,
@@ -324,7 +340,12 @@ impl FlowFamily {
             market_model: Some(record),
             raw_sends: None,
             start_positions: Default::default(),
-            close_out: Default::default(),
+            close_out: BTreeMap::from([(
+                self.symbol.clone(),
+                CloseOut {
+                    haircut_bps: self.close_haircut_bps,
+                },
+            )]),
             tx_layer: None,
             stop_out: None,
             liquidator: None,
@@ -408,6 +429,7 @@ mod tests {
         );
         for scenario in &a {
             scenario.validate().unwrap();
+            assert_eq!(scenario.valuation(), "oracle");
             scenario.actors.as_ref().unwrap().validate().unwrap();
         }
     }
