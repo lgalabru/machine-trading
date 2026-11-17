@@ -8,8 +8,8 @@
 //!   An account that trades at most of the steps anyone does is a maker,
 //!   on the other side of the takes; every other account's change is a
 //!   take.
-//! - **Bursts.** The takers' net buying over the last 20 slots past 3 TSLA
-//!   either way is a burst.
+//! - **Bursts.** The takers' net buying over the last 150 slots (the
+//!   longest horizon a fund trades on) past 5 TSLA either way is a burst.
 //! - **The read.** Each burst (each new side) is marked out against the
 //!   oracle 60 slots later, in basis points, the burst's way: what
 //!   following it would have paid before costs. Once two are marked, a
@@ -18,7 +18,7 @@
 //! - **Quiet.** Stay flat: at TSLA's open, resting quotes lose to the
 //!   price's drift under one-sided flow on either kind of morning.
 //! - **Toxic.** A burst sets the side, with the cap, held 40 slots after
-//!   the last signal.
+//!   the last signal its way; a burst the other way doesn't flip it.
 //!
 //! It isn't told who anyone is.
 
@@ -39,11 +39,12 @@ use mtx_kit::{
 
 /// How far past the price a taking order may fill, as a share.
 pub const TAKE_REACH: f64 = 0.006;
-/// Slots a flow is summed over, the net, in TSLA, that sets a side, and how
-/// long a side holds after its last signal.
-pub const FLOW_SLOTS: u64 = 20;
-pub const FLOW_UNITS: f64 = 1.5;
-pub const BURST_UNITS: f64 = 3.0;
+/// Slots a flow is summed over (at least the longest horizon a fund trades
+/// on), the net, in TSLA, that sets a side, and how long a side holds after
+/// its last signal.
+pub const FLOW_SLOTS: u64 = 150;
+pub const FLOW_UNITS: f64 = 2.5;
+pub const BURST_UNITS: f64 = 5.0;
 pub const HOLD_SLOTS: u64 = 40;
 /// A quote's size, and the inventory past which only the side that reduces
 /// it is quoted.
@@ -373,7 +374,9 @@ impl Markouts {
     }
 }
 
-/// The side the bot leans: set by a signal, held [`HOLD_SLOTS`] after it.
+/// The side the bot leans: set by a signal, held [`HOLD_SLOTS`] after the
+/// last signal its way. A signal the other way while it leans is ignored:
+/// no flips after entry.
 #[derive(Debug, Clone, Default)]
 pub struct Lean {
     pub dir: f64,
@@ -382,6 +385,9 @@ pub struct Lean {
 
 impl Lean {
     pub fn signal(&mut self, dir: f64, at: u64) {
+        if self.dir != 0.0 && dir != self.dir {
+            return;
+        }
         if dir != self.dir {
             log(&format!("slot {at}: lean {dir:+}"));
         }

@@ -11,16 +11,18 @@
 //!
 //! Phoenix names traders by their account, a PDA of the wallet, so it maps
 //! each wallet to its account and reads their TSLA positions every step.
-//! Any net buying or selling by the fund over the last 10 slots sets the
-//! side, with the cap, held 40 slots after the fund's last take; between
-//! the fund's trades it stays flat.
+//! The fund's net buying or selling over the last 150 slots (the longest
+//! horizon it trades on) past 1 TSLA sets the side, with the cap, held 40
+//! slots after the last signal its way, and never flipped while held:
+//! single takes of a wallet that reads the market wrong don't move it.
+//! Between the fund's trades it stays flat.
 
 use mtx_bot_toxic_day_make_or_follow::{Lean, Watch, closing, go_to, make};
 use mtx_kit::{log, prelude::*, venue::PhoenixVenue};
 
 /// Slots the fund's flow is summed over, and the least net that counts.
-const FUND_SLOTS: u64 = 10;
-const FUND_UNITS: f64 = 0.001;
+const FUND_SLOTS: u64 = 150;
+const FUND_UNITS: f64 = 1.0;
 
 /// The strategy.
 pub struct Informed {
