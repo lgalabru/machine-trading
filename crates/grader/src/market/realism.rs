@@ -2131,6 +2131,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "generators")]
     fn hand_set_short_sessions_get_a_verdict() {
         for family in [
             "flash-crash",
@@ -2151,6 +2152,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "generators")]
     fn a_session_sets_its_own_book_or_runs_on_the_snapshots() {
         let scenarios = crate::generators::generator("flash-crash")
             .unwrap()
