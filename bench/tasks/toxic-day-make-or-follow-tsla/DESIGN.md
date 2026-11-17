@@ -12,18 +12,19 @@ Status: Gate 0 on prototypes (see `hidden/gate0/README.md`).
 ## Thesis
 
 A good bot profits here because it reads from the whole tape whether this
-morning's takers know where the price goes, and makes or follows
-accordingly.
+morning's bursts of one-sided flow know where the price goes, and follows
+them on a morning they do and stands aside on one they don't.
 
-- **Wins:** marks out the market's takes against the oracle, makes while
-  they are noise, and leans with the takers' net flow once their markouts
-  show they lead the price.
-- **Loses:** making into an informed tape is picked off; following a noise
-  tape pays the spread and fees on every lean; a fixed flow threshold
-  follows the same bursts every morning, informed or not.
-- **Regimes:** a toxic morning (the fund's takes are 35-50% of the taker
-  volume) or a quiet one (10-20%), even odds, with the same expected taker
-  volume.
+- **Wins:** marks out the market's bursts against the oracle, and leans
+  with them once their markouts clear a round trip's costs.
+- **Loses:** following every burst pays a round trip for each algo parent
+  on a quiet morning; standing aside every morning earns nothing; making at
+  the open is run over by the drift under one-sided flow.
+- **Regimes:** two funds trade in bursts every session, an informed fund
+  and an execution algo; on a toxic morning the fund is the busy one (60-90
+  times the market's trade rate while it trades, the algo a quarter of
+  that), on a quiet morning the algo is. Even odds; the bursts' sizes,
+  pace and rhythm are the same either way.
 - **Mandate:** TSLA only, within 8 either way, a $400 loss limit (a breach is
   stopped out); a position left at the close is closed at the oracle less
   5 bp.
@@ -54,32 +55,58 @@ fact: telling it would tell the informed bot which half of the sessions it
 is in, the class card 1 and card 8 lost their informed bots for. So the
 informed bot is **not** told the morning.
 
-It is told an identity instead: **the fund's wallets**
+It is told an identity instead: **the informed fund's wallets**
 (`{"roster": ["informed"]}`, resolved to the session's wallets as it
-starts). Every session seats the fund, with 6-10 wallets on either kind of
-morning, drawn from the same range, and noise and chasers from wallets of
-their own. The roster says who the fund is, and nothing about how busy it
-will be, when it trades, or where the price goes. The informed bot learns
-the morning the way the reference does, from the tape, but reads the fund's
-own takes instead of the whole market's.
+starts). Every session seats the fund and the algo, each from 6-10 wallets
+of its own drawn from one range, on either kind of morning. The roster says
+who the fund is, and nothing about how busy it will be, when it trades, or
+where the price goes. The informed bot follows the fund's own takes, on a
+toxic morning (its bursts are big) and a quiet one (they are small); it
+never needs the morning.
 
-What a careful reader can learn in the session (item 7): the market's takes
-marked out against the oracle; their mean markout is higher on a toxic
-morning because a larger share of them come from the fund. The fund trades
-from 6-10 wallets, a few takes each, so per-wallet records are thin; the
-aggregate is the main route, and reading individual wallets is an allowed
-second one.
+What a careful reader can learn in the session (item 7): the bursts of net
+taker flow, marked out against the oracle. On a toxic morning the big
+bursts are the fund's and lead the price; on a quiet morning they are the
+algo's and don't. A session has a few bursts (the fund's edge holds about
+5% of the time, and the algo works as often), so the read takes a real part
+of the session and is noisy. Reading individual wallets is a second route:
+each wallet carries a sixth to a tenth of its fund's takes.
+
+## Version 1 (dev runs only), and why it was reworked
+
+Version 1 had one informed fund whose share of the taker volume the
+morning set (35-50% toxic, 10-20% quiet), with noise making up the rest,
+and asked the bot to make on a quiet morning. Two dev sets (12 and 16
+sessions, their own secrets) showed it could not pass:
+
+- Making at the open loses on both mornings (-$14 and -$8 a session): the
+  fills' own markout is about -$1, and the rest is the inventory's drift
+  under one-sided flow (fund and chasers).
+- The fund trades only while its edge holds, about 5% of the time, so it
+  trades in bursts on either morning; a burst is informed whatever the
+  morning, so the morning doesn't decide anything. With its pace capped to
+  keep bursts plausible, its share fell to 0-26% and the two mornings
+  merged.
+- No untold rung made money: the reference -$22 and -$2 a session,
+  following the net flow -$84 and -$116, following bursts -$25, while the
+  told bot made +$25 and +$18.
+
+Version 2 keeps the session and the told fact, drops making from the
+reference, and makes bursts ambiguous: an execution algo (a new generic
+library actor, `algos`) works parent orders in bursts with the fund's
+rhythm, and the morning picks which of the two is busy.
 
 ## Rungs
 
 | Rung | What it does | Reads |
 | --- | --- | --- |
-| informed | told the fund's wallets; leans with any net take of theirs in the last 10 slots, held 40 slots after; makes between | the fund's takes |
-| reference | marks out every take (60 slots); once 30 steps are marked, a mean over the bar means toxic: lean with the takers' net flow past 1.5 TSLA in 20 slots; else make | the whole tape's markouts |
+| informed | told the fund's wallets; leans with any net take of theirs in the last 10 slots, held 40 slots after; flat between | the fund's takes |
+| reference | marks out each burst (net taker flow past 3 TSLA in 20 slots, each new side) 60 slots on; once two are marked, a mean over 10 bp means toxic: lean with the bursts; else flat | the bursts' markouts |
 | flat | never trades | nothing |
-| make | makes all session (one TSLA a side at the touch, post-only) | nothing |
+| make | makes all session (one TSLA a side at the touch, post-only, inventory within 2) | nothing |
 | follow | leans with the takers' net flow past 1.5 TSLA all session | the flow, not whether it is informed |
-| switch | leans past 3 TSLA, makes between: a fixed threshold | the flow, not whether it is informed |
+| switch | leans with bursts (3 TSLA), makes between: a fixed threshold | the flow, not whether it is informed |
+| burst | leans with bursts every morning, flat between: the reference without the read | the flow, not whether it is informed |
 
 ## Departures from the card
 
@@ -90,4 +117,11 @@ second one.
 - **The informed bot is told the fund's wallets, not the kind of morning**
   (above). The card said no wallet is told; that was for an informed bot
   told the day type, which the boundary doesn't allow.
+- **No making on a quiet morning.** At TSLA's open resting quotes lose on
+  both mornings (version 1), so the quiet-morning call is to stand aside;
+  `make` and `switch` stay as rungs. The card's "make or follow" becomes
+  "follow or stand aside".
+- **The mornings differ in who bursts, not in the informed share of a
+  steady flow.** An execution algo (a real desk participant) supplies the
+  uninformed bursts; volume, sizes and rhythm match by construction.
 - **Edge 20-30 bp** (card: 15-20) so a lean clears the ~10 bp round trip.
