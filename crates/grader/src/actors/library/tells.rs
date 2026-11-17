@@ -19,6 +19,8 @@ use crate::actors::{Cast, Moment};
 struct Act {
     slot: u64,
     role: String,
+    /// The wallet, `role#n`.
+    wallet: String,
     verb: String,
     side: Option<Side>,
     size: f64,
@@ -27,12 +29,14 @@ struct Act {
 
 fn parse(slot: u64, line: &str) -> Act {
     let mut words = line.split_whitespace();
-    let role = words.next().unwrap().to_string();
+    let wallet = words.next().unwrap().to_string();
+    let role = wallet.split('#').next().unwrap().to_string();
     let verb = words.next().unwrap().to_string();
     if verb == "cancel" {
         return Act {
             slot,
             role,
+            wallet,
             verb,
             side: None,
             size: 0.0,
@@ -49,6 +53,7 @@ fn parse(slot: u64, line: &str) -> Act {
     Act {
         slot,
         role,
+        wallet,
         verb,
         side: Some(side),
         size,
@@ -86,7 +91,7 @@ impl Drive<'_> {
             .wallets()
             .into_iter()
             .enumerate()
-            .map(|(n, (role, _))| {
+            .map(|(n, (role, i))| {
                 let position = Arc::new(Mutex::new(0.0));
                 positions.push((role, position.clone()));
                 WalletSeat {
@@ -95,7 +100,7 @@ impl Drive<'_> {
                         top: top.clone(),
                         log: log.clone(),
                         position,
-                        name: role.to_string(),
+                        name: format!("{role}#{i}"),
                         lot: 0.0,
                     }),
                 }
@@ -535,4 +540,59 @@ async fn informed_rfq_clients_are_right_on_average_and_wrong_some_of_the_time() 
         (0.05..=0.35).contains(&wrong),
         "wrong {wrong:.3} of the time"
     );
+}
+
+/// How often two wallets take the same side in the slots they both trade.
+fn agreement(acts: &[Act], a: &str, b: &str) -> f64 {
+    let sides = |wallet: &str| -> BTreeMap<u64, Side> {
+        acts.iter()
+            .filter(|x| x.wallet == wallet && x.verb == "take" && x.slot < 19_000)
+            .filter_map(|x| x.side.map(|s| (x.slot, s)))
+            .collect()
+    };
+    let (a, b) = (sides(a), sides(b));
+    let both: Vec<_> = a.iter().filter_map(|(slot, s)| Some((s, b.get(slot)?))).collect();
+    assert!(both.len() > 500, "{} shared slots", both.len());
+    both.iter().filter(|(x, y)| x == y).count() as f64 / both.len() as f64
+}
+
+#[tokio::test]
+async fn informed_wallets_err_on_their_own_as_decoys_do() {
+    let seeds = [3u8, 4, 5, 6, 7];
+    let (mut pairs, mut crossed) = (Vec::new(), Vec::new());
+    for salt in seeds {
+        let library = serde_json::json!({
+            "scale": scale(),
+            "informed": [{ "wallets": 2, "horizon_slots": 20, "edge_bps": 30.0 }],
+            "decoys": [{
+                "wallets": 2,
+                "horizon_slots": 20,
+                "edge_bps": 30.0,
+                "informed_for": { "from": 19_000, "until": 19_500 },
+            }],
+        });
+        let session = Drive {
+            library: &library,
+            salt,
+            slots: 20_000,
+            touch: &|_| (99.0, 101.0),
+            level: &|s| 100.0 * (1.0 + 0.0004 * s as f64),
+            fills: &[],
+        }
+        .run()
+        .await;
+        pairs.push(agreement(&session.acts, "informed#0", "informed#1"));
+        for i in ["informed#0", "informed#1"] {
+            for d in ["decoy#0", "decoy#1"] {
+                crossed.push(agreement(&session.acts, i, d));
+            }
+        }
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let (within, across) = (mean(&pairs), mean(&crossed));
+    assert!(
+        (within - across).abs() < 0.05,
+        "informed pair agree {within:.3}, informed with decoys {across:.3}"
+    );
+    assert!((0.68..=0.81).contains(&within), "informed pair agree {within:.3}");
 }

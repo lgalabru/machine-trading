@@ -56,8 +56,7 @@ pub struct Spoofer {
     /// How far behind the touch a wall goes up, and how long it stands
     /// (`lifetime_slots`) unless the price comes: each is drawn per wall
     /// within `jitter` of its setting, and a wall's size (`wall_mult`) and
-    /// a harvest (`harvest_mult`) lognormally at `size_sigma` (by default the
-    /// market's own `trade_size_sigma`).
+    /// a harvest (`harvest_mult`) lognormally at `size_sigma` (by default 0.3).
     #[serde(default = "five")]
     pub distance_ticks: u64,
     #[serde(default = "one_tick")]

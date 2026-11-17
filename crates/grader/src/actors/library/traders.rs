@@ -348,7 +348,8 @@ pub(super) struct InformedTrader {
     wallets: Vec<Wallet>,
     path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
     rng: Rng,
-    view: View,
+    /// One view a wallet, as a decoy's: the wallets err on their own.
+    views: Vec<View>,
     last: Option<u64>,
 }
 
@@ -360,27 +361,30 @@ impl InformedTrader {
         path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
         rng: Rng,
     ) -> Self {
-        let view = View::new(
-            spec.horizon_slots,
-            spec.edge_bps,
-            spec.hit_rate,
-            spec.view_noise_bps,
-        );
+        let views = vec![
+            View::new(
+                spec.horizon_slots,
+                spec.edge_bps,
+                spec.hit_rate,
+                spec.view_noise_bps
+            );
+            wallets.len()
+        ];
         Self {
             spec,
             scale,
             wallets,
             path,
             rng,
-            view,
+            views,
             last: None,
         }
     }
 
-    /// The side it trades `at`, if the move it sees ahead is past its edge.
-    fn side(&mut self, now: &Moment) -> Option<Side> {
+    /// The side `wallet` trades `at`, if the move it sees ahead is past its edge.
+    fn side(&mut self, wallet: usize, now: &Moment) -> Option<Side> {
         let ahead = (self.path)(now.at + self.spec.horizon_slots).book_usd;
-        self.view.side(
+        self.views[wallet].side(
             &mut self.rng,
             now.at,
             (ahead / now.book_usd - 1.0) * 10_000.0,
@@ -396,26 +400,26 @@ impl Actor for InformedTrader {
         if !Window::holds(&self.spec.active, last.at) {
             return;
         }
-        let Some(side) = self.side(last) else {
-            return;
-        };
-        let n = self
-            .rng
-            .poisson(self.scale.per_slot() * self.spec.intensity_mult * slots as f64);
-        for _ in 0..n {
-            let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult);
-            take_one(
-                &self.wallets,
-                &mut self.rng,
-                last.at,
-                side,
-                size,
-                last.book_usd,
-                self.spec.limit_bps,
-            )
-            .await;
+        let rate = self.scale.per_slot() * self.spec.intensity_mult / self.wallets.len() as f64;
+        let mut stepped = false;
+        for wallet in 0..self.wallets.len() {
+            let Some(side) = self.side(wallet, last) else {
+                continue;
+            };
+            stepped = true;
+            for _ in 0..self.rng.poisson(rate * slots as f64) {
+                let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult);
+                let reach = self.spec.limit_bps / 10_000.0;
+                let limit = match side {
+                    Side::Bid => last.book_usd * (1.0 + reach),
+                    Side::Ask => last.book_usd * (1.0 - reach),
+                };
+                self.wallets[wallet].take(last.at, side, size, limit).await;
+            }
         }
-        self.wallets[0].count("informed_steps", 1);
+        if stepped {
+            self.wallets[0].count("informed_steps", 1);
+        }
     }
 
     async fn report(&mut self, _: &mut ActorsReport) {}
