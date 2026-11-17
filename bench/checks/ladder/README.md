@@ -13,7 +13,7 @@ task's rungs, ladder bots and exploit bots live in its folder
 - **The order rule**, on every set, and how often it would hold on a set
   like it: a bootstrap over each set's sessions, at least `min_rule_odds`.
 - **The exploit bots' limits** (`bench/tasks/<task>/checks/exploits`), over every set: they must
-  lose some sessions, stay within a multiple of the reference (`exploits.max_ratio` in the ladder file, 2 if absent), and never
+  lose some sessions, stay under the oracle they are bounded by (`below`), and never
   reach the bound.
 - **Clean runs**: no rung is refused or disqualified.
 

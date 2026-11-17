@@ -225,17 +225,13 @@ def disqualified(report):
     return any(s.get("disqualified") for s in report["scenarios"])
 
 
-# An exploit bot may earn at most this multiple of the reference's PnL (the
-# ladder file's `exploits.max_ratio` overrides it).
-DEFAULT_MAX_RATIO = 2.0
-
-
 def ratio_reason(ratio, limits):
     """Why an exploit bot's PnL, as a multiple of the reference's, is over the
-    limit; None when it is within it or there is no ratio (the reference lost
-    money)."""
-    limit = limits.get("max_ratio", DEFAULT_MAX_RATIO)
-    if ratio is not None and ratio > limit:
+    limit the ladder file's `exploits.max_ratio` sets; None when it sets none
+    (there is no default: exploits are bounded by the `below` oracle), when it
+    is within it, or when there is no ratio (the reference lost money)."""
+    limit = limits.get("max_ratio")
+    if limit is not None and ratio is not None and ratio > limit:
         return f"{ratio:.2f}x the reference, over {limit:g}x"
     return None
 
@@ -246,20 +242,39 @@ def breach_sessions(report):
     return sum(1 for s in report["scenarios"] if s.get("disqualified"))
 
 
+# What a rung is compared on: "v1" is the grade a v1 task gives (a run with a
+# disqualified session scores 0, whatever it earned), "v2" the v2 headline's
+# per-session value (loss-weighted PnL over nop's, a breach floored).
+GRADE_BASIS = "v1"
+
+
 def totals(reports, sessions=None):
-    """Each rung's total PnL on `sessions` (indices), and the hindsight
-    bound's. A rung that breached counts what it earned, not 0: zeroing it
-    let a breaching rung that out-earned the reference pass `rung < reference`.
-    Breaches are counted apart (`breach_sessions`)."""
+    """Each rung's total over `sessions` (indices), on the grade the task gives
+    its rungs: under v1 a rung the grader disqualified totals 0, under v2 the
+    sum of its sessions' v2 values (a breach already floored); the hindsight
+    bound's. Raw PnL and breaches are information: `raw_totals`,
+    `breach_sessions`."""
     n = len(reports["reference"]["scenarios"])
     sessions = range(n) if sessions is None else sessions
+    if GRADE_BASIS == "v2" and all(r.get("v2") for r in reports.values()):
+        out = {name: sum(report["v2"]["sessions"][i]["bot_usd"] for i in sessions)
+               for name, report in reports.items()}
+        ceil = reports["reference"]["v2"]["sessions"]
+        out["hindsight"] = sum(ceil[i]["ceiling_usd"] for i in sessions)
+        return out
     out = {
-        name: sum(pnls(report)[i] for i in sessions)
+        name: 0.0 if disqualified(report) else sum(pnls(report)[i] for i in sessions)
         for name, report in reports.items()
     }
     bound = [s["bound_pnl_usd"] for s in reports["reference"]["scenarios"]]
     out["hindsight"] = sum(bound[i] for i in sessions)
     return out
+
+
+def raw_totals(reports):
+    """Each rung's raw PnL, a breach included: information beside the graded
+    totals, never compared."""
+    return {name: sum(pnls(report)) for name, report in reports.items()}
 
 
 def skills(reports):
@@ -913,6 +928,10 @@ def main():
     with open(args.config or os.path.join(ROOT, "bench/tasks", args.task, "checks/ladder.json")) as f:
         config = json.load(f)
     count = args.count or config["count"]
+    global GRADE_BASIS
+    verifier = os.path.join(ROOT, "bench/tasks", args.task, "tests/test.sh")
+    if os.path.isfile(verifier) and "v2-headline" in open(verifier).read():
+        GRADE_BASIS = "v2"
     out = os.path.join(args.out, args.task)
     os.makedirs(out, exist_ok=True)
 
@@ -968,7 +987,9 @@ def main():
         "min_rule_odds": min_rule_odds,
         "public_seed": args.public_seed,
         "totals": [totals(reports) for reports in sets],
-        # Sessions each rung was disqualified (breached) in, by set.
+        # Raw PnL, a breach included, and the sessions each rung was
+        # disqualified (breached) in, by set: information.
+        "raw_totals": [raw_totals(reports) for reports in sets],
         "breaches": [{name: breach_sessions(report) for name, report in reports.items()}
                      for reports in sets],
         # Each rung's PnL session by session, for the gates that weigh them
@@ -1066,7 +1087,7 @@ def main():
             "reasons": reasons, "sessions": len(all_pnls),
             "profitable_sessions": sum(p > 0 for p in all_pnls),
             "max_profitable": limits["max_profitable"], "total": sum(all_pnls),
-            "max_ratio": limits.get("max_ratio", DEFAULT_MAX_RATIO),
+            "max_ratio": limits.get("max_ratio"),
             "below": below, "below_total": ceiling, "below_odds": below_odds,
             "reached_bound": reward > 0.999,
             "displacement": moved,

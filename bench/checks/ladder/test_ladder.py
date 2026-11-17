@@ -56,7 +56,7 @@ def report(pnl_by_session, breached=()):
 
 
 class BreachingRungs(unittest.TestCase):
-    """A rung that breached is compared on what it earned, not zeroed."""
+    """Rungs are compared on the grade the task gives them."""
 
     reports = {
         "nop": report([0.0, 0.0, 0.0]),
@@ -64,29 +64,44 @@ class BreachingRungs(unittest.TestCase):
         "momentum": report([900.0, 400.0, -300.0], breached={2}),
     }
 
-    def test_a_breaching_rung_totals_its_pnl(self):
-        self.assertEqual(ladder.totals(self.reports)["momentum"], 1000.0)
+    def test_a_breaching_rung_scores_0_on_a_v1_task_however_much_it_earned(self):
+        self.assertEqual(ladder.totals(self.reports)["momentum"], 0.0)
+        self.assertTrue(ladder.holds("momentum < reference", ladder.totals(self.reports)))
 
-    def test_a_breaching_rung_that_outearns_the_reference_fails_the_order_rule(self):
-        self.assertFalse(ladder.holds("momentum < reference", ladder.totals(self.reports)))
-
-    def test_the_breaches_are_counted_apart(self):
+    def test_its_raw_pnl_and_breaches_are_information_beside_the_total(self):
+        self.assertEqual(ladder.raw_totals(self.reports)["momentum"], 1000.0)
         self.assertEqual(ladder.breach_sessions(self.reports["momentum"]), 1)
         self.assertEqual(ladder.breach_sessions(self.reports["reference"]), 0)
 
+    def test_a_v2_task_compares_the_v2_value_with_the_breach_floored(self):
+        def v2(values):
+            return {"sessions": [{"bot_usd": b, "ceiling_usd": 500.0} for b in values]}
+        reports = {
+            "nop": dict(report([0.0] * 3), v2=v2([0.0] * 3)),
+            "reference": dict(report([100.0, 50.0, -20.0]), v2=v2([100.0, 50.0, -30.0])),
+            "momentum": dict(report([900.0, 400.0, -300.0], breached={2}),
+                             v2=v2([900.0, 400.0, -1500.0])),
+        }
+        ladder.GRADE_BASIS = "v2"
+        try:
+            t = ladder.totals(reports)
+        finally:
+            ladder.GRADE_BASIS = "v1"
+        self.assertEqual(t["momentum"], -200.0)
+        self.assertEqual(t["reference"], 120.0)
+        self.assertEqual(t["hindsight"], 1500.0)
+
 
 class ExploitRatio(unittest.TestCase):
-    def test_an_exploit_over_its_multiple_of_the_reference_is_a_reason(self):
+    def test_a_ladder_file_that_sets_a_multiple_enforces_it(self):
         self.assertIn("2.50x", ladder.ratio_reason(2.5, {"max_ratio": 2.0}))
         self.assertIsNone(ladder.ratio_reason(1.9, {"max_ratio": 2.0}))
 
-    def test_the_default_multiple_is_two(self):
-        self.assertEqual(ladder.DEFAULT_MAX_RATIO, 2.0)
-        self.assertIsNotNone(ladder.ratio_reason(2.1, {}))
-        self.assertIsNone(ladder.ratio_reason(2.0, {}))
+    def test_there_is_no_default_multiple(self):
+        self.assertIsNone(ladder.ratio_reason(40.0, {}))
 
     def test_no_ratio_is_not_a_reason(self):
-        self.assertIsNone(ladder.ratio_reason(None, {}))
+        self.assertIsNone(ladder.ratio_reason(None, {"max_ratio": 2.0}))
 
 
 class RungEnvironment(unittest.TestCase):

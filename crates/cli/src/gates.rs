@@ -272,7 +272,8 @@ pub struct Options {
 pub struct LadderSummary {
     #[serde(default)]
     pub sessions: usize,
-    /// Per set, each rung's total PnL as graded (0 if disqualified), and the
+    /// Per set, each rung's total on the grade the task gives it (0 if
+    /// disqualified on v1; the v2 value on a v2 task), and the
     /// set's `hindsight` bound.
     pub totals: Vec<BTreeMap<String, f64>>,
     pub rules: Vec<RuleResult>,
@@ -494,9 +495,9 @@ pub fn strength_band(
         "weighted (k = {k}) over {} sessions: reference ${e_ref:.0}, informed ${e_inf:.0}, ratio {ratio:.2} in [{low}, {high}]; reference Sharpe {s:.2} (at least {min_sharpe})",
         reference.len()
     );
-    // A reference that loses money is no thin edge a short set might hide: it
-    // fails in fast mode as in full.
-    match (misses.is_empty(), fast && e_ref > 0.0) {
+    // A reference that loses money fails in fast mode as in full, unless the
+    // loss is within a short set's noise.
+    match (misses.is_empty(), fast && !loses_confidently(&reference)) {
         (true, _) => Check::pass(SOLVABLE, id, title, measured),
         (false, true) => Check::new(
             SOLVABLE,
@@ -890,6 +891,26 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
     )
 }
 
+/// Why a fast set whose reference lost money can't settle the reference and
+/// order checks.
+const THIN_SAMPLE: &str = "The reference lost money on this small sample, but not by enough to say its edge is gone; the full ladder decides";
+
+/// Whether `xs` (a reference's per-session PnL) lose money with confidence: a
+/// one-sided test, P(total > 0) under 5% (t under -1.645). A short set's loss
+/// within its noise is no evidence against a thin edge.
+pub fn loses_confidently(xs: &[f64]) -> bool {
+    let n = xs.len() as f64;
+    if xs.len() < 2 {
+        return false;
+    }
+    let mean = xs.iter().sum::<f64>() / n;
+    let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    if var <= 0.0 {
+        return mean < 0.0;
+    }
+    mean / (var / n).sqrt() < -1.645
+}
+
 /// The checks the ladder answers: the reference and nop anchors, the order,
 /// the signal gate, the exploit bots, clean runs.
 pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> Vec<Check> {
@@ -900,6 +921,14 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .iter()
         .filter_map(|s| s.get("reference").copied())
         .collect();
+    // A short set can lose money by chance for a thin edge: fast mode fails a
+    // losing reference only when the loss is statistically confident.
+    let thin = fast
+        && reference.iter().any(|r| *r <= 0.0)
+        && !summary
+            .pnls
+            .iter()
+            .any(|set| set.get("reference").is_some_and(|xs| loses_confidently(xs)));
     let reference_pnl = format!(
         "reference total PnL per set: {}",
         reference
@@ -908,13 +937,23 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
             .collect::<Vec<_>>()
             .join(", ")
     );
-    checks.push(Check::from(
-        SOLVABLE,
-        "reference-scores-1",
-        "Reference is the 1.0 line (makes money on every set)",
-        reference.len() == sets && reference.iter().all(|r| *r > 0.0),
-        reference_pnl,
-    ));
+    checks.push(if thin {
+        Check::new(
+            SOLVABLE,
+            "reference-scores-1",
+            "Reference is the 1.0 line (makes money on every set)",
+            Status::Inconclusive,
+            format!("{reference_pnl}. {THIN_SAMPLE}"),
+        )
+    } else {
+        Check::from(
+            SOLVABLE,
+            "reference-scores-1",
+            "Reference is the 1.0 line (makes money on every set)",
+            reference.len() == sets && reference.iter().all(|r| *r > 0.0),
+            reference_pnl,
+        )
+    });
     let nop: Vec<f64> = summary
         .totals
         .iter()
@@ -961,7 +1000,15 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
             .collect::<Vec<_>>()
             .join("; ")
     };
-    checks.push({
+    checks.push(if thin && !broken.is_empty() {
+        Check::new(
+            SOLVABLE,
+            "ladder-order",
+            "Skill ladder keeps its order",
+            Status::Inconclusive,
+            format!("{order_detail}. {THIN_SAMPLE}"),
+        )
+    } else {
         Check::from(
             SOLVABLE,
             "ladder-order",
@@ -1966,14 +2013,21 @@ mod tests {
     const INFORMED: &[f64] = &[120.0, 30.0, 80.0, 90.0, -20.0, 60.0];
 
     #[test]
-    fn a_reference_that_loses_money_fails_the_band_even_on_a_fast_set() {
+    fn a_reference_that_loses_money_confidently_fails_the_band_on_a_fast_set() {
         let k = scoring_text::Settings::default();
-        let losing = sessions(&[&[
-            ("reference", &[-5.0, -2.0, 4.0, -6.0, 1.0, -2.0][..]),
-            ("informed", INFORMED),
-        ]]);
+        // Twelve sessions all losing about the same: far from noise.
+        let sure: Vec<f64> = (0..12).map(|i| -10.0 - f64::from(i % 3)).collect();
+        let informed: Vec<f64> = (0..12).map(|i| 30.0 + f64::from(i % 4)).collect();
+        let losing = sessions(&[&[("reference", &sure[..]), ("informed", &informed[..])]]);
         let check = strength_band(&losing, &anchors(), &k, true);
         assert_eq!(check.status, Status::Fail, "{}", check.detail);
+        // A loss within the noise stays inconclusive in fast mode.
+        let noisy = [
+            -5.0, 20.0, -30.0, 12.0, -4.0, 9.0, -25.0, 15.0, -8.0, 6.0, -3.0, 7.0,
+        ];
+        let thin = sessions(&[&[("reference", &noisy[..]), ("informed", &informed[..])]]);
+        let check = strength_band(&thin, &anchors(), &k, true);
+        assert_ne!(check.status, Status::Fail, "{}", check.detail);
     }
 
     #[test]
@@ -2443,29 +2497,60 @@ mod tests {
     }
 
     #[test]
-    fn a_reference_that_lost_money_fails_in_fast_mode_as_in_full() {
-        let mut s = summary(&[&[
-            ("nop", 0.0),
-            ("reference", -38.0),
-            ("fade", 18.0),
-            ("told", 850.0),
-        ]]);
-        s.rules.push(RuleResult {
-            rule: "fade < reference".into(),
-            ok: false,
-            sets_holding: 0,
-            sets: 1,
-            odds: 0.16,
-        });
+    fn a_reference_that_lost_money_by_chance_is_inconclusive_in_fast_mode_and_a_sure_loss_fails() {
+        let rules = |s: &mut LadderSummary| {
+            s.rules.push(RuleResult {
+                rule: "fade < reference".into(),
+                ok: false,
+                sets_holding: 0,
+                sets: 1,
+                odds: 0.16,
+            });
+        };
         let g = gate(&["told"], &["fade"]);
         let status =
             |checks: &[Check], id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
+        // Market-making's: -$38 over twelve sessions, one session of -$34.
+        let noisy = [
+            -34.0, 5.0, -8.0, 12.0, -20.0, 9.0, -3.0, 15.0, -22.0, 6.0, 1.0, -1.0,
+        ];
+        let fade = [18.0; 12];
+        let told = [70.0; 12];
+        let mut s = sessions(&[&[
+            ("nop", &[0.0; 12][..]),
+            ("reference", &noisy[..]),
+            ("fade", &fade[..]),
+            ("told", &told[..]),
+        ]]);
+        rules(&mut s);
         let fast = ladder_checks(&s, &g, true);
-        assert_eq!(status(&fast, "reference-scores-1"), Status::Fail);
-        assert_eq!(status(&fast, "ladder-order"), Status::Fail);
+        assert_eq!(status(&fast, "reference-scores-1"), Status::Inconclusive);
+        assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
         let full = ladder_checks(&s, &g, false);
         assert_eq!(status(&full, "reference-scores-1"), Status::Fail);
         assert_eq!(status(&full, "ladder-order"), Status::Fail);
+        // Losing in nearly every session is not noise.
+        let sure: Vec<f64> = (0..12).map(|i| -10.0 - f64::from(i % 3)).collect();
+        let mut s = sessions(&[&[
+            ("nop", &[0.0; 12][..]),
+            ("reference", &sure[..]),
+            ("fade", &fade[..]),
+            ("told", &told[..]),
+        ]]);
+        rules(&mut s);
+        let fast = ladder_checks(&s, &g, true);
+        assert_eq!(status(&fast, "reference-scores-1"), Status::Fail);
+        assert_eq!(status(&fast, "ladder-order"), Status::Fail);
+    }
+
+    #[test]
+    fn a_loss_is_confident_only_when_it_is_past_the_noise() {
+        assert!(loses_confidently(&[-10.0, -11.0, -12.0, -10.0]));
+        assert!(!loses_confidently(&[
+            -34.0, 5.0, -8.0, 12.0, -20.0, 9.0, -3.0, 15.0
+        ]));
+        assert!(!loses_confidently(&[5.0, 6.0, 7.0]));
+        assert!(!loses_confidently(&[-1.0]));
     }
 
     #[test]
