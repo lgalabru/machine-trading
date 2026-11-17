@@ -215,9 +215,7 @@
     ]
   },
   "rules": [
-    "dump < twap-cross",
-    "dump < twap-passive",
-    "max(twap-cross, twap-passive) < reference",
+    "max(dump, twap-cross, twap-passive) < reference",
     "reference < informed < hindsight"
   ],
   "exploits": {

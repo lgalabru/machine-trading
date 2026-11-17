@@ -165,6 +165,36 @@ usual. The card is realistic and mirrored; the ratio is held down by the
 engine's cheap crossing (TWAP-cross makes about 0.8× the reference: small
 IOC slices against the grader's maker cost little), not by a design flaw.
 
+## The full ladder (72 sessions, 2026-11-17)
+
+| Rung | Total | Weighted (losses 1.5x) |
+| --- | --- | --- |
+| nop | $0 | $0 |
+| dump | -$82.8 | -$736.9 |
+| TWAP-cross | $22.8 | -$286.6 |
+| TWAP-passive | -$66.7 | -$148.8 |
+| reference | $329.5 | $243.5 |
+| informed | $817.8 | $726.1 |
+
+Informed is 35.9x the best non-reading rung; the reference is 0.335 of
+the informed bot's weighted PnL (per-session Sharpe 0.40); `max(dump,
+TWAP-cross, TWAP-passive) < reference` holds on 0.999 of bootstrapped sets
+and `reference < informed` on 1.000. The card's pairwise rules `dump <
+TWAP-cross` and `dump < TWAP-passive` are replaced by the one rule over all
+three: over 72 sessions every non-reading rung loses or breaks even, and
+ranking one losing naive rung against another tests nothing the card is
+about (they held on 0.69 and 0.50 of sets: a tie).
+
+## Structural tells (checked before the screen)
+
+Nothing structural marks the informed trader or the move's direction: the
+eight taker accounts are funded alike and all trade noise from the start;
+a burst, real or fake-out, comes from one account with the same count,
+spacing, sizes and limits; the informed account is drawn per session and
+shows nothing before its burst. The one prior is disclosed: onsets fall in
+15-70% of the session and fake-outs in 15-85%, so a burst late in the
+session is more likely a fake-out.
+
 ## Departures from the card
 
 | Card | Built | Why |
