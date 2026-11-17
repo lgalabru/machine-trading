@@ -1,0 +1,31 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mtx-bot-copy-or-bait"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# The strategy: a component on wasm32-wasip2 (`bot.wasm`), its rung set at
+# build time by `MTX_COB_RUNG` (the reference without it), and a library for
+# the process below.
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+# The same strategy as a process (`bin/bot`), its rung set by `MTX_RUNG`.
+[[bin]]
+name = "mtx-copy-or-bait"
+path = "src/main.rs"
+
+[dependencies]
+borsh = "1"
+bs58 = "0.5"
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../../../crates/kit", default-features = false, features = ["component", "venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mtx-kit = { path = "../../../../crates/kit" }
