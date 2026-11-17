@@ -107,7 +107,10 @@ impl Strategy for Informed {
         self.trader = venue.trader_account(&key(wallet)?).to_string();
         self.asset_id = u64::from(market.asset_id);
         self.lot = venue.lots_to_base_units(market, 1);
-        log(&format!("informed trader {wallet}, account {}", self.trader));
+        log(&format!(
+            "informed trader {wallet}, account {}",
+            self.trader
+        ));
         Ok(())
     }
 
@@ -134,7 +137,9 @@ impl Strategy for Informed {
             let moved = now - self.seen.front().map_or(now, |(_, p)| *p);
             if moved.abs() >= BURST_UNITS {
                 self.sign = moved.signum();
-                log(&format!("slot {slot}: the informed trader moved {moved:+.3}"));
+                log(&format!(
+                    "slot {slot}: the informed trader moved {moved:+.3}"
+                ));
             }
         }
         // Where a fall stands: the session's high, and its low since then.
