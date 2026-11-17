@@ -23,6 +23,7 @@
           ]
         },
         "edge_bps": 31.46,
+        "hit_rate": 0.85,
         "horizon_slots": 41,
         "informed_for": {
           "from": 385,
@@ -31,16 +32,19 @@
         "intensity_mult": 24.0,
         "limit_bps": 50.0,
         "size_mult": 10.0,
+        "view_noise_bps": 0.0,
         "wallets": 3
       }
     ],
     "informed": [
       {
         "edge_bps": 31.46,
+        "hit_rate": 0.85,
         "horizon_slots": 41,
         "intensity_mult": 8.0,
         "limit_bps": 50.0,
         "size_mult": 10.0,
+        "view_noise_bps": 0.0,
         "wallets": 1
       }
     ],
@@ -76,8 +80,8 @@
   },
   "description": "NVDA practice session",
   "duration_slots": 1928,
-  "informed_max_drawdown_usd": 11.18,
-  "informed_pnl_usd": 27.6,
+  "informed_max_drawdown_usd": 11.16,
+  "informed_pnl_usd": 44.09,
   "mandate": {
     "limits": {
       "max_drawdown_usd": 500.0
@@ -513,7 +517,7 @@
       "slot": 1920
     }
   ],
-  "reference_max_drawdown_usd": 19.76,
-  "reference_pnl_usd": 16.07,
+  "reference_max_drawdown_usd": 7.41,
+  "reference_pnl_usd": -7.41,
   "symbol": "NVDA"
 }
