@@ -10,6 +10,10 @@
 //! Chasers and decoys are directional flow that knows nothing: summed with
 //! the informed, they blur what the market's net flow says, so only a
 //! reader who keeps each wallet's record can tell the informed apart.
+//!
+//! The informed may set [`Bait`]: once one account keeps following their
+//! runs of trading, their wallets keep trading as before on views no better
+//! than a coin flip.
 
 use std::sync::Arc;
 
@@ -17,8 +21,12 @@ use async_trait::async_trait;
 use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
 
-use super::{Rng, Scale, Wallet, Window, finite_at_least_zero, finite_positive, within};
-use crate::actors::{Actor, ActorsReport, Moment};
+use super::{
+    Rng, Scale, Wallet, Window,
+    bait::{Bait, BaitWatch, Who},
+    finite_at_least_zero, finite_positive, within,
+};
+use crate::actors::{Actor, ActorsReport, Moment, StepFlow};
 
 fn one() -> f64 {
     1.0
@@ -91,6 +99,9 @@ pub struct Informed {
     pub limit_bps: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<Window>,
+    /// Whether it turns its wallets into bait once copied, and how.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bait: Option<Bait>,
 }
 
 impl Informed {
@@ -100,6 +111,9 @@ impl Informed {
         }
         if self.horizon_slots == 0 {
             return Err("horizon_slots must be at least 1".into());
+        }
+        if let Some(bait) = &self.bait {
+            bait.validate()?;
         }
         finite_at_least_zero("edge_bps", self.edge_bps)?;
         within("hit_rate", self.hit_rate, 0.5, 1.0)?;
@@ -216,6 +230,11 @@ struct View {
 }
 
 impl View {
+    /// From its next draw on, it is right with chance `hit_rate`.
+    fn rate(&mut self, hit_rate: f64) {
+        self.hit_rate = hit_rate;
+    }
+
     fn new(horizon: u64, edge_bps: f64, hit_rate: f64, noise_bps: f64) -> Self {
         Self {
             horizon,
@@ -351,6 +370,7 @@ pub(super) struct InformedTrader {
     /// One view a wallet, as a decoy's: the wallets err on their own.
     views: Vec<View>,
     last: Option<u64>,
+    bait: Option<BaitWatch>,
 }
 
 impl InformedTrader {
@@ -370,6 +390,11 @@ impl InformedTrader {
             );
             wallets.len()
         ];
+        let bait = spec.bait.and_then(|bait| {
+            let own = wallets.iter().map(Wallet::pubkey).collect();
+            let ledger = wallets.first()?.ledger.clone();
+            Some(BaitWatch::new(bait, spec.horizon_slots, own, ledger))
+        });
         Self {
             spec,
             scale,
@@ -378,7 +403,30 @@ impl InformedTrader {
             rng,
             views,
             last: None,
+            bait,
         }
+    }
+
+    /// Start a baiting trader's step at `at`: if one account has now
+    /// followed enough of its runs, its views turn to `hit_rate_after`.
+    fn begin_bait(&mut self, at: u64) {
+        let Some(watch) = self.bait.as_mut() else {
+            return;
+        };
+        let Some(who) = watch.begin(at) else {
+            return;
+        };
+        let after = self.spec.bait.map_or(0.5, |b| b.hit_rate_after);
+        for view in &mut self.views {
+            view.rate(after);
+        }
+        let by = match who {
+            Who::Bot => "bot".to_string(),
+            Who::Wallet(wallet) => self.wallets[0].ledger.kind_of(&wallet),
+        };
+        self.wallets[0].count("bait_set", 1);
+        self.wallets[0].count(&format!("bait_set_by_{by}"), 1);
+        self.wallets[0].count("bait_set_at_slot", at);
     }
 
     /// The side `wallet` trades `at`, if the move it sees ahead is past its edge.
@@ -397,6 +445,7 @@ impl Actor for InformedTrader {
     async fn before_blocks(&mut self, last: &Moment) {
         let slots = last.at - self.last.unwrap_or(0);
         self.last = Some(last.at);
+        self.begin_bait(last.at);
         if !Window::holds(&self.spec.active, last.at) {
             return;
         }
@@ -414,7 +463,10 @@ impl Actor for InformedTrader {
                     Side::Bid => last.book_usd * (1.0 + reach),
                     Side::Ask => last.book_usd * (1.0 - reach),
                 };
-                self.wallets[wallet].take(last.at, side, size, limit).await;
+                let landed = self.wallets[wallet].take(last.at, side, size, limit).await;
+                if landed && let Some(watch) = self.bait.as_mut() {
+                    watch.filled(last.at, side, size);
+                }
             }
         }
         if stepped {
@@ -422,7 +474,23 @@ impl Actor for InformedTrader {
         }
     }
 
-    async fn report(&mut self, _: &mut ActorsReport) {}
+    fn wants_flow(&self) -> bool {
+        self.bait.is_some()
+    }
+
+    async fn flow(&mut self, flow: &StepFlow) {
+        if let Some(watch) = self.bait.as_mut() {
+            watch.bot(flow);
+        }
+    }
+
+    async fn report(&mut self, _: &mut ActorsReport) {
+        if let Some(watch) = &self.bait
+            && !watch.is_set()
+        {
+            self.wallets[0].count("bait_set", 0);
+        }
+    }
 }
 
 pub(super) struct ChaserTrader {
@@ -612,6 +680,7 @@ mod tests {
             size_mult: 1.0,
             limit_bps: 50.0,
             active: None,
+            bait: None,
         };
         let mut informed =
             InformedTrader::new(spec, scale(), vec![wallet], path, Rng::new([3; 32]));
@@ -627,6 +696,113 @@ mod tests {
             "{log:?}"
         );
         assert_eq!(ledger.report().actors[0].counts["informed_steps"], 1);
+    }
+
+    /// Once a copier sets its bait, a baiting trader's wallet trades at the
+    /// same pace, sizes and moments as before, ahead of moves over its
+    /// edge: only how often its side is right changes, so nothing but its
+    /// record says the bait is set.
+    #[tokio::test]
+    async fn a_baiting_trader_keeps_its_pace_sizes_and_timing_once_set() {
+        use std::collections::HashMap;
+
+        use solana_pubkey::Pubkey;
+
+        use crate::actors::library::{Ledger, WalletSeat};
+
+        let (book, log) = Book::new("i", 99.0, 101.0);
+        let ledger = Ledger::with_takes();
+        let wallet = ledger
+            .wallets(
+                "informed",
+                vec![WalletSeat {
+                    pubkey: Pubkey::new_unique(),
+                    seat: Box::new(book),
+                }],
+            )
+            .remove(0);
+        let level = |s: u64| 100.0 * (1.0 + 0.01 * (s as f64 / 40.0).sin());
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(move |s| at(s, level(s)));
+        let spec = Informed {
+            wallets: 1,
+            horizon_slots: 20,
+            edge_bps: 30.0,
+            hit_rate: 0.85,
+            view_noise_bps: 0.0,
+            intensity_mult: 2.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            active: None,
+            bait: Some(Bait {
+                follow_slots: 10,
+                match_share: 0.6,
+                matches: 3,
+                episodes: 8,
+                ref_fills: 3,
+                hit_rate_after: 0.5,
+            }),
+        };
+        spec.validate().unwrap();
+        let scale = Scale {
+            trades_per_minute: 150.0,
+            trade_size: 1.0,
+            trade_size_sigma: 1.0,
+        };
+        let mut informed =
+            InformedTrader::new(spec, scale, vec![wallet], path, Rng::new([12; 32]));
+        assert!(informed.wants_flow());
+        // From slot 3,000, a copier takes twice each of its takes, the slot
+        // after, until the bait is set.
+        let copier = Pubkey::new_unique();
+        let mut takes: Vec<(u64, bool, f64)> = Vec::new();
+        let mut active = HashMap::<bool, u64>::new();
+        for s in (2..=60_000).step_by(2) {
+            let set = informed.bait.as_ref().is_some_and(BaitWatch::is_set);
+            informed.before_blocks(&at(s, level(s))).await;
+            let ahead = (level(s + 20) / level(s) - 1.0) * 10_000.0;
+            if ahead.abs() > 30.0 {
+                *active.entry(set).or_default() += 1;
+            }
+            for line in std::mem::take(&mut *log.lock().unwrap()) {
+                let mut words = line.split_whitespace().skip(2);
+                let side = words.next().unwrap() == "Bid";
+                let size: f64 = words.next().unwrap().parse().unwrap();
+                assert!(ahead.abs() > 30.0, "a take at {s}, {ahead:.1} bp ahead");
+                let right = side == (ahead > 0.0);
+                takes.push((s, right, size));
+                if !set && s >= 3_000 {
+                    let side = if side { Side::Bid } else { Side::Ask };
+                    ledger.took(s + 1, copier, side, 2.0 * size);
+                }
+            }
+        }
+        let counts = &ledger.report().actors[0].counts;
+        assert_eq!(counts["bait_set"], 1, "{counts:?}");
+        assert_eq!(counts["bait_set_by_unknown"], 1, "{counts:?}");
+        let set_at = counts["bait_set_at_slot"];
+        assert!((3_000..5_000).contains(&set_at), "set at {set_at}");
+        // Past the view drawn before the bait was set.
+        let (before, after): (Vec<_>, Vec<_>) = takes
+            .iter()
+            .filter(|(s, ..)| *s < set_at || *s > set_at + 20)
+            .partition(|(s, ..)| *s < set_at);
+        assert!(before.len() > 100 && after.len() > 2_000);
+        let wrong = |v: &[&(u64, bool, f64)]| {
+            v.iter().filter(|(_, right, _)| !right).count() as f64 / v.len() as f64
+        };
+        let (wb, wa) = (wrong(&before), wrong(&after));
+        assert!((0.03..=0.3).contains(&wb), "wrong {wb:.3} before");
+        assert!((0.4..=0.6).contains(&wa), "wrong {wa:.3} after");
+        let pace = |v: &[&(u64, bool, f64)], set: bool| v.len() as f64 / active[&set] as f64;
+        let (pb, pa) = (pace(&before, false), pace(&after, true));
+        assert!((0.75..=1.33).contains(&(pa / pb)), "pace {pb:.3} then {pa:.3}");
+        let median = |v: &[&(u64, bool, f64)]| {
+            let mut sizes: Vec<f64> = v.iter().map(|(.., size)| *size).collect();
+            sizes.sort_by(f64::total_cmp);
+            sizes[sizes.len() / 2]
+        };
+        let (mb, ma) = (median(&before), median(&after));
+        assert!((0.75..=1.33).contains(&(ma / mb)), "median size {mb:.3} then {ma:.3}");
     }
 
     #[tokio::test]

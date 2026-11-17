@@ -44,7 +44,7 @@ median trade size (and that size's lognormal sigma), from the calibration's
 | Actor | What it does | Settings |
 | --- | --- | --- |
 | `noise` | Takes at random: Poisson arrivals, a coin-flip side, lognormal sizes. | `wallets`, `flow_mult`, `size_mult`, `limit_bps`, `active` |
-| `informed` | Sees the scenario's level `horizon_slots` ahead and takes its way while the move is over `edge_bps`. Its view is imperfect: for a `horizon_slots` at a time, with chance `1 - hit_rate` (default 0.85) it reads the move the wrong way and trades against it, and `view_noise_bps` blurs what it sees each step. Right on average, and not always; each wallet has its own view, so the wallets err on their own. | `wallets`, `horizon_slots`, `edge_bps`, `hit_rate`, `view_noise_bps`, `intensity_mult`, `size_mult`, `limit_bps`, `active` |
+| `informed` | Sees the scenario's level `horizon_slots` ahead and takes its way while the move is over `edge_bps`. Its view is imperfect: for a `horizon_slots` at a time, with chance `1 - hit_rate` (default 0.85) it reads the move the wrong way and trades against it, and `view_noise_bps` blurs what it sees each step. Right on average, and not always; each wallet has its own view, so the wallets err on their own. With `bait`, it turns its wallets into bait once one account keeps copying it (below). | `wallets`, `horizon_slots`, `edge_bps`, `hit_rate`, `view_noise_bps`, `intensity_mult`, `size_mult`, `limit_bps`, `active`, `bait` |
 | `chasers` | Takes the way the book moved once it moved over `trigger_bps` in the last `lookback_slots`: directional flow that knows nothing. | `wallets`, `lookback_slots`, `trigger_bps`, `intensity_mult`, `size_mult`, `limit_bps`, `active` |
 | `decoys` | Each wallet trades as the informed do until a slot drawn in `informed_for`, then keeps its pace on a view it draws at random and holds for `horizon_slots`: a record that looks informed, then isn't. While it sees ahead it errs as the informed do. | `wallets`, `horizon_slots`, `edge_bps`, `hit_rate`, `view_noise_bps`, `informed_for`, `intensity_mult`, `size_mult`, `limit_bps` |
 | `spoofers` | Rests a wall `distance_ticks` behind the touch and pulls it once the touch comes within `cancel_ticks`, or after `lifetime_slots`; each wall's distance and lifetime are drawn within `jitter` (default 0.4) of the settings, its size and a harvest's lognormally at `size_sigma` (default 0.3, a fixed spread of about 50 to 80 percent either way at two sigmas, whatever the market's own sigma), so no one value is the spoofer's. It may sell into the other side while it stands (`harvest_mult`). With `ahead_slots`, walls only while it sees the level that far ahead going against the wall (support painted ahead of a fall). One wallet throughout. | `side`, `distance_ticks`, `cancel_ticks`, `wall_mult`, `lifetime_slots`, `harvest_mult`, `ahead_slots`, `jitter`, `size_sigma`, `active` |
@@ -55,6 +55,38 @@ median trade size (and that size's lognormal sigma), from the calibration's
 | `rfq_clients` | Ask the bot for quotes on `rfq:<symbol>`; take a quote no worse than their value by their reach: `tolerance_bps` for one trade size, `sqrt(n)` times that for `n`. Informed clients value the asset at the level `lead_slots` ahead, by `correlation`, and are mistaken with chance `1 - hit_rate` (default 0.85): that request asks and values the other way. Fills settle as swaps against the bot's wallet, which starts with `desk_base` of the asset and `desk_usdc` more USDC. | `clients`, `informed_share`, `lead_slots`, `correlation`, `hit_rate`, `per_100_slots`, `size_mult`, `deadline_slots`, `tolerance_bps`, `two_way_share`, `desk_base`, `desk_usdc`, `over_idle_desk` |
 | `liquidator` | Races the bot for liquidations on a lending venue, best bonus first. Idle until a session has one. | `latency_slots`, `min_bonus_bps` |
 | `refill` | Puts back the depth takers consume. The snapshot's makers are splines that only come back when a path move re-centres them (measured 0% in 60 slots on every market); this rests post-only orders from the old touch back toward the makers' own touch, so a gap halves every half-life, drawn once per session from `half_life_slots`. Never crosses the spread or goes past the makers' touch, stops adding to a side at `max_position_mult` trade sizes, and pulls its orders when the book level moves. Opt-in: without it, depth behaves as before. | `half_life_slots` (`[low, high]`), `levels`, `size_mult`, `react_slots`, `max_position_mult`, `min_gap_ticks`, `active` |
+
+## Bait
+
+An informed trader with `bait` minds being copied, the way a fund whose
+wallet copy-traders track does: once it sees one account keep following
+it, it moves what it knows to wallets nobody watches and leaves the
+watched one trading as before, as bait. Its trading comes in runs: a run
+starts with its first take `horizon_slots` or more after the last run's
+start, or on the other side. For each run it sets every other account's
+net flow on the run's side within `follow_slots` after the run's start
+against what the run's first `ref_fills` takes traded (default 3); an
+account at `match_share` of that or more matched the run. Once one account
+has matched `matches` of its last `episodes` runs (default 8), the bait is
+set for the rest of the session: from each view's next draw on, it is right
+with chance `hit_rate_after` (default 0.5). It keeps its pace, its sizes and
+its timing (it still trades only while the move it sees ahead is over its
+edge), so markouts' size says nothing; only their sign, over several runs,
+does.
+
+```json
+"informed": [{ "horizon_slots": 100, "edge_bps": 25.0, "intensity_mult": 4.0,
+  "bait": { "follow_slots": 25, "match_share": 0.8, "matches": 3 } }]
+```
+
+The accounts are the library's other wallets, through the takes they land,
+and the bot, through its position step by step. A run is judged once its
+window is over and its first takes are in, or once it ends. Judging over
+several runs is what tells a copier from an account that trades at random
+at the same sizes: one heavy random take matches a run now and then, and
+only a follower keeps matching. The actor's counts say whether the bait was
+set (`bait_set`), by whom (`bait_set_by_bot`, `bait_set_by_noise`, ...) and
+at which slot (`bait_set_at_slot`).
 
 ## Onboarding order
 

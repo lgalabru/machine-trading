@@ -42,6 +42,7 @@
 //! all (see [`rfq`]).
 
 mod arbitrageur;
+mod bait;
 mod front_runner;
 mod iceberg;
 mod liquidator;
@@ -64,6 +65,7 @@ use solana_transaction::Signature;
 
 pub use self::{
     arbitrageur::Arbitrageur,
+    bait::Bait,
     front_runner::FrontRunner,
     iceberg::Iceberg,
     liquidator::{Candidate, Liquidations, Liquidator},
@@ -230,6 +232,17 @@ impl Library {
             .collect()
     }
 
+    /// Whether any of its informed traders sets [`Bait`].
+    pub fn has_bait(&self) -> bool {
+        self.informed.iter().any(|i| i.bait.is_some())
+    }
+
+    /// Whether some actor reads the bot's trading step by step: the
+    /// front-runners and the traders that set bait.
+    pub fn watches_bot(&self) -> bool {
+        !self.front_runners.is_empty() || self.has_bait()
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         self.scale.validate()?;
         let each = |kind: &str, checks: Vec<Result<(), String>>| {
@@ -389,6 +402,11 @@ impl Library {
         seed: &dyn Fn(&str, u32) -> [u8; 32],
     ) -> Built {
         let ledger = Ledger::new(self.record);
+        let ledger = if self.has_bait() {
+            ledger.keeping_takes()
+        } else {
+            ledger
+        };
         let mut seats = seats.into_iter();
         let mut take =
             |n: u32| -> Vec<Shared> { seats.by_ref().take(n as usize).map(Shared::from).collect() };
@@ -758,6 +776,9 @@ struct LedgerState {
     record: bool,
     actors: Vec<ActorTally>,
     tape: Vec<TapeEntry>,
+    /// Every take that landed, in order, when an actor watches who trades
+    /// (see [`bait`]): the slot, the wallet, the side and the size.
+    takes: Option<Vec<(u64, Pubkey, Side, f64)>>,
 }
 
 impl Ledger {
@@ -766,7 +787,46 @@ impl Ledger {
             record,
             actors: Vec::new(),
             tape: Vec::new(),
+            takes: None,
         })))
+    }
+
+    /// The same ledger, keeping every take that lands.
+    fn keeping_takes(self) -> Self {
+        self.state().takes = Some(Vec::new());
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_takes() -> Self {
+        Self::new(false).keeping_takes()
+    }
+
+    /// `wallet` took `size` on `side` at `at`, if the ledger keeps takes.
+    pub(crate) fn took(&self, at: u64, wallet: Pubkey, side: Side, size: f64) {
+        if let Some(takes) = self.state().takes.as_mut() {
+            takes.push((at, wallet, side, size));
+        }
+    }
+
+    /// The takes kept, from the `from`th on.
+    fn takes_from(&self, from: usize) -> Vec<(u64, Pubkey, Side, f64)> {
+        self.state()
+            .takes
+            .as_ref()
+            .and_then(|takes| takes.get(from..))
+            .map(<[_]>::to_vec)
+            .unwrap_or_default()
+    }
+
+    /// The kind of actor `wallet` trades for (the first, in a pool).
+    fn kind_of(&self, wallet: &Pubkey) -> String {
+        let wallet = wallet.to_string();
+        self.state()
+            .actors
+            .iter()
+            .find(|tally| tally.wallets.contains(&wallet))
+            .map_or_else(|| "unknown".to_string(), |tally| tally.kind.clone())
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, LedgerState> {
@@ -907,6 +967,9 @@ impl Wallet {
             ..self.entry(at, "take", sent.is_ok())
         };
         self.ledger.note(self.actor, entry, Done::Took(side));
+        if sent.is_ok() {
+            self.ledger.took(at, self.pubkey, side, size);
+        }
         sent.is_ok()
     }
 

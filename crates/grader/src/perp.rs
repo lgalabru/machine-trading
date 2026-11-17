@@ -591,10 +591,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     if let Some((library, seats)) = library {
         let path = own.moments();
         // Front-runners read the bot's trading through a seat on its
-        // account, and its sends as they arrive.
+        // account, and its sends as they arrive; traders that set bait read
+        // its trading too.
         let send_reader = (!library.front_runners.is_empty())
             .then(|| send_reader(own.market.clone(), internal.url().to_string()));
-        if !library.front_runners.is_empty() {
+        if library.watches_bot() {
             cast.watch(FlowWatch::new(vec![
                 own.perp.seat(bot.insecure_clone(), internal.url()).await?,
             ]));
