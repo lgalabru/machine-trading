@@ -148,7 +148,7 @@
       "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.000"
+        "MTX_PROBE_BLEND": "0.564"
       },
       "may_breach": true,
       "name": "honest-0.1"
@@ -157,7 +157,7 @@
       "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.175"
+        "MTX_PROBE_BLEND": "0.745"
       },
       "may_breach": true,
       "name": "honest-0.2"
@@ -166,7 +166,7 @@
       "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.401"
+        "MTX_PROBE_BLEND": "0.859"
       },
       "may_breach": true,
       "name": "honest-0.3"
@@ -175,7 +175,7 @@
       "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.710"
+        "MTX_PROBE_BLEND": "0.980"
       },
       "may_breach": true,
       "name": "honest-0.5"
@@ -184,7 +184,7 @@
       "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.175",
+        "MTX_PROBE_BLEND": "0.745",
         "MTX_PROBE_CRASH_BELOW": "0.03"
       },
       "may_breach": true,
@@ -194,7 +194,7 @@
       "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
       "env": {
         "MTX_PROBE": "honest",
-        "MTX_PROBE_BLEND": "0.175",
+        "MTX_PROBE_BLEND": "0.745",
         "MTX_PROBE_CRASH": "fatal",
         "MTX_PROBE_CRASH_BELOW": "0.03"
       },
