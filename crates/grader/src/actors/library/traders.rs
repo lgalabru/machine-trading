@@ -1,6 +1,7 @@
 //! Takers at the market's pace: noise traders at random, informed traders
-//! ahead of the scenario's path, chasers behind it, and decoys that trade
-//! ahead of it for a while and then on random views of their own.
+//! ahead of the scenario's path, chasers behind it, decoys that trade
+//! ahead of it for a while and then on random views of their own, and
+//! execution algos that work parent orders in one-sided runs.
 //!
 //! All take at the start of a step, against what the bot left after its
 //! last turn, as the scenario's takers do. Each trade goes from one of the
@@ -173,6 +174,52 @@ impl Decoy {
             return Err("informed_for needs an until after its from".into());
         }
         finite_at_least_zero("edge_bps", self.edge_bps)?;
+        finite_positive("intensity_mult", self.intensity_mult)?;
+        finite_positive("size_mult", self.size_mult)?;
+        finite_positive("limit_bps", self.limit_bps)
+    }
+}
+
+/// Execution algos: each works one parent order at a time, a run of takes
+/// on one side (a coin flip per parent) at `intensity_mult` times the
+/// market's trade rate for a length drawn from `length_slots`, then a pause
+/// drawn from `gap_slots` before the next. Each take goes from one of its
+/// wallets at random. Flow that comes in bursts, as an informed trader's
+/// does ahead of a move, and knows nothing of where the price goes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Algo {
+    #[serde(default = "one_wallet")]
+    pub wallets: u32,
+    #[serde(default = "one")]
+    pub intensity_mult: f64,
+    #[serde(default = "one")]
+    pub size_mult: f64,
+    #[serde(default = "fifty")]
+    pub limit_bps: f64,
+    /// A parent's length, and the pause before each parent (the first
+    /// too), in slots, each drawn from its inclusive range.
+    pub length_slots: [u64; 2],
+    pub gap_slots: [u64; 2],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<Window>,
+}
+
+impl Algo {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.wallets == 0 {
+            return Err("wallets must be at least 1".into());
+        }
+        for (what, [lo, hi]) in [
+            ("length_slots", self.length_slots),
+            ("gap_slots", self.gap_slots),
+        ] {
+            if lo == 0 || lo > hi {
+                return Err(format!(
+                    "{what} must be a range of at least 1 slot, low first"
+                ));
+            }
+        }
         finite_positive("intensity_mult", self.intensity_mult)?;
         finite_positive("size_mult", self.size_mult)?;
         finite_positive("limit_bps", self.limit_bps)
@@ -406,6 +453,101 @@ impl Actor for ChaserTrader {
     async fn report(&mut self, _: &mut ActorsReport) {}
 }
 
+pub(super) struct AlgoTrader {
+    spec: Algo,
+    scale: Scale,
+    wallets: Vec<Wallet>,
+    rng: Rng,
+    last: Option<u64>,
+    /// The parent being worked (its side and the slot it ends at), or the
+    /// slot the next one starts at.
+    parent: Option<(Side, u64)>,
+    next: Option<u64>,
+}
+
+impl AlgoTrader {
+    pub fn new(spec: Algo, scale: Scale, wallets: Vec<Wallet>, rng: Rng) -> Self {
+        Self {
+            spec,
+            scale,
+            wallets,
+            rng,
+            last: None,
+            parent: None,
+            next: None,
+        }
+    }
+
+    fn draw(&mut self, [lo, hi]: [u64; 2]) -> u64 {
+        lo + self.rng.below((hi - lo + 1) as usize) as u64
+    }
+
+    /// The side it works `at`, starting and ending parents as their slots
+    /// come.
+    fn side(&mut self, at: u64) -> Option<Side> {
+        if let Some((side, until)) = self.parent {
+            if at < until {
+                return Some(side);
+            }
+            self.parent = None;
+            let gap = self.draw(self.spec.gap_slots);
+            self.next = Some(until + gap);
+        }
+        let next = match self.next {
+            Some(next) => next,
+            None => {
+                let first = self.draw(self.spec.gap_slots);
+                self.next = Some(first);
+                first
+            }
+        };
+        if at < next {
+            return None;
+        }
+        let side = if self.rng.chance(0.5) {
+            Side::Bid
+        } else {
+            Side::Ask
+        };
+        let until = at + self.draw(self.spec.length_slots);
+        self.parent = Some((side, until));
+        Some(side)
+    }
+}
+
+#[async_trait]
+impl Actor for AlgoTrader {
+    async fn before_blocks(&mut self, last: &Moment) {
+        let slots = last.at - self.last.unwrap_or(0);
+        self.last = Some(last.at);
+        if !Window::holds(&self.spec.active, last.at) {
+            return;
+        }
+        let Some(side) = self.side(last.at) else {
+            return;
+        };
+        let n = self
+            .rng
+            .poisson(self.scale.per_slot() * self.spec.intensity_mult * slots as f64);
+        for _ in 0..n {
+            let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult);
+            take_one(
+                &self.wallets,
+                &mut self.rng,
+                last.at,
+                side,
+                size,
+                last.book_usd,
+                self.spec.limit_bps,
+            )
+            .await;
+        }
+        self.wallets[0].count("algo_steps", 1);
+    }
+
+    async fn report(&mut self, _: &mut ActorsReport) {}
+}
+
 pub(super) struct DecoyTrader {
     spec: Decoy,
     scale: Scale,
@@ -529,6 +671,51 @@ mod tests {
             "{log:?}"
         );
         assert_eq!(ledger.report().actors[0].counts["informed_steps"], 1);
+    }
+
+    #[tokio::test]
+    async fn algos_work_one_side_a_parent_and_pause_between() {
+        let (book, log) = Book::new("a", 99.0, 101.0);
+        let (wallet, ledger) = wallet(book);
+        let spec = Algo {
+            wallets: 1,
+            intensity_mult: 60.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            length_slots: [20, 20],
+            gap_slots: [100, 200],
+            active: None,
+        };
+        spec.validate().unwrap();
+        let mut algo = AlgoTrader::new(spec, scale(), vec![wallet], Rng::new([9; 32]));
+        let mut active = Vec::new();
+        for s in (2..6_000).step_by(2) {
+            algo.before_blocks(&at(s, 100.0)).await;
+            let step = std::mem::take(&mut *log.lock().unwrap());
+            let buys = step.iter().filter(|l| l.contains("Bid")).count();
+            assert!(buys == 0 || buys == step.len(), "{step:?}");
+            if !step.is_empty() {
+                active.push((s, buys > 0));
+            }
+        }
+        // Nothing before the first pause; parents of 20 slots at least 100
+        // apart, both ways.
+        assert!(active.first().is_some_and(|(s, _)| *s >= 100));
+        let starts: Vec<u64> = active
+            .iter()
+            .enumerate()
+            .filter(|(i, (s, _))| *i == 0 || s - active[i - 1].0 > 20)
+            .map(|(_, (s, _))| *s)
+            .collect();
+        assert!((20..=60).contains(&starts.len()), "{}", starts.len());
+        assert!(starts.windows(2).all(|w| w[1] - w[0] >= 100), "{starts:?}");
+        assert!(active.iter().any(|(_, b)| *b) && active.iter().any(|(_, b)| !*b));
+        assert!(ledger.report().actors[0].counts["algo_steps"] > 0);
+        let bad = Algo {
+            length_slots: [0, 3],
+            ..algo.spec.clone()
+        };
+        assert!(bad.validate().is_err());
     }
 
     #[tokio::test]

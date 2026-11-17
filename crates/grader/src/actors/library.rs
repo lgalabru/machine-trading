@@ -8,6 +8,8 @@
 //!   **decoys** ([`Decoy`]) trade as the informed do for a while, then on
 //!   a view they draw at random: directional flow that knows nothing, which
 //!   only a reader of each wallet's record tells from the informed.
+//! - **Execution algos** ([`Algo`]) work parent orders in one-sided runs
+//!   with pauses between: bursts that know nothing of the price.
 //! - **Spoofers** ([`Spoofer`]) rest walls near the touch and pull them as
 //!   the price comes near, always from the same wallet.
 //! - **Icebergs** ([`Iceberg`]) show a slice of a large parent order and
@@ -70,7 +72,7 @@ pub use self::{
     rfq::{DeskReport, RfqBoard, RfqClients, RfqSeat, Settlement, SwapError, Swaps, Token},
     spoofer::Spoofer,
     stop_hunter::StopHunter,
-    traders::{Chaser, Decoy, Informed, Noise},
+    traders::{Algo, Chaser, Decoy, Informed, Noise},
 };
 use super::{Actor, ActorsReport, Moment, SendReader};
 use crate::venue::Seat;
@@ -96,6 +98,8 @@ pub struct Library {
     pub chasers: Vec<Chaser>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decoys: Vec<Decoy>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub algos: Vec<Algo>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spoofers: Vec<Spoofer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -238,6 +242,7 @@ impl Library {
             self.chasers.iter().map(Chaser::validate).collect(),
         )?;
         each("decoys", self.decoys.iter().map(Decoy::validate).collect())?;
+        each("algos", self.algos.iter().map(Algo::validate).collect())?;
         each(
             "spoofers",
             self.spoofers.iter().map(Spoofer::validate).collect(),
@@ -341,6 +346,9 @@ impl Library {
         }
         for decoy in &self.decoys {
             add("decoy", own(PoolRole::Decoys, decoy.wallets));
+        }
+        for algo in &self.algos {
+            add("algo", algo.wallets);
         }
         for _ in &self.spoofers {
             add("spoofer", 1);
@@ -462,6 +470,15 @@ impl Library {
                 wallets,
                 setting.path.clone(),
                 rng("decoy"),
+            )));
+        }
+        for spec in &self.algos {
+            let wallets = ledger.add("algo", seats_for(None, spec.wallets), false);
+            built.actors.push(Box::new(traders::AlgoTrader::new(
+                spec.clone(),
+                scale,
+                wallets,
+                rng("algo"),
             )));
         }
         for spec in &self.spoofers {

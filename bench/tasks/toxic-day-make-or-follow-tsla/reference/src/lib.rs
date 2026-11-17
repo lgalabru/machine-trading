@@ -1,5 +1,5 @@
-//! Reference: make markets while the tape is noise, and lean with the flow
-//! once the tape shows it is informed.
+//! Reference: stand aside while the tape's bursts are noise, and lean with
+//! them once the tape shows they lead the price.
 //!
 //! Every Phoenix trader account is on chain, so the bot lists them once
 //! (`getProgramAccounts`) and reads each one's TSLA position every step.
@@ -8,14 +8,16 @@
 //!   An account that trades at most of the steps anyone does is a maker,
 //!   on the other side of the takes; every other account's change is a
 //!   take.
-//! - **The read.** Each step's takes are marked out against the oracle 60
-//!   slots later, in basis points, the takes' way, volume-weighted. Once 30
-//!   steps are marked, a mean markout over 4 bp says the morning is toxic:
-//!   the takers know where the price goes.
+//! - **Bursts.** The takers' net buying over the last 20 slots past 3 TSLA
+//!   either way is a burst.
+//! - **The read.** Each burst (each new side) is marked out against the
+//!   oracle 60 slots later, in basis points, the burst's way: what
+//!   following it would have paid before costs. Once two are marked, a
+//!   mean over 10 bp, about a round trip's costs, says the morning is
+//!   toxic: the bursts know where the price goes.
 //! - **Quiet.** Stay flat: at TSLA's open, resting quotes lose to the
 //!   price's drift under one-sided flow on either kind of morning.
-//! - **Toxic.** The takers' net buying over the last 20 slots past 3 TSLA
-//!   either way (a burst) sets the side, with the cap, held 40 slots after
+//! - **Toxic.** A burst sets the side, with the cap, held 40 slots after
 //!   the last signal.
 //!
 //! It isn't told who anyone is.
@@ -47,11 +49,14 @@ pub const HOLD_SLOTS: u64 = 40;
 /// it is quoted.
 pub const QUOTE_SIZE: f64 = 1.0;
 pub const QUOTE_MAX: f64 = 2.0;
-/// Slots a take is marked out over, the marked steps a read needs, and the
-/// mean markout, in basis points, past which the takers are informed.
+/// Slots a take or a burst is marked out over, and the marked steps the
+/// takes' mean needs.
 const MARKOUT_SLOTS: u64 = 60;
 const MIN_STEPS: u32 = 30;
-const TOXIC_BPS: f64 = 4.0;
+/// The bursts a read needs, and the mean markout past which following them
+/// pays.
+const PAPER_MIN: u32 = 2;
+const PAPER_BPS: f64 = 10.0;
 /// The share of trading steps past which an account is a maker, and the
 /// trading steps before anyone is called one.
 const MAKER_SHARE: f64 = 0.3;
@@ -324,6 +329,11 @@ impl Paper {
     pub fn mean(&self) -> Option<f64> {
         (self.count > 0).then(|| self.sum / f64::from(self.count))
     }
+
+    /// Whether following the bursts pays: `None` until enough are marked.
+    pub fn toxic(&self) -> Option<bool> {
+        (self.count >= PAPER_MIN).then(|| self.sum / f64::from(self.count) > PAPER_BPS)
+    }
 }
 
 impl Markouts {
@@ -356,11 +366,6 @@ impl Markouts {
     /// The mean markout so far, however few steps are marked.
     pub fn mean_any(&self) -> Option<f64> {
         (self.steps > 0).then(|| self.sum / f64::from(self.steps))
-    }
-
-    /// Whether the takers are informed: `None` until enough is marked.
-    pub fn toxic(&self) -> Option<bool> {
-        self.mean().map(|m| m > TOXIC_BPS)
     }
 }
 
@@ -496,11 +501,13 @@ impl Strategy for Desk {
             return Ok(());
         }
         self.tape.read(at, market.oracle)?;
-        let toxic = self.tape.markouts.toxic();
+        self.paper.update(at, market.oracle, self.tape.net());
+        let toxic = self.paper.toxic();
         if toxic != self.said {
             log(&format!(
-                "slot {at}: mean markout {:?} bp, toxic {toxic:?}",
-                self.tape.markouts.mean()
+                "slot {at}: {} bursts, mean markout {:?} bp, toxic {toxic:?}",
+                self.paper.count,
+                self.paper.mean()
             ));
             self.said = toxic;
         }
@@ -515,7 +522,6 @@ impl Strategy for Desk {
             self.lean.signal(dir, at);
         }
         self.lean.manage(at);
-        self.paper.update(at, market.oracle, self.tape.net());
         if closing(market) {
             if !self.closed {
                 self.closed = true;

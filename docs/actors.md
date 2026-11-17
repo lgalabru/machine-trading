@@ -29,6 +29,7 @@ median trade size (and that size's lognormal sigma), from the calibration's
   "informed": [{ "horizon_slots": 40, "edge_bps": 30.0, "intensity_mult": 4.0 }],
   "chasers": [{ "wallets": 2, "trigger_bps": 10.0, "intensity_mult": 4.0 }],
   "decoys": [{ "horizon_slots": 40, "edge_bps": 30.0, "informed_for": { "from": 60, "until": 160 } }],
+  "algos": [{ "wallets": 6, "intensity_mult": 60.0, "length_slots": [50, 150], "gap_slots": [500, 1500] }],
   "spoofers": [{ "side": "bid", "distance_ticks": 5, "cancel_ticks": 2, "wall_mult": 8.0, "ahead_slots": 40 }],
   "icebergs": [{ "side": "bid", "display_mult": 1.0, "parent_mult": 6.0 }],
   "stop_hunters": [{ "level_step_usd": 1.0 }],
@@ -47,6 +48,7 @@ median trade size (and that size's lognormal sigma), from the calibration's
 | `informed` | Sees the scenario's level `horizon_slots` ahead and takes its way while the move is over `edge_bps`. | `wallets`, `horizon_slots`, `edge_bps`, `intensity_mult`, `size_mult`, `limit_bps`, `active` |
 | `chasers` | Takes the way the book moved once it moved over `trigger_bps` in the last `lookback_slots`: directional flow that knows nothing. | `wallets`, `lookback_slots`, `trigger_bps`, `intensity_mult`, `size_mult`, `limit_bps`, `active` |
 | `decoys` | Each wallet trades as the informed do until a slot drawn in `informed_for`, then keeps its pace on a view it draws at random and holds for `horizon_slots`: a record that looks informed, then isn't. | `wallets`, `horizon_slots`, `edge_bps`, `informed_for`, `intensity_mult`, `size_mult`, `limit_bps` |
+| `algos` | An execution algo working parent orders one at a time: a run of takes on one side (a coin flip per parent) for a length drawn from `length_slots`, then a pause drawn from `gap_slots` (before the first too). Bursts like the informed's ahead of a move, that know nothing of the price. | `wallets`, `intensity_mult`, `size_mult`, `limit_bps`, `length_slots`, `gap_slots`, `active` |
 | `spoofers` | Rests a wall `distance_ticks` behind the touch and pulls it once the touch comes within `cancel_ticks`, or after `lifetime_slots`; may sell into the other side while it stands (`harvest_mult`). With `ahead_slots`, walls only while it sees the level that far ahead going against the wall (support painted ahead of a fall). One wallet throughout. | `side`, `distance_ticks`, `cancel_ticks`, `wall_mult`, `lifetime_slots`, `harvest_mult`, `ahead_slots`, `active` |
 | `icebergs` | A large parent order shown a slice at a time: it rests `display_mult` trade sizes `distance_ticks` behind the touch on its side, and when the slice trades puts the same size back at the same price, until `parent_mult` trade sizes are done. It never pulls on approach, which is how a reader tells it from a spoofer's wall; if the touch moves more than `max_away_ticks` from its slice, it puts the slice up again behind the new touch. One wallet, its own: it reads its fills from the wallet's position. | `side`, `distance_ticks`, `display_mult`, `parent_mult`, `max_away_ticks`, `active` |
 | `stop_hunters` | Pushes the price through a round level on a `level_step_usd` grid once it comes within `trigger_bps`, and trades back `hold_slots` later. With `wallets` over 1, each hunt runs from one wallet it draws, and trades back from that wallet. | `wallets`, `level_step_usd`, `trigger_bps`, `push_mult`, `overshoot_ticks`, `hold_slots`, `cooldown_slots`, `limit_bps`, `active` |
@@ -76,7 +78,7 @@ set can't write them down. Its latent state (`mtx_grader::latent::Latent`)
 names the kinds to tell, as `{"roster": ["informed", "decoy"]}`, and the
 session fills in their wallets as it starts, handed over as `MTX_REGIME`:
 `{"wallets": {"informed": ["<pubkey>"], "decoy": ["<pubkey>"]}}`. The kinds are
-the report's actors' (`noise`, `informed`, `chaser`, `decoy`, `spoofer`,
+the report's actors' (`noise`, `informed`, `chaser`, `decoy`, `algo`, `spoofer`,
 `iceberg`, `stop-hunter`, …), and `rfq-informed`, the ids of the RFQ clients
 that are informed (`c3` for the requests `c3-0`, `c3-1`, …). The wallets
 are the actors' authorities (signing keys). Phoenix's events and fills name the
