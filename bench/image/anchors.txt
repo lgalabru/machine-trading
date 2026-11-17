@@ -3,4 +3,6 @@
 flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
+stealth-or-block mtx-bot-stealth-or-block mtx-stealth-or-block bench/tasks/stealth-or-block-tsla/reference
+stealth-or-block-informed mtx-bot-stealth-or-block-informed mtx-stealth-or-block-informed bench/tasks/stealth-or-block-tsla/checks/bots/informed
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
