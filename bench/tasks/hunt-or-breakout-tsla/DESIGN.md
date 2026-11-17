@@ -145,6 +145,16 @@ After the fix (fresh 72 sessions, `hidden/gate0/gate0-redesign.txt`):
 informed $6,990, reference $3,383 (0.48 weighted), push-fade $644 (0.04),
 wait-for-the-oracle −$475, fade-every-run −$1,440, follow-every-run
 −$2,382.
+On main with #113 and #114 (drawn push sizes, jittered holds, informed
+views right 85% of the time), fresh 72 sessions
+(`hidden/gate0/gate0-main114.txt`): informed $6,837, reference $3,323
+(0.49), push-fade $230 (−0.04), wait-for-the-oracle −$125, fade −$1,531,
+follow −$1,821; order 1.000, reference Sharpe 1.42.
+
+The first screen's Opus runs (claude-opus-5-5, high effort, native Claude
+Code, before the fix) scored 0.795, 0.714 and 0.715 on one hidden set:
+each read the same tell (one hunter-sized clip before a run means a
+hunt).
 
 ## Failure modes, priced
 
