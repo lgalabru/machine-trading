@@ -1658,6 +1658,7 @@ impl ScenarioV2 {
                     Some(c) => (
                         Some(Making {
                             competitor_bps: c.competitor_bps,
+                            makers_bps: c.makers_bps,
                             competition: c.competition,
                             takers: actors.takers,
                         }),
@@ -1919,6 +1920,7 @@ fn market_actors(markets: &[MarketScenario]) -> BTreeMap<String, MarketActors> {
                 Some(making) => MarketActors {
                     competitor: Some(Competitor {
                         competitor_bps: making.competitor_bps,
+                        makers_bps: making.makers_bps,
                         competition: making.competition,
                     }),
                     takers: making.takers.clone(),
