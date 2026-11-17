@@ -74,8 +74,8 @@
   },
   "description": "TSLA practice session",
   "duration_slots": 1708,
-  "informed_max_drawdown_usd": 8.55,
-  "informed_pnl_usd": 68.91,
+  "informed_max_drawdown_usd": 8.51,
+  "informed_pnl_usd": 68.9,
   "mandate": {
     "limits": {
       "max_drawdown_usd": 500.0
@@ -1085,7 +1085,7 @@
       "slot": 1700
     }
   ],
-  "reference_max_drawdown_usd": 7.24,
-  "reference_pnl_usd": 15.34,
+  "reference_max_drawdown_usd": 4.39,
+  "reference_pnl_usd": 8.85,
   "symbol": "TSLA"
 }
