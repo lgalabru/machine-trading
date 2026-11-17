@@ -67,6 +67,13 @@ abs_size_median_pct = 0.3596
 abs_size_p90_pct = 0.6185
 rule = "1 m regular-hours return beyond 5 robust sigmas of the trailing hour"
 
+[fair_value.jumps.opening]
+per_hour = 3.9
+abs_size_median_pct = 0.382
+abs_size_p90_pct = 0.652
+earnings_per_hour = 6.7
+source = "docs/market-calibration.md, Measured reference values: Phoenix 1 m mark candles to 2026-11-17, opening hour 09:31-10:30 New York, jumps by the calibration's rule"
+
 [calendar]
 model = "sessions"
 timezone = "America/New_York"

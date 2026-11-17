@@ -1099,6 +1099,7 @@ pub fn report(
             }
         }
     }
+    checks.extend(stated_regime_bound(calibration, sessions));
     let mut report = Report {
         calibration: calibration.meta.calibration_id.clone(),
         calibration_sha256: calibration.sha256.clone(),
@@ -1115,6 +1116,88 @@ pub fn report(
     };
     report.decide();
     report
+}
+
+/// A session whose spec states a jump rate or jump sizes is judged against
+/// itself everywhere else, so the stated regime is bounded here: no stated
+/// rate above the instrument's measured opening-window rate (the earnings
+/// allowance, where the spec says it is an earnings day and the calibration
+/// has one), and no stated size above the opening window's median and p90.
+/// Where the calibration has no opening window measured, its own all-session
+/// rate and sizes bound the spec.
+fn stated_regime_bound(calibration: &Calibration, sessions: &[SessionPath]) -> Option<Check> {
+    const NAME: &str = "stated_regime_bound";
+    let stated: Vec<&ModelSpec> = sessions.iter().filter_map(|s| s.stated.as_ref()).collect();
+    if stated.is_empty() {
+        return None;
+    }
+    let jumps = &calibration.fair_value.jumps;
+    let (rate, median, p90, source) = match &jumps.opening {
+        Some(o) => (
+            o.per_hour,
+            o.abs_size_median_pct,
+            o.abs_size_p90_pct,
+            "the opening window",
+        ),
+        None => (
+            jumps.per_hour,
+            jumps.abs_size_median_pct,
+            jumps.abs_size_p90_pct,
+            "the calibration's all-session values",
+        ),
+    };
+    let mut worst = 0.0_f64;
+    let mut why = String::new();
+    let mut note = |ratio: f64, what: String| {
+        if ratio > worst {
+            worst = ratio;
+            why = what;
+        }
+    };
+    for spec in stated {
+        let allowed = match (spec.earnings_day, jumps.opening.as_ref()) {
+            (true, Some(o)) => o.earnings_per_hour.unwrap_or(rate),
+            _ => rate,
+        };
+        if let Some(r) = spec.jump_rate_per_hour {
+            note(
+                r / allowed,
+                format!("a stated {r:.2} jumps an hour, over {allowed:.2} ({source})"),
+            );
+        }
+        if let Some(size) = &spec.jump_size {
+            note(
+                size.abs_median_pct / median,
+                format!(
+                    "a stated median jump of {:.3}%, over {median:.3}% ({source})",
+                    size.abs_median_pct
+                ),
+            );
+            note(
+                size.abs_p90_pct / p90,
+                format!(
+                    "a stated p90 jump of {:.3}%, over {p90:.3}% ({source})",
+                    size.abs_p90_pct
+                ),
+            );
+        }
+    }
+    let ok = worst <= 1.0 + 1e-9;
+    Some(Check {
+        name: NAME.into(),
+        status: pass(ok),
+        real: Some(1.0),
+        generated: Some(worst),
+        band: Some(Band {
+            ratio: Some([0.0, 1.0]),
+            diff: None,
+        }),
+        detail: if ok {
+            format!("every stated rate and size is within {source}")
+        } else {
+            format!("{why}")
+        },
+    })
 }
 
 /// Sessions shorter than the reference window, judged on statistics scaled
@@ -2088,6 +2171,51 @@ mod tests {
         }
         let report = report(&cal, "mislabelled", &mislabelled, SLOT_SECONDS, None);
         assert_eq!(status(&report, "short_jump_rate"), Status::Fail);
+    }
+
+    /// A stated regime is held to what the instrument's opening window
+    /// measured: 20 jumps an hour at 1.5% / 3% on TSLA fails, the measured
+    /// 3.9 at 0.382 / 0.652 passes, and the earnings-day rate needs the flag.
+    #[test]
+    fn a_stated_regime_is_bounded_by_the_opening_window() {
+        use crate::market::model::JumpSize;
+        let cal = tsla();
+        let spec = |rate: f64, median: f64, p90: f64, earnings_day: bool| ModelSpec {
+            jumps: true,
+            jump_rate_per_hour: Some(rate),
+            jump_size: Some(JumpSize {
+                abs_median_pct: median,
+                abs_p90_pct: p90,
+                source: "test".into(),
+            }),
+            earnings_day,
+            ..ModelSpec::default()
+        };
+        let verdict = |spec: ModelSpec| {
+            let sessions = short_model_sessions(&cal, &spec, 60, (80.0, 400.0), 1);
+            let report = report(&cal, "stated", &sessions, SLOT_SECONDS, None);
+            let check = report
+                .checks
+                .iter()
+                .find(|c| c.name == "stated_regime_bound")
+                .expect("a stated regime is bounded")
+                .clone();
+            (check.status, report.verdict)
+        };
+        let (status, verdict_) = verdict(spec(20.0, 1.5, 3.0, false));
+        assert_eq!(status, Status::Fail);
+        assert_eq!(verdict_, Verdict::Fail);
+        assert_eq!(verdict(spec(3.9, 0.382, 0.652, false)).0, Status::Pass);
+        // Sizes over the opening window's fail on their own.
+        assert_eq!(verdict(spec(3.9, 0.382, 1.0, false)).0, Status::Fail);
+        // 6.7 an hour is the earnings-reaction days' rate: only as such.
+        assert_eq!(verdict(spec(6.7, 0.382, 0.652, false)).0, Status::Fail);
+        assert_eq!(verdict(spec(6.7, 0.382, 0.652, true)).0, Status::Pass);
+        assert_eq!(verdict(spec(7.0, 0.382, 0.652, true)).0, Status::Fail);
+        // Default specs state nothing, so there is nothing to bound.
+        let sessions = short_model_sessions(&cal, &ModelSpec::default(), 60, (80.0, 400.0), 1);
+        let report = report(&cal, "default", &sessions, SLOT_SECONDS, None);
+        assert!(report.checks.iter().all(|c| c.name != "stated_regime_bound"));
     }
 
     /// The calibrated model's false-fail rate on short sessions, on fresh

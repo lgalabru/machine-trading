@@ -2700,6 +2700,7 @@ mod tests {
             scheduled: Vec::new(),
             regime_clock: 1.0,
             regime_set: None,
+            earnings_day: false,
             regimes: Vec::new(),
             sessions: Vec::new(),
             events: Vec::new(),

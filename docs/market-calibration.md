@@ -238,6 +238,17 @@ so treat as ranges, and cap at the largest observed):
 Earnings gaps are 3 to 10 times an ordinary overnight gap (n of 1 to 2 per
 name): use the calendar's gap field, not an event.
 
+Each calibration file stores these measured values as `[fair_value.jumps.opening]`
+(`per_hour`, `abs_size_median_pct`, `abs_size_p90_pct`, `earnings_per_hour` where
+the data has shown it, and a `source` citing the table above), added after the
+fit from this measurement. The realism gate's `stated_regime_bound` check fails
+any session set whose spec states a `jump_rate_per_hour` above the opening
+rate, or a `jump_size` median or p90 above the opening window's. The TSLA
+earnings-reaction rate (6.7 an hour) is allowed only to a spec that sets
+`earnings_day = true`, which lifts the rate bound to `earnings_per_hour` and
+leaves the size bound where it is. A calibration without an opening
+measurement is bounded by its own all-session rate and sizes.
+
 `mtx market-cal check --spec` draws with these fields like any other spec
 field. Jump events are not masked from the tail statistics, so it judges a
 stated jump regime against the all-days bands; scheduled events are masked.

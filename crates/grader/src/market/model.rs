@@ -82,6 +82,12 @@ pub struct ModelSpec {
     /// sign. Drawn whether or not `jumps` is on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<ScheduledEvent>,
+    /// The session is an earnings-reaction day, stated: its jump rate may
+    /// reach the calibration's earnings allowance (`jumps.opening.earnings_per_hour`)
+    /// instead of the opening rate. A flag, not a rate: the realism checks
+    /// refuse it where the calibration has no such allowance.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub earnings_day: bool,
     /// Gaps when a session opens (on by default).
     #[serde(default = "yes")]
     pub gaps: bool,
@@ -143,6 +149,10 @@ fn check_size(what: &str, median: f64, p90: f64, source: &str) -> Result<(), Str
     Ok(())
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn is_one(x: &f64) -> bool {
     *x == 1.0
 }
@@ -172,6 +182,7 @@ impl Default for ModelSpec {
             events: Vec::new(),
             gaps: true,
             regime_clock: 1.0,
+            earnings_day: false,
             regimes: None,
         }
     }
@@ -236,6 +247,9 @@ pub struct MarketModelRecord {
     /// The spec's stated regime chain, when it replaces the calibration's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regime_set: Option<Regimes>,
+    /// The spec's earnings-day flag, when set.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub earnings_day: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -289,6 +303,7 @@ impl MarketModelRecord {
             events: self.scheduled.clone(),
             regime_clock: self.regime_clock,
             regimes: self.regime_set.clone(),
+            earnings_day: self.earnings_day,
             ..ModelSpec::default()
         })
     }
@@ -791,6 +806,7 @@ impl<'a> Walker<'a> {
                 events: self.events,
                 regime_clock: self.model.spec.regime_clock,
                 regime_set: self.model.spec.regimes.clone(),
+                earnings_day: self.model.spec.earnings_day,
             },
         }
     }

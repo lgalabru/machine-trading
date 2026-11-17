@@ -199,6 +199,26 @@ pub struct Jumps {
     pub abs_size_median_pct: f64,
     pub abs_size_p90_pct: f64,
     pub rule: String,
+    /// What the instrument's opening window measured: the most a stated
+    /// jump regime may state (see [`OpeningJumps`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opening: Option<OpeningJumps>,
+}
+
+/// The jump rate and sizes measured in the instrument's opening window, the
+/// highest regime the data supports: a spec that states a jump rate or size
+/// above them is judged unrealistic. `earnings_per_hour` is the allowance a
+/// spec that says it is an earnings-reaction day (`earnings_day`) gets, where
+/// the data has shown one.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OpeningJumps {
+    pub per_hour: f64,
+    pub abs_size_median_pct: f64,
+    pub abs_size_p90_pct: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub earnings_per_hour: Option<f64>,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -658,6 +678,22 @@ impl Calibration {
             )?;
             if j.abs_size_p90_pct < j.abs_size_median_pct {
                 return Err("fair_value.jumps: the p90 size is below the median".into());
+            }
+        }
+        if let Some(o) = &j.opening {
+            positive("fair_value.jumps.opening.per_hour", o.per_hour)?;
+            positive(
+                "fair_value.jumps.opening.abs_size_median_pct",
+                o.abs_size_median_pct,
+            )?;
+            if o.abs_size_p90_pct < o.abs_size_median_pct {
+                return Err("fair_value.jumps.opening: the p90 size is below the median".into());
+            }
+            if o.earnings_per_hour.is_some_and(|e| e < o.per_hour) {
+                return Err("fair_value.jumps.opening: earnings_per_hour is below per_hour".into());
+            }
+            if o.source.trim().is_empty() {
+                return Err("fair_value.jumps.opening: names no source".into());
             }
         }
         self.validate_calendar()?;
