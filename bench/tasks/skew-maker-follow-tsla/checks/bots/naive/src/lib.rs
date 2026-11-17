@@ -36,12 +36,13 @@ impl Strategy for Naive {
     fn start(&mut self, session: &Session) -> BotResult {
         self.mode = option_env!("MTX_NAIVE").ok_or("built without MTX_NAIVE")?.to_string();
         self.book = BookReader::new(session)?;
-        // Three makers' mean is a third of one's lean: it follows at a third
-        // of the thresholds the others use.
+        // Three makers' mean is a third of one's lean, and two leaning
+        // together reach the others' thresholds' half: the best of 0.1 to
+        // 0.3 on a replay of 48 sessions.
         let follow = if self.mode == "mean-skew" {
             Follow {
-                take: 0.15,
-                lean: 0.08,
+                take: 0.3,
+                lean: 0.15,
             }
         } else {
             Follow::default()

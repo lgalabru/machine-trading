@@ -34,11 +34,12 @@ pub const SLICE: f64 = 1.0;
 /// under (over) the index, in basis points.
 pub const LEAN_SIZE: f64 = 0.25;
 pub const LEAN_IN_BPS: f64 = 1.0;
-/// Steps a lean must be gone before it closes.
-pub const EXIT_STEPS: u32 = 4;
+/// Steps a lean must be gone before it closes: about a horizon, so it
+/// holds through the move the lean was ahead of.
+pub const EXIT_STEPS: u32 = 40;
 /// The lead, in basis points of a unit, a maker's following PnL must hold
 /// over every other's before the reference follows it.
-pub const LEAD_BPS: f64 = 40.0;
+pub const LEAD_BPS: f64 = 30.0;
 
 /// One resting order on Phoenix's book.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -268,8 +269,8 @@ pub struct Follow {
 impl Default for Follow {
     fn default() -> Self {
         Self {
-            take: 0.45,
-            lean: 0.25,
+            take: 0.6,
+            lean: 0.35,
         }
     }
 }

@@ -144,7 +144,7 @@ impl SkewMakerFamily {
             react_slots: (8, 14),
             quote_size: (1.0, 3.0),
             horizon_slots: (60, 150),
-            edge_bps: (20.0, 30.0),
+            edge_bps: (30.0, 40.0),
             hit_rate: 0.85,
             noise_wallets: (3, 5),
             noise_flow: 4.0,
