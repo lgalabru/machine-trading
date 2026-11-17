@@ -1143,6 +1143,7 @@ mod tests {
         let fills = meter.market_records(0).await.unwrap().fills;
         assert_eq!(fills.len(), 4);
         assert_eq!(fills[0].price, price(13_821));
+        assert_eq!(fills[0].worst_price, price(13_821));
         // Between its two ticks, not at the last, and what was paid.
         let across = &fills[1];
         assert!(
@@ -1151,17 +1152,48 @@ mod tests {
             across.price
         );
         assert!((across.price * across.quantity - paid(2_072_120_240)).abs() < dec!(0.000001));
+        // Each names the last tick it reached as its worst level.
+        assert_eq!(across.worst_price, price(13_822));
         assert_eq!(fills[2].price, (price(15_000) + price(15_001)) / dec!(2));
+        assert_eq!(fills[2].worst_price, price(15_001));
         assert_eq!(
             fills[2].price * fills[2].quantity,
             paid((100 * 15_000 + 100 * 15_001) * tick)
         );
         // No size, no quote lots to divide: its tick.
         assert_eq!(fills[3].price, price(15_002));
+        assert_eq!(fills[3].worst_price, price(15_002));
         // The taker's fills, as an enforcer reads them, carry the same prices.
         let mine = meter.records(0).await.unwrap().fills;
         let prices: Vec<Decimal> = mine.iter().map(|f| f.fill.price).collect();
         let all: Vec<Decimal> = fills.iter().map(|f| f.price).collect();
         assert_eq!(prices, all);
+        let worst: Vec<Decimal> = mine.iter().map(|f| f.worst_price).collect();
+        assert_eq!(
+            worst,
+            fills.iter().map(|f| f.worst_price).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_spline_fill_of_size_for_no_quote_lots_is_refused() {
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        chain.set_account(main, account(PhoenixAccount::Trader, &owner));
+        let (meter, book) = spcx_meter(&chain, owner);
+        let spcx = meter.market.clone();
+        let events = [
+            header(&spcx, 30, main),
+            priced(
+                spline_filled(&spcx, Pubkey::new_unique(), MathSide::Ask, 13_822, 10),
+                0,
+                0,
+            ),
+            summary_of(main, MathSide::Bid, 15_200, 0),
+        ];
+        chain.record_transaction(logged(50, 11, &events, false), &[book]);
+        let read = meter.market_records(0).await;
+        assert!(matches!(read, Err(MeterError::Decode { .. })), "{read:?}");
     }
 }

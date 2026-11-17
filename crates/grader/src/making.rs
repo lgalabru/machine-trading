@@ -1199,6 +1199,7 @@ mod tests {
             maker,
             taker_side: side,
             price: "123.45".parse().unwrap(),
+            worst_price: "123.45".parse().unwrap(),
             quantity: "2.5".parse().unwrap(),
             unix_timestamp: 0,
             taker_fee: "0.108".parse().unwrap(),

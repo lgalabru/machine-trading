@@ -980,16 +980,16 @@ impl Mandate {
             let limit = match fill.side {
                 Side::Sell => allowance
                     .min_sell_price
-                    .filter(|floor| fill.price < floor - floor * 1e-9),
+                    .filter(|floor| fill.worst_price < floor - floor * 1e-9),
                 Side::Buy => allowance
                     .max_buy_price
-                    .filter(|cap| fill.price > cap + cap * 1e-9),
+                    .filter(|cap| fill.worst_price > cap + cap * 1e-9),
             };
             if let Some(limit) = limit {
                 return Some(Breach::Price {
                     instrument: fill.instrument.clone(),
                     side: fill.side,
-                    price: fill.price,
+                    price: fill.worst_price,
                     limit,
                 });
             }
@@ -1249,12 +1249,16 @@ pub struct ObservedTake {
 }
 
 /// A fill as the audit reads it: where, which way for the account, and at
-/// what price, in quote units per base unit, before fees.
+/// what price, in quote units per base unit, before fees. `price` is what
+/// the fill paid on average; `worst_price` is the worst level it reached
+/// (the highest for a buy, the lowest for a sell), equal to `price` for a
+/// fill at one level. The limit-price rule judges `worst_price`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ObservedFill {
     pub instrument: InstrumentRef,
     pub side: Side,
     pub price: f64,
+    pub worst_price: f64,
 }
 
 impl Observed {
@@ -1784,6 +1788,7 @@ mod tests {
             instrument: format!("{venue}:spot:SOL-USDC").parse().unwrap(),
             side,
             price,
+            worst_price: price,
         }
     }
 
@@ -1888,6 +1893,68 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    fn walked(venue: &str, side: Side, price: f64, worst_price: f64) -> ObservedFill {
+        ObservedFill {
+            price,
+            worst_price,
+            ..fill(venue, side, price)
+        }
+    }
+
+    #[test]
+    fn a_limit_judges_the_worst_level_a_fill_reached() {
+        let mut capped = Mandate::spot(&["phoenix"], "SOL-USDC", 100.0);
+        capped.universe[0].max_buy_price = Some(138.218);
+        // Buying 15 walked up to 138.22 at an average of 138.2151.
+        let mut through = Observed::default();
+        through
+            .fills
+            .push(walked("phoenix", Side::Buy, 138.2151, 138.22));
+        assert!(matches!(
+            capped.audit(&through),
+            Some(Breach::Price {
+                side: Side::Buy,
+                price: 138.22,
+                limit: 138.218,
+                ..
+            })
+        ));
+        // One level exactly at the cap is within it.
+        let mut at = Observed::default();
+        at.fills.push(fill("phoenix", Side::Buy, 138.218));
+        assert_eq!(capped.audit(&at), None);
+        // Walking up to the cap and no further is within it too.
+        let mut up_to = Observed::default();
+        up_to
+            .fills
+            .push(walked("phoenix", Side::Buy, 138.2151, 138.218));
+        assert_eq!(capped.audit(&up_to), None);
+
+        let mut floored = Mandate::spot(&["phoenix"], "SOL-USDC", 100.0);
+        floored.universe[0].min_sell_price = Some(138.182);
+        let mut under = Observed::default();
+        under
+            .fills
+            .push(walked("phoenix", Side::Sell, 138.1858, 138.18));
+        assert!(matches!(
+            floored.audit(&under),
+            Some(Breach::Price {
+                side: Side::Sell,
+                price: 138.18,
+                limit: 138.182,
+                ..
+            })
+        ));
+        let mut at = Observed::default();
+        at.fills.push(fill("phoenix", Side::Sell, 138.182));
+        assert_eq!(floored.audit(&at), None);
+        let mut down_to = Observed::default();
+        down_to
+            .fills
+            .push(walked("phoenix", Side::Sell, 138.1858, 138.182));
+        assert_eq!(floored.audit(&down_to), None);
     }
 
     #[test]

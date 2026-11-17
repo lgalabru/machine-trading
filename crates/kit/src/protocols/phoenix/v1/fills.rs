@@ -72,6 +72,7 @@ pub fn fills_in_log(data: &[u8], market: &PhoenixV1Market, slot: u64) -> Vec<Mar
             let index = u16_at(data, o + 1);
             let maker_order = u64_at(data, o + 35);
             let maker_bid = maker_order >> 63 == 1;
+            let price = market.ticks_to_price(u64_at(data, o + 43));
             fills.push(MarketFill {
                 slot,
                 instrument: market.id().clone(),
@@ -79,7 +80,8 @@ pub fn fills_in_log(data: &[u8], market: &PhoenixV1Market, slot: u64) -> Vec<Mar
                 taker: signer,
                 maker: key_at(data, o + 3),
                 taker_side: if maker_bid { Side::Sell } else { Side::Buy },
-                price: market.ticks_to_price(u64_at(data, o + 43)),
+                price,
+                worst_price: price,
                 quantity: market.base_lots_to_quantity(u64_at(data, o + 51)),
                 unix_timestamp: timestamp,
                 taker_fee: Decimal::ZERO,

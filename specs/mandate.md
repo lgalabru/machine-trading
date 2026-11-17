@@ -169,9 +169,13 @@ these holds:
 4. **Sides.** The account has a fill, or an open order, on a side its
    allowance does not list in `sides`.
 5. **Limit prices.** The account has a sell fill below the instrument's
-   `min_sell_price`, or a buy fill above its `max_buy_price`. A fill's price
-   is the price the venue records for it, before fees. Resting orders at any
-   price are allowed; only fills are checked.
+   `min_sell_price`, or a buy fill above its `max_buy_price`. Limits are
+   judged per unit, at the worst price level a fill reached, before fees: the
+   highest level of a buy, the lowest of a sell. A fill that walks several
+   price levels in one record is judged at its worst level, not its average,
+   so an account can't buy through a cap or sell through a floor on the
+   strength of a better average. A fill at one level is judged at its price.
+   Resting orders at any price are allowed; only fills are checked.
 6. **Health.** When the mandate sets `min_health`, the health of any of the
    account's borrowing positions, measured as the venue profile defines, is
    below it.

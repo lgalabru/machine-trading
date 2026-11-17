@@ -55,8 +55,11 @@ cross-margin account.
   account, the maker's side, the price in ticks, `base_lots_filled` and
   `quote_lots_filled`. A fill's price is what it paid per base unit: an
   order's fill is at its price in ticks, but a spline's can span several of
-  its ticks and names only the last it reached, so its price is
-  `quote_lots_filled` over `base_lots_filled`, never its tick. Each run of
+  its ticks and names only the last it reached. That tick is the fill's
+  worst level (`worst_price`, which the mandate's limit prices judge); its
+  price is `quote_lots_filled` over `base_lots_filled`, after converting
+  lots to USDC and base units, never its tick. A spline's fill of no size
+  keeps its tick, and one of size for no quote lots is refused. Each run of
   fills is closed by a `TradeSummary` event whose `trader` is the run's
   taker, on the side opposite the makers', and which carries the fee the
   taker paid (`fee_in_quote_lots`). The taker need
