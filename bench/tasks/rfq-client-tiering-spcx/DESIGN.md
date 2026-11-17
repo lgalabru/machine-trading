@@ -127,10 +127,30 @@ fast model the family was tuned on (`gate0-seed-*.txt`).
   an informed request declines uninformed requests on that request's side.
 - **The careful rungs** are told the tolerance (so they know the reach
   exactly) and not who is who: quote-all, quote-wide (3 bp past the reach),
-  fixed-width (1.5 bp), size-tier (only requests of 20 trade sizes or more),
+  fixed-width (2 bp), size-tier (only requests of 5 lots or more),
   side-skew (decline the side the last 80 slots' requests lean to by 0.1).
   Every rung except side-skew reads nothing of the session; side-skew reads
-  the request flow, not who sent it.
+  the request flow, not who sent it. (v0 and v1 used 1.5 bp and 20 trade
+  sizes, the model's picks for their family.)
+
+### v2, as built (reach 0.8 to 1.6 bp a lot)
+
+| Set | Informed / best careful | Informed / best blind | Order holds | Reference, weighted share of informed | Informed / reference | Reference per-session Sharpe |
+| --- | --- | --- | --- | --- | --- | --- |
+| v2 set 1 | 6.44 (side-skew) | none positive | 0.972 | 0.43 | 2.22 | 0.46 |
+| v2 set 2 | 4.42 (quote-all) | 4.42 (quote-all) | 0.950 | 0.51 | 1.89 | 0.59 |
+| v2 set 3 | 4.23 (side-skew) | 29.2 (size-tier) | 0.988 | 0.65 | 1.60 | 0.67 |
+| v2 pooled (216) | 5.15 (side-skew) | 29.3 (size-tier) | 0.984 | 0.53 | 1.88 | 0.56 |
+
+The ladder (`bench/checks/ladder/ladder.py` on the same three sets) holds
+every rule on 3 of 3 sets, bootstrap odds 0.994, 0.980 and 0.998 for
+naive < reference, careful < reference and reference < informed. Side-skew
+sits at 0.35 to 0.38 of the reference (0.01 to 0.15 of the informed bot,
+weighted); every blind rung is near 0 or below. The perp front-runner
+grades as quote-all: the order sheet cuts its perp trades to the mandate's
+0.001 SPCX.
+
+### Earlier generations (reach 0.2 to 0.5 bp a 0.021 SPCX trade size)
 
 Each set is 72 fresh sessions; "best careful" counts side-skew, "best blind"
 leaves it out. The order is nop, quote-all and quote-wide, and every careful
