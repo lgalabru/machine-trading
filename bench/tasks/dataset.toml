@@ -13,6 +13,10 @@ email = "ludo.galabru@solana.org"
 
 
 [[tasks]]
+name = "solana-foundation/basket-unwind-nvda-tsla"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[[tasks]]
 name = "solana-foundation/flash-crash-spcx"
 digest = "sha256:bdfbc02d873089c8e0f1b957045db53e4bbaa65201b0756f89743d34b94ebc65"
 
