@@ -126,10 +126,11 @@ the README.
   informed trader is seated in every session and trades noise like every
   account; ahead of a move its burst comes from it, and each fake-out from
   one other account. The bot maps the wallet to its Phoenix trader account,
-  reads that account's NVDA position every step, and takes a net change of
-  0.6 NVDA within 120 slots as the burst: up, it buys the rest at once
-  (paying up to 40 bp over the broker); down, it waits until the oracle has
-  fallen 0.35% from the high and stopped falling; until then, or in a calm
+  reads the orders that wallet sends, filled or not (its transactions'
+  Phoenix market orders: side and size), and takes 4 or more one-way
+  orders within 120 slots, at least 0.5 NVDA net, as the burst: up, it buys the rest at once
+  (paying up to 60 bp over the broker); down, it waits until the oracle has
+  fallen 0.5% from the high and stopped falling; until then, or in a calm
   session, it works passively. It isn't told whether the session moves,
   which way, when or how far.
 
@@ -155,6 +156,15 @@ from informed bursts.
   knew the onset; the built informed bot knows only the latent state
   (#47's rule), so it is weaker than Gate 0's told.
 
+## Gate exception (Michael, 2026-11-17)
+
+On the full 72-session ladder this card passes Gate 0's ratio at informed
+≥ 1.9× the best non-reading rung (not 2×), with the order on ≥ 85% of
+bootstrapped sets and the reference at 0.2–0.7 of the informed bot as
+usual. The card is realistic and mirrored; the ratio is held down by the
+engine's cheap crossing (TWAP-cross makes about 0.8× the reference: small
+IOC slices against the grader's maker cost little), not by a design flaw.
+
 ## Departures from the card
 
 | Card | Built | Why |
@@ -163,6 +173,7 @@ from informed bursts.
 | Haircut h 15-50 bp | 10-30 bp | at 15-50 bp the haircut swamps the information edge: told came to 1.25x the best TWAP in Gate 0 |
 | Resilience as a refill half-life of 4-40 slots | the maker's look delay (2-12 slots, jittered) and its lean, over a backstop at 15-30 bp | the snapshot's NVDA makers hold about 12 NVDA a tick and re-centre on every path move (measured: a 36.5-unit take moved the ask 8 ticks and nothing came back in 60 slots until a move restored it), so a refill on them measures nothing. The makers are widened to a backstop with a new opt-in `makers_bps` (grader) apart from the maker's own half-spread |
 | No drawdown limit | a loss limit of 5% of the order's notional | the scenario format requires one on a perp; it is out of reach of the family's moves |
+| Informed move 1.5-3x the median jump | 2.5-4x (0.71-1.14%) | with the informed bot told only who the informed trader is, the engine's TWAP-cross (0.84x the reference on the fast set) left it at 1.85x the best non-reading rung; a mirrored, bigger move raises what reading earns and leaves the non-reading rungs' expectation unchanged. Realism: NVDA's calibration (nvda.20261113.903d1120) puts the median one-minute jump at 0.284% and its p90 at 0.489% (0.58 jumps an hour beyond 5 robust sigma); 0.71-1.14% over 10-60 s is 1.5-2.3x that p90, a news-sized move: rare in regular hours, and smaller than the median close-to-open move the same file records (1.04%) |
 | Informed lead 20-150 slots | 20-100 | with the lean, a lead past 100 slots reached the session's start too often |
 | Noise rate as market making's, 0.2-0.45 a slot | 0.06-0.15 a slot, sizes around 0.15 | with the market-making flow the burst was buried and a passive bid filled the whole order from noise sells |
 | v1 reward and skill | scoring v2 only (`--scoring v2-headline`) | one reported score (GRADING_DECISIONS, 2026-11-14) |

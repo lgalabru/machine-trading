@@ -4998,8 +4998,10 @@ dependencies = [
 name = "mtx-bot-perp-accumulate-informed"
 version = "0.1.0"
 dependencies = [
+ "bs58",
  "mtx-bot-perp-accumulate",
  "mtx-kit",
+ "serde_json",
 ]
 
 [[package]]
@@ -5199,6 +5201,7 @@ dependencies = [
  "borsh 1.8.1",
  "bs58",
  "chrono",
+ "futures 0.3.34",
  "mtx-core",
  "phoenix-rise",
  "rust_decimal",

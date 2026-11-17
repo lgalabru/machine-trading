@@ -1604,6 +1604,7 @@ impl Account for LendingAccount {
             turn_ms: None,
             answered: None,
             fair_usd: None,
+            markets: Vec::new(),
         };
         self.last = Some(now);
         Ok(record)
@@ -1733,6 +1734,7 @@ impl Account for LendingAccount {
             }),
             tx_layer: None,
             crank_refusals: done.crank_refusals,
+            markets: Vec::new(),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1744,6 +1746,7 @@ impl Account for LendingAccount {
                 transactions: done.transactions,
                 calls: done.calls,
                 taker_orders: done.actors.taker_orders,
+                market_taker_orders: Default::default(),
             },
         })
     }

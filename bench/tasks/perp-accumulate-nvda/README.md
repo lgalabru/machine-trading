@@ -23,7 +23,7 @@ A good bot profits here because it reads whether one-sided taker flow is informe
 
 ## The market
 
-Sessions of 1,200 to 2,000 slots on NVDA's fitted price model. A session is calm (30%) or carries an informed move of 0.43% to 0.85% up or down (35% each), from an onset 15% to 70% into it, over 40 to 240 slots. A burst of taker orders trades the move's way 20 to 100 slots ahead of it, and the noise leans its way after; 0 to 2 fake-out bursts, drawn alike, come in every session. Near the touch the book is the grader's maker (2 to 5 NVDA at 3 to 6 bp, requoting every 2 to 12 slots, leaning 1 bp a unit against its inventory); the snapshot's makers are a deep backstop 15 to 30 bp out. The order is Q of 20 to 45 NVDA; the broker takes the rest at the closing index plus 10 to 30 bp.
+Sessions of 1,200 to 2,000 slots on NVDA's fitted price model. A session is calm (30%) or carries an informed move of 0.71% to 1.14% up or down (35% each), from an onset 15% to 70% into it, over 40 to 240 slots. A burst of taker orders trades the move's way 20 to 100 slots ahead of it, and the noise leans its way after; 0 to 2 fake-out bursts, drawn alike, come in every session. Near the touch the book is the grader's maker (2 to 5 NVDA at 3 to 6 bp, requoting every 2 to 12 slots, leaning 1 bp a unit against its inventory); the snapshot's makers are a deep backstop 15 to 30 bp out. The order is Q of 20 to 45 NVDA; the broker takes the rest at the closing index plus 10 to 30 bp.
 
 ## Scoring
 
