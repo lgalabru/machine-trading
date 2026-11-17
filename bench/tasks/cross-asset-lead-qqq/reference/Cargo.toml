@@ -20,6 +20,9 @@ name = "mtx-cross-asset-lead"
 path = "src/main.rs"
 
 [dependencies]
+borsh = "1"
+bs58 = "0.5"
+serde_json = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 mtx-kit = { path = "../../../../crates/kit", default-features = false, features = ["component", "venue"] }

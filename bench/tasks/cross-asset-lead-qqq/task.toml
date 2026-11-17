@@ -16,10 +16,10 @@ email = "ludo.galabru@solana.org"
 difficulty = "hard"
 category = "trading"
 # Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
-snapshot = "phoenix-spcx-2026-10-29"
+snapshot = "phoenix-perps-2026-11-13"
 
 [metadata.mtx]
-generator = "flash-crash"
+generator = "cross-asset-lead"
 anchor = "cross-asset-lead"
 emoji = "🆕"
 market = "TODO: venue and instrument (flash-crash-spcx base)"

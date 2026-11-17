@@ -1,0 +1,16 @@
+# `just build` builds bin/bot, the process the ladder and the verifier run
+# (`just run` starts it). The grader builds nothing: build before grading.
+
+# Build bin/bot.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    exe="$(cargo build --release --bin mtx-cross-asset-lead-naive --message-format=json-render-diagnostics \
+      | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
+    mkdir -p bin
+    cp "$exe" bin/bot
+    echo "built bin/bot"
+
+# Start the process bot.
+run:
+    @exec ./bin/bot

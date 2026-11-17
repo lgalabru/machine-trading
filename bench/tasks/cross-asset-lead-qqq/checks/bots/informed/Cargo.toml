@@ -7,22 +7,13 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
-# The strategy: a component on wasm32-wasip2 (`bot.wasm`, what the task
-# grades, and its oracle solution), and a library for the process below.
-[lib]
-crate-type = ["cdylib", "rlib"]
-path = "src/lib.rs"
-
-# The same strategy as a process (`bin/bot`): the anchor hidden sets are
-# scored against, and the ladder's rungs.
+# The informed bot as a process (`bin/bot`): only the ladder and the
+# verifier hand a bot its session's latent state, so it is never a
+# component.
 [[bin]]
 name = "mtx-cross-asset-lead-informed"
 path = "src/main.rs"
 
 [dependencies]
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-mtx-kit = { path = "../../../../../../crates/kit", default-features = false, features = ["component", "venue"] }
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mtx-bot-cross-asset-lead = { path = "../../../reference" }
 mtx-kit = { path = "../../../../../../crates/kit" }
