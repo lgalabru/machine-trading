@@ -19,6 +19,13 @@
 //! resting order) and logs that under the same header. Only a run no
 //! summary closes takes the header's trader as its taker.
 //!
+//! A fill's price is what it paid per base unit, before fees, and its
+//! `worst_price` the worst level it reached. An `OrderFilled` fills at its
+//! order's price, both. A `SplineFilled` can fill across several of the
+//! spline's ticks and names only the last it reached, which is its
+//! `worst_price`; its price is its `quote_lots_filled` over its size (its
+//! tick, for a fill of no size).
+//!
 //! Two instructions move a position without a fill: `LiquidationTransfer`
 //! (a keeper takes a liquidatee's position into its own account) and
 //! `CloseMatchedPositions` (auto-deleveraging closes a long against a
@@ -254,6 +261,7 @@ impl PerpMarketRecords {
                             format!("{}: no time: no block time or slot context", market.id()),
                         )
                     })?;
+                let price = market.ticks_to_price(ticks);
                 Ok(MarketFill {
                     slot: summary.slot,
                     instrument: market.id().clone(),
@@ -261,7 +269,8 @@ impl PerpMarketRecords {
                     taker: Pubkey::new_from_array(h.trader_account),
                     maker: Pubkey::new_from_array(maker),
                     taker_side: side(maker_side).opposite(),
-                    price: market.ticks_to_price(ticks),
+                    price,
+                    worst_price: price,
                     quantity: market
                         .base_lots_to_quantity(on_market(market, lots_i64(what, lots))?),
                     unix_timestamp,
@@ -309,7 +318,7 @@ impl PerpMarketRecords {
                     self.fills.push(taken);
                 }
                 MarketEvent::SplineFilled(f) if let Some(market) = on => {
-                    let taken = fill(
+                    let mut taken = fill(
                         market,
                         "a spline's fill",
                         f.maker,
@@ -320,6 +329,28 @@ impl PerpMarketRecords {
                         f.maker_fee_rate,
                         None,
                     )?;
+                    // One event can fill across several of the spline's
+                    // ticks and names only the last, the worst it reached
+                    // (the fill's `worst_price`, already set): the price is
+                    // what the fill's quote lots paid per unit.
+                    if !taken.quantity.is_zero() {
+                        let paid = quote(
+                            market,
+                            on_market(
+                                market,
+                                lots_i64("a spline's fill", f.quote_lots_filled.as_inner()),
+                            )?,
+                        );
+                        if paid.is_zero() {
+                            return Err(decode(
+                                "a spline's fill",
+                                format!("{} of size and no quote lots", taken.quantity),
+                            ));
+                        }
+                        taken.price = paid.checked_div(taken.quantity).ok_or_else(|| {
+                            decode("a spline's fill", format!("{paid} over {}", taken.quantity))
+                        })?;
+                    }
                     run.push((self.fills.len(), f.quote_lots_filled.as_inner()));
                     self.fills.push(taken);
                 }
