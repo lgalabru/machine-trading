@@ -30,6 +30,20 @@ doesn't (Kyle 1985; Easley, Kiefer and O'Hara on informed order arrival;
 markouts are how desks score counterparties). The non-expert trades the
 chart: it rides the jump, fades it, or chases the second move.
 
+## The funds' hit rate (checklist 16d)
+
+Both funds read the move ahead with the actor library's default
+`hit_rate` of 0.85 (`fund_hit_rate`): each wallet, a horizon at a time,
+misreads the move with chance 15%, on its own. Real informed flow is right
+on average, not on every trade, and a task whose informed wallets never err
+teaches a reader to trust any one trade. The contrary fund trades against
+its own (equally imperfect) read, so the two still mirror. The instruction
+states it as a process fact. The bots read robustly because of it: both the
+informed bot and the reference sum a fund's net flow over 90 slots, the
+funds' longest horizon (so it spans the fund's wallets and outlasts one
+wrong stretch), enter only on a reading held three steps, and never turn
+round after entry.
+
 ## How it differs from B2 (smart-money-decay-nvda)
 
 Both read who is informed from wallets' records, so the difference is what
