@@ -1,0 +1,28 @@
+144 sessions, 9 rungs
+rung                 total     mean       sd   win%       v2w
+most-active         -12043   -83.63    64.92      4    -18097
+momentum             -3891   -27.02    12.42      2     -5840
+blind-short          -1875   -13.02    47.47     39     -3732
+follow-flow           -998    -6.93    16.23     25     -1728
+fade-flow             -176    -1.22     5.16      0      -263
+blind-long             -22    -0.15    47.42     49     -1352
+nop                      0     0.00     0.00      0         0
+reference             2116    14.69    25.61     67      1819
+informed              5241    36.39    29.14     92      5117
+
+signal gate: informed 5241 / best non-reading (nop) 0 = inf (need >= 2)
+strength band: reference v2-weighted / informed's = 0.36 (band 0.2-0.7); raw 0.40
+reference per-session Sharpe 0.57 (need >= 0.25)
+  most-active v2-weighted share of informed: -3.54
+  momentum v2-weighted share of informed: -1.14
+  blind-long v2-weighted share of informed: -0.26
+  reference v2-weighted share of informed: 0.36
+  blind-short v2-weighted share of informed: -0.73
+  nop v2-weighted share of informed: 0.00
+  follow-flow v2-weighted share of informed: -0.34
+  fade-flow v2-weighted share of informed: -0.05
+
+on 2000 bootstrapped 72-session sets:
+  order max(nop, blind-long, blind-short, follow-flow, fade-flow, momentum, most-active) < reference < informed holds on 0.993 (need >= 0.85)
+  informed >= 2x best non-reading on 1.000
+  both on 0.993
