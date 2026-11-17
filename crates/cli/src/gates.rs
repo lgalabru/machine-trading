@@ -540,6 +540,66 @@ pub fn v2_checks(
     checks
 }
 
+/// The oracle installs `solution/src` into the agent's starter, whose
+/// Cargo.toml has no features of its own: a component export gated on one
+/// (`#[cfg(feature = "export")]`) vanishes there, and the bot trades nothing.
+/// Only `not(feature = ...)` and target gates survive the starter's build.
+pub fn solution_exports_component(root: &Path, task: &str) -> Check {
+    let (id, title) = (
+        "solution-exports",
+        "The solution exports its component when built as the starter",
+    );
+    let src = root.join("bench/tasks").join(task).join("solution/src");
+    let mut files = Vec::new();
+    collect_files(&src, &mut files);
+    let sources: Vec<String> = files
+        .iter()
+        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+    match export_problem(&sources) {
+        None => Check::pass(
+            SOLVABLE,
+            id,
+            title,
+            "mtx_kit::export! is not behind a cargo feature",
+        ),
+        Some(why) => Check::fail(SOLVABLE, id, title, why),
+    }
+}
+
+/// Why `sources`, built as the starter's `src/`, would export no component.
+fn export_problem(sources: &[String]) -> Option<String> {
+    let mut found = false;
+    for source in sources {
+        let lines: Vec<&str> = source.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with("//") || !code.contains("export!(") {
+                continue;
+            }
+            found = true;
+            let mut j = i;
+            while j > 0 && lines[j - 1].trim_start().starts_with("#[") {
+                j -= 1;
+                let mut attr = lines[j].to_string();
+                while let Some(at) = attr.find("not(feature") {
+                    let end = attr[at..].find(')').map_or(attr.len(), |e| at + e + 1);
+                    attr.replace_range(at..end, "");
+                }
+                if attr.contains("feature") {
+                    return Some(format!(
+                        "`{}` is gated on a cargo feature ({}): the starter's Cargo.toml enables none, so the oracle's bot exports nothing and trades nothing. Gate it on `not(feature = \"embedded\")` or on the target only",
+                        code.trim_end(),
+                        lines[j].trim()
+                    ));
+                }
+            }
+        }
+    }
+    (!found).then(|| "no mtx_kit::export! in solution/src: the oracle's bot is not a component".into())
+}
+
 /// No task's verifier tells the graded bot anything about its sessions:
 /// `--tell-latent` and `--tell-regime` are the ladder's, for its informed
 /// rung and its oracles. In a verifier they would hand the agent's bot what
@@ -1674,6 +1734,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let test = std::fs::read_to_string(root.join("bench/tasks").join(task).join("tests/test.sh"))
         .unwrap_or_default();
     checks.push(bot_told_nothing(&test));
+    checks.push(solution_exports_component(root, task));
     checks.push(practice_holds_no_latent(root, task, &family, headline));
     checks.extend(v2_checks(
         root,
@@ -1801,6 +1862,32 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_feature_gated_export_is_not_a_component_in_the_starter() {
+        let src = |attrs: &str| vec![format!("fn x() {{}}\n{attrs}\nmtx_kit::export!(Reference);\n")];
+        assert!(export_problem(&src("#[cfg(target_arch = \"wasm32\")]")).is_none());
+        assert!(
+            export_problem(&src(
+                "#[cfg(all(target_arch = \"wasm32\", not(feature = \"embedded\")))]"
+            ))
+            .is_none()
+        );
+        assert!(export_problem(&src("#[cfg(all(target_arch = \"wasm32\", feature = \"export\"))]")).is_some());
+        assert!(export_problem(&src("#[cfg(feature = \"export\")]\n#[allow(dead_code)]")).is_some());
+        assert!(export_problem(&["fn x() {}".to_string()]).is_some());
+    }
+
+    #[test]
+    fn every_shipped_task_solution_exports() {
+        let root = authoring::repo_root();
+        for t in authoring::list(&root) {
+            let name = t["name"].as_str().unwrap();
+            let c = solution_exports_component(&root, name);
+            assert_eq!(c.status, Status::Pass, "{name}: {}", c.detail);
+        }
+    }
+
 
     fn summary(sets: &[&[(&str, f64)]]) -> LadderSummary {
         LadderSummary {

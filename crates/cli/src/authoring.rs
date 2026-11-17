@@ -1675,6 +1675,42 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// What the oracle does: the scaffolded solution's sources replace the
+    /// starter's, whose Cargo.toml enables no feature. The component export
+    /// has to survive that, for both bases.
+    #[test]
+    fn a_scaffolded_solution_exports_its_component_in_the_starter() {
+        for (base, name) in [
+            (Base::Shocks, "funding-squeeze-spcx"),
+            (Base::Making, "quote-skew-spcx"),
+        ] {
+            let root = scratch_repo();
+            let from = repo_root().join("bench/tasks").join(base.task());
+            if !root.join("bench/tasks").join(base.task()).exists() {
+                copy_dir(
+                    &from,
+                    &root.join("bench/tasks").join(base.task()),
+                    &["bin", "target", "practice", "checks"],
+                )
+                .unwrap();
+            }
+            let mut spec = spec();
+            spec.name = name.into();
+            spec.base = Some(base);
+            scaffold(&root, &spec).unwrap();
+            let check = crate::gates::solution_exports_component(&root, name);
+            assert_eq!(check.status, crate::gates::Status::Pass, "{}", check.detail);
+            let reference = read(&root.join("bench/tasks").join(name).join("reference/src/lib.rs"));
+            let solution = read(&root.join("bench/tasks").join(name).join("solution/src/lib.rs"));
+            assert_eq!(reference, solution, "the solution is the reference's source");
+            // The reference's own manifest declares no feature the export
+            // waits on: what the solution is built with is the starter's.
+            let manifest = read(&root.join("bench/tasks").join(name).join("reference/Cargo.toml"));
+            assert!(!manifest.contains("[features]"), "{manifest}");
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+    }
+
     /// The template end to end: a dummy task scaffolded, checked step by
     /// step and gated, so the scaffold can't rot.
     #[test]
