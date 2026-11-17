@@ -275,6 +275,14 @@ pub struct LadderSummary {
     pub rules: Vec<RuleResult>,
     pub exploits: Vec<ExploitResult>,
     pub disqualified: Vec<Disqualified>,
+    #[serde(default)]
+    pub probes: Option<Vec<ProbeResult>>,
+    /// `checked`, `exempt` (the ladder file says why: `probes_exempt`) or
+    /// `absent`: the task declares nothing about the probe gate.
+    #[serde(default)]
+    pub probes_status: Option<String>,
+    #[serde(default)]
+    pub probes_exempt: Option<String>,
     /// Per set, each rung's PnL in each session, as graded (absent in older
     /// summaries).
     #[serde(default)]
@@ -317,6 +325,27 @@ pub struct ExploitResult {
     pub below_odds: Option<f64>,
     #[serde(default)]
     pub reached_bound: Option<bool>,
+    /// `pass`, `fail` or `no_power`: a pushing bot that moved the mark too
+    /// little proves nothing by losing.
+    #[serde(default)]
+    pub verdict: Option<String>,
+    #[serde(default)]
+    pub no_power: Option<String>,
+}
+
+/// One probe rule's verdict (scoring v2's probe gate, `ladder.py`'s
+/// `probe_checks`): `pass`, `fail`, `inconclusive` (the point estimate
+/// breaks it, the sample can't confirm that) or `no_power` (a probe that was
+/// to breach never did).
+#[derive(Debug, Deserialize)]
+pub struct ProbeResult {
+    pub id: String,
+    pub verdict: String,
+    pub detail: String,
+    /// The point estimate breaks the rule, whatever the sample can confirm:
+    /// the full gate fails on it.
+    #[serde(default)]
+    pub point_violated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -961,6 +990,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
     });
     checks.push(signal_gate(summary, gate));
     checks.push(exploit_check(summary, fast));
+    checks.push(probe_check(summary, fast));
     checks.push(Check::from(
         GRADED,
         "ladder-clean",
@@ -1049,6 +1079,19 @@ fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
             }
         }
     }
+    // A bot that was to move the mark and moved nothing proves nothing by
+    // losing: no power fails the gate, as a leak would.
+    for e in summary
+        .exploits
+        .iter()
+        .filter(|e| e.verdict.as_deref() == Some("no_power"))
+    {
+        failed.push(format!(
+            "{} (no power: {})",
+            e.bot,
+            e.no_power.as_deref().unwrap_or("it moved nothing")
+        ));
+    }
     if !failed.is_empty() {
         return Check::fail(GRADED, id, title, failed.join("; "));
     }
@@ -1078,6 +1121,87 @@ fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
             .collect::<Vec<_>>()
             .join(", "),
     )
+}
+
+/// The probe bots land where scoring v2's decisions say they must: gamblers
+/// at or under doing nothing, a breacher no better than its clipped twin,
+/// leverage held to its multiple, honest edge over doing nothing, a crash
+/// no better than the bot it wraps. The ladder fixes the rules and applies a
+/// bootstrap: a rule broken with confidence fails, one the sample can't
+/// confirm is inconclusive in a fast run and fails in the full one (as an
+/// exploit over its limit does), and a probe with no power fails. A task
+/// that says nothing about probes fails; one that opts out says why.
+fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
+    let (id, title) = ("probe-bots", "Probe bots land in their v2 bands");
+    if summary.probes_status.as_deref() == Some("exempt") {
+        return Check::not_run(
+            GRADED,
+            id,
+            title,
+            format!(
+                "exempt: {}",
+                summary
+                    .probes_exempt
+                    .as_deref()
+                    .unwrap_or("no reason given")
+            ),
+        );
+    }
+    let Some(probes) = summary.probes.as_ref().filter(|p| !p.is_empty()) else {
+        return Check::fail(
+            GRADED,
+            id,
+            title,
+            "the task's ladder file has no `probes` section: add one, or exempt the task with a reason (bench/checks/probes/README.md)",
+        );
+    };
+    let of = |keep: &dyn Fn(&ProbeResult) -> bool| -> Vec<String> {
+        probes
+            .iter()
+            .filter(|p| keep(p))
+            .map(|p| format!("{} ({})", p.id, p.detail))
+            .collect()
+    };
+    let failed =
+        of(&|p| p.verdict == "fail" || (!fast && p.verdict == "inconclusive" && p.point_violated));
+    let no_power = of(&|p| p.verdict == "no_power");
+    let unsure = of(&|p| p.verdict == "inconclusive" && (fast || !p.point_violated));
+    if !failed.is_empty() || !no_power.is_empty() {
+        let mut parts = Vec::new();
+        if !failed.is_empty() {
+            parts.push(format!("out of band: {}", failed.join("; ")));
+        }
+        if !no_power.is_empty() {
+            parts.push(format!("no power: {}", no_power.join("; ")));
+        }
+        return Check::fail(GRADED, id, title, parts.join(". "));
+    }
+    if !unsure.is_empty() {
+        return Check::new(
+            GRADED,
+            id,
+            title,
+            Status::Inconclusive,
+            format!("the sample can't confirm: {}", unsure.join("; ")),
+        );
+    }
+    // A rule the task can't exercise (the breacher's run cap where its reference
+    // rides the cap) is said, never counted as held.
+    let idle: Vec<&str> = probes
+        .iter()
+        .filter(|p| p.verdict == "not_exercised")
+        .map(|p| p.id.as_str())
+        .collect();
+    let held = probes.len() - idle.len();
+    let detail = if idle.is_empty() {
+        format!("{held} probe rules hold")
+    } else {
+        format!(
+            "{held} probe rules hold; not exercised on this task: {}",
+            idle.join(", ")
+        )
+    };
+    Check::pass(GRADED, id, title, detail)
 }
 
 /// The last lines of a command's output, joined.
@@ -1797,6 +1921,9 @@ mod tests {
             rules: vec![],
             exploits: vec![],
             disqualified: vec![],
+            probes: None,
+            probes_status: None,
+            probes_exempt: None,
             pnls: vec![],
         }
     }
@@ -2066,6 +2193,7 @@ mod tests {
             below_total: Some(100.0),
             below_odds: Some(odds),
             reached_bound: Some(false),
+            ..Default::default()
         };
         let check = |e: ExploitResult, fast: bool| {
             let mut s = summary(&[]);
@@ -2105,6 +2233,98 @@ mod tests {
         let report = Report::new("t", "fast", "abc".into(), vec![exploit_check(&s, true)]);
         assert!(report.passed);
         assert!(report.markdown().contains("1 inconclusive"));
+    }
+
+    #[test]
+    fn a_pusher_with_no_power_fails_the_exploit_check() {
+        let mut s = summary(&[]);
+        s.exploits.push(ExploitResult {
+            bot: "pusher".into(),
+            ok: true,
+            verdict: Some("no_power".into()),
+            no_power: Some("moved the mark 0.10 bp".into()),
+            ..Default::default()
+        });
+        let c = exploit_check(&s, false);
+        assert_eq!(c.status, Status::Fail);
+        assert!(
+            c.detail.contains("no power: moved the mark 0.10 bp"),
+            "{}",
+            c.detail
+        );
+        s.exploits[0].verdict = Some("pass".into());
+        assert_eq!(exploit_check(&s, false).status, Status::Pass);
+    }
+
+    fn probe(id: &str, verdict: &str) -> ProbeResult {
+        ProbeResult {
+            id: id.into(),
+            verdict: verdict.into(),
+            detail: "raw +0.100".into(),
+            point_violated: verdict != "pass",
+        }
+    }
+
+    #[test]
+    fn probe_rules_fail_the_gate_unless_the_sample_cannot_confirm_them() {
+        let check = |probes: Option<Vec<ProbeResult>>, fast: bool| {
+            let mut s = summary(&[]);
+            s.probes = probes;
+            probe_check(&s, fast)
+        };
+        // Nothing said about probes fails; an exemption says why and isn't run.
+        assert_eq!(check(None, true).status, Status::Fail);
+        assert_eq!(check(Some(vec![]), true).status, Status::Fail);
+        let mut s = summary(&[]);
+        s.probes_status = Some("exempt".into());
+        s.probes_exempt = Some("not wired".into());
+        let exempt = probe_check(&s, false);
+        assert_eq!(exempt.status, Status::NotRun);
+        assert!(exempt.detail.contains("not wired"));
+        let held = check(Some(vec![probe("a", "pass"), probe("b", "pass")]), true);
+        assert_eq!(held.status, Status::Pass);
+        assert!(held.detail.contains("2 probe rules"));
+        let idle = check(
+            Some(vec![
+                probe("a", "pass"),
+                probe("b:run_cap", "not_exercised"),
+            ]),
+            false,
+        );
+        assert_eq!(idle.status, Status::Pass);
+        assert!(idle.detail.contains("1 probe rules hold"));
+        assert!(
+            idle.detail
+                .contains("not exercised on this task: b:run_cap")
+        );
+        let unsure = vec![probe("a", "pass"), probe("b", "inconclusive")];
+        assert_eq!(check(Some(unsure), true).status, Status::Inconclusive);
+        let broken = vec![probe("zero_edge:coin", "fail"), probe("b", "pass")];
+        let c = check(Some(broken), true);
+        assert_eq!(c.status, Status::Fail);
+        assert!(
+            c.detail
+                .contains("out of band: zero_edge:coin (raw +0.100)")
+        );
+        let powerless = check(Some(vec![probe("breacher", "no_power")]), true);
+        assert_eq!(powerless.status, Status::Fail);
+        assert!(powerless.detail.contains("no power"));
+        let both = vec![probe("a", "inconclusive"), probe("b", "fail")];
+        assert_eq!(check(Some(both), true).status, Status::Fail);
+    }
+
+    #[test]
+    fn the_full_gate_fails_a_broken_point_estimate_the_fast_one_tolerates() {
+        let unsure = || Some(vec![probe("b", "inconclusive")]);
+        let mut s = summary(&[]);
+        s.probes = unsure();
+        assert_eq!(probe_check(&s, true).status, Status::Inconclusive);
+        assert_eq!(probe_check(&s, false).status, Status::Fail);
+        // An inconclusive rule whose point estimate holds is not a failure.
+        let mut fine = probe("c", "inconclusive");
+        fine.point_violated = false;
+        s.probes = Some(vec![fine]);
+        assert_eq!(probe_check(&s, false).status, Status::Inconclusive);
     }
 
     #[test]

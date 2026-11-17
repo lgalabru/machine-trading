@@ -28,7 +28,8 @@ finished ladder) adjust a run.
 | | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive) | ladder, per-session PnL |
 | | no task's verifier tells the graded bot anything (`--tell-latent`, `--tell-regime`) | `tests/test.sh` |
 | | a v2 task's verifier runs its informed bot on the hidden set: `tests/test.sh` draws its set, grades only a component and passes `--informed /opt/mtx/anchors/<anchor>-informed`, which `bench/image/anchors.txt` builds from the ladder's informed anchor, and that bot is written (v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh`, `anchors.txt` |
-| Graded correctly | the exploit bots stay inside their limits; no rung is refused or disqualified | ladder |
+| Graded correctly | the exploit bots stay inside their limits (a pushing bot that moved the mark too little is `no_power`, and fails); no rung is refused or disqualified | ladder |
+| | the probe bots land in their scoring v2 bands, and a probe with no power (a breacher that never breached) fails | ladder, when the task declares `probes` (`bench/checks/probes/README.md`) |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
 | | the agent's image holds no answer; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit`, `keypair-probe`, `clock-probe` |
 | | replays are byte-identical: the reference, graded again on the same fresh hidden set (fast: 2 sessions twice; full: 6 sessions three times on a loaded machine) | `mtx grade --replay`, when the build has it |
