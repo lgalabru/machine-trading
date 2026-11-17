@@ -425,6 +425,7 @@ mod tests {
                 reactive: None,
             },
             takers: Vec::new(),
+            obligations: None,
             makers_bps: None,
         };
         let seat = Box::new(NotingSeat {
@@ -560,6 +561,7 @@ mod tests {
                 reactive,
             },
             takers: Vec::new(),
+            obligations: None,
             makers_bps: None,
         }
     }

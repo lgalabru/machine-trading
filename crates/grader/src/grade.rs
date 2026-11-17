@@ -215,6 +215,20 @@ impl GradeReport {
             .iter()
             .map(|result| {
                 let session = &result.session;
+                // Its ceiling and its trade markout read one market's marks
+                // and cap.
+                if !session.markets.is_empty() {
+                    return Err(format!(
+                        "{}: scoring v2 scores sessions on one market; this one trades {}",
+                        session.scenario,
+                        session
+                            .markets
+                            .iter()
+                            .map(|m| m.symbol.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
                 // The cost-aware hindsight ceiling, on the reference's marks
                 // only: the bot's own marks move with its trades, so a bot
                 // could lower its own ceiling. Without a reference session
@@ -448,8 +462,8 @@ impl GradeReport {
                 ("score_v2_risk_allowance".to_string(), v2.risk.allowance),
                 ("score_v2_risk_weight".to_string(), v2.risk.weight),
             ]);
-            if let Some(cap) = v2.breach_cap {
-                rewards.insert("score_v2_breach_cap".to_string(), cap);
+            if v2.breached_sessions > 0 {
+                rewards.insert("score_v2_breach_penalty".to_string(), v2.breach_penalty);
             }
             if let Some(anchor) = v2.risk.dd_rms_anchor {
                 rewards.insert("score_v2_dd_rms_anchor".to_string(), anchor);
@@ -652,7 +666,7 @@ fn write_details(
             scenario,
             annotation: annotations.and_then(|a| a.get(index)),
             disqualified: disqualification(report),
-            bound_pnl_usd: scenario.bound_usd(report.start_mark_usd),
+            bound_pnl_usd: bound_of(scenario, report),
             report,
             timeline: &report.timeline,
         };
@@ -941,7 +955,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         .into_iter()
         .map(|(session, scenario)| ScenarioResult {
             disqualified: disqualification(&session),
-            bound_pnl_usd: scenario.bound_usd(session.start_mark_usd),
+            bound_pnl_usd: bound_of(scenario, &session),
             reference_pnl_usd: scenario.reference_pnl_usd,
             informed_pnl_usd: scenario.informed_pnl_usd,
             trade_markout_usd: trade_markout(&session, scenario),
@@ -984,10 +998,21 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
     }
 }
 
+/// What a session's PnL is divided by: its scenario's bound at the session's
+/// start mark, or, on several markets, each market's at its own.
+fn bound_of(scenario: &Scenario, session: &SessionReport) -> f64 {
+    if scenario.markets.is_empty() {
+        scenario.bound_usd(session.start_mark_usd)
+    } else {
+        scenario.markets_bound_usd(&session.start_marks_usd())
+    }
+}
+
 /// A session's PnL split against its scenario's fair value, if the scenario
 /// reports one at every step. The position is valued as the session valued
 /// it: at the mark, the scenario's oracle level (market making) or its book
-/// level.
+/// level. A session on several markets has none: its account's value is
+/// one, and the split is a one-market split.
 fn markout(session: &SessionReport, scenario: &Scenario) -> Option<Decomposition> {
     decompose(session, scenario, true)
 }
@@ -1011,6 +1036,11 @@ fn decompose(
     scenario: &Scenario,
     against_fair: bool,
 ) -> Option<Decomposition> {
+    // The split is one market's: a session on several has none, and its
+    // flat fields describe no market.
+    if !scenario.markets.is_empty() {
+        return None;
+    }
     let fair_or = |fair: Option<f64>, price: f64| if against_fair { fair } else { Some(price) };
     let timeline = &session.timeline;
     let start = fair_or(
@@ -1249,7 +1279,7 @@ pub async fn calibrate(
                 scenario.reference_max_drawdown_usd = drawdown_usd;
             }
             if let Some(path) = path {
-                scenario.save(path)?;
+                scenario.save_any(path)?;
             }
         } else {
             tracing::warn!(
@@ -1591,12 +1621,14 @@ mod tests {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            obligations: None,
             tx_layer: None,
             lending: None,
             crank_refusals: Vec::new(),
             forced_closes: Vec::new(),
             liquidator: None,
             oracle_starts: Default::default(),
+            markets: Vec::new(),
             turns: Default::default(),
             wall_ms: 0,
             timeline: Default::default(),
@@ -1706,6 +1738,8 @@ mod tests {
             bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,
@@ -1748,6 +1782,7 @@ mod tests {
             pnl_usd: value - 10_100.0,
             turn_ms: None,
             answered: None,
+            markets: Vec::new(),
         };
         let mut report = session(0.0);
         // Bought 10 at 99.60 (fair 100), held while fair rose to 101, sold
@@ -1995,6 +2030,37 @@ mod tests {
     }
 
     #[test]
+    fn v2_refuses_a_session_on_several_markets() {
+        let s = scenario(Some(100.0));
+        let mut multi = session(30.0);
+        multi.markets = ["NVDA", "SPCX"]
+            .into_iter()
+            .map(|symbol| session::MarketReport {
+                symbol: symbol.into(),
+                start_mark_usd: 100.0,
+                end_mark_usd: 100.0,
+                start_position: 0.0,
+                end_position: 0.0,
+                valuation: "mark",
+                flow: None,
+                competitor: None,
+            })
+            .collect();
+        let mut report = score(vec![(multi, &s)]);
+        let refused = report.score_v2(&v2()).unwrap_err().to_string();
+        assert!(
+            refused
+                .contains("scoring v2 scores sessions on one market; this one trades NVDA, SPCX"),
+            "{refused}"
+        );
+        assert!(report.v2.is_none());
+        // One market is scored as before.
+        let mut one = score(vec![(session(30.0), &s)]);
+        one.score_v2(&v2()).unwrap();
+        assert!(one.v2.is_some());
+    }
+
+    #[test]
     fn v2s_ceiling_is_the_informed_bot_when_every_scenario_has_one() {
         let mut s = scenario(Some(100.0));
         let mut proxied = score(vec![(session(300.0), &s), (session(50.0), &s)]);
@@ -2122,7 +2188,7 @@ mod tests {
         assert_eq!(rewards["score_v2_risk_weight"], 1.0);
         assert!((rewards["metric_return_on_capital"] - 150.0 / 10_100.0).abs() < 1e-15);
         assert_eq!(rewards["metric_drawdown_to_limit_max"], 0.95);
-        assert!(!rewards.contains_key("score_v2_breach_cap"));
+        assert!(!rewards.contains_key("score_v2_breach_penalty"));
     }
 
     #[test]
@@ -2157,6 +2223,7 @@ mod tests {
             peak_usd: 10_100.0,
             value_after_usd: 10_100.0 + pnl_usd,
             position_before: 50.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: true,
         }];
@@ -2181,7 +2248,11 @@ mod tests {
                 .contains("stopped out")
         );
         assert_eq!(graded.breached_sessions, 1);
-        assert_eq!(graded.breach_cap, Some(0.5));
+        assert!((graded.breach_penalty - scoring_v2::BREACH_RATE_WEIGHT / 2.0).abs() < 1e-15);
+        assert_eq!(
+            report.rewards()["score_v2_breach_penalty"],
+            graded.breach_penalty
+        );
         assert_eq!(graded.metrics.stopped_out_sessions, 1);
         // A stop-out that lost less than the limit still counts k·L.
         let mut report = score(vec![(session(300.0), &s), (stopped_out(-900.0), &s)]);
@@ -2281,8 +2352,8 @@ mod tests {
     }
 
     /// The reference levered past its limit: it earns more where it holds,
-    /// and the risk desk stops it out now and then. Under v2 it never beats
-    /// the same strategy sized to comply.
+    /// and the risk desk stops it out now and then. The breach penalty
+    /// prices breaches by their rate; it doesn't cap the run.
     #[test]
     fn an_occasional_breacher_stopped_out_scores_below_its_compliant_twin() {
         let s = scenario(Some(20.0));
@@ -2295,26 +2366,35 @@ mod tests {
         };
         let mut compliant = score(twin());
         compliant.score_v2(&v2()).unwrap();
-        for stops in [1, 2] {
-            let mut levered: Vec<(SessionReport, &Scenario)> =
-                twin_pnl.iter().map(|p| (session(p * 3.0), &s)).collect();
-            for (session, _) in levered.iter_mut().skip(2).take(stops) {
+        let c = compliant.v2.as_ref().unwrap().clone();
+        let levered = |lever: f64, stops: usize| {
+            let mut sessions: Vec<(SessionReport, &Scenario)> =
+                twin_pnl.iter().map(|p| (session(p * lever), &s)).collect();
+            for (session, _) in sessions.iter_mut().skip(2).take(stops) {
                 *session = stopped_out(-1_050.0);
             }
-            let mut breacher = score(levered);
+            let mut breacher = score(sessions);
             breacher.score_v2(&v2()).unwrap();
-            let (b, c) = (
-                breacher.v2.as_ref().unwrap(),
-                compliant.v2.as_ref().unwrap(),
-            );
+            breacher.v2.unwrap()
+        };
+        for stops in [1, 2] {
+            let b = levered(2.5, stops);
             assert!(b.raw < c.raw, "{stops} stop-outs: {} vs {}", b.raw, c.raw);
-            assert_eq!(b.breach_cap, Some(if stops == 1 { 0.5 } else { 0.0 }));
+            let rate = stops as f64 / 6.0;
+            assert!((b.breach_penalty - scoring_v2::BREACH_RATE_WEIGHT * rate).abs() < 1e-15);
             if stops == 1 {
-                // Levering paid in USD (5,400 − 1,575 against 2,000): the
-                // cap is what keeps it below its twin.
+                // Levering paid in USD (4,500 − 1,575 against 2,000): the
+                // breach penalty is what keeps it below its twin.
                 assert!(b.bot_usd > c.bot_usd);
+                assert!(b.raw + b.breach_penalty > c.raw);
             }
         }
+        // The limit, stated: tripling every session's PnL and breaching in
+        // one session of six earns more than the penalty takes. On the
+        // tasks' own paths, levering that far breaches far more often; the
+        // probe gate checks that the breacher stays below its twin there.
+        let tripled = levered(3.0, 1);
+        assert!(tripled.raw > c.raw);
     }
 
     #[test]
@@ -2425,6 +2505,7 @@ mod tests {
             peak_usd: 10_000.0,
             value_after_usd: 8_650.0,
             position_before: 70.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: true,
         }];
@@ -2461,6 +2542,7 @@ mod tests {
             peak_usd: 10_000.0,
             value_after_usd: 9_100.0,
             position_before: 70.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: true,
         }];
@@ -2511,6 +2593,7 @@ mod tests {
             peak_usd: 10_000.0,
             value_after_usd: 8_650.0,
             position_before: 70.0,
+            positions_before: Default::default(),
             orders: Vec::new(),
             flat: true,
         }];
@@ -2540,6 +2623,64 @@ mod tests {
             disqualification(&own)
                 .unwrap()
                 .contains("a side its mandate")
+        );
+    }
+
+    /// On two markets, the desk's forced sells on each are left out of the
+    /// sides rule, whichever market's allowance has it; the bot's own sell
+    /// is caught and names its market.
+    #[test]
+    fn a_stop_outs_forced_sells_on_two_markets_arent_the_bots() {
+        use mtx_core::Side;
+
+        use crate::{
+            risk::{ForcedClose, ForcedCloseReason},
+            scenario::StopRule,
+        };
+        let mut stopped = session(-1_150.0);
+        stopped
+            .mandate
+            .universe
+            .extend(Mandate::perp(VENUE, "NVDA", 40.0, 1_000.0).universe);
+        for allowance in &mut stopped.mandate.universe {
+            allowance.sides = Some(vec![Side::Buy]);
+        }
+        stopped.max_drawdown_usd = 1_300.0;
+        stopped.forced_closes = vec![ForcedClose {
+            reason: ForcedCloseReason::StopOut {
+                rule: StopRule::Drawdown,
+            },
+            step: 40,
+            at: 80,
+            value_before_usd: 8_700.0,
+            peak_usd: 10_000.0,
+            value_after_usd: 8_650.0,
+            position_before: 70.0,
+            positions_before: [("NVDA".to_string(), 40.0), ("SPCX".to_string(), 70.0)].into(),
+            orders: Vec::new(),
+            flat: true,
+        }];
+        let fill = |symbol: &str, side, forced| crate::perp::PerpFillRecord {
+            at: 80,
+            instrument: format!("phoenix:perp:{symbol}").parse().unwrap(),
+            side,
+            price: 100.0,
+            base: 10.0,
+            forced,
+        };
+        stopped.perp_fills = vec![
+            fill("SPCX", Side::Buy, false),
+            fill("NVDA", Side::Buy, false),
+            fill("NVDA", Side::Sell, true),
+            fill("SPCX", Side::Sell, true),
+        ];
+        assert!(disqualification(&stopped).is_none());
+        let mut own = stopped;
+        own.perp_fills.push(fill("NVDA", Side::Sell, false));
+        let why = disqualification(&own).unwrap();
+        assert!(
+            why.contains("phoenix:perp:NVDA") && why.contains("a side its mandate"),
+            "{why}"
         );
     }
 
