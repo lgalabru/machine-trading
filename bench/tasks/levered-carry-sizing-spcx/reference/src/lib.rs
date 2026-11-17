@@ -459,7 +459,9 @@ impl Strategy for LevCarry {
                 } else if flushed {
                     sized
                 } else {
-                    sized * ((INFORMED_STRESSED - p) / (INFORMED_STRESSED - INFORMED_CALM)).clamp(0.0, 1.0)
+                    sized
+                        * ((INFORMED_STRESSED - p) / (INFORMED_STRESSED - INFORMED_CALM))
+                            .clamp(0.0, 1.0)
                 }
             }
             Rung::Oracle => {
@@ -618,10 +620,7 @@ impl Filter {
             .var("MTX_REGIME")
             .ok_or("the informed bot needs MTX_REGIME")?;
         let latent: serde_json::Value = serde_json::from_str(latent)?;
-        let level = latent["discount_pct"]
-            .as_f64()
-            .ok_or("no discount_pct")?
-            / 100.0;
+        let level = latent["discount_pct"].as_f64().ok_or("no discount_pct")? / 100.0;
         let vol = |i: usize| latent["regime_vol"][i].as_f64().ok_or("no regime_vol");
         Ok(Self {
             level,
@@ -653,7 +652,10 @@ impl Filter {
                 let calm = like(self.level, DISCOUNT_NOISE[0]);
                 let stressed = like(self.level * STRESSED_WIDENING, DISCOUNT_NOISE[1]);
                 let top = calm.max(stressed);
-                let (a, b) = (self.p * (stressed - top).exp(), (1.0 - self.p) * (calm - top).exp());
+                let (a, b) = (
+                    self.p * (stressed - top).exp(),
+                    (1.0 - self.p) * (calm - top).exp(),
+                );
                 self.p = (a / (a + b)).clamp(1e-4, 1.0 - 1e-4);
                 self.last = Some((discount, k));
             }
