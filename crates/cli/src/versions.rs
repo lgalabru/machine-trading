@@ -7,12 +7,14 @@
 //! unless `--allow-version-mismatch` is given; the output then shows the
 //! mismatch. The task fingerprint itself is [`fingerprint`].
 
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+#[cfg(feature = "generate")]
+use std::path::PathBuf;
+use std::{collections::BTreeMap, path::Path};
 
-use anyhow::{Context, Result, bail};
+#[cfg(feature = "generate")]
+use anyhow::Context;
+use anyhow::{Result, bail};
+#[cfg(feature = "generate")]
 use mtx_grader::versions::{GRADER_VERSION, hash_parts};
 use serde_json::{Value, json};
 
@@ -20,6 +22,7 @@ use serde_json::{Value, json};
 /// `mtx task sync` (from `bench/tasks/<task>/tests/task.fingerprint`).
 pub const VERIFIER_FINGERPRINT: &str = "/tests/task.fingerprint";
 /// The file `mtx task sync` writes, under a task's folder.
+#[cfg(feature = "generate")]
 pub const FINGERPRINT_FILE: &str = "tests/task.fingerprint";
 /// What a missing stamp reads as.
 pub const UNVERSIONED: &str = "unversioned";
@@ -33,12 +36,15 @@ pub fn recorded_fingerprint(given: Option<String>, file: &Path) -> Option<String
         .filter(|t| !t.is_empty())
 }
 
+#[cfg(feature = "generate")]
 /// The seed and size of the scenario draw whose bytes stand for the task's
 /// scenario family and its parameters. Public, never a hidden set's.
 const FAMILY_SEED: u64 = 0x7461_736b_6670;
+#[cfg(feature = "generate")]
 /// The size of the draw when a verifier names none: the hidden sets' own.
 const FAMILY_COUNT: usize = 72;
 
+#[cfg(feature = "generate")]
 /// The hidden draw's size, from the verifier's `--count`.
 fn draw_count(script: &str) -> usize {
     let mut words = script.split_whitespace();
@@ -53,6 +59,7 @@ fn draw_count(script: &str) -> usize {
     FAMILY_COUNT
 }
 
+#[cfg(feature = "generate")]
 /// Keys of `task.toml` that only describe the task (or point at a build of
 /// it): they don't change what it measures.
 const COSMETIC_KEYS: &[&str] = &[
@@ -69,6 +76,7 @@ const COSMETIC_KEYS: &[&str] = &[
     "build_timeout_sec",
 ];
 
+#[cfg(feature = "generate")]
 /// A task's fingerprint: a hash over everything that changes what it
 /// measures. `read` gives a file of the task's folder (`root`-relative, or
 /// None), so a caller can overlay files not yet written (see `tasks::render`).
@@ -157,6 +165,7 @@ pub fn fingerprint(
     ))
 }
 
+#[cfg(feature = "generate")]
 /// Drop the cosmetic keys from a parsed `task.toml`, at any depth.
 fn strip(value: &mut toml::Value) {
     match value {
@@ -169,6 +178,7 @@ fn strip(value: &mut toml::Value) {
     }
 }
 
+#[cfg(feature = "generate")]
 /// The files under `dir` (relative to `root`), sorted: those git tracks or
 /// that aren't added yet (`--cached --others --exclude-standard`), without
 /// any directory named in `skip` (build output). Ignored files (a
@@ -193,6 +203,7 @@ pub(crate) fn tracked_files(root: &Path, dir: &Path, skip: &[&str]) -> Vec<PathB
     out
 }
 
+#[cfg(feature = "generate")]
 /// What git lists under `dir`, if `root` is the top of a git checkout.
 fn git_files(root: &Path, dir: &Path) -> Option<Vec<PathBuf>> {
     let git = |args: &[&str]| {
@@ -228,6 +239,7 @@ fn git_files(root: &Path, dir: &Path) -> Option<Vec<PathBuf>> {
     )
 }
 
+#[cfg(feature = "generate")]
 fn disk_files(root: &Path, dir: &Path) -> Vec<PathBuf> {
     fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
