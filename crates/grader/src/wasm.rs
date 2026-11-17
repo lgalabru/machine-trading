@@ -1018,6 +1018,33 @@ impl WasmBot {
         if let Some(board) = &self.desk.rfqs {
             fills.extend(board.take_fills());
         }
+        // A perp account's other markets (a session on several): each
+        // seat's own position and top.
+        if matches!(self.desk.reader, Reader::Perp(_)) {
+            for view in venues.iter_mut().skip(1) {
+                let Some(seat) = self
+                    .desk
+                    .seats
+                    .iter()
+                    .skip(1)
+                    .find(|s| s.market() == view.id)
+                else {
+                    continue;
+                };
+                if let Ok(size) = seat.position().await {
+                    view.position = Some(mtx_kit::Position {
+                        size,
+                        ..Default::default()
+                    });
+                }
+                if view.best_bid.is_none()
+                    && view.best_ask.is_none()
+                    && let Ok((bid, ask)) = seat.top().await
+                {
+                    (view.best_bid, view.best_ask) = (bid, ask);
+                }
+            }
+        }
         // A measured wallet's other markets: the same SOL held, and each
         // seat's own top, where the step's depth didn't give one.
         if let (Reader::Lending { .. }, Some(wallet)) = (&self.desk.reader, wallet) {
@@ -1216,9 +1243,11 @@ impl WasmBot {
             orders.push(intent, options);
         }
         // Only what the session executes counts toward the cap.
-        let (planned, notes) = mtx_kit::plan_sheet_with(&orders, &market, |venue, action| {
-            self.seat(venue).is_some_and(|seat| seat.executes(action))
-        });
+        // Each venue's lines are cut to its own cap in the mandate.
+        let (planned, notes) =
+            mtx_kit::plan_sheet_under(&orders, &market, &self.session.mandate, |venue, action| {
+                self.seat(venue).is_some_and(|seat| seat.executes(action))
+            });
         for note in &notes {
             tracing::warn!(step = k, "{note}");
         }

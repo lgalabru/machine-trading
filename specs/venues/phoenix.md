@@ -94,6 +94,27 @@ cross-margin account.
   order it placed to rest on the book, its side the sign of its
   `quantity`; it may since have filled or been cancelled.
 
+### Several markets
+
+One cross-margin trader account trades every perpetual market, and Phoenix
+margins them together. On a universe of several perpetual markets, an
+enforcer measures each market's position from `view_margin_for_asset` for
+that market, and the account's collateral, unrealized PnL and
+`position_count` from `view_margin` once, for every market. Markets the
+account holds outside the universe are its `position_count` less the
+universe markets it holds a position or orders in. Each fill names its
+market by the `Header` event's `asset_id`; a market's sequence numbers are
+its own, so an enforcer tells two markets' fills apart by the market as
+well as the sequence number: the kit's fill id comes from the instrument,
+the sequence and the side. One transaction can trade several markets, so
+the kit's meter reads the union of the markets' transactions, fetches and
+decodes each once, and routes each event to the market its `asset_id`
+names. Fills come in the order they landed: by slot, then each market's
+own sequence, with two markets' fills in one slot in the order the
+transaction lists saw them. The markets an account is measured on must
+count quote lots alike, as its collateral is one number; the kit's meter
+refuses others.
+
 ### Liquidation
 
 A trader account crossing its maintenance margin is liquidated by keepers,
@@ -191,6 +212,10 @@ such as the authority's USDC, are counted once, as the
   and the deepest drawdown, and disqualifies the session on any breach.
 - It hands the bot its copy of the mandate in `MTX_MANDATE`, with the term
   set to the session's last slot.
+- A session on several perpetual markets measures the one account on each
+  of them, and lists them in `MTX_MARKETS` (`["phoenix:perp:NVDA", ...]`,
+  the session's own market first); a component gets a seat on each, every
+  one tradable at its market address.
 
 It audits spot sessions on the spot market this profile names, alone or
 with OpenBook's:
