@@ -1,0 +1,15 @@
+# Process bots for the close-out check: `just build` builds the dodge into
+# dodge/bin/bot, `just build honest` and `just build drain` the others, each
+# with a Justfile beside it that runs it.
+
+build probe="dodge":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    features=""
+    if [ "{{probe}}" != "dodge" ]; then features="--features {{probe}}"; fi
+    exe="$(cargo build --release --bin mtx-closeout-probe $features --message-format=json-render-diagnostics \
+      | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
+    mkdir -p "{{probe}}/bin"
+    cp "$exe" "{{probe}}/bin/bot"
+    printf 'run:\n    @exec ./bin/bot\n' > "{{probe}}/Justfile"
+    echo "built {{probe}}/bin/bot from $exe"

@@ -1013,6 +1013,14 @@ impl QuoteSampler {
 /// One side's resting orders: `(price, size)` in USD and base units.
 type Quotes = Vec<(f64, f64)>;
 
+/// A trader account the bot holds, with its own position in the market.
+struct HeldAccount {
+    account: Pubkey,
+    /// The isolated subaccount number it is, if it is one.
+    subaccount: Option<u8>,
+    position: f64,
+}
+
 /// A perp session's account: the bot's Phoenix trader account, metered.
 struct PerpAccount {
     scenario: Scenario,
@@ -1215,6 +1223,29 @@ async fn wallet_holds(
 }
 
 impl PerpAccount {
+    /// Every trader account the bot holds with its own position in the
+    /// market, the cross-margin one first, and each other one's isolated
+    /// subaccount number (`None` when it isn't one the grader can name).
+    async fn held_accounts(&self, owner: &Pubkey) -> Result<Vec<HeldAccount>> {
+        let held = patiently("the trader accounts", || self.meter.account_positions()).await?;
+        Ok(held
+            .into_iter()
+            .enumerate()
+            .map(|(n, (account, position))| HeldAccount {
+                account,
+                subaccount: (n > 0)
+                    .then(|| {
+                        (1..=u8::MAX).find(|index| {
+                            mtx_kit::phoenix_rise::api::TraderKey::derive_pda(owner, 0, *index)
+                                == account
+                        })
+                    })
+                    .flatten(),
+                position: grader_f64(position),
+            })
+            .collect())
+    }
+
     async fn measure(&self) -> Result<Measurement> {
         Ok(patiently("the meter", || self.meter.measure(&self.universe)).await?)
     }
@@ -1648,10 +1679,14 @@ impl Account for PerpAccount {
         decode_instruction(ix, keys, &self.market)
     }
 
-    /// Cancel the bot's orders, then sell a long (buy back a short) with
-    /// market orders through the book, each at most `slice`, limited
-    /// [`STOP_OUT_LIMIT_BPS`] through the best price, reading the position
-    /// back from Phoenix after each.
+    /// Cancel the orders of every trader account the bot holds, then close
+    /// each account's own position from that account: sell a long (buy back
+    /// a short) with market orders through the book, each at most `slice`
+    /// (the cross-margin account's), limited [`STOP_OUT_LIMIT_BPS`] through
+    /// the best price, reading the position back from Phoenix after each. A
+    /// subaccount's is closed by one reduce-only order from it, so no
+    /// account's exit opens a position in another or meets the bot's own
+    /// resting orders.
     async fn force_close(
         &mut self,
         bot: &Keypair,
@@ -1660,10 +1695,19 @@ impl Account for PerpAccount {
         at: u64,
     ) -> Result<Closing> {
         let seat = self.perp.seat(bot.insecure_clone(), rpc_url).await?;
+        let trader = self.perp.trader(bot.insecure_clone(), rpc_url)?;
+        let owner = bot.pubkey();
         if let Err(error) = seat.cancel_all().await {
             tracing::warn!(%error, "stop-out: cancelling the bot's orders failed");
         }
-        let mut position = position_in(&self.measure().await?, &self.market_id);
+        let held = self.held_accounts(&owner).await?;
+        for other in held.iter().skip(1) {
+            if let Err(error) = trader.cancel_all_in(other.account).await {
+                tracing::warn!(%error, account = %other.account, "stop-out: cancelling a subaccount's orders failed");
+            }
+        }
+        let through = STOP_OUT_LIMIT_BPS / 10_000.0;
+        let mut position = held.first().map_or(0.0, |main| main.position);
         let mut orders = Vec::new();
         while !is_flat(position) && orders.len() < MAX_CLOSE_ORDERS_PER_STEP {
             let (side, name) = if position > 0.0 {
@@ -1673,14 +1717,17 @@ impl Account for PerpAccount {
             };
             let size = slice.map_or(position.abs(), |s| s.min(position.abs()));
             let (bid, ask) = seat.top().await.map_err(Error::StopOut)?;
-            let through = STOP_OUT_LIMIT_BPS / 10_000.0;
             let limit_usd = match side {
                 Side::Ask => bid.unwrap_or(self.start_mark_usd) * (1.0 - through),
                 Side::Bid => ask.unwrap_or(self.start_mark_usd) * (1.0 + through),
             };
             let sent = seat.take(side, size, limit_usd).await;
             let signature = sent.as_ref().ok().and_then(|()| seat.last_signature());
-            let after = position_in(&self.measure().await?, &self.market_id);
+            let after = self
+                .held_accounts(&owner)
+                .await?
+                .first()
+                .map_or(0.0, |main| main.position);
             let moved = (after - position).abs() > 0.0;
             orders.push(CloseOrder {
                 at,
@@ -1698,6 +1745,45 @@ impl Account for PerpAccount {
                 break;
             }
         }
+        for other in self.held_accounts(&owner).await?.into_iter().skip(1) {
+            let Some(index) = other.subaccount else {
+                continue;
+            };
+            if is_flat(other.position) {
+                continue;
+            }
+            let (side, name) = if other.position > 0.0 {
+                (Side::Ask, "sell")
+            } else {
+                (Side::Bid, "buy")
+            };
+            let size = other.position.abs();
+            let (bid, ask) = seat.top().await.map_err(Error::StopOut)?;
+            let limit_usd = match side {
+                Side::Ask => bid.unwrap_or(self.start_mark_usd) * (1.0 - through),
+                Side::Bid => ask.unwrap_or(self.start_mark_usd) * (1.0 + through),
+            };
+            let sent = trader
+                .reduce_in(other.account, index, side, size, limit_usd)
+                .await;
+            let after = self
+                .held_accounts(&owner)
+                .await?
+                .into_iter()
+                .find(|held| held.account == other.account)
+                .map_or(other.position, |held| held.position);
+            orders.push(CloseOrder {
+                at,
+                side: name.into(),
+                size,
+                limit_usd,
+                position_after: after,
+                ok: sent.is_ok(),
+                signature: sent.as_ref().ok().map(ToString::to_string),
+                error: sent.err().map(|e| e.to_string()),
+            });
+        }
+        let position = position_in(&self.measure().await?, &self.market_id);
         Ok(Closing { orders, position })
     }
 
@@ -1744,7 +1830,7 @@ impl Account for PerpAccount {
         let scenario = &self.scenario;
         let end_position = position_in(&end, &self.market_id);
         let end_desk = self.desk_holdings().await?;
-        let end_value_usd = self
+        let mut end_value_usd = self
             .value(grader_f64(end.value_usd), end_position, done.end_slot)
             .await?
             + end_desk.map_or(0.0, |held| self.desk_value(&held));
@@ -1771,6 +1857,14 @@ impl Account for PerpAccount {
         let close_usd = self
             .moment(done.end_slot.saturating_sub(self.base_slot))
             .level_usd;
+        // What a close-out left unclosed isn't valued at the level for free:
+        // it pays what the worst exit the close-out would take costs.
+        let residual_charge_usd = if self.closed_out && !is_flat(end_position) {
+            end_position.abs() * close_usd * STOP_OUT_LIMIT_BPS / 10_000.0
+        } else {
+            0.0
+        };
+        end_value_usd -= residual_charge_usd;
         let fair_close_usd = fair_close_usd(
             scenario,
             self.start_mark_usd,
@@ -1805,6 +1899,7 @@ impl Account for PerpAccount {
                     end_at: done.end_slot.saturating_sub(self.base_slot),
                     uptime: obligations.as_ref().map(|report| report.uptime),
                     close_out_at,
+                    residual_charge_usd,
                 })
             });
         Ok(SessionReport {

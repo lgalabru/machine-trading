@@ -438,7 +438,8 @@ impl SessionReport {
             .collect();
         observed.samples = self.samples.clone();
         observed.term_start = self.term_start.clone();
-        observed.takes = crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
+        observed.takes =
+            crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
         observed
     }
 }
@@ -1206,9 +1207,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             Some(_) => Some(crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?),
             None => None,
         };
-        // A cancel sent in the slot an order was placed in leaves it
-        // resting, and the exit would match the bot's own last quotes, so
-        // the close-out goes a slot on.
+        // The close-out's cancel-all is the same transaction as the bot's
+        // own in the slot of its last turn (same key, instruction and
+        // blockhash), which the chain runs once: the grader's never runs and
+        // the bot's last quotes stay to meet the exit. A slot on, it has its
+        // own blockhash.
         let slot = crate::chain::next_slot(surfnet, &rpc).await?;
         let close = account
             .close_out(

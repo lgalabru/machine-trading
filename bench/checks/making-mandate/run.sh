@@ -31,12 +31,14 @@
 # The probes must be built: `just build`, `just build one-sided`,
 # `just build taker` and `just build crosser` in bots/making-probe, and
 # `just process taker` and `just process crosser` for the process bots, and
-# `just one-unit` in bots/subaccount-probe.
+# `just one-unit` in bots/subaccount-probe, and `just build`, `just build honest`
+# and `just build drain` in bots/closeout-probe.
 set -euo pipefail
 mtx=$1 snapshot=$2 out=$3
 here="$(cd "$(dirname "$0")" && pwd)"
 probe="$here/../../../bots/making-probe"
 subprobe="$here/../../../bots/subaccount-probe/one-unit"
+closeprobe="$here/../../../bots/closeout-probe"
 rm -rf "$out"
 mkdir -p "$out/plain" "$out/obliged" "$out/closed"
 "$mtx" scenario generate --family market-making-v2 --prefix mm --count 3 --seed 43 --out "$out/plain" >/dev/null
@@ -95,6 +97,12 @@ mkdir -p "$out/closed-subaccount"
 "$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$subprobe" --logs "$out/closed-subaccount/logs" \
   --report "$out/closed-subaccount/report.json" "$out"/closed/*.json \
   >"$out/closed-subaccount/stdout.log" 2>"$out/closed-subaccount/stderr.log" || { echo "closed-subaccount: the grade failed"; tail -20 "$out/closed-subaccount/stderr.log"; exit 1; }
+for name in honest dodge drain; do
+  mkdir -p "$out/closeout-$name"
+  "$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$closeprobe/$name" --logs "$out/closeout-$name/logs" \
+    --report "$out/closeout-$name/report.json" "$out"/closed/*.json \
+    >"$out/closeout-$name/stdout.log" 2>"$out/closeout-$name/stderr.log" || { echo "closeout-$name: the grade failed"; tail -20 "$out/closeout-$name/stderr.log"; exit 1; }
+done
 python3 -I - "$out" <<'PY'
 import json, sys
 out = sys.argv[1]
@@ -201,6 +209,21 @@ for s in sessions("closed-subaccount"):
     # The close-out can't hide a subaccount's take: the audit still finds it.
     assert taking in (s["disqualified"] or ""), f"closed-subaccount {s['scenario']}: a take from a subaccount went unpunished"
     assert "decomposition" in s
+# A bot that parks its inventory where the close-out can't reach it pays the
+# exit as the honest one does: each account is closed from itself, and what is
+# left is charged, never valued at the oracle for free.
+honest = by_name("closeout-honest")
+for name in ("closeout-dodge", "closeout-drain"):
+    for s in sessions(name):
+        tag = f"{name} {s['scenario']}"
+        d = s["decomposition"]["close_out"]
+        h = honest[s["scenario"]]
+        assert abs(s["end_position"]) < FLAT or d["residual_charge_usd"] > 0, f"{tag}: left open and not charged"
+        assert abs(s["end_position"]) < FLAT, f"{tag}: not flat after the close-out ({s['end_position']})"
+        assert d["cost_usd"] >= h["decomposition"]["close_out"]["cost_usd"] - 0.05, f"{tag}: paid less to exit than the honest bot"
+        assert s["pnl_usd"] <= h["pnl_usd"] + 0.05, f"{tag}: ended {s['pnl_usd']} against the honest bot's {h['pnl_usd']}"
+        print(f"{tag}: pnl {s['pnl_usd']:.4f} (honest {h['pnl_usd']:.4f}); close-out cost {d['cost_usd']:.4f} "
+              f"(honest {h['decomposition']['close_out']['cost_usd']:.4f}); residual {d['residual_base']:.4f} charged {d.get('residual_charge_usd', 0.0):.4f}")
 for name in ("maker", "plain"):
     for s in sessions(name):
         assert "decomposition" not in s and not s.get("forced_closes"), f"{name}: close-out fields without opting in"

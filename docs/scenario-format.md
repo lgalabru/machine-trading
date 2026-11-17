@@ -207,14 +207,21 @@ separate from the mandate terms above:
 its inventory open, as before, and reports neither.
 
 **The close-out.** After the bot's last turn (and the keeper's) the grader
-cancels the bot's resting orders and sends market orders from the bot's
-account, signed with its key through the grader's own endpoint, each for the
-whole position, limited 4% through the best price (the risk desk's limit), until
-the account is flat or eight have gone. The order is never larger than the
-position, so it only reduces it. It is a real trade against the live book
-(the competitor and Phoenix's makers), so the session's PnL and end value are
-measured after paying the book's impact and the taker fee; a residue the book
-didn't take is valued at the oracle (the decomposition reports it). It is a
+cancels the resting orders of every trader account the bot holds (its
+cross-margin account and any isolated subaccount), then closes each
+account's own position from that account, signed with the bot's key through
+the grader's own endpoint: the cross-margin account with market orders for
+the whole position, limited 4% through the best price (the risk desk's
+limit), until it is flat or eight have gone; a subaccount with one
+reduce-only market order. No order is larger than the position of the account
+it is sent from, so none opens or flips one, and none meets the bot's own
+quotes. It is a real trade against the live book (the competitor and
+Phoenix's makers), so the session's PnL and end value are measured after
+paying the book's impact and the taker fee. A position the close-out leaves
+(a book that took nothing, a margin refusal) is not valued at the oracle for
+free: it is charged what the worst exit the close-out would take costs (4% of
+its value at the level), reported as `residual_charge_usd` and counted in the
+close-out's cost. It is a
 `forced_closes` entry with `reason.kind` `close_out`, and its fills are marked
 `forced` in `making_fills`, so they are the grader's, not the bot's: they
 never count against the mandate's taking rule, and the cost of exiting is not
@@ -237,7 +244,7 @@ session, `q`, `p` and `s` a fill's size, price and sign, +1 a buy):
 | `inventory_jump_usd`, `inventory_walk_usd` | the same inventory counted from the position held just before each move of the level, times the move, split into jumps and the walk (a move more than 4 robust standard deviations from the session's typical move is a jump) |
 | `unexplained_usd` | `inventory_usd` less those two: what the fills' logged prices and fees and the level don't account for in the account's value. Zero to the cent where the exit is small; a few hundredths of a percent of what the exit traded when it went through Phoenix's book |
 | `uptime` | the share of steps it quoted both sides within its obligations' band (with `obligations`) |
-| `close_out` | `fills`, `base` closed, `slippage_usd` (impact against the level), `fees_usd`, `cost_usd`, and the `residual_base` left |
+| `close_out` | `fills`, `base` closed, `slippage_usd` (impact against the level), `fees_usd`, `cost_usd`, the `residual_base` left and the `residual_charge_usd` it was charged |
 | `passive_fills`, `passive_base`, `passive_notional_usd` | the passive volume the spread is earned on |
 
 `S + T - maker_fees_usd + inventory_usd = pnl_usd` by construction. A match

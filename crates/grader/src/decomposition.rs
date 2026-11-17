@@ -105,8 +105,17 @@ pub struct CloseOutCost {
     pub slippage_usd: f64,
     pub fees_usd: f64,
     pub cost_usd: f64,
-    /// The position the close left, in base units (valued at the level).
+    /// The position the close left, in base units.
     pub residual_base: f64,
+    /// What that position was charged: the cost of the worst exit the close
+    /// would take (see `STOP_OUT_LIMIT_BPS`), instead of its value at the
+    /// level for free. Part of `cost_usd`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub residual_charge_usd: f64,
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }
 
 /// What the decomposition needs of a session.
@@ -123,6 +132,8 @@ pub struct Session<'a> {
     pub uptime: Option<f64>,
     /// The slot the close-out was sent at.
     pub close_out_at: u64,
+    /// What a position the close-out left was charged.
+    pub residual_charge_usd: f64,
 }
 
 fn sign(side: Side) -> f64 {
@@ -163,6 +174,7 @@ pub fn decompose(session: &Session) -> Decomposition {
         fees_usd: 0.0,
         cost_usd: 0.0,
         residual_base: session.end_position,
+        residual_charge_usd: session.residual_charge_usd,
     };
     for fill in session.fills {
         if fill.role == "maker" {
@@ -200,9 +212,10 @@ pub fn decompose(session: &Session) -> Decomposition {
             }
         }
     }
-    close_out.cost_usd = close_out.slippage_usd + close_out.fees_usd;
+    close_out.cost_usd =
+        close_out.slippage_usd + close_out.fees_usd + close_out.residual_charge_usd;
     let taking = taking_gross - taker_fees;
-    let inventory = session.pnl_usd - spread - taking + maker_fees;
+    let inventory = session.pnl_usd - spread - taking + maker_fees + session.residual_charge_usd;
     let (jump, walk) = held_through_moves(session);
     Decomposition {
         pnl_usd: session.pnl_usd,
@@ -343,6 +356,7 @@ mod tests {
             end_at: 100,
             uptime: Some(0.9),
             close_out_at: 100,
+            residual_charge_usd: 0.0,
         }
     }
 

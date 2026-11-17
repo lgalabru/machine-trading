@@ -86,6 +86,25 @@ impl PhoenixEternalMeter {
         traders(self.chain.as_ref(), &self.owner, self.trader).await
     }
 
+    /// Each trader account the owner holds, with its own position in the
+    /// market now, in base units (positive is long), the cross-margin
+    /// account first.
+    pub async fn account_positions(&self) -> Result<Vec<(Pubkey, Decimal)>, MeterError> {
+        let accounts = traders(self.chain.as_ref(), &self.owner, self.trader).await?;
+        let readings = self.readings(&accounts).await?;
+        Ok(accounts
+            .into_iter()
+            .zip(readings)
+            .map(|(account, reading)| {
+                let held = self.market.position(
+                    reading.asset.base_lots,
+                    reading.asset.entry_price_quote_lots_per_base_lot,
+                );
+                (account, held.quantity)
+            })
+            .collect())
+    }
+
     /// The instrument this meter measures, as the mandate names it.
     pub fn instrument(&self) -> &InstrumentId {
         &self.market.instrument.id
