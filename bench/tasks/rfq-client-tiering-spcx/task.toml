@@ -19,7 +19,7 @@ category = "trading"
 snapshot = "phoenix-spcx-2026-10-29"
 
 [metadata.mtx]
-generator = "market-making"
+generator = "rfq-tiering"
 anchor = "rfq-client-tiering"
 emoji = "🆕"
 market = "TODO: venue and instrument (market-making-spcx base)"

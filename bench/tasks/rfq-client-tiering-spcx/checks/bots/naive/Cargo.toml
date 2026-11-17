@@ -1,0 +1,16 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mtx-bot-rfq-client-tiering-naive"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-rfq-client-tiering-naive"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-rfq-client-tiering = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }

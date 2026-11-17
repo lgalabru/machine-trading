@@ -1,203 +1,429 @@
-//! Reference: quote one tick inside the competing makers, skew against
-//! inventory, and trade with the flow when it turns toxic.
+//! The RFQ desk: answers SPCX requests for quotes at each client's reach,
+//! and declines the clients it has found informed.
 //!
-//! The competitors' half-spread is read once, from their spline account; the
-//! quotes sit that far less one tick either side of a reservation price:
-//! the oracle, shifted against what the bot holds, so a long inventory lowers
-//! both quotes and sheds itself (Avellaneda-Stoikov's idea, with a linear
-//! skew). Holding a quarter of the cap, it stops quoting the side that would
-//! add to it. Fills that pile up one way in a few slots look like informed
-//! flow ahead of a jump: it buys (or sells) a few units the burst's way, pulls
-//! the quote the burst was hitting for a while, and lets the skew unwind the
-//! position after. Only fills that grow the inventory count toward a burst:
-//! the skew unwinding a lean is a run of one-sided fills too, and a maker
-//! that took it for one would lean back and forth on its own. And it leans
-//! with the drift: the further the oracle runs from its recent average, the
-//! further the reservation price follows, so it sells into a falling market
-//! rather than buying all the way down.
+//! A client takes a quote no worse than its value by its reach:
+//! `tolerance_bps` for one trade size (0.021 SPCX), times the square root
+//! of the size in trade sizes. An uninformed client values SPCX at the
+//! level, which Phoenix's index shows to the cent; an informed one at where
+//! the level is going, and asks the way it is going.
 //!
-//! It prices off the oracle, not Phoenix's mark: the mark blends in the
-//! book, and the bot's own best bid or ask pulls it along, so a maker that
-//! quotes around the mark chases its own quotes.
-//!
-//! Its PnL is a published baseline, not the reward's scale (that's the
-//! spread bound plus the hindsight bound). It reacts to its own fills only:
-//! it doesn't read the tape, doesn't tell a fake-out from a real burst, and
-//! leans the same few units whatever the burst's size.
-//!
-//! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
-//! solution), and a process (`src/main.rs`), the anchor hidden sets are
-//! scored against.
+//! - **Reach.** The family's tolerance is 0.2 to 0.5 bp; the desk narrows
+//!   it from its own answers: a declined quote was past the reach, a taken
+//!   one (from a client not flagged) within it.
+//! - **Hit ratio on wide quotes.** Each client's first two requests are
+//!   answered for one trade size, just past the widest reach the family
+//!   allows. No uninformed client takes that; an informed one does when its
+//!   view is worth more than the gap. A client that takes one is flagged.
+//! - **Markouts.** Every request of a client, answered or not, is marked
+//!   against the index a minute later, signed by its side; a client whose
+//!   record says informed is flagged too.
+//! - **Flow.** A flagged client's request says which way SPCX is going: for
+//!   a minute after it, the desk doesn't sell to a buyer (or buy from a
+//!   seller) on its side.
+//! - **Inventory.** No answer takes the desk's SPCX more than 1 SPCX from
+//!   where it started.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet};
 
-use mtx_kit::{
-    log,
-    prelude::*,
-    rpc_account,
-    venue::{PhoenixVenue, phoenix_rise::accounts::spline_collection::SplineCollection},
-};
+use mtx_kit::{LineOptions, Rfq, prelude::*};
 
-const SKEW_BPS_PER_UNIT: f64 = 2.5;
-const DRIFT_WEIGHT: f64 = 0.5;
-const DRIFT_SLOTS: f64 = 80.0;
-const DRIFT_MAX_BPS: f64 = 5.0;
-const QUOTE_SIZE: f64 = 1.0;
-const INVENTORY_LIMIT: f64 = 0.25;
-const TOXIC_UNITS: f64 = 1.5;
-const TOXIC_WINDOW_SLOTS: u64 = 8;
-const LEAN_UNITS: f64 = 5.0;
-const TOXIC_SLOTS: u64 = 24;
-const REQUOTE_BPS: f64 = 1.5;
-const REQUOTE_SLOTS: u64 = 12;
+/// One trade size, in SPCX: a request's size over it is its size in trade
+/// sizes.
+pub const TRADE_SIZE: f64 = 0.021;
+/// The family's tolerance, bp for one trade size.
+pub const TOLERANCE: (f64, f64) = (0.2, 0.5);
+/// How far inside the reach a quote sits: the index is the level to a cent.
+pub const EPS_BP: f64 = 0.4;
+/// The most the desk's SPCX may move from its start, in SPCX.
+pub const SOFT: f64 = 1.0;
 
-/// The strategy.
-#[derive(Default)]
-pub struct Maker {
-    cap: f64,
-    half_spread_bps: f64,
-    /// (slot, position, position from its quotes' fills) at each step.
-    history: VecDeque<(u64, f64, f64)>,
-    /// What its own market orders added to the position.
-    own: f64,
-    toxic_until: u64,
-    /// Which way the toxic fills took the inventory: +1 long, -1 short.
-    toxic_side: f64,
-    quoted: Option<(u64, f64, f64)>,
-    requotes: u64,
-    /// The oracle's recent average, and the slot it was last updated at.
-    average: Option<(u64, f64)>,
+/// A request as the desk saw it.
+#[derive(Debug, Clone)]
+pub struct Ask {
+    pub slot: u64,
+    pub client: String,
+    /// +1: the client buys.
+    pub sign: f64,
+    /// Its size, in trade sizes.
+    pub n: f64,
+    pub index: f64,
 }
 
-impl Strategy for Maker {
+/// What became of an answer.
+#[derive(Debug, Clone)]
+pub struct Outcome {
+    pub slot: u64,
+    pub client: String,
+    pub filled: bool,
+    pub tag: Tag,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Tag {
+    /// A quote at the desk's reach estimate, for this tolerance.
+    Reach(f64),
+    Probe,
+    Other,
+}
+
+pub enum Answer {
+    Decline,
+    /// `bp` past the index, for `size` SPCX (the whole request without).
+    Quote { bp: f64, size: Option<f64>, tag: Tag },
+}
+
+/// The desk's view at a request.
+pub struct View<'a> {
+    pub slot: u64,
+    pub index: f64,
+    /// The index at every step so far, by slot.
+    pub history: &'a [(u64, f64)],
+    /// Every request so far, this one last.
+    pub requests: &'a [Ask],
+    pub outcomes: &'a [Outcome],
+}
+
+impl View<'_> {
+    /// The index at the first step at or after `slot`, if one has come.
+    pub fn index_at(&self, slot: u64) -> Option<f64> {
+        let i = self.history.partition_point(|(s, _)| *s < slot);
+        self.history.get(i).map(|(_, v)| *v)
+    }
+
+    /// The index's sd per slot over the last `window` slots.
+    pub fn sd_per_slot(&self, window: u64) -> Option<f64> {
+        let from = self.slot.saturating_sub(window);
+        let i = self.history.partition_point(|(s, _)| *s < from);
+        let tail = &self.history[i..];
+        if tail.len() < 20 {
+            return None;
+        }
+        let r: Vec<f64> = tail
+            .windows(2)
+            .map(|w| (w[1].1 / w[0].1).ln() / ((w[1].0 - w[0].0).max(1) as f64).sqrt())
+            .collect();
+        let mean = r.iter().sum::<f64>() / r.len() as f64;
+        let var = r.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / r.len() as f64;
+        Some(var.sqrt())
+    }
+}
+
+pub trait Policy {
+    fn start(&mut self, session: &Session) {
+        let _ = session;
+    }
+    fn answer(&mut self, view: &View<'_>, ask: &Ask) -> Answer;
+}
+
+/// The client a request comes from: `c3` of `c3-17`.
+pub fn client_of(id: &str) -> String {
+    id.split('-').next().unwrap_or(id).to_string()
+}
+
+/// A reach, in bp, for `n` trade sizes at `tolerance`.
+pub fn reach_bp(tolerance: f64, n: f64) -> f64 {
+    tolerance * n.max(0.0).sqrt()
+}
+
+/// What was answered at the last step and is still waiting on its client.
+struct Pending {
+    slot: u64,
+    client: String,
+    /// The desk's change in SPCX if it fills.
+    base: f64,
+    price: f64,
+    size: f64,
+    tag: Tag,
+}
+
+/// The run loop around a policy: the index's history, the requests, what
+/// became of each answer, and the inventory.
+pub struct Desk<P> {
+    pub policy: P,
+    history: Vec<(u64, f64)>,
+    requests: Vec<Ask>,
+    outcomes: Vec<Outcome>,
+    seen: HashSet<String>,
+    pending: Vec<Pending>,
+    inventory: f64,
+}
+
+impl<P: Policy> Desk<P> {
+    pub fn new(policy: P) -> Self {
+        Self {
+            policy,
+            history: Vec::new(),
+            requests: Vec::new(),
+            outcomes: Vec::new(),
+            seen: HashSet::new(),
+            pending: Vec::new(),
+            inventory: 0.0,
+        }
+    }
+
+    /// Settle last step's answers against this step's fills.
+    fn settle(&mut self, market: &Market) {
+        let mut fills: Vec<_> = market
+            .fills
+            .iter()
+            .filter(|f| f.venue.starts_with("rfq:"))
+            .collect();
+        for p in std::mem::take(&mut self.pending) {
+            let hit = fills.iter().position(|f| {
+                (f.price - p.price).abs() <= 1e-6 * p.price && (f.size - p.size).abs() <= 1e-9
+            });
+            let filled = hit.is_some();
+            if let Some(i) = hit {
+                fills.swap_remove(i);
+                self.inventory += p.base;
+            }
+            self.outcomes.push(Outcome {
+                slot: p.slot,
+                client: p.client,
+                filled,
+                tag: p.tag,
+            });
+        }
+    }
+}
+
+impl<P: Policy> Strategy for Desk<P> {
     fn start(&mut self, session: &Session) -> BotResult {
-        self.cap = session.mandate.universe[0].max_position;
-        self.half_spread_bps = competitor_half_spread_bps(session)?;
-        log(&format!(
-            "one tick inside the competitor: {:.3} bps; quoting a cap of {}",
-            self.half_spread_bps, self.cap
-        ));
+        self.policy.start(session);
         Ok(())
     }
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
-        let (slot, mark, held, cap) = (market.slot, market.oracle, market.position.size, self.cap);
-        let filled = held - self.own;
-        self.history.push_back((slot, held, filled));
-        while self
-            .history
-            .front()
-            .is_some_and(|(s, ..)| s + TOXIC_WINDOW_SLOTS < slot)
-        {
-            self.history.pop_front();
-        }
-        if let Some(&(_, held_then, then)) = self.history.front()
-            && (filled - then).abs() >= TOXIC_UNITS
-            && held.abs() > held_then.abs()
-            && self.toxic_until <= slot
-        {
-            log(&format!("slot {slot}: one-sided fills; backing off"));
-            self.toxic_until = slot + TOXIC_SLOTS;
-            self.toxic_side = (filled - then).signum();
-            let lean = -self.toxic_side * LEAN_UNITS - held;
-            if lean.abs() >= 0.5 {
-                let size = lean.abs().min(cap);
-                orders.cancel_all();
-                if lean > 0.0 {
-                    orders.buy(size, round_cents(mark * 1.003));
-                } else {
-                    orders.sell(size, round_cents(mark * 0.997));
-                }
-                self.own += size.copysign(lean);
-                return Ok(());
-            }
-        }
-        let toxic = slot < self.toxic_until;
-
-        let mean = match self.average {
-            Some((at, mean)) => {
-                let weight = 1.0 - (-((slot - at) as f64) / DRIFT_SLOTS).exp();
-                mean + weight * (mark - mean)
-            }
-            None => mark,
-        };
-        self.average = Some((slot, mean));
-        let drift_bps =
-            (DRIFT_WEIGHT * (mark / mean - 1.0) * 10_000.0).clamp(-DRIFT_MAX_BPS, DRIFT_MAX_BPS);
-        let reservation = mark * (1.0 + (drift_bps - SKEW_BPS_PER_UNIT * held) / 10_000.0);
-        let half = self.half_spread_bps;
-        let bid = reservation * (1.0 - half / 10_000.0);
-        let ask = reservation * (1.0 + half / 10_000.0);
-        let moved = self.quoted.is_none_or(|(at, b, a)| {
-            slot >= at + REQUOTE_SLOTS
-                || ((bid - b) / mark).abs() * 10_000.0 >= REQUOTE_BPS
-                || ((ask - a) / mark).abs() * 10_000.0 >= REQUOTE_BPS
-        });
-        if !moved {
+        self.settle(market);
+        if market.index <= 0.0 {
             return Ok(());
         }
-
-        orders.cancel_all();
-        let bid_size = QUOTE_SIZE.min(cap - held);
-        let ask_size = QUOTE_SIZE.min(cap + held);
-        let mut quotes = [
-            (
-                Side::Bid,
-                bid,
-                bid_size,
-                held < INVENTORY_LIMIT * cap && !(toxic && self.toxic_side > 0.0),
-            ),
-            (
-                Side::Ask,
-                ask,
-                ask_size,
-                held > -INVENTORY_LIMIT * cap && !(toxic && self.toxic_side < 0.0),
-            ),
-        ];
-        if self.requotes % 2 == 1 {
-            quotes.reverse();
-        }
-        self.requotes += 1;
-        for (side, price, size, wanted) in quotes {
-            if wanted && size >= 0.01 {
-                match side {
-                    Side::Bid => orders.bid(price, size),
-                    Side::Ask => orders.ask(price, size),
-                };
+        self.history.push((market.slot, market.index));
+        let mut exposure = 0.0;
+        let open: Vec<&Rfq> = market
+            .rfqs
+            .iter()
+            .filter(|r| !self.seen.contains(&r.id))
+            .collect();
+        for rfq in open {
+            self.seen.insert(rfq.id.clone());
+            let Some(wants) = rfq.side else { continue };
+            let sign = if wants == Side::Bid { 1.0 } else { -1.0 };
+            let ask = Ask {
+                slot: market.slot,
+                client: client_of(&rfq.id),
+                sign,
+                n: rfq.size / TRADE_SIZE,
+                index: market.index,
+            };
+            self.requests.push(ask.clone());
+            let view = View {
+                slot: market.slot,
+                index: market.index,
+                history: &self.history,
+                requests: &self.requests,
+                outcomes: &self.outcomes,
+            };
+            let Answer::Quote { bp, size, tag } = self.policy.answer(&view, &ask) else {
+                continue;
+            };
+            let size = size.map_or(rfq.size, |s| s.min(rfq.size));
+            let base = -sign * size;
+            let after = self.inventory + exposure + base;
+            if after.abs() > SOFT && after.abs() > (self.inventory + exposure).abs() {
+                continue;
             }
+            exposure += base;
+            let price = market.index * (1.0 + sign * bp / 1e4);
+            let (bid, ask_px) = if sign > 0.0 {
+                (None, Some(price))
+            } else {
+                (Some(price), None)
+            };
+            orders.push(
+                Intent::Respond {
+                    id: rfq.id.clone(),
+                    bid,
+                    ask: ask_px,
+                    size: Some(size),
+                },
+                LineOptions {
+                    venue: Some(rfq.venue.clone()),
+                    ..LineOptions::default()
+                },
+            );
+            self.pending.push(Pending {
+                slot: market.slot,
+                client: ask.client,
+                base,
+                price,
+                size,
+                tag,
+            });
         }
-        self.quoted = Some((slot, bid, ask));
         Ok(())
     }
 }
 
-/// The competing makers' half-spread less one tick, in basis points of the
-/// starting oracle: the closest any enabled spline quotes to its mid.
-fn competitor_half_spread_bps(session: &Session) -> BotResult<f64> {
-    let venue = PhoenixVenue::from_json(&session.venue)?;
-    let market = venue.market(&session.symbol)?;
-    let data = rpc_account(&market.spline_pubkey)?.ok_or("no spline account")?;
-    let collection = SplineCollection::try_from_account_bytes(&data).map_err(|e| e.to_string())?;
-    let inner = collection
-        .splines()
-        .filter_map(|s| s.ok())
-        .filter(|s| s.is_enabled())
-        .flat_map(|s| {
-            s.active_bid_regions()
-                .iter()
-                .chain(s.active_ask_regions())
-                .map(|r| r.start_offset().as_inner())
-                .collect::<Vec<_>>()
-        })
-        .min()
-        .ok_or("no competing quotes")?;
-    let tick_usd = venue.ticks_to_usd(market, 1);
-    Ok(((inner.saturating_sub(1)) as f64 * tick_usd / session.start_oracle * 10_000.0).max(1.0))
+/// The reference: reach learned from its own answers, a probe past the
+/// widest reach for each client's first requests, request markouts, and
+/// its flagged clients' flow.
+pub struct Reference {
+    lo: f64,
+    hi: f64,
+    absorbed: usize,
+    probes: HashMap<String, u32>,
+    flagged: HashSet<String>,
 }
 
-fn round_cents(usd: f64) -> f64 {
-    (usd * 100.0).round() / 100.0
+/// The reference's settings.
+const PROBES: u32 = 2;
+const PROBE_BP: f64 = 0.5;
+const MARKOUT_SLOTS: u64 = 60;
+const PRIOR: f64 = 0.3;
+const FLAG: f64 = 0.5;
+const INFORMED_MARKOUT: f64 = 0.8;
+const SMALL_N: f64 = 4.0;
+const NEED: usize = 2;
+const FOLLOW_SLOTS: u64 = 60;
+
+impl Default for Reference {
+    fn default() -> Self {
+        Self {
+            lo: TOLERANCE.0,
+            hi: TOLERANCE.1,
+            absorbed: 0,
+            probes: HashMap::new(),
+            flagged: HashSet::new(),
+        }
+    }
 }
+
+impl Reference {
+    fn absorb(&mut self, outcomes: &[Outcome]) {
+        for o in &outcomes[self.absorbed..] {
+            match o.tag {
+                Tag::Probe if o.filled => {
+                    self.flagged.insert(o.client.clone());
+                }
+                Tag::Reach(t) if !o.filled => {
+                    self.hi = self.hi.min(t);
+                    if self.lo >= self.hi {
+                        self.lo = TOLERANCE.0;
+                    }
+                }
+                Tag::Reach(t) if !self.flagged.contains(&o.client) => {
+                    self.lo = self.lo.max(t.min(self.hi));
+                }
+                _ => {}
+            }
+        }
+        self.absorbed = outcomes.len();
+    }
+
+    /// The odds that `client` is informed, from its requests' markouts, and
+    /// how many are on record.
+    fn posterior(&self, view: &View<'_>, client: &str) -> (f64, usize) {
+        let sd = view.sd_per_slot(400).unwrap_or(7.8e-5);
+        let sd_m = (sd * (MARKOUT_SLOTS as f64).sqrt()).max(1e-6);
+        let mu = INFORMED_MARKOUT * sd_m;
+        let mut llr = (PRIOR / (1.0 - PRIOR)).ln();
+        let mut count = 0;
+        for r in view.requests.iter().filter(|r| r.client == client) {
+            if r.slot + MARKOUT_SLOTS > view.slot {
+                continue;
+            }
+            let Some(later) = view.index_at(r.slot + MARKOUT_SLOTS) else {
+                continue;
+            };
+            let x = (r.sign * (later - r.index) / r.index).clamp(-3.0 * sd_m, 3.0 * sd_m);
+            llr += (x * mu - mu * mu / 2.0) / (sd_m * sd_m);
+            count += 1;
+        }
+        (1.0 / (1.0 + (-llr).exp()), count)
+    }
+}
+
+impl Policy for Reference {
+    fn answer(&mut self, view: &View<'_>, ask: &Ask) -> Answer {
+        self.absorb(view.outcomes);
+        if self.flagged.contains(&ask.client) {
+            return Answer::Decline;
+        }
+        let probes = self.probes.entry(ask.client.clone()).or_insert(0);
+        if *probes < PROBES {
+            *probes += 1;
+            return Answer::Quote {
+                bp: TOLERANCE.1 + PROBE_BP,
+                size: Some(TRADE_SIZE),
+                tag: Tag::Probe,
+            };
+        }
+        let (odds, count) = self.posterior(view, &ask.client);
+        if odds >= FLAG {
+            return Answer::Decline;
+        }
+        let follow = view
+            .requests
+            .iter()
+            .rev()
+            .skip(1)
+            .take_while(|r| r.slot + FOLLOW_SLOTS > view.slot)
+            .find(|r| self.flagged.contains(&r.client));
+        if follow.is_some_and(|r| r.sign == ask.sign) {
+            return Answer::Decline;
+        }
+        let t = if self.hi - self.lo > 0.06 {
+            0.5 * (self.lo + self.hi)
+        } else {
+            self.lo
+        };
+        let size = (count < NEED).then_some(SMALL_N * TRADE_SIZE);
+        let n = size.map_or(ask.n, |s| ask.n.min(s / TRADE_SIZE));
+        Answer::Quote {
+            bp: reach_bp(t, n) - EPS_BP,
+            size,
+            tag: Tag::Reach(t),
+        }
+    }
+}
+
+/// The latent state a told bot reads from `MTX_REGIME`.
+#[derive(Debug, Clone, Default)]
+pub struct Told {
+    pub informed: HashSet<String>,
+    pub lead_slots: u64,
+    pub tolerance_bps: f64,
+}
+
+impl Told {
+    pub fn read(session: &Session) -> Self {
+        let Some(regime) = session.var("MTX_REGIME") else {
+            return Self::default();
+        };
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(regime) else {
+            return Self::default();
+        };
+        let informed = v["wallets"]["rfq-informed"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        Self {
+            informed,
+            lead_slots: v["lead_slots"].as_u64().unwrap_or(0),
+            tolerance_bps: v["tolerance_bps"].as_f64().unwrap_or(TOLERANCE.0),
+        }
+    }
+}
+
+impl<P: Policy + Default> Default for Desk<P> {
+    fn default() -> Self {
+        Self::new(P::default())
+    }
+}
+
+/// The task's reference: the desk with the reference's policy.
+pub type Bot = Desk<Reference>;
 
 #[cfg(target_arch = "wasm32")]
-mtx_kit::export!(Maker);
+mtx_kit::export!(Bot);

@@ -32,27 +32,27 @@ BASE = dict(
     jump_pct=(1.0, 3.0),
     # None: the card's 0-2 jumps of 1-3%; a rate: SPCX's calibrated jumps (0.674 an hour, median 0.519%,
     # p90 1.001%: log-sd 0.512).
-    jumps_per_hour=None,
+    jumps_per_hour=0.674,
     jump_median_pct=0.5194,
     jump_log_sd=0.512,
     clients=(10, 16),
     share=(0.15, 0.45),
-    lead=(40, 120),
+    lead=(30, 90),
     corr=(0.6, 0.95),
     asks=(3, 10),
     trade_size=0.021,
-    size_mult=14.0,  # median request, in trade sizes
-    size_sigma=1.3,
-    tol=(0.5, 1.5),  # bp for one trade size
+    size_mult=20.0,  # median request, in trade sizes
+    size_sigma=0.5,
+    tol=(0.2, 0.5),  # bp for one trade size
     cap=40.0,  # inventory bound, SPCX
-    soft=2.0,  # the skew: decline what takes |inventory| past this, SPCX
+    soft=1.0,  # the skew: decline what takes |inventory| past this, SPCX
     markout=60,  # slots, the reference's markout
     ref_prior=0.3,
     ref_flag=0.5,
     ref_mu=0.8,  # an informed request's mean markout, in markout-horizon sds
     k=1.5,
     eps=0.4,  # bp inside the reach: the index is the level to a cent (0.7 bp)
-    probe_delta=0.5,  # bp past the widest reach the prober quotes
+    probe_delta=0.5,  # bp past the widest reach the reference probes at
     probes=2,
     told_follow=True,
     ref_flow=None,
@@ -358,7 +358,12 @@ def main():
     best_careful = max(careful, key=lambda n: pnl[n].sum())
     base = max(pnl[best_careful].sum(), 0.0)
     ratio = pnl["told"].sum() / base if base > 0 else float("inf")
-    print(f"told / best non-reading ({best_careful}): {ratio:.2f}  (need >= 2)")
+    print(f"told / best careful rung ({best_careful}): {ratio:.2f}  (need >= 2)")
+    blind = [n for n in careful if n != "side_skew"]
+    best_blind = max(blind, key=lambda n: pnl[n].sum())
+    b = max(pnl[best_blind].sum(), 0.0)
+    r2 = pnl["told"].sum() / b if b > 0 else float("inf")
+    print(f"told / best rung that reads nothing of the session ({best_blind}): {r2:.2f}")
 
     def checks(idx):
         t = {n: pnl[n][idx].sum() for n in pnl}
