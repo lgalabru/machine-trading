@@ -128,8 +128,8 @@ the README.
   one other account. The bot maps the wallet to its Phoenix trader account,
   reads that account's NVDA position every step, and takes a net change of
   0.6 NVDA within 120 slots as the burst: up, it buys the rest at once
-  (paying up to 40 bp over the broker); down, it waits until the oracle has
-  fallen 0.35% from the high and stopped falling; until then, or in a calm
+  (paying up to 60 bp over the broker); down, it waits until the oracle has
+  fallen 0.5% from the high and stopped falling; until then, or in a calm
   session, it works passively. It isn't told whether the session moves,
   which way, when or how far.
 

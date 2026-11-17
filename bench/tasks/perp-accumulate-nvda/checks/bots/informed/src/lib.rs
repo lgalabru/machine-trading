@@ -19,9 +19,9 @@
 //!   while the grader's maker leans short, so a slow net drift says
 //!   nothing.)
 //! - **Up:** it buys the rest of the order at once, at the maker when it can
-//!   and on the backstop when it must, paying up to 40 bp over the broker.
+//!   and on the backstop when it must, paying up to 60 bp over the broker.
 //! - **Down:** it buys nothing, and rests nothing, until the fall has
-//!   landed (the oracle 0.35% under the session's high, and no new low for
+//!   landed (the oracle 0.5% under the session's high, and no new low for
 //!   80 slots), then works the rest as in a calm session.
 //! - **Until a burst, or in a calm session:** it rests a bid a tick inside
 //!   the maker and catches up behind a back-loaded floor, crossing only
@@ -45,12 +45,12 @@ const BURST_TRADES: usize = 4;
 /// The share of its traded size the burst's net must be.
 const BURST_ONE_WAY: f64 = 0.75;
 /// What it pays over the broker ahead of a rise, in basis points.
-const UP_EDGE_BPS: f64 = 40.0;
+const UP_EDGE_BPS: f64 = 60.0;
 /// Its largest buy a step ahead of a rise.
 const UP_SLICE: f64 = 4.0;
 /// A fall this far under the session's high, as a share, has landed once
 /// it makes no new low for `SETTLE_SLOTS`.
-const LANDED: f64 = 0.0035;
+const LANDED: f64 = 0.005;
 const SETTLE_SLOTS: u64 = 80;
 /// From here on, in share of the session, it catches up whatever it saw.
 const LATE: f64 = 0.85;
