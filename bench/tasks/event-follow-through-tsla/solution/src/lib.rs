@@ -15,7 +15,10 @@
 //!   markout is two standard errors above zero leads the price; one two
 //!   below lags it.
 //! - **The trade.** The leaders' net buying over the last 30 slots, less
-//!   the laggards', past 1.2 TSLA either way sets the side, with the cap.
+//!   the laggards', past 1.2 TSLA either way sets the side, with the cap,
+//!   once it has read the same side three steps running. An account stays
+//!   read until its markouts fall under one standard error, and once in,
+//!   the bot doesn't turn round.
 //!   A move in the oracle of 0.15% within 20 slots is the verdict: six
 //!   slots after it the bot closes and is done for the session.
 //!
@@ -51,6 +54,11 @@ pub const AFTER_VERDICT_SLOTS: u64 = 6;
 const MARKOUT_SLOTS: u64 = 30;
 const MIN_TAKES: u32 = 6;
 const MIN_T: f64 = 2.0;
+/// An account read as leading or lagging stays so until its mean markout
+/// falls back under this many standard errors.
+const KEEP_T: f64 = 1.0;
+/// Steps running the same side must read before the bot enters.
+const CONFIRM_STEPS: u32 = 3;
 
 /// The mid of the book, if it has both sides.
 pub fn mid(market: &Market) -> Option<f64> {
@@ -317,6 +325,8 @@ pub struct Markouts {
     pending: VecDeque<Takes>,
     /// Takes, and their markouts' sum and sum of squares, in basis points.
     stats: Vec<(u32, f64, f64)>,
+    /// Each account's reading: `1.0` leads, `-1.0` lags, `0.0` neither.
+    read: Vec<f64>,
 }
 
 impl Markouts {
@@ -324,6 +334,7 @@ impl Markouts {
         Self {
             pending: VecDeque::new(),
             stats: vec![(0, 0.0, 0.0); accounts],
+            read: vec![0.0; accounts],
         }
     }
 
@@ -355,29 +366,30 @@ impl Markouts {
     }
 
     /// `1.0` for an account that leads the price, `-1.0` for one that lags
-    /// it, `0.0` for the rest.
-    pub fn weights(&self) -> Vec<f64> {
-        self.stats
-            .iter()
-            .map(|&(n, sum, sq)| {
-                if n < MIN_TAKES {
-                    return 0.0;
-                }
-                let n = f64::from(n);
-                let mean = sum / n;
-                let sd = ((sq / n - mean * mean).max(0.0) * n / (n - 1.0))
-                    .sqrt()
-                    .max(1.0);
-                let t = mean / (sd / n.sqrt());
-                if t >= MIN_T {
-                    1.0
-                } else if t <= -MIN_T {
-                    -1.0
-                } else {
-                    0.0
-                }
-            })
-            .collect()
+    /// it, `0.0` for the rest. An account is read at [`MIN_T`] standard
+    /// errors and kept until it falls under [`KEEP_T`].
+    pub fn weights(&mut self) -> Vec<f64> {
+        for (read, &(n, sum, sq)) in self.read.iter_mut().zip(&self.stats) {
+            if n < MIN_TAKES {
+                continue;
+            }
+            let n = f64::from(n);
+            let mean = sum / n;
+            let sd = ((sq / n - mean * mean).max(0.0) * n / (n - 1.0))
+                .sqrt()
+                .max(1.0);
+            let t = mean / (sd / n.sqrt());
+            *read = if t >= MIN_T {
+                1.0
+            } else if t <= -MIN_T {
+                -1.0
+            } else if *read * t >= KEEP_T {
+                *read
+            } else {
+                0.0
+            };
+        }
+        self.read.clone()
     }
 }
 
@@ -390,6 +402,8 @@ pub struct Reference {
     markouts: Markouts,
     hold: Hold,
     known: usize,
+    /// The side the flow has read, and for how many steps running.
+    reading: (f64, u32),
 }
 
 impl Strategy for Reference {
@@ -425,8 +439,15 @@ impl Strategy for Reference {
                     .zip(&weights)
                     .map(|(c, w)| c * w)
                     .sum();
-                if let Some(dir) = flow_side(net) {
-                    self.hold.want(dir, at);
+                let side = flow_side(net).unwrap_or(0.0);
+                self.reading = if side != 0.0 && side == self.reading.0 {
+                    (side, self.reading.1 + 1)
+                } else {
+                    (side, u32::from(side != 0.0))
+                };
+                // Enter once the reading holds; never turn round after.
+                if self.hold.dir == 0.0 && self.reading.1 >= CONFIRM_STEPS {
+                    self.hold.want(side, at);
                 }
             }
         }
