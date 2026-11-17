@@ -91,6 +91,12 @@ pub struct FrontRunner {
     /// The steps it stays on the bot after the pattern last held.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub persist_steps: Option<u64>,
+    /// Trade a held front-run back only at a profit of this many basis
+    /// points on the price it was made at, holding it past `hold_steps`
+    /// until then (and to the close at worst), instead of at any price
+    /// within `limit_bps`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cover_bps: Option<f64>,
 }
 
 impl Default for FrontRunner {
@@ -105,6 +111,7 @@ impl Default for FrontRunner {
             on_send: false,
             window_steps: None,
             persist_steps: None,
+            cover_bps: None,
         }
     }
 }
@@ -116,6 +123,11 @@ impl FrontRunner {
         }
         if self.window_steps == Some(0) {
             return Err("window_steps must be at least 1".into());
+        }
+        if let Some(cover) = self.cover_bps
+            && !(cover.is_finite() && cover >= 0.0)
+        {
+            return Err(format!("cover_bps {cover} must be 0 or more"));
         }
         finite_positive("min_mult", self.min_mult)?;
         finite_positive("share", self.share)?;
@@ -140,9 +152,9 @@ struct Inner {
     /// with `persist_steps`.
     seen: Option<(Side, u64, f64)>,
     on_until: u64,
-    /// What it holds from front-running: each trade's way, size and the
-    /// step it was made at.
-    held: Vec<(Side, f64, u64)>,
+    /// What it holds from front-running: each trade's way, size, the step
+    /// it was made at and the book's price then.
+    held: Vec<(Side, f64, u64, f64)>,
     steps: u64,
     /// Whether it has front-run in the turn since the last step.
     fronted: bool,
@@ -172,7 +184,7 @@ impl Inner {
 
     /// The most it may still take: what it holds stays under its cap.
     fn room(&self) -> f64 {
-        let held: f64 = self.held.iter().map(|(_, size, _)| size).sum();
+        let held: f64 = self.held.iter().map(|(_, size, ..)| size).sum();
         (self.spec.max_inventory_mult * self.scale.trade_size - held).max(0.0)
     }
 
@@ -196,7 +208,7 @@ impl Inner {
                 _ => size,
             };
             if filled > 0.0 {
-                self.held.push((side, filled, self.steps));
+                self.held.push((side, filled, self.steps, price));
                 self.wallet.count(what, 1);
             }
         }
@@ -240,20 +252,44 @@ impl Inner {
     }
 
     async fn unwind(&mut self, at: u64, price: f64, all: bool) {
-        let due: Vec<_> = self
-            .held
-            .iter()
-            .copied()
-            .filter(|(_, _, step)| all || self.steps >= step + self.spec.hold_steps)
-            .collect();
-        self.held
-            .retain(|(_, _, step)| !(all || self.steps >= step + self.spec.hold_steps));
-        for (side, size, _) in due {
+        let (hold, steps) = (self.spec.hold_steps, self.steps);
+        let mut kept = Vec::new();
+        for (side, size, step, entry) in std::mem::take(&mut self.held) {
+            if !(all || steps >= step + hold) {
+                kept.push((side, size, step, entry));
+                continue;
+            }
             let back = side.opposite();
-            self.wallet
-                .take(at, back, size, self.limit(back, price))
-                .await;
+            let Some(cover) = self.spec.cover_bps.filter(|_| !all) else {
+                self.wallet
+                    .take(at, back, size, self.limit(back, price))
+                    .await;
+                continue;
+            };
+            let limit = match back {
+                Side::Bid => entry * (1.0 - cover / 10_000.0),
+                Side::Ask => entry * (1.0 + cover / 10_000.0),
+            };
+            let reachable = match (back, self.wallet.seat().top().await) {
+                (Side::Bid, Ok((_, Some(ask)))) => ask <= limit,
+                (Side::Ask, Ok((Some(bid), _))) => bid >= limit,
+                _ => false,
+            };
+            let mut left = size;
+            if reachable {
+                let before = self.wallet.seat().position().await.ok();
+                if self.wallet.take(at, back, size, limit).await {
+                    left = match (before, self.wallet.seat().position().await.ok()) {
+                        (Some(before), Some(after)) => size - (after - before).abs().min(size),
+                        _ => 0.0,
+                    };
+                }
+            }
+            if left > 1e-9 {
+                kept.push((side, left, step, entry));
+            }
         }
+        self.held = kept;
     }
 }
 
@@ -504,6 +540,34 @@ mod tests {
         runner.flow(&StepFlow::default()).await;
         runner.after_blocks(&at(10, 100.0)).await;
         assert_eq!(ledger.report().actors[0].counts["front_runs"], 1);
+    }
+
+    /// With `cover_bps`, a held sale is bought back only under its price,
+    /// not at whatever the ask is once the hold is up; at the close, at any
+    /// price.
+    #[tokio::test]
+    async fn it_covers_only_at_a_profit() {
+        let (book, log) = Book::new("f", 99.0, 101.0);
+        let (wallet, _) = wallet(book);
+        let mut runner = Runner::new(
+            FrontRunner {
+                hold_steps: 1,
+                cover_bps: Some(0.0),
+                ..FrontRunner::default()
+            },
+            scale(),
+            wallet,
+            None,
+        );
+        for s in [2, 4, 6] {
+            let flow = if s < 6 { sold(4.0) } else { StepFlow::default() };
+            runner.flow(&flow).await;
+            runner.after_blocks(&at(s, 100.0)).await;
+        }
+        // It sold at 100's book; the ask, 101, is over it: it holds.
+        assert_eq!(*log.lock().unwrap(), ["f take Ask 2.000 at 99.50"]);
+        runner.end(&at(8, 100.0)).await;
+        assert_eq!(log.lock().unwrap().last().unwrap(), "f take Bid 2.000 at 100.50");
     }
 
     /// Once it has found a seller it stays on it for `persist_steps`, and

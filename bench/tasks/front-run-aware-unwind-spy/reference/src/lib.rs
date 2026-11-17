@@ -36,7 +36,7 @@ pub const GOOD_BPS: f64 = 20.0;
 pub const SLICE: f64 = 0.08;
 /// The reference's first pace, in SPY a step; how often it speeds up, in
 /// steps, and by how much.
-pub const START_PACE: f64 = 0.004;
+pub const START_PACE: f64 = 0.0012;
 pub const GROW_STEPS: u64 = 25;
 pub const GROW: f64 = 1.5;
 /// Gone bids that find the predator, within this many steps of a sale.
@@ -44,9 +44,11 @@ pub const FOUND_AFTER: u32 = 2;
 pub const SOLD_WITHIN: u64 = 4;
 /// Turns the bid must stay before it sells again once found.
 pub const CLEAR_STEPS: u32 = 3;
+/// The tiny rung's slice, in SPY a step.
+pub const TINY: f64 = 0.003;
 /// The informed bot keeps its window's selling under this share of the
 /// threshold.
-pub const MARGIN: f64 = 0.85;
+pub const MARGIN: f64 = 0.9;
 
 /// Which rung the machinery runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,9 +62,9 @@ pub enum Mode {
     Twap,
     /// The same pace in random slices with random pauses.
     RandomTwap,
-    /// Half the even pace.
+    /// Half the even pace, only at a good bid.
     Slow,
-    /// A fixed tiny slice a step.
+    /// A fixed tiny slice a step, only at a good bid.
     Tiny,
     /// The even pace, only at a good bid, catching up after.
     Patient,
@@ -341,13 +343,17 @@ impl Strategy for Unwind {
                 self.cross(market, orders, size);
                 self.budget = (self.budget - size).max(-pace * 4.0);
             }
-            Mode::Slow => {
-                self.budget += 0.5 * self.order.quantity / (market.steps_left + market.k + 1) as f64;
-                let size = round_lots(self.budget);
-                self.cross(market, orders, size);
-                self.budget -= size;
+            Mode::Slow | Mode::Tiny => {
+                self.budget += if self.mode == Mode::Slow {
+                    0.5 * self.order.quantity / (market.steps_left + market.k + 1) as f64
+                } else {
+                    TINY
+                };
+                if let Some(bid) = self.good_bid(market) {
+                    let sold = self.sell_at(market, orders, self.budget.min(SLICE), bid);
+                    self.budget -= sold;
+                }
             }
-            Mode::Tiny => self.cross(market, orders, 0.004),
             Mode::Patient => {
                 self.budget = self.budget.max(0.0) + self.even_pace(market);
                 if let Some(bid) = self.good_bid(market) {

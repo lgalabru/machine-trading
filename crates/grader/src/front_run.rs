@@ -16,7 +16,8 @@
 //!   reaches its threshold, it has found a seller: it stays on it for a
 //!   while, selling ahead of each of the bot's turns into the maker's bid,
 //!   and buys back later. Its type is drawn per session from a fixed menu
-//!   ([`PREDATORS`]); one of them never trades ahead of anyone.
+//!   ([`PREDATORS`]). It sells ahead into the maker's bid, and buys back
+//!   only under the price it sold at.
 //! - **The order.** The desk starts long `Q` and must be flat by the close,
 //!   sells only; a broker sells whatever is left at the closing index less
 //!   a haircut (`order`, `mandate`).
@@ -64,49 +65,41 @@ pub struct Predator {
     pub hold_steps: u64,
 }
 
-/// The menu a session's predator is drawn from, with equal odds. A
-/// `dormant` one is seated and funded like the others and never trades
-/// ahead.
+/// The menu a session's predator is drawn from, with equal odds: the safe
+/// pace (the threshold over the window) runs from about a tenth of an even
+/// pace to the close to about its whole.
 pub const PREDATORS: &[Predator] = &[
     Predator {
         name: "hair-trigger",
-        window_steps: 8,
-        min_mult: 1.0,
+        window_steps: 12,
+        min_mult: 0.4,
         share: 1.2,
-        persist_steps: 80,
-        hold_steps: 20,
+        persist_steps: 300,
+        hold_steps: 40,
     },
     Predator {
         name: "quick",
         window_steps: 12,
-        min_mult: 2.0,
+        min_mult: 1.2,
         share: 1.2,
-        persist_steps: 100,
-        hold_steps: 30,
+        persist_steps: 300,
+        hold_steps: 40,
     },
     Predator {
         name: "steady",
         window_steps: 20,
-        min_mult: 6.0,
+        min_mult: 3.6,
         share: 1.2,
-        persist_steps: 120,
+        persist_steps: 300,
         hold_steps: 40,
     },
     Predator {
         name: "patient",
         window_steps: 30,
-        min_mult: 16.0,
+        min_mult: 12.0,
         share: 1.2,
-        persist_steps: 150,
-        hold_steps: 50,
-    },
-    Predator {
-        name: "dormant",
-        window_steps: 1,
-        min_mult: 1.0e6,
-        share: 1.2,
-        persist_steps: 0,
-        hold_steps: 1,
+        persist_steps: 300,
+        hold_steps: 40,
     },
 ];
 
@@ -270,6 +263,7 @@ impl FrontRunFamily {
                 "hold_steps": predator.hold_steps,
                 "limit_bps": self.predator_limit_bps,
                 "max_inventory_mult": self.predator_cap_mult,
+                "cover_bps": 0.0,
             }],
         }))
         .expect("the family's actors are a valid library");
@@ -442,10 +436,10 @@ mod tests {
     #[test]
     fn sets_are_stratified_and_seat_one_predator() {
         let family = FrontRunFamily::spy();
-        let set = family.draw_set("h", 70, 3);
+        let set = family.draw_set("h", 72, 3);
         for kind in PREDATORS {
             let n = set.iter().filter(|(_, s)| s.predator == kind.name).count();
-            assert_eq!(n, 14, "{}", kind.name);
+            assert_eq!(n, 18, "{}", kind.name);
         }
         for (scenario, _) in &set {
             assert_eq!(scenario.actors.as_ref().unwrap().front_runners.len(), 1);
