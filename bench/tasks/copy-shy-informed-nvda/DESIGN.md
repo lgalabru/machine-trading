@@ -6,12 +6,20 @@ each version learned.
 
 ## Thesis
 
-A good bot profits here because it it finds the informed fund from its trades and copies it small enough that the fund keeps trading.
+A good bot profits here because it finds the informed fund from its trades and copies it small enough that the fund keeps trading.
 
 - **Wins:** copying the fund it identified at a footprint under its detection threshold, episode after episode
 - **Loses:** copying at full size (the fund hides after one episode), following decoys or chasers, or trading the tape blind
 - **Regimes:** opening-hour jumps (2.75 an hour) with one shy fund, 1-2 shy decoys, chasers and noise
-- **Mandate:** 10 SPCX position cap, $200 loss limit, 72 hidden sessions per grade.
+- **Mandate:** 10 NVDA position cap, $200 loss limit, 72 hidden sessions per grade.
+
+## The fund's read (checklist 16d)
+
+The fund and the decoys use the actor library's `hit_rate`, left at its default of 0.85, with `view_noise_bps` at 0. Each wallet reads the
+move ahead correctly on 85% of its horizons. On the other 15% it is wrong for a whole horizon and trades the other way, and each
+wallet errs on its own. The fund has a single wallet, so the rule "the informed wallets must agree" changes nothing here. The
+copiers (reference, informed and full-size) read the fund's net flow over 240 slots, about one horizon. They enter only the way that flow
+points and never flip after entry. The instruction may state the 85%.
 
 ## Expert research
 
