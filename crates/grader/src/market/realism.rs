@@ -1195,7 +1195,7 @@ fn stated_regime_bound(calibration: &Calibration, sessions: &[SessionPath]) -> O
         detail: if ok {
             format!("every stated rate and size is within {source}")
         } else {
-            format!("{why}")
+            why
         },
     })
 }
@@ -2215,7 +2215,12 @@ mod tests {
         // Default specs state nothing, so there is nothing to bound.
         let sessions = short_model_sessions(&cal, &ModelSpec::default(), 60, (80.0, 400.0), 1);
         let report = report(&cal, "default", &sessions, SLOT_SECONDS, None);
-        assert!(report.checks.iter().all(|c| c.name != "stated_regime_bound"));
+        assert!(
+            report
+                .checks
+                .iter()
+                .all(|c| c.name != "stated_regime_bound")
+        );
     }
 
     /// The calibrated model's false-fail rate on short sessions, on fresh

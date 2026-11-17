@@ -380,15 +380,22 @@ mod tests {
         let takes = takes(&spcx(), 0.0, &fills);
         assert_eq!(takes.len(), 1);
         assert_eq!(takes[0].position_before, 1.0);
-        let allowance = Allowance::reduce_only_for_test();
+        let allowance: Allowance = serde_json::from_str(
+            r#"{"instrument":"phoenix:perp:SPCX","max_position":20.0,"taking":"reduce_only"}"#,
+        )
+        .unwrap();
         assert!(allowance.may_take(takes[0].position_before, takes[0].side, takes[0].quantity));
         // Appended after, as before, the same take is judged from flat: a
         // sell that opens a short.
         let appended = [fills[1].clone(), fills[0].clone()];
         let wrong = super::takes(&spcx(), 0.0, &appended);
         assert_eq!(wrong[0].position_before, 0.0);
+        assert!(!allowance.may_take(wrong[0].position_before, wrong[0].side, wrong[0].quantity));
         // A fill of the bot's before the uncross stays before it.
-        let mut fills = vec![fill(5, Side::Sell, "taker", 1.0), fill(11, Side::Sell, "taker", 1.0)];
+        let mut fills = vec![
+            fill(5, Side::Sell, "taker", 1.0),
+            fill(11, Side::Sell, "taker", 1.0),
+        ];
         let (_, at) = reconcile(1.0, &mut fills, 0, 0.0, 3, Some(10), 100.0);
         assert_eq!(at, Some(1));
     }

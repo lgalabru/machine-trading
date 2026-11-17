@@ -1651,8 +1651,7 @@ impl PerpAccount {
             .uncross_slots
             .iter()
             .copied()
-            .filter(|s| *s > read.reconciled_scan && *s <= slot)
-            .next_back()
+            .rfind(|s| *s > read.reconciled_scan && *s <= slot)
             .map(|s| s.saturating_sub(base_slot));
         let (result, at_index) = crate::making::reconcile(
             start,
@@ -1669,7 +1668,10 @@ impl PerpAccount {
                     .insert(i, (u128::MAX - read.keys.len() as u128, false));
             }
             (crate::making::Reconciled::Unexplained, _) => {
-                tracing::warn!(slot, "the bot's position doesn't match its fills, with no jump in the step: its takes are not judged");
+                tracing::warn!(
+                    slot,
+                    "the bot's position doesn't match its fills, with no jump in the step: its takes are not judged"
+                );
                 read.unjudged = true;
             }
             _ => {}
