@@ -17,6 +17,10 @@ name = "solana-foundation/flash-crash-spcx"
 digest = "sha256:bdfbc02d873089c8e0f1b957045db53e4bbaa65201b0756f89743d34b94ebc65"
 
 [[tasks]]
+name = "solana-foundation/front-run-aware-unwind-spy"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[[tasks]]
 name = "solana-foundation/funding-carry-spcx"
 digest = "sha256:6e3ed43826c0e818008369dbdcf3721c56df643a186e74dd81886c7e2d7175a8"
 
