@@ -126,6 +126,19 @@ rung a component, bootstrapped 72-session sets. Walls 8 to 36 ticks out.
 - Strength band: reference 0.37 of informed, v2-weighted (band 0.2 to
   0.7, target 0.5 or under; by set 0.50, 0.06, 0.62, 0.32); per-session
   Sharpe 0.43.
+- How far one set's band strays: bootstrapping the 144 sessions, a
+  72-session hidden set lands the reference at 0.18 to 0.54 of informed
+  (5th to 95th percentile), outside 0.2 to 0.7 in 7% of sets, nearly all
+  on the low side (a set whose falls the book seldom tests before the
+  jump). 100 sessions would cut that to 4% and 144 to 2%; the verifier
+  keeps the card's 72 for its time budget (the informed bot runs as a
+  process), so a grade's 0.5 can sit on a reference that read fewer walls
+  than usual.
+- The practice set (six sessions, seed 61, three falls) is a lucky one for
+  the reference: it reads two of the three falls, and makes 0.82 of the
+  informed bot's PnL. Practice scores there run lower than the hidden
+  set's for the same bot: matching the reference scores 0.5 on both, but
+  doing nothing to the reference's 0.82 leaves little room between.
 - Passed. An earlier run with walls 6 to 28 ticks out, before #114, put
   the reference at 0.71: the walls' distance sets the band.
 

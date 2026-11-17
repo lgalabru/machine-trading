@@ -1,0 +1,471 @@
+{
+  "actors": {
+    "icebergs": [
+      {
+        "active": {
+          "from": 499,
+          "until": 854
+        },
+        "display_mult": 48.27,
+        "distance_ticks": 21,
+        "jitter": 0.4,
+        "max_away_ticks": 57,
+        "parent_mult": 176.23,
+        "side": "bid"
+      }
+    ],
+    "noise": [
+      {
+        "flow_mult": 9.0,
+        "limit_bps": 4.0,
+        "size_mult": 1.0,
+        "wallets": 3
+      }
+    ],
+    "refill": {
+      "half_life_slots": [
+        34.93,
+        34.93
+      ],
+      "levels": 5,
+      "max_position_mult": 20.0,
+      "min_gap_ticks": 2.0,
+      "react_slots": 2,
+      "size_mult": 0.5
+    },
+    "scale": {
+      "trade_size": 0.05,
+      "trade_size_sigma": 0.705,
+      "trades_per_minute": 1.408
+    },
+    "spoofers": [
+      {
+        "active": {
+          "from": 470,
+          "until": 559
+        },
+        "cancel_ticks": 3,
+        "distance_ticks": 32,
+        "harvest_mult": 0.0,
+        "jitter": 0.4,
+        "lifetime_slots": 1854,
+        "side": "ask",
+        "wall_mult": 74.45
+      }
+    ]
+  },
+  "description": "QQQ practice session",
+  "duration_slots": 1854,
+  "informed_max_drawdown_usd": 10.49,
+  "informed_pnl_usd": 7.53,
+  "mandate": {
+    "limits": {
+      "max_drawdown_usd": 439.0
+    },
+    "universe": [
+      {
+        "instrument": "phoenix:perp:QQQ",
+        "max_position": 13.0,
+        "min_position": 0.0,
+        "sides": [
+          "sell"
+        ]
+      }
+    ],
+    "version": "v0"
+  },
+  "market_model": {
+    "calibration": "qqq.20261113.60ee1c12",
+    "calibration_sha256": "6b061ede35cc439a84498dcfe3457326df4e67520e5ae3f044e652c620593738",
+    "process": "regime_garch_t",
+    "regime_vol": [
+      1.1046342895324468
+    ],
+    "regimes": [
+      {
+        "name": "base",
+        "slot": 0
+      }
+    ],
+    "sessions": [
+      {
+        "name": "regular",
+        "slot": 0
+      }
+    ],
+    "slot_seconds": 0.25,
+    "start_unix": 1800374159,
+    "vol_mult": 1.0
+  },
+  "name": "practice-5",
+  "order": {
+    "haircut_bps": 14.58,
+    "quantity": 13.0,
+    "reduce_only": true,
+    "side": "sell"
+  },
+  "path": [
+    {
+      "level_pct": -0.007,
+      "slot": 20
+    },
+    {
+      "level_pct": -0.012,
+      "slot": 40
+    },
+    {
+      "level_pct": -0.006,
+      "slot": 60
+    },
+    {
+      "level_pct": -0.011,
+      "slot": 80
+    },
+    {
+      "level_pct": -0.032,
+      "slot": 100
+    },
+    {
+      "level_pct": -0.039,
+      "slot": 120
+    },
+    {
+      "level_pct": -0.02,
+      "slot": 140
+    },
+    {
+      "level_pct": -0.008,
+      "slot": 160
+    },
+    {
+      "level_pct": -0.007,
+      "slot": 180
+    },
+    {
+      "level_pct": -0.006,
+      "slot": 200
+    },
+    {
+      "level_pct": 0.005,
+      "slot": 220
+    },
+    {
+      "level_pct": 0.003,
+      "slot": 240
+    },
+    {
+      "level_pct": 0.001,
+      "slot": 260
+    },
+    {
+      "level_pct": -0.006,
+      "slot": 280
+    },
+    {
+      "level_pct": -0.008,
+      "slot": 300
+    },
+    {
+      "level_pct": 0.004,
+      "slot": 320
+    },
+    {
+      "level_pct": 0.023,
+      "slot": 340
+    },
+    {
+      "level_pct": 0.001,
+      "slot": 360
+    },
+    {
+      "level_pct": -0.007,
+      "slot": 380
+    },
+    {
+      "level_pct": -0.017,
+      "slot": 400
+    },
+    {
+      "level_pct": -0.024,
+      "slot": 420
+    },
+    {
+      "level_pct": -0.035,
+      "slot": 440
+    },
+    {
+      "level_pct": -0.02,
+      "slot": 460
+    },
+    {
+      "level_pct": -0.022,
+      "slot": 480
+    },
+    {
+      "level_pct": -0.024,
+      "slot": 500
+    },
+    {
+      "level_pct": -0.003,
+      "slot": 520
+    },
+    {
+      "level_pct": -0.005,
+      "slot": 540
+    },
+    {
+      "level_pct": 0.284,
+      "slot": 558
+    },
+    {
+      "level_pct": 0.272,
+      "slot": 562
+    },
+    {
+      "level_pct": 0.262,
+      "slot": 580
+    },
+    {
+      "level_pct": 0.253,
+      "slot": 600
+    },
+    {
+      "level_pct": 0.257,
+      "slot": 620
+    },
+    {
+      "level_pct": 0.248,
+      "slot": 640
+    },
+    {
+      "level_pct": 0.273,
+      "slot": 660
+    },
+    {
+      "level_pct": 0.269,
+      "slot": 680
+    },
+    {
+      "level_pct": 0.292,
+      "slot": 700
+    },
+    {
+      "level_pct": 0.304,
+      "slot": 720
+    },
+    {
+      "level_pct": 0.3,
+      "slot": 740
+    },
+    {
+      "level_pct": 0.299,
+      "slot": 760
+    },
+    {
+      "level_pct": 0.3,
+      "slot": 780
+    },
+    {
+      "level_pct": 0.312,
+      "slot": 800
+    },
+    {
+      "level_pct": 0.317,
+      "slot": 820
+    },
+    {
+      "level_pct": 0.324,
+      "slot": 840
+    },
+    {
+      "level_pct": 0.331,
+      "slot": 860
+    },
+    {
+      "level_pct": 0.327,
+      "slot": 900
+    },
+    {
+      "level_pct": 0.316,
+      "slot": 920
+    },
+    {
+      "level_pct": 0.307,
+      "slot": 940
+    },
+    {
+      "level_pct": 0.299,
+      "slot": 960
+    },
+    {
+      "level_pct": 0.292,
+      "slot": 980
+    },
+    {
+      "level_pct": 0.293,
+      "slot": 1000
+    },
+    {
+      "level_pct": 0.301,
+      "slot": 1020
+    },
+    {
+      "level_pct": 0.321,
+      "slot": 1040
+    },
+    {
+      "level_pct": 0.328,
+      "slot": 1060
+    },
+    {
+      "level_pct": 0.314,
+      "slot": 1080
+    },
+    {
+      "level_pct": 0.318,
+      "slot": 1100
+    },
+    {
+      "level_pct": 0.322,
+      "slot": 1140
+    },
+    {
+      "level_pct": 0.333,
+      "slot": 1160
+    },
+    {
+      "level_pct": 0.341,
+      "slot": 1180
+    },
+    {
+      "level_pct": 0.317,
+      "slot": 1200
+    },
+    {
+      "level_pct": 0.286,
+      "slot": 1220
+    },
+    {
+      "level_pct": 0.288,
+      "slot": 1240
+    },
+    {
+      "level_pct": 0.282,
+      "slot": 1260
+    },
+    {
+      "level_pct": 0.278,
+      "slot": 1280
+    },
+    {
+      "level_pct": 0.285,
+      "slot": 1300
+    },
+    {
+      "level_pct": 0.295,
+      "slot": 1320
+    },
+    {
+      "level_pct": 0.298,
+      "slot": 1340
+    },
+    {
+      "level_pct": 0.299,
+      "slot": 1360
+    },
+    {
+      "level_pct": 0.297,
+      "slot": 1380
+    },
+    {
+      "level_pct": 0.286,
+      "slot": 1400
+    },
+    {
+      "level_pct": 0.294,
+      "slot": 1420
+    },
+    {
+      "level_pct": 0.298,
+      "slot": 1440
+    },
+    {
+      "level_pct": 0.306,
+      "slot": 1460
+    },
+    {
+      "level_pct": 0.303,
+      "slot": 1480
+    },
+    {
+      "level_pct": 0.3,
+      "slot": 1500
+    },
+    {
+      "level_pct": 0.296,
+      "slot": 1520
+    },
+    {
+      "level_pct": 0.308,
+      "slot": 1540
+    },
+    {
+      "level_pct": 0.325,
+      "slot": 1560
+    },
+    {
+      "level_pct": 0.33,
+      "slot": 1580
+    },
+    {
+      "level_pct": 0.331,
+      "slot": 1620
+    },
+    {
+      "level_pct": 0.324,
+      "slot": 1640
+    },
+    {
+      "level_pct": 0.306,
+      "slot": 1660
+    },
+    {
+      "level_pct": 0.288,
+      "slot": 1680
+    },
+    {
+      "level_pct": 0.275,
+      "slot": 1700
+    },
+    {
+      "level_pct": 0.27,
+      "slot": 1720
+    },
+    {
+      "level_pct": 0.275,
+      "slot": 1740
+    },
+    {
+      "level_pct": 0.258,
+      "slot": 1760
+    },
+    {
+      "level_pct": 0.247,
+      "slot": 1800
+    },
+    {
+      "level_pct": 0.257,
+      "slot": 1820
+    },
+    {
+      "level_pct": 0.272,
+      "slot": 1840
+    }
+  ],
+  "reference_max_drawdown_usd": 10.5,
+  "reference_pnl_usd": 7.52,
+  "start_positions": {
+    "QQQ": 13.0
+  },
+  "symbol": "QQQ"
+}
