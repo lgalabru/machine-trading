@@ -12,9 +12,7 @@
 //!
 //! Each sells what is left late, as the reference does.
 
-use mtx_bot_spoof_or_iceberg_exit::{
-    BookReader, Order, round_lots, sell_late, sell_now, walls_in,
-};
+use mtx_bot_spoof_or_iceberg_exit::{BookReader, Order, round_lots, sell_late, sell_now, walls_in};
 use mtx_kit::prelude::*;
 
 #[derive(Default)]
@@ -28,7 +26,9 @@ pub struct Naive {
 
 impl Strategy for Naive {
     fn start(&mut self, session: &Session) -> BotResult {
-        self.mode = option_env!("MTX_NAIVE").ok_or("built without MTX_NAIVE")?.to_string();
+        self.mode = option_env!("MTX_NAIVE")
+            .ok_or("built without MTX_NAIVE")?
+            .to_string();
         self.order = Order::from_session(session)?;
         self.book = BookReader::new(session)?;
         Ok(())
@@ -61,7 +61,10 @@ impl Strategy for Naive {
             }
             "trust-depth" | "fade-walls" => {}
             "probe" => {
-                let (bid, ask) = (market.best_bid.unwrap_or(0.0), market.best_ask.unwrap_or(0.0));
+                let (bid, ask) = (
+                    market.best_bid.unwrap_or(0.0),
+                    market.best_ask.unwrap_or(0.0),
+                );
                 let tick = self.book.tick_usd;
                 let mut seen: Vec<String> = self
                     .book
@@ -70,7 +73,11 @@ impl Strategy for Naive {
                     .filter(|r| r.initial >= 0.2)
                     .map(|r| {
                         let p = self.book.price(r.ticks);
-                        let away = if r.bid { (bid - p) / tick } else { (p - ask) / tick };
+                        let away = if r.bid {
+                            (bid - p) / tick
+                        } else {
+                            (p - ask) / tick
+                        };
                         format!(
                             "{}{}@{:.0}t {:.3}/{:.3} s{}",
                             r.trader,

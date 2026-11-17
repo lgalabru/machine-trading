@@ -241,7 +241,11 @@ impl Walls {
                     let touch = if before.bid { bid } else { ask };
                     let gap = touch.map(|t| {
                         let p = before.ticks as f64 * tick_usd;
-                        if before.bid { (t - p) / tick_usd } else { (p - t) / tick_usd }
+                        if before.bid {
+                            (t - p) / tick_usd
+                        } else {
+                            (p - t) / tick_usd
+                        }
                     });
                     if back {
                         Some(Kind::Iceberg)
@@ -293,7 +297,10 @@ pub fn sell_now(market: &Market, orders: &mut Orders, size: f64) {
     };
     let size = round_lots(size.min(SLICE).min(market.position.size.max(0.0)));
     if size > 0.0 {
-        orders.sell(size, round_down_cents(bid * (1.0 - SELL_DEPTH_BPS / 10_000.0)));
+        orders.sell(
+            size,
+            round_down_cents(bid * (1.0 - SELL_DEPTH_BPS / 10_000.0)),
+        );
     }
 }
 
