@@ -155,9 +155,9 @@ async fn holding_the_start_through_a_fall_is_no_drawdown_in_a_net_scored_session
     }
 }
 
-/// A session that starts holding SPCX, scored net of the hold, whose book
-/// trades at a premium to the level at the close: what holding earns is not
-/// what the hold baseline takes off.
+/// A session that starts holding SPCX, scored net of the hold at the fair
+/// value, whose book trades at a premium to it at the close: what holding
+/// earns is not what the hold baseline takes off.
 fn held_at_a_premium() -> Scenario {
     let mut scenario = holding(
         vec![
@@ -174,6 +174,7 @@ fn held_at_a_premium() -> Scenario {
         inventory_bps: 0.0,
         venue_position: None,
     });
+    scenario.fair_path = Some(vec![Waypoint::at(20, 0.0), Waypoint::at(40, -3.0)]);
     scenario.reference_pnl_usd = Some(100.0);
     scenario.informed_pnl_usd = Some(1000.0);
     scenario.reference_max_drawdown_usd = Some(0.0);
