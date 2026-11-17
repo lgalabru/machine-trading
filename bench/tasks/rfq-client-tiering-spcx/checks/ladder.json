@@ -6,9 +6,7 @@
   "count": 72,
   "exploits": {
     "below": "informed",
-    "bots": [
-      "perp-front-run"
-    ],
+    "bots": [],
     "max_profitable": 0.75
   },
   "family": "rfq-tiering",
@@ -70,12 +68,6 @@
       "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/informed",
       "name": "informed",
       "tell_latent": true
-    },
-    {
-      "dir": "bench/tasks/rfq-client-tiering-spcx/checks/bots/naive/rungs/perp-front-run",
-      "name": "perp-front-run",
-      "tell_latent": true,
-      "may_breach": true
     }
   ]
 }

@@ -11,9 +11,12 @@
 //!   reach, smaller ones declined;
 //! - `side-skew`: every request inside its reach, unless the requests of the
 //!   last `MTX_WINDOW` slots lean `MTX_LEAN` or more to its side.
-//! - `perp-front-run` (an exploit): quotes every request inside its reach,
-//!   and trades the perp the way each request asks, ahead of the clients'
-//!   move. The mandate's 0.001 SPCX cap on the perp stops it.
+//! - `perp-front-run`: quotes every request inside its reach, and trades
+//!   the perp the way each request asks, ahead of the clients' move. The
+//!   order sheet cuts it to the mandate's 0.001 SPCX cap on the perp, so it
+//!   grades as quote-all: the perp is no route around the desk (checked by
+//!   hand; the ladder's exploit check needs a hindsight bound, which an RFQ
+//!   desk's sessions don't have).
 
 use mtx_bot_rfq_client_tiering::{Answer, Ask, Desk, EPS_BP, Policy, Tag, Told, View, reach_bp};
 use mtx_kit::prelude::*;
