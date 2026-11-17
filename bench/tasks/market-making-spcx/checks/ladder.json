@@ -42,8 +42,14 @@
     }
   ],
   "gates": {
-    "informed": ["flow-oracle"],
-    "non_reading": ["nop", "naive-quoter", "skew-quoter"]
+    "informed": [
+      "flow-oracle"
+    ],
+    "non_reading": [
+      "nop",
+      "naive-quoter",
+      "skew-quoter"
+    ]
   },
   "rules": [
     "naive-quoter < reference",
@@ -58,5 +64,8 @@
     ],
     "max_profitable": 0.9,
     "below": "flow-oracle"
+  },
+  "probes": {
+    "exempt": "market making is excluded: its redesign has its own probes"
   }
 }

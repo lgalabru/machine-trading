@@ -1,0 +1,24 @@
+# The probe bots (see README.md). Outside the repository's workspace, like
+# the exploit bots: they never ship in a task image. A task's own rung crate
+# (`checks/rungs/probe`) depends on this one to wrap its reference.
+[package]
+name = "mtx-probes"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bot"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+mtx-kit = { path = "../../../crates/kit" }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+
+[workspace]
