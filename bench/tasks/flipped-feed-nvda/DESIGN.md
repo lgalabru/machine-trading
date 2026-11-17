@@ -37,7 +37,7 @@ crossing cost. After, every call is worth the model's edge.
 The house model (the library's `actors.feed`) sees the index
 `horizon_slots` ahead (96 to 240 slots, 24 to 60 s, drawn per session) and,
 while the move there is more than `edge_bps` (20 to 30, per session) from
-the book's price, calls its way at `calls_per_minute` (4 to 6 per session;
+the book's price, calls its way at `calls_per_minute` (5 to 7 per session;
 about a dozen calls a session), no two calls nearer than 16 slots. Its view
 is drawn right or wrong once a horizon, right with chance `hit_rate` 0.8
 (16d: the engine's per-horizon draws, the case the model planned on), so

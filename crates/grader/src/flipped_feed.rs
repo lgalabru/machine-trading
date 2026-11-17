@@ -136,7 +136,7 @@ impl FlippedFeedFamily {
             horizon_slots: (96, 240),
             edge_bps: (20.0, 30.0),
             hit_rate: 0.8,
-            calls_per_minute: (4.0, 6.0),
+            calls_per_minute: (5.0, 7.0),
             min_gap_slots: 16,
             max_position: 4.0,
             max_drawdown_usd: 150.0,
