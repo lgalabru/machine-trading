@@ -246,6 +246,48 @@ mod tests {
         );
     }
 
+    /// The reference, the informed bot, the do-nothing bot and the bot
+    /// play one scenario against the same actors: their sessions' seeds
+    /// agree, wherever the scenario sits in each role's list, while their
+    /// keypairs stay their own.
+    #[test]
+    fn every_role_draws_the_same_world() {
+        let keys = SessionKeys::from_eval_seed(b"a batch secret of at least 32 chars")
+            .salt_strategy_seeds();
+        let bot = keys.role("bot").session(3, "hidden-4");
+        for other in [
+            keys.role("reference").session(3, "hidden-4"),
+            keys.role("informed").session(3, "hidden-4"),
+            keys.role("nop").session(0, "hidden-4"),
+        ] {
+            for (role, n) in [
+                ("noise", 0),
+                ("informed", 2),
+                ("decoy", 1),
+                ("competitor", 0),
+            ] {
+                assert_eq!(bot.seed(role, n), other.seed(role, n), "{role} {n}");
+            }
+            assert_eq!(bot.seed("onboarding", 0), other.seed("onboarding", 0));
+            assert_ne!(
+                bot.keypair("bot", 0).pubkey(),
+                other.keypair("bot", 0).pubkey()
+            );
+        }
+        // Another scenario, or another batch, draws another world.
+        assert_ne!(
+            bot.seed("noise", 0),
+            keys.role("bot").session(3, "hidden-5").seed("noise", 0)
+        );
+        assert_ne!(
+            bot.seed("noise", 0),
+            SessionKeys::from_eval_seed(b"another batch secret, 32 chars long")
+                .role("bot")
+                .session(3, "hidden-4")
+                .seed("noise", 0)
+        );
+    }
+
     #[test]
     fn keys_replay_and_never_repeat() {
         let keys = SessionKeys::from_eval_seed(b"a batch secret of at least 32 chars");
