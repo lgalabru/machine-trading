@@ -33,6 +33,7 @@ pub mod simulated;
 pub mod snapshot;
 pub mod spot;
 pub mod taking;
+pub mod toxic_day;
 pub mod txlayer;
 pub mod venue;
 pub mod wasm;

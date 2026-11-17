@@ -18,6 +18,7 @@ use crate::{
     error::Result,
     making::MakingFamily,
     scenario::{Scenario, Shape, ShockFamily},
+    toxic_day::{Shape as ToxicDayShape, ToxicDayFamily},
     weekend::{WeekendFamily, WeekendShape},
 };
 
@@ -132,6 +133,23 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "toxic-day",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                ToxicDayFamily::tsla().draw_set(prefix, count, seed),
+                false,
+                toxic_day_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                ToxicDayFamily::tsla().draw_set("hidden", count, seed),
+                tell,
+                toxic_day_latent,
             )
         },
     },
@@ -387,6 +405,14 @@ fn carry_latent(shape: &CarryShape) -> Value {
     })
 }
 
+/// Who the fund is: its wallets, through the roster. Every session seats
+/// the fund, with as many wallets on a toxic morning as on a quiet one. Not
+/// the kind of morning (how busy the fund is), the path or its jumps, or
+/// when the fund trades.
+fn toxic_day_latent(_: &ToxicDayShape) -> Value {
+    json!({ "roster": ["informed"] })
+}
+
 /// Who is who: whether an informed trader and a one-sided worker are
 /// seated, from which accounts, and the impact curve. Not which way the
 /// worker trades, where the weekend took the market, when anyone trades, or
@@ -587,6 +613,12 @@ mod tests {
         for name in ["market-making", "market-making-v2"] {
             assert!(latent(name).iter().all(|l| l == "{}"), "{name}");
         }
+        // Toxic-day tells the fund's wallets and nothing of the morning.
+        assert!(
+            latent("toxic-day")
+                .iter()
+                .all(|l| l == r#"{"roster":["informed"]}"#)
+        );
     }
 
     /// The check above would catch a draw handed over: a shock's direction
