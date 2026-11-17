@@ -21,14 +21,25 @@
 //! the number of windows judged, so a fair generator passes whatever its
 //! seed. Windows that hold a gap are left out of the return checks; the
 //! gaps are checked on their own. A report whose return checks didn't run
-//! is [`Verdict::NotJudged`], never a pass. [`window_stats`] is the port of the fitter's
+//! is [`Verdict::NotJudged`], never a pass.
+//!
+//! Sessions shorter than the reference window (a task's minutes against
+//! SPCX's half hour) can't fill it. They are judged on statistics scaled to
+//! their own length instead, each against what the calibration implies for
+//! it (see [`short_session_checks`]): the 1 s volatility, how often a minute
+//! moves like a jump and how big the jumps are, the range a session covers
+//! against the calibration's own model's at the same lengths, and the
+//! book's spread. Hand-set paths that miss those bands are
+//! [`Verdict::Stylised`]: stress paths, to be labelled as such, not a market.
+//! [`window_stats`] is the port of the fitter's
 //! `window_stats` (infra-calib `calib/export_v1.py`): keep the two in step.
 
 use serde::{Deserialize, Serialize};
 
 use super::{
     calibration::{
-        Band, Calibration, DiffSpread, LogSpread, LongClustering, Realism, Spread, WindowStats,
+        Band, BookModel, Calibration, DiffSpread, LogSpread, LongClustering, Realism, Spread,
+        WindowStats,
     },
     model::{EventKind, MarketModel, ModelPath, ModelSpec, Start},
 };
@@ -47,8 +58,34 @@ pub const REQUIRED: [&[&str]; 3] = [
     &["vol_of_vol"],
     &["tail_ratio", "kurtosis_within"],
 ];
+/// What a pass of short sessions needs judged: the 1 s volatility, how often
+/// a minute jumps, and the range sessions cover.
+pub const REQUIRED_SHORT: [&[&str]; 3] = [
+    &["short_vol_1s"],
+    &["short_jump_rate"],
+    &["short_range_median"],
+];
 /// Fewer gaps than this and the gap check is skipped.
 pub const MIN_GAPS: usize = 20;
+/// What a second's volatility may differ from the reference windows' minute
+/// volatility over the square root of 60, beyond sampling: the scaling is
+/// only good to the autocorrelation of 1 s returns and how the day's vol
+/// varies. The calibrated model's own sessions sit up to about 20% under it.
+pub const SCALING_SLACK: f64 = 1.3;
+/// Fewer short sessions than this and they aren't judged.
+pub const MIN_SHORT_SESSIONS: usize = 30;
+/// Fewer jumps than this and their size isn't judged.
+pub const MIN_JUMPS: usize = 8;
+/// A minute is a jump when it moves more than this many of the reference
+/// windows' minute volatilities: the calibration's rule is five robust
+/// sigmas of the trailing hour.
+pub const JUMP_SIGMAS: f64 = 5.0;
+/// How much more the count of jumps in a set of sessions varies than a
+/// Poisson count: jumps cluster in the volatile sessions, and the
+/// calibrated model's own sessions show a variance about 3 times the mean.
+pub const JUMP_DISPERSION: f64 = 4.0;
+/// The calibration's jumps are minutes (see [`JUMP_SIGMAS`]).
+pub const JUMP_BAR_SECONDS: f64 = 60.0;
 
 /// One session's path, as the checks read it.
 #[derive(Debug, Clone)]
@@ -141,6 +178,10 @@ pub enum Verdict {
     /// didn't run (too few windows, or no `[realism]`), or a required one
     /// (vol level, vol of vol, a tail check) had no power. Not a pass.
     NotJudged,
+    /// Hand-set paths (no market model drew them) miss the real asset's
+    /// bands: stress paths, not a market. Every miss is listed in the
+    /// checks; a task that uses them says so. Not a pass.
+    Stylised,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -185,6 +226,13 @@ pub struct Report {
     pub verdict: Verdict,
     /// The verdict is [`Verdict::Pass`].
     pub passed: bool,
+    /// The sessions were shorter than the reference window and were judged
+    /// by [`short_session_checks`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub short_sessions: bool,
+    /// No market model drew the sessions' paths: they are hand-set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hand_set: bool,
 }
 
 impl Report {
@@ -197,9 +245,26 @@ impl Report {
                 .iter()
                 .any(|c| c.status == Status::Pass && names.contains(&c.name.as_str()))
         };
-        self.verdict = if self.checks.iter().any(|c| c.status == Status::Fail) {
-            Verdict::Fail
-        } else if self.generated.is_none() || !REQUIRED.iter().all(|group| judged(group)) {
+        let failed: Vec<&Check> = self
+            .checks
+            .iter()
+            .filter(|c| c.status == Status::Fail)
+            .collect();
+        let required: &[&[&str]] = if self.short_sessions {
+            &REQUIRED_SHORT
+        } else {
+            &REQUIRED
+        };
+        let ran = self.short_sessions || self.generated.is_some();
+        self.verdict = if !failed.is_empty() {
+            // Round trips that win are a broken book, however the path was
+            // made; every other miss of hand-set sessions is a stress path.
+            if self.hand_set && failed.iter().all(|c| c.name != "round_trips") {
+                Verdict::Stylised
+            } else {
+                Verdict::Fail
+            }
+        } else if !ran || !required.iter().all(|group| judged(group)) {
             Verdict::NotJudged
         } else {
             Verdict::Pass
@@ -679,31 +744,47 @@ pub fn probe_round_trips(
     trips
 }
 
+/// The half-spread, in basis points, of the book a scenario runs on, where
+/// the scenario sets it: its competing makers (market making) or its
+/// off-hours makers. A scenario that sets none runs on the snapshot's own
+/// book, which a scenario file doesn't hold.
+pub fn book_half_spread_bps(scenario: &Scenario) -> Option<f64> {
+    match (&scenario.making, &scenario.offhours) {
+        (Some(making), _) => Some(making.competitor_bps),
+        (None, Some(off)) => Some(off.half_spread_bps),
+        (None, None) => None,
+    }
+}
+
 /// Check scenario files against a calibration. Sessions shorter than the
-/// reference window can't be judged on returns; round trips go through
-/// each market-making scenario's competing makers, or the calibration's
-/// default book.
+/// reference window are judged on statistics scaled to their length (see
+/// [`short_session_checks`]). Round trips go through each scenario's own
+/// book where it sets one (its competing makers, or its off-hours makers);
+/// a scenario on the snapshot's own book isn't probed, and isn't judged
+/// against the calibration's default book either.
 pub fn check_scenarios(calibration: &Calibration, target: &str, scenarios: &[Scenario]) -> Report {
     let sessions: Vec<SessionPath> = scenarios.iter().map(SessionPath::from_scenario).collect();
     let mut trips = Vec::new();
     let mut books = Vec::new();
     for (i, scenario) in scenarios.iter().enumerate() {
+        let Some(half_spread) = book_half_spread_bps(scenario) else {
+            continue;
+        };
         let levels: Vec<f64> = (0..=scenario.duration_slots)
             .map(|slot| 1.0 + book_at(&scenario.path, slot) / 100.0)
             .collect();
-        let (half_spread, sizes) = match &scenario.making {
+        let sizes = match &scenario.making {
             Some(making) => {
                 let mut sizes: Vec<f64> = making.takers.iter().map(|t| t.size).collect();
                 sizes.sort_by(f64::total_cmp);
                 let q = |p: f64| quantile(&sizes, p);
-                let sizes = if sizes.is_empty() {
+                if sizes.is_empty() {
                     vec![1.0]
                 } else {
                     vec![q(0.5), q(0.9), q(0.99)]
-                };
-                (making.competitor_bps, sizes)
+                }
             }
-            None => (calibration.book.half_spread_bps, default_sizes(calibration)),
+            None => default_sizes(calibration),
         };
         books.push(half_spread);
         trips.extend(probe_round_trips(
@@ -715,13 +796,15 @@ pub fn check_scenarios(calibration: &Calibration, target: &str, scenarios: &[Sce
             i as u64,
         ));
     }
-    let book = if scenarios.iter().all(|s| s.making.is_some()) {
-        "the scenarios' competing makers".to_string()
+    let book = if books.is_empty() {
+        "no book of the scenarios' own: they run on the snapshot's".to_string()
     } else {
         format!(
-            "half-spreads of {:.1}-{:.1} bp (the calibration's default book where a scenario has no makers)",
+            "the scenarios' own books, half-spreads of {:.1}-{:.1} bp ({} of {} sessions; the rest run on the snapshot's book)",
             books.iter().copied().fold(f64::INFINITY, f64::min),
-            books.iter().copied().fold(0.0, f64::max)
+            books.iter().copied().fold(0.0, f64::max),
+            books.len(),
+            scenarios.len()
         )
     };
     let mut report = report(
@@ -731,10 +814,48 @@ pub fn check_scenarios(calibration: &Calibration, target: &str, scenarios: &[Sce
         SLOT_SECONDS,
         Some((trips, book)),
     );
+    report.hand_set = !scenarios.is_empty() && scenarios.iter().all(|s| s.market_model.is_none());
+    report.checks.push(book_spread_check(calibration, &books));
     if let Some(realism) = &calibration.realism {
         add_long(&mut report, realism, &sessions);
     }
+    report.decide();
     report
+}
+
+/// The scenarios' own books' half-spreads against the calibration's book:
+/// their median within a factor of it (3 where the calibration's book is
+/// stated defaults, not recorded; 1.5 where it is fitted). Sessions on the
+/// snapshot's own book have nothing to judge here.
+fn book_spread_check(calibration: &Calibration, books: &[f64]) -> Check {
+    if books.is_empty() {
+        return Check::skipped(
+            "book_spread",
+            "no scenario sets its own book: they run on the snapshot's, which the scenario files don't hold",
+        );
+    }
+    let w = match calibration.book.model {
+        BookModel::Defaults => 3.0,
+        BookModel::Fitted => 1.5,
+    };
+    let mut check = judge(
+        "book_spread",
+        calibration.book.half_spread_bps,
+        median(books),
+        Band {
+            ratio: Some([1.0 / w, w]),
+            diff: None,
+        },
+    );
+    check.detail = format!(
+        "{} sessions set their own book: median half-spread {:.1} bp against the calibration's {:.1} bp ({}); {}",
+        books.len(),
+        median(books),
+        calibration.book.half_spread_bps,
+        calibration.book.half_spread_source,
+        check.detail
+    );
+    check
 }
 
 /// Draw `count` sessions from the calibration's own model and check them:
@@ -891,6 +1012,7 @@ pub fn report(
     let mut checks = Vec::new();
     let mut generated = None;
     let (mut used, mut masked) = (0, 0);
+    let mut short_sessions = false;
     match &calibration.realism {
         None => checks.push(Check::skipped(
             "returns",
@@ -901,14 +1023,28 @@ pub fn report(
             used = windows.len();
             masked = dropped;
             if windows.len() < MIN_WINDOWS {
+                short_sessions = sessions.len() >= MIN_SHORT_SESSIONS;
                 checks.push(Check::skipped(
                     "returns",
                     format!(
-                        "{} windows of {} s, fewer than {MIN_WINDOWS}: sessions shorter than the reference window, or too few",
+                        "{} windows of {} s, fewer than {MIN_WINDOWS}: sessions shorter than the reference window, or too few{}",
                         windows.len(),
-                        realism.bar_seconds * realism.window_bars as f64
+                        realism.bar_seconds * realism.window_bars as f64,
+                        if short_sessions {
+                            "; judged on statistics scaled to their length instead"
+                        } else {
+                            ""
+                        }
                     ),
                 ));
+                if short_sessions {
+                    checks.extend(short_session_checks(
+                        calibration,
+                        realism,
+                        sessions,
+                        slot_seconds,
+                    ));
+                }
             } else {
                 let (stats, compared) = compare(realism, &windows);
                 checks.extend(compared);
@@ -941,9 +1077,261 @@ pub fn report(
         checks,
         verdict: Verdict::NotJudged,
         passed: false,
+        short_sessions,
+        hand_set: false,
     };
     report.decide();
     report
+}
+
+/// Sessions shorter than the reference window, judged on statistics scaled
+/// to their length, each against what the calibration says of the real asset:
+/// - `short_vol_1s`: the median over sessions of the sd of 1 s returns,
+///   against the reference windows' volatility scaled to a second;
+/// - `short_jump_rate`: minutes (non-overlapping, from the session's start)
+///   that move more than [`JUMP_SIGMAS`] reference minute volatilities, per
+///   hour of session, against the calibration's jump rate;
+/// - `short_jump_size`: the 90th percentile of those jumps against the
+///   calibration's, with at least [`MIN_JUMPS`] of them;
+/// - `short_range_median`, `short_range_p90`: how far a session's price
+///   travels from its high to its low, against sessions of the same lengths
+///   drawn from the calibration's own model.
+///
+/// Each band is the real statistic's sampling spread at the calibration's
+/// window count, combined with the generated one's at the sessions given
+/// (see [`compare`]), and a check whose band also holds the obviously wrong
+/// market's value has no power.
+pub fn short_session_checks(
+    calibration: &Calibration,
+    realism: &Realism,
+    sessions: &[SessionPath],
+    slot_seconds: f64,
+) -> Vec<Check> {
+    let sigmas = realism.spread.sigmas;
+    let per_second = ((1.0 / slot_seconds).round() as usize).max(1);
+    let per_bar = ((JUMP_BAR_SECONDS / slot_seconds).round() as usize).max(1);
+    // The reference windows' volatility, scaled to a second.
+    let real_1s =
+        realism.reference.vol_level / (realism.bar_seconds * realism.vol_bars as f64).sqrt();
+    let price = |session: &SessionPath, slot: usize| {
+        tick(session.log_levels[slot].exp(), realism.price_tick_rel)
+    };
+    // Sessions' 1 s volatility.
+    let mut sds = Vec::new();
+    for session in sessions {
+        let slots = session.log_levels.len().saturating_sub(1);
+        let returns: Vec<f64> = (0..slots / per_second)
+            .filter(|i| {
+                let (from, to) = (i * per_second, (i + 1) * per_second);
+                !session
+                    .masked_slots
+                    .iter()
+                    .any(|m| (from as u64..=to as u64).contains(m))
+            })
+            .map(|i| (price(session, (i + 1) * per_second) / price(session, i * per_second)).ln())
+            .collect();
+        if returns.len() >= 10 {
+            sds.push(moments(&returns).sd);
+        }
+    }
+    let mut checks = Vec::new();
+    if sds.len() < MIN_SHORT_SESSIONS {
+        checks.push(Check::skipped(
+            "short_vol_1s",
+            format!(
+                "{} sessions of at least 10 s, fewer than {MIN_SHORT_SESSIONS}",
+                sds.len()
+            ),
+        ));
+    } else {
+        let real = real_1s;
+        let logs: Vec<f64> = sds.iter().map(|v| v.max(1e-300).ln()).collect();
+        let own = median_se(&logs);
+        let spread = realism.spread.log_sd.vol_level
+            * (realism.spread.windows as f64 / realism.windows.max(1) as f64).sqrt();
+        let w = (sigmas * spread.hypot(own)).hypot(SCALING_SLACK.ln()).exp();
+        let band = Band {
+            ratio: Some([1.0 / w, w]),
+            diff: None,
+        };
+        let nulls = [0.5 * real, 2.0 * real];
+        let held = nulls.iter().find(|v| (1.0 / w..=w).contains(&(**v / real)));
+        let mut check = gate("short_vol_1s", real, median(&sds), band, held.copied());
+        check.detail = format!(
+            "{} sessions; {}, and {SCALING_SLACK}x for the scaling (real: the reference windows' volatility over {} s, scaled to 1 s)",
+            sds.len(),
+            check.detail,
+            realism.bar_seconds * realism.vol_bars as f64
+        );
+        checks.push(check);
+    }
+    // Jumps: whole minutes.
+    let threshold = JUMP_SIGMAS * real_1s * JUMP_BAR_SECONDS.sqrt();
+    let (mut bars, mut jumps) = (0usize, Vec::new());
+    for session in sessions {
+        let slots = session.log_levels.len().saturating_sub(1);
+        for i in 0..slots / per_bar {
+            let (from, to) = (i * per_bar, (i + 1) * per_bar);
+            if session
+                .masked_slots
+                .iter()
+                .any(|m| (from as u64..=to as u64).contains(m))
+            {
+                continue;
+            }
+            bars += 1;
+            let r = (price(session, to) / price(session, from)).ln();
+            if r.abs() > threshold {
+                jumps.push(r.abs());
+            }
+        }
+    }
+    let hours = bars as f64 * JUMP_BAR_SECONDS / 3_600.0;
+    let jumping = &calibration.fair_value.jumps;
+    if bars == 0 {
+        checks.push(Check::skipped(
+            "short_jump_rate",
+            "no session holds a whole minute",
+        ));
+    } else {
+        let expected = jumping.per_hour * hours;
+        let slack = (sigmas * (JUMP_DISPERSION * expected).sqrt() + 1.0) / hours;
+        let band = Band {
+            ratio: None,
+            diff: Some(slack),
+        };
+        let mut check = judge(
+            "short_jump_rate",
+            jumping.per_hour,
+            jumps.len() as f64 / hours,
+            band,
+        );
+        check.detail = format!(
+            "{} jumps (a minute past {:.2}%) in {hours:.1} h of sessions, per hour; expected {expected:.1}; {}",
+            jumps.len(),
+            threshold * 100.0,
+            check.detail
+        );
+        checks.push(check);
+    }
+    if jumps.len() < MIN_JUMPS {
+        checks.push(Check::skipped(
+            "short_jump_size",
+            format!(
+                "{} jumps, fewer than {MIN_JUMPS}: their size isn't judged",
+                jumps.len()
+            ),
+        ));
+    } else {
+        // The calibration's jump sizes are log-normal, fitted to the median
+        // and the 90th percentile; only the upper tail is judged, since the
+        // generated jumps are cut at the threshold and the real ones aren't.
+        let sd_log = (jumping.abs_size_p90_pct / jumping.abs_size_median_pct).ln() / 1.281_551_6;
+        let se = sd_log * (0.9_f64 * 0.1 / jumps.len() as f64).sqrt() / 0.175_498;
+        let spread = realism.spread.log_sd.vol_level;
+        let w = (sigmas * se.hypot(spread)).exp();
+        checks.push(judge(
+            "short_jump_size",
+            jumping.abs_size_p90_pct / 100.0,
+            quantile(&jumps, 0.9).exp_m1(),
+            Band {
+                ratio: Some([1.0 / w, w]),
+                diff: None,
+            },
+        ));
+    }
+    checks.extend(range_checks(calibration, realism, sessions, sigmas));
+    checks
+}
+
+/// The sessions' high-to-low range against sessions of the same lengths from
+/// the calibration's own model, at the median and the 90th percentile.
+fn range_checks(
+    calibration: &Calibration,
+    realism: &Realism,
+    sessions: &[SessionPath],
+    sigmas: f64,
+) -> Vec<Check> {
+    let names = ["short_range_median", "short_range_p90"];
+    let skipped = |why: String| {
+        names
+            .iter()
+            .map(|n| Check::skipped(n, why.clone()))
+            .collect()
+    };
+    let mut spec = ModelSpec::default();
+    if let Some(kind) = &realism.session_kind {
+        spec.start = Start::Session { kind: kind.clone() };
+    }
+    let model = match MarketModel::new(calibration.clone(), spec) {
+        Ok(model) => model,
+        Err(why) => return skipped(format!("no model to draw the reference from: {why}")),
+    };
+    let range = |levels: &[f64]| {
+        let (lo, hi) = levels
+            .iter()
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), l| {
+                (lo.min(*l), hi.max(*l))
+            });
+        hi.exp() / lo.exp() - 1.0
+    };
+    let generated: Vec<f64> = sessions.iter().map(|s| range(&s.log_levels)).collect();
+    // As many reference sessions as generated ones, at the same lengths,
+    // twice over: the reference's own spread is then the smaller.
+    let reference: Vec<f64> = (0..2 * sessions.len())
+        .map(|i| {
+            let duration = (sessions[i % sessions.len()].log_levels.len() - 1) as u64;
+            let path = model.draw(0x7261_6e67_6500_0000 ^ i as u64, duration);
+            range(&path.log_levels)
+        })
+        .collect();
+    let mut out = Vec::new();
+    for (name, q) in names.iter().zip([0.5, 0.9]) {
+        let (real, got) = (quantile(&reference, q), quantile(&generated, q));
+        let w = (sigmas * quantile_se(&generated, q, 1).hypot(quantile_se(&reference, q, 2))).exp();
+        let mut check = judge(
+            name,
+            real,
+            got,
+            Band {
+                ratio: Some([1.0 / w, w]),
+                diff: None,
+            },
+        );
+        check.detail = format!(
+            "range of a session, high over low, against {} sessions of the calibration's model at the same lengths; {}",
+            reference.len(),
+            check.detail
+        );
+        out.push(check);
+    }
+    out
+}
+
+/// The standard error of the log of a sample's median.
+fn median_se(logs: &[f64]) -> f64 {
+    let iqr_sd = (quantile(logs, 0.75) - quantile(logs, 0.25)) / 1.349;
+    1.2533 * iqr_sd / (logs.len().max(1) as f64).sqrt()
+}
+
+/// The standard error of the log of a sample's `q` quantile, by bootstrap
+/// from a fixed seed.
+fn quantile_se(x: &[f64], q: f64, seed: u64) -> f64 {
+    const DRAWS: usize = 200;
+    let n = x.len();
+    if n < 2 {
+        return f64::INFINITY;
+    }
+    let mut rng = SplitMix64(0x7365_0000 ^ seed ^ n as u64);
+    let logs: Vec<f64> = (0..DRAWS)
+        .map(|_| {
+            let sample: Vec<f64> = (0..n)
+                .map(|_| x[(rng.next_u64() % n as u64) as usize])
+                .collect();
+            quantile(&sample, q).max(1e-300).ln()
+        })
+        .collect();
+    moments(&logs).sd
 }
 
 struct Moments {
@@ -1443,9 +1831,9 @@ mod tests {
     fn todays_making_family_is_too_hot_for_spcx() {
         let scenarios = crate::making::MakingFamily::spcx().sample_set("mm", 60, 3);
         let report = check_scenarios(&spcx(), "market-making", &scenarios);
-        // Sessions of minutes can't fill SPCX's hour-long windows: the
-        // round trips pass, but the market isn't judged, and that isn't a
-        // pass.
+        // Sessions of minutes can't fill SPCX's half-hour windows: they are
+        // judged on statistics scaled to their length, and hand-set paths
+        // that miss the real asset's are stylised, not a pass.
         assert!(
             report
                 .checks
@@ -1453,7 +1841,9 @@ mod tests {
                 .any(|c| c.name == "returns" && c.status == Status::Skipped)
         );
         assert_eq!(report.windows, 0);
-        assert_eq!(report.verdict, Verdict::NotJudged);
+        assert!(report.short_sessions);
+        assert_eq!(status(&report, "short_vol_1s"), Status::Fail);
+        assert_eq!(report.verdict, Verdict::Stylised);
         assert!(!report.passed);
         let report = check_scenarios(&sol(), "market-making", &scenarios);
         let vol = report
@@ -1469,6 +1859,134 @@ mod tests {
             .find(|c| c.name == "round_trips")
             .unwrap();
         assert_eq!(trips.status, Status::Pass, "{trips:?}");
+    }
+
+    /// `count` sessions from the calibration's own model, of lengths between
+    /// `seconds.0` and `seconds.1`, each inside a session of its kind.
+    fn short_model_sessions(
+        cal: &Calibration,
+        spec: &ModelSpec,
+        count: usize,
+        seconds: (f64, f64),
+        seed: u64,
+    ) -> Vec<SessionPath> {
+        let mut spec = spec.clone();
+        if let Some(kind) = cal.realism.as_ref().and_then(|r| r.session_kind.clone()) {
+            spec.start = Start::Session { kind };
+        }
+        let model = MarketModel::new(cal.clone(), spec).unwrap();
+        let mut rng = SplitMix64(seed);
+        (0..count)
+            .map(|i| {
+                let secs = seconds.0 + (seconds.1 - seconds.0) * rng.next_f64();
+                let path = model.draw(
+                    seed.wrapping_mul(7919).wrapping_add(i as u64),
+                    (secs / SLOT_SECONDS) as u64,
+                );
+                SessionPath::from_model(&path)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn short_sessions_from_the_calibrated_model_pass_whatever_the_seed() {
+        for (cal, seconds) in [(spcx(), (80.0, 400.0)), (sol(), (40.0, 110.0))] {
+            for seed in 1..=4 {
+                let sessions =
+                    short_model_sessions(&cal, &ModelSpec::default(), 300, seconds, seed);
+                let report = report(&cal, "short", &sessions, SLOT_SECONDS, None);
+                let missed: Vec<_> = report
+                    .checks
+                    .iter()
+                    .filter(|c| c.status != Status::Pass && c.status != Status::Skipped)
+                    .collect();
+                assert!(report.short_sessions);
+                assert_eq!(
+                    report.verdict,
+                    Verdict::Pass,
+                    "{} seed {seed}: {missed:#?}",
+                    cal.meta.calibration_id
+                );
+            }
+        }
+    }
+
+    /// The calibrated model's false-fail rate on short sessions, on fresh
+    /// seeds, for each file: at most 2%. In release: `cargo test --release
+    /// -p mtx-grader --lib short_session_false_fail_rate -- --ignored
+    /// --nocapture`.
+    #[test]
+    #[ignore]
+    fn short_session_false_fail_rate() {
+        for (cal, seconds) in [(spcx(), (80.0, 400.0)), (sol(), (40.0, 110.0))] {
+            let seeds = 60;
+            let failed: Vec<u64> = (100..100 + seeds)
+                .filter(|seed| {
+                    let sessions =
+                        short_model_sessions(&cal, &ModelSpec::default(), 300, seconds, *seed);
+                    let report = report(&cal, "short", &sessions, SLOT_SECONDS, None);
+                    for c in report.checks.iter().filter(|c| c.status == Status::Fail) {
+                        println!("seed {seed}: {} {}", c.name, c.detail);
+                    }
+                    report.verdict != Verdict::Pass
+                })
+                .collect();
+            println!("{}: failed seeds {failed:?}", cal.meta.calibration_id);
+            assert!(failed.len() as f64 <= 0.02 * seeds as f64, "{failed:?}");
+        }
+    }
+
+    #[test]
+    fn short_sessions_at_half_and_twice_the_volatility_fail() {
+        let cal = spcx();
+        for vol_mult in [0.5, 2.0] {
+            let spec = ModelSpec {
+                vol_mult,
+                ..ModelSpec::default()
+            };
+            let sessions = short_model_sessions(&cal, &spec, 300, (80.0, 400.0), 1);
+            let report = report(&cal, "short", &sessions, SLOT_SECONDS, None);
+            assert_eq!(status(&report, "short_vol_1s"), Status::Fail, "{vol_mult}");
+            assert_eq!(report.verdict, Verdict::Fail, "{vol_mult}");
+        }
+    }
+
+    #[test]
+    fn hand_set_short_sessions_get_a_verdict() {
+        for family in [
+            "flash-crash",
+            "market-making",
+            "funding-carry",
+            "weekend-gap",
+        ] {
+            let scenarios = crate::generators::generator(family)
+                .unwrap()
+                .practice("check", 300, 1);
+            let report = check_scenarios(&spcx(), family, &scenarios);
+            assert!(report.short_sessions && report.hand_set, "{family}");
+            assert_ne!(report.verdict, Verdict::NotJudged, "{family}");
+            for name in ["short_vol_1s", "short_jump_rate", "short_range_median"] {
+                assert_ne!(status(&report, name), Status::Skipped, "{family} {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_session_sets_its_own_book_or_runs_on_the_snapshots() {
+        let scenarios = crate::generators::generator("flash-crash")
+            .unwrap()
+            .practice("check", 60, 1);
+        let report = check_scenarios(&spcx(), "flash-crash", &scenarios);
+        // No scenario sets a book: the default 5 bp book judges nothing.
+        assert_eq!(status(&report, "round_trips"), Status::Skipped);
+        assert_eq!(status(&report, "book_spread"), Status::Skipped);
+        let making = crate::generators::generator("market-making")
+            .unwrap()
+            .practice("check", 60, 1);
+        let report = check_scenarios(&spcx(), "market-making", &making);
+        assert_eq!(status(&report, "round_trips"), Status::Pass);
+        // The competitors quote 8-30 bp; the calibration's book says 5.
+        assert_eq!(status(&report, "book_spread"), Status::Fail);
     }
 
     #[test]

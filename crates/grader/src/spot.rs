@@ -1354,7 +1354,7 @@ mod tests {
         let ok = scenario();
         assert_eq!(ok.validate(), Ok(()));
         assert_eq!(ok.max_position(), 10.0);
-        assert_eq!(ok.bound_usd(150.0), 0.0);
+        assert_eq!(ok.bound_usd(150.0, 3), 0.0);
         let json = serde_json::to_string(&ok).unwrap();
         assert_eq!(serde_json::from_str::<Scenario>(&json).unwrap(), ok);
 
