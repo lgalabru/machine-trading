@@ -273,7 +273,7 @@ A task is one folder, `bench/tasks/<name>/`:
 
 | | |
 | --- | --- |
-| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator |
+| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator, and `component_anchors = true` for a task whose anchors must run as strategy components (requests for quotes reach only components), which the image then builds for `wasm32-wasip2` too |
 | `reference/` | The reference bot's crate (a workspace member): the verifier scores against it |
 | `solution/` | The oracle's copy of `reference/`, written by `mtx task sync` |
 | `checks/` | `ladder.json` (rungs, order rules, the `anchors` and `probes` a v2 task names), `rungs/` (rungs that run a bot), `bots/` (ladder bots' crates; `bots/informed` is a v2 task's informed bot) and `exploits/` (the frozen exploit bots) |

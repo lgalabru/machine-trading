@@ -193,8 +193,10 @@ pub struct Competition {
 #[serde(deny_unknown_fields, default)]
 pub struct Reactive {
     /// The smallest resting size it reacts to, in base units: quotes under
-    /// it are odd lots and set no touch.
-    pub q_react: f64,
+    /// it are odd lots and set no touch. Absent, it is the market's minimum
+    /// lot: any order the market accepts is a rival, whatever its size.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub q_react: Option<f64>,
     /// How far each look's delay varies around `react_slots`, as a fraction
     /// of it: the delay is drawn from `react_slots * (1 ± jitter)`.
     pub jitter: f64,
@@ -212,7 +214,7 @@ pub struct Reactive {
 impl Default for Reactive {
     fn default() -> Self {
         Self {
-            q_react: 1.0,
+            q_react: None,
             jitter: 0.5,
             step_ticks: (1, 2),
             toxic_size_mult: 2.0,
@@ -223,12 +225,18 @@ impl Default for Reactive {
 }
 
 impl Reactive {
+    /// The smallest size it reacts to on a market whose lot is `lot`: the
+    /// scenario's `q_react`, else the lot. A hair of slack keeps a resting
+    /// size of exactly one lot from being lost to a float's rounding.
+    pub fn min_size(&self, lot: f64) -> f64 {
+        self.q_react.unwrap_or(lot.max(0.0) * (1.0 - 1e-9))
+    }
+
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if !(self.q_react.is_finite() && self.q_react >= 0.0) {
-            return Err(format!(
-                "reactive q_react {} must be 0 or more",
-                self.q_react
-            ));
+        if let Some(q) = self.q_react
+            && !(q.is_finite() && q >= 0.0)
+        {
+            return Err(format!("reactive q_react {q} must be 0 or more"));
         }
         if !(self.jitter.is_finite() && (0.0..1.0).contains(&self.jitter)) {
             return Err(format!("reactive jitter {} must be in [0, 1)", self.jitter));
