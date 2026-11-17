@@ -137,8 +137,12 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      on unguarded tasks only: a native harness can't be guarded (its
      provider's API, which its network must allow, can fetch the web for
      it), so `just bench` refuses it on a guarded task. `MTX_UNGUARDED=1`
-     allows it for a screen: the batch is stamped `guarded: false`, its
-     trajectories are scanned for fetch attempts, and `publish` refuses it.
+     allows it for a screen: the batch is stamped `guarded: false` before
+     its first trial, its trajectories are scanned for fetch attempts, and
+     `publish` and `export` refuse it, and any trial of a native harness
+     on a guarded task, whatever its directory. A direct `harbor run` of
+     a native harness on a guarded task is unguarded too: Harbor opens the
+     harness's provider host itself.
      Its token counts come from Hermes's session; a cost only when Hermes
      knows the model's price. `effort` (left empty, each harness keeps its
      default) sets one reasoning effort for every harness; cross-family

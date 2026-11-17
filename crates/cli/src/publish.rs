@@ -73,15 +73,104 @@ pub fn results_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bench/results")
 }
 
-/// Why a batch wasn't guarded, if it wasn't: its `.unguarded` marker, or
-/// `"guarded": false` in its batch.json.
-fn unguarded(batch: &Path) -> Option<&'static str> {
-    if batch.join(".unguarded").exists() {
-        return Some("marked .unguarded");
+/// Why a batch wasn't guarded, if it wasn't: an `.unguarded` marker or
+/// `"guarded": false` in a batch.json, in `dir` or the two above it (a job
+/// published from inside its batch).
+fn marked_unguarded(dir: &Path) -> Option<String> {
+    for d in dir.ancestors().take(3) {
+        if d.join(".unguarded").exists() {
+            return Some(format!("{} is marked .unguarded", d.display()));
+        }
+        let plan = std::fs::read_to_string(d.join("batch.json")).ok();
+        let plan: Option<serde_json::Value> = plan.and_then(|p| serde_json::from_str(&p).ok());
+        if plan.is_some_and(|p| p.get("guarded") == Some(&json!(false))) {
+            return Some(format!("{}/batch.json says guarded: false", d.display()));
+        }
     }
-    let plan = std::fs::read_to_string(batch.join("batch.json")).ok()?;
-    let plan: serde_json::Value = serde_json::from_str(&plan).ok()?;
-    (plan.get("guarded") == Some(&json!(false))).then_some("batch.json says guarded: false")
+    None
+}
+
+/// The repository (where `bench/tasks` is), from the working directory up,
+/// else from where this binary was built.
+pub(crate) fn repo_root() -> PathBuf {
+    let mut dir = std::env::current_dir().ok();
+    while let Some(d) = dir {
+        if d.join("bench/tasks").is_dir() && d.join("Justfile").is_file() {
+            return d;
+        }
+        dir = d.parent().map(Path::to_path_buf);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+/// Whether a task's agent starts from the base's `-agent` image (see
+/// `bench/image/Dockerfile`): its network is an allowlist.
+fn guarded_task(root: &Path, task: &str) -> bool {
+    std::fs::read_to_string(
+        root.join("bench/tasks")
+            .join(task)
+            .join("environment/Dockerfile"),
+    )
+    .is_ok_and(|text| {
+        text.lines().any(|line| {
+            line.strip_prefix("FROM ").is_some_and(|image| {
+                image
+                    .split(['@', ' '])
+                    .next()
+                    .is_some_and(|name| name.ends_with("-agent"))
+            })
+        })
+    })
+}
+
+/// The trials in `trials` that ran a native harness (Claude Code, Codex) on a
+/// task whose agent is guarded, or on one `root` doesn't hold (so can't be
+/// shown unguarded). Native harnesses can't be guarded: a provider's API
+/// must stay open to them, and Harbor opens it itself when asked nothing.
+fn native_on_guarded(root: &Path, trials: &[PathBuf]) -> Vec<String> {
+    let mut found = Vec::new();
+    for trial in trials {
+        let Some(result) = std::fs::read_to_string(trial.join("result.json"))
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        else {
+            continue;
+        };
+        let agent = result["agent_info"]["name"].as_str().unwrap_or("");
+        if !matches!(agent, "codex" | "claude-code") {
+            continue;
+        }
+        let task = result["task_name"]
+            .as_str()
+            .unwrap_or("")
+            .rsplit('/')
+            .next()
+            .unwrap_or("");
+        let known = root.join("bench/tasks").join(task).is_dir();
+        if !known || guarded_task(root, task) {
+            found.push(format!("{} ({agent} on {task})", trial.display()));
+        }
+    }
+    found
+}
+
+/// Refuse what ran unguarded: a marked batch, or any trial of a native
+/// harness on a guarded task, wherever the trial sits and whatever it was
+/// copied with. Checked by `publish` and `export`.
+pub(crate) fn refuse_unguarded(root: &Path, dir: &Path, trials: &[PathBuf]) -> Result<()> {
+    if let Some(why) = marked_unguarded(dir) {
+        bail!("{why}: it was not guarded and can't be published");
+    }
+    let native = native_on_guarded(root, trials);
+    if !native.is_empty() {
+        bail!(
+            "{} trial{} ran a native harness on a guarded task, which can't be guarded (its provider's API is open to it): {}",
+            native.len(),
+            if native.len() == 1 { "" } else { "s" },
+            native.into_iter().take(3).collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok(())
 }
 
 /// Published releases, newest first. A release in the results dataset is
@@ -229,16 +318,13 @@ pub fn publish(
     let batch = batch
         .canonicalize()
         .with_context(|| batch.display().to_string())?;
-    // A batch whose native harnesses ran on guarded tasks (`just bench` with
-    // MTX_UNGUARDED=1) was a screen: its agents could reach their provider's
-    // API, so its results aren't published.
-    if let Some(why) = unguarded(&batch) {
-        bail!("{} was not guarded ({why}); it can't be published", batch.display());
-    }
     let trials = review::discover(&batch);
     if trials.is_empty() {
         bail!("no Harbor trials under {}", batch.display());
     }
+    // A batch run with MTX_UNGUARDED, or a native harness's trial on a
+    // guarded task, whichever way it got here.
+    refuse_unguarded(&repo_root(), &batch, &trials)?;
     let pending: Vec<String> = trials
         .iter()
         .filter(|t| !t.join("result.json").is_file())
@@ -1215,6 +1301,52 @@ mod tests {
                 .join("1.0.3/job/task__a/agent/hermes.txt.gz")
                 .is_file()
         );
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn a_native_harness_on_a_guarded_task_is_refused_wherever_the_trial_sits() {
+        let tmp = std::env::temp_dir().join(format!("mtx-native-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let task = |name: &str, from: &str| {
+            let env = tmp.join("bench/tasks").join(name).join("environment");
+            std::fs::create_dir_all(&env).unwrap();
+            std::fs::write(
+                env.join("Dockerfile"),
+                format!("FROM ghcr.io/x/machine-trading:{from}\n"),
+            )
+            .unwrap();
+        };
+        task("guarded-spcx", "0.12.0-agent");
+        task("plain-spcx", "0.12.0");
+        let trial = |dir: &str, agent: &str, task: &str| {
+            let t = tmp.join("runs").join(dir);
+            std::fs::create_dir_all(&t).unwrap();
+            std::fs::write(
+                t.join("result.json"),
+                json!({"trial_name": dir, "task_name": format!("solana-foundation/{task}"), "agent_info": {"name": agent}}).to_string(),
+            )
+            .unwrap();
+            t
+        };
+        let hermes = trial("a", "hermes", "guarded-spcx");
+        let codex = trial("b", "codex", "guarded-spcx");
+        let claude = trial("c", "claude-code", "guarded-spcx");
+        let plain = trial("d", "codex", "plain-spcx");
+        let unknown = trial("e", "codex", "elsewhere-spcx");
+        let run = tmp.join("runs");
+        assert!(refuse_unguarded(&tmp, &run, &[hermes.clone(), plain]).is_ok());
+        for bad in [codex, claude, unknown] {
+            let error = refuse_unguarded(&tmp, &bad, &[hermes.clone(), bad.clone()]).unwrap_err();
+            assert!(error.to_string().contains("native harness"), "{error}");
+        }
+        // A marker above a job is found from inside it.
+        let job = tmp.join("batch/job");
+        std::fs::create_dir_all(&job).unwrap();
+        assert!(refuse_unguarded(&tmp, &job, &[]).is_ok());
+        std::fs::write(tmp.join("batch/.unguarded"), "").unwrap();
+        let error = refuse_unguarded(&tmp, &job, &[]).unwrap_err();
+        assert!(error.to_string().contains("not guarded"), "{error}");
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

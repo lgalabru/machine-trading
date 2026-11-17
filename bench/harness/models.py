@@ -214,21 +214,51 @@ def stamp_unguarded(batch: Path) -> None:
 
 
 # What an agent's trajectory shows when it tried to fetch from outside: a
-# fetch tool or client, another Codex, the Responses API, the repository's host.
+# fetch tool or client, a server-side web tool that ran, the provider's API or
+# the key that opens it, the repository's host.
 FETCH_PATTERNS = {
     "curl": r"\bcurl\b",
     "wget": r"\bwget\b",
-    "python requests": r"\b(requests\.(get|post)|urllib\.request|httpx\.|aiohttp)\b",
-    "codex exec": r"\bcodex\s+exec\b",
-    "web_search": r"web_search",
-    "responses api": r"/v1/responses",
+    "python requests": r"\b(requests\.(get|post|request)|urllib\.request|httpx\.|aiohttp)\b",
+    "http.client": r"\bhttp\.client\b",
+    "/dev/tcp": r"/dev/tcp/",
+    "node fetch": r"(?<![\w.])fetch\(\s*[\"'`]https?:",
+    "web search/fetch ran": r"\"web_(search|fetch)_requests\":\s*[1-9]|\bweb_search_call\b|\"name\":\s*\"web_(search|fetch)\"|\bweb_fetch\b(?!_requests)",
+    "codex exec": r"(?<!nvm\.sh; fi; )\bcodex\s+exec\b(?!\s+--dangerously)",
+    "provider api": r"api\.openai\.com|api\.anthropic\.com|chatgpt\.com|/v1/(responses|chat/completions|messages)",
+    "key": r"auth\.json|\b(OPENAI|ANTHROPIC|CODEX)_API_KEY\b",
+    "provider sdk": r"\b(from|import)\s+(openai|anthropic)\b|\.responses\.create",
     "raw.githubusercontent": r"raw\.githubusercontent\.com",
     "github": r"github\.com|ghcr\.io",
 }
 
 
+# A client or fetch tool is only an attempt when something outside is named:
+# a trajectory that reaches only the sandbox's own chain, or the crates
+# registry, fetched nothing.
+CLIENTS = ("curl", "wget", "python requests", "http.client", "/dev/tcp", "node fetch")
+LOCAL_URL = re.compile(
+    r"https?://(?!(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\]|[\w.-]*crates\.io|\$|\{|<)\b)[\w-]+(\.[\w-]+)+"
+)
+
+
 def fetch_flags(text: str) -> list[str]:
-    return [name for name, pattern in FETCH_PATTERNS.items() if re.search(pattern, text)]
+    outside = bool(LOCAL_URL.search(text)) or "/dev/tcp/" in text
+    return [
+        name
+        for name, pattern in FETCH_PATTERNS.items()
+        if re.search(pattern, text) and (outside or name not in CLIENTS)
+    ]
+
+
+def agent_text(raw: str) -> str:
+    """A trajectory's agent side: its steps but the task's own instruction and
+    system text, which name curl and the hosts the task allows."""
+    try:
+        steps = json.loads(raw)["steps"]
+    except (ValueError, KeyError, TypeError):
+        return raw
+    return json.dumps([s for s in steps if not isinstance(s, dict) or s.get("source") not in ("user", "system")])
 
 
 def fetch_scan(batch: Path) -> dict[str, list[str]]:
@@ -236,7 +266,7 @@ def fetch_scan(batch: Path) -> dict[str, list[str]]:
     into batch.json's `fetch_flags`, for a run that wasn't guarded."""
     found = {}
     for trajectory in sorted(batch.glob("**/agent/trajectory.json")):
-        flags = fetch_flags(trajectory.read_text(errors="replace"))
+        flags = fetch_flags(agent_text(trajectory.read_text(errors="replace")))
         if flags:
             found[str(trajectory.relative_to(batch))] = flags
     (batch / ".fetch-scan.json").write_text(json.dumps(found, indent=2))

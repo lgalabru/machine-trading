@@ -519,6 +519,11 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
                "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
                "commit": commit}, open(out, "w"), indent=2)' \
       "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "{{hermes}}" "{{effort}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    # A screen with native harnesses on guarded tasks is stamped before its
+    # first trial: an interrupted batch is still unguarded.
+    if [ -n "$unguarded" ]; then
+      python3 -I bench/harness/models.py stamp-unguarded "$batch"
+    fi
     # What the providers say when the account, not the model, is out: a
     # quota, a credit balance or a usage cap. Rate limits are retried by the
     # harnesses and don't stop a batch.
@@ -589,6 +594,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     scan_batch() {
       [ -z "$scanned" ] || return 0
       scanned=1
+      [ -z "$unguarded" ] || python3 -I bench/harness/models.py fetch-scan "$batch" || true
       kill "$watcher" ${proxy:+"$proxy"} 2> /dev/null || true
       if python3 -I bench/harness/models.py scan "$batch" > "$batch/.scan" 2>&1; then
         mv "$batch/.scan" "$batch/.scan-passed"
@@ -646,14 +652,13 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     if grep -rlF --exclude=.seed "$MTX_EVAL_SEED" "$batch"; then
       echo "the batch's secret appears in the job files above"; exit 1
     fi
-    if [ -n "$unguarded" ]; then
-      python3 -I bench/harness/models.py stamp-unguarded "$batch"
-      python3 -I bench/harness/models.py fetch-scan "$batch"
-      echo "WARNING: this batch was not guarded (guarded: false in batch.json): it can't be published"
-    fi
     python3 -I bench/report.py "$batch"
     echo "browse it: just review $batch"
-    echo "publish it: just publish $batch {{version}}"
+    if [ -n "$unguarded" ]; then
+      echo "WARNING: this batch was not guarded (guarded: false in batch.json): it can't be published"
+    else
+      echo "publish it: just publish $batch {{version}}"
+    fi
 
 # Check each model's name and key with a 1-token request: names from
 # bench/harness/models.toml, or `provider/model`. Reads the keys as `bench` does.

@@ -497,7 +497,10 @@ pub fn image_problems(toml: &str, task: &str) -> Vec<String> {
     };
     let mut problems = Vec::new();
     for (section, own) in [
-        ("[environment]", (image(&["environment"]), format!("-{task}"))),
+        (
+            "[environment]",
+            (image(&["environment"]), format!("-{task}")),
+        ),
         (
             "[verifier.environment]",
             (

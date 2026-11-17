@@ -62,12 +62,28 @@ class NativeGuard(unittest.TestCase):
         found = models.fetch_scan(batch)
         self.assertEqual(list(found), ["job/trial/agent/trajectory.json"])
         self.assertIn("codex exec", found["job/trial/agent/trajectory.json"])
-        self.assertIn("web_search", found["job/trial/agent/trajectory.json"])
         for text, flag in [("curl https://raw.githubusercontent.com/x", "raw.githubusercontent"),
-                           ("POST /v1/responses", "responses api"), ("wget http://a", "wget"),
-                           ("requests.get(u)", "python requests"), ("git clone https://github.com/a/b", "github")]:
+                           ("POST /v1/responses", "provider api"), ("wget http://a.example/x", "wget"),
+                           ("requests.get(u); https://example.com/a", "python requests"), ("git clone https://github.com/a/b", "github")]:
             self.assertIn(flag, models.fetch_flags(text))
         self.assertEqual(models.fetch_flags("cargo build --release"), [])
+        # What the harnesses' own text says is not an attempt.
+        usage = '{"server_tool_use": {"web_search_requests": 0, "web_fetch_requests": 0}}'
+        self.assertEqual(models.fetch_flags(usage), [])
+        self.assertIn("web search/fetch ran", models.fetch_flags(usage.replace(': 0, "web_fetch', ': 1, "web_fetch')))
+        self.assertIn("web search/fetch ran", models.fetch_flags('{"type": "web_search_call"}'))
+        own = "if [ -s ~/.nvm/nvm.sh ]; then . ~/.nvm/nvm.sh; fi; codex exec --dangerously-bypass-approvals"
+        self.assertEqual(models.fetch_flags(own), [])
+        for text, flag in [("api.openai.com/v1/chat/completions", "provider api"), ("cat ~/.codex/auth.json", "key"),
+                           ("echo $OPENAI_API_KEY", "key"), ("import anthropic", "provider sdk"),
+                           ("exec 3<>/dev/tcp/1.2.3.4/80", "/dev/tcp"),
+                           ("http.client.HTTPSConnection('example.com'); https://example.com/x", "http.client"),
+                           ("fetch('https://example.org/a')", "node fetch")]:
+            self.assertIn(flag, models.fetch_flags(text))
+        # The task's own instruction and a local chain aren't attempts.
+        self.assertEqual(models.fetch_flags("curl http://localhost:8899 -d x"), [])
+        steps = json.dumps({"steps": [{"source": "user", "message": "curl https://github.com/x"}, {"source": "agent", "message": "cargo build"}]})
+        self.assertEqual(models.fetch_flags(models.agent_text(steps)), [])
 
 
 if __name__ == "__main__":

@@ -1752,9 +1752,22 @@ mod tests {
             .filter_map(|l| l.strip_prefix("docker_image = "))
             .collect();
         assert_eq!(images.len(), 2, "{toml}");
-        assert!(images.iter().any(|i| i.ends_with(&format!("-{name}\""))), "{images:?}");
-        assert!(images.iter().any(|i| i.ends_with(&format!("-{name}-verifier\""))), "{images:?}");
-        assert!(images.iter().all(|i| !i.contains('@') && !i.contains("flash-crash-spcx")), "{images:?}");
+        assert!(
+            images.iter().any(|i| i.ends_with(&format!("-{name}\""))),
+            "{images:?}"
+        );
+        assert!(
+            images
+                .iter()
+                .any(|i| i.ends_with(&format!("-{name}-verifier\""))),
+            "{images:?}"
+        );
+        assert!(
+            images
+                .iter()
+                .all(|i| !i.contains('@') && !i.contains("flash-crash-spcx")),
+            "{images:?}"
+        );
         assert!(!instruction.contains("the reward needs no reference"));
         assert!(
             read(&task.join("environment/Dockerfile"))
