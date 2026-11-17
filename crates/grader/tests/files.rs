@@ -47,3 +47,48 @@ fn every_spec_example_is_a_valid_mandate() {
         Mandate::load(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
     }
 }
+
+/// Every mandate the tasks ship needs nothing newer than v0, and writes
+/// back with the same members and values; every spec example writes back as
+/// the same bytes. A v0 reader reads them as before.
+#[test]
+fn every_shipped_mandate_is_still_v0() {
+    let mut count = 0;
+    for task in std::fs::read_dir(root().join("bench/tasks")).unwrap() {
+        let task = task.unwrap().path();
+        for dir in ["environment/practice", "tests/scenarios"] {
+            let dir = task.join(dir);
+            if !dir.is_dir() {
+                continue;
+            }
+            for file in json_files(&dir) {
+                let raw: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+                let scenario = Scenario::load(&file).unwrap();
+                let mandate = &scenario.mandate;
+                assert_eq!(mandate.minimal_version(), "v0", "{}", file.display());
+                assert_eq!(mandate.version, "v0", "{}", file.display());
+                assert_eq!(
+                    serde_json::to_value(mandate).unwrap(),
+                    raw["mandate"],
+                    "{}",
+                    file.display()
+                );
+                count += 1;
+            }
+        }
+    }
+    assert!(count > 0, "no task scenarios found");
+    for file in json_files(&root().join("specs/examples")) {
+        let mandate = Mandate::load(&file).unwrap();
+        if mandate.version == "v0" {
+            assert_eq!(mandate.minimal_version(), "v0", "{}", file.display());
+        }
+        assert_eq!(
+            serde_json::to_string_pretty(&mandate).unwrap() + "\n",
+            std::fs::read_to_string(&file).unwrap(),
+            "{}",
+            file.display()
+        );
+    }
+}

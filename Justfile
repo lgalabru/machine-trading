@@ -59,6 +59,15 @@ install bin="mtx":
 ladder-test:
     python3 -I bench/checks/ladder/test_ladder.py
 
+# The probe bots' crate (outside the workspace, so `fmt`, `lint` and `test`
+# never see it) and its calibration: format, lint, tests. CI runs it.
+probes-check:
+    cargo +nightly fmt --manifest-path bench/checks/probes/Cargo.toml -- --check
+    cargo clippy --manifest-path bench/checks/probes/Cargo.toml --all-targets -- -D warnings
+    cargo test --manifest-path bench/checks/probes/Cargo.toml
+    python3 -I bench/checks/probes/test_calibrate.py
+    python3 -I bench/checks/ladder/test_ladder.py
+
 snapshot-build name *flags:
     cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
@@ -210,6 +219,24 @@ actors-smoke:
     library actors-desk bots/rfq-desk
     python3 bench/checks/actors/desk.py target/logs/actors-desk.json > /dev/null
     echo "actors-desk: idle $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-desk-idle.json) USD, answering $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-desk.json) USD, both the desk's own"
+    # The pool, the iceberg and the desk scored over the idle desk: noise
+    # and a two-wallet stop hunter draw from four wallets, so some wallet is
+    # in both roles; the iceberg shows slices and never takes; an idle desk
+    # scores 0, and an answering desk what its fills earn.
+    library actors-pooled bots/actors-smoke pooled
+    jq -e '.scenarios[0].actors | ([.actors[] | select(.reacts_to_bot | not) | .actions.failed] | add) == 0
+        and all(.actors[]; .on_chain == .actions.took + .actions.placed + .actions.cancelled)
+        and ([.actors[] | select(.kind == "noise" or .kind == "stop-hunter") | .wallets[]] | (length > (unique | length)))
+        and any(.actors[]; .kind == "iceberg" and .counts.slices > 0 and .actions.took == 0)
+        and any(.actors[]; .kind == "stop-hunter" and .counts.pushes > 0)' target/logs/actors-pooled.json > /dev/null \
+      || { echo "actors-pooled: the pool or the iceberg didn't act as set: $(jq -c '[.scenarios[0].actors.actors[] | {kind, wallets: (.wallets | length), counts}]' target/logs/actors-pooled.json)"; exit 1; }
+    library actors-pooled-idle bots/starter pooled
+    python3 bench/checks/actors/desk.py --idle --over-idle target/logs/actors-pooled-idle.json > /dev/null
+    jq -e '(.scenarios[0].pnl_usd | fabs) < 0.01' target/logs/actors-pooled-idle.json > /dev/null \
+      || { echo "actors-pooled-idle: an idle desk didn't score 0: $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-pooled-idle.json)"; exit 1; }
+    library actors-pooled-desk bots/rfq-desk pooled
+    python3 bench/checks/actors/desk.py --over-idle target/logs/actors-pooled-desk.json > /dev/null
+    echo "actors-pooled: idle $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-pooled-idle.json) USD, answering $(jq -c '.scenarios[0].pnl_usd' target/logs/actors-pooled-desk.json) USD over the idle desk"
     # Answers too small to settle are no answers: a bot that sends nothing
     # else grades (its session isn't voided), and no client acts on them.
     library actors-rfq-dust bots/rfq-dust rfq-dust

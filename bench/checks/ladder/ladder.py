@@ -117,6 +117,47 @@ def rung_bot(rung, set_dir, count=None):
     return wrapper
 
 
+VERIFIER_FLAGS = ("--loss-weight", "--risk-weight", "--anchor-floor")
+
+
+def verifier_flags(script, flags):
+    """Every `flag value` (or `flag=value`) a shell script passes, in order and
+    unquoted, as `scoring_text::flag_values` reads them; comments are skipped."""
+    words = [w for line in script.splitlines() for w in line.split("#")[0].split()]
+    found = []
+    for i, word in enumerate(words):
+        for flag in flags:
+            if word == flag and i + 1 < len(words):
+                found.append((flag, words[i + 1].strip("\"'")))
+            elif word.startswith(flag + "="):
+                found.append((flag, word[len(flag) + 1:].strip("\"'")))
+    return found
+
+
+def probe_grading(task, config, root=ROOT):
+    """How the probe rungs are graded: as the task's verifier grades the
+    graded bot. The reference, the verifier's own `--loss-weight`,
+    `--risk-weight` and `--anchor-floor`, and, when it passes `--informed`
+    (a v2 task), the ladder's informed anchor, so the ceiling, the floor and
+    the near-breach charge's anchor are the ones the task scores with."""
+    test = os.path.join(root, "bench/tasks", task, "tests/test.sh")
+    with open(test) as f:
+        script = f.read()
+    flags = verifier_flags(script, VERIFIER_FLAGS)
+    for flag in VERIFIER_FLAGS:
+        if sum(1 for name, _ in flags if name == flag) > 1:
+            raise SystemExit(f"probe gate: tests/test.sh passes {flag} more than once")
+    grading = {"reference": os.path.join(root, "bench/tasks", task, "reference"), "flags": flags}
+    if verifier_flags(script, ("--informed",)):
+        name = (config.get("anchors") or {}).get("informed")
+        rung = next((r for r in config["rungs"] if r["name"] == name), None)
+        if rung is None:
+            raise SystemExit("probe gate: tests/test.sh passes --informed, but the ladder file "
+                             "names no `anchors.informed` rung to grade the probes against")
+        grading["informed"] = os.path.join(root, rung["dir"])
+    return grading
+
+
 def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users, v2=None):
     report = os.path.join(out, f"{rung['name']}.json")
     if os.path.exists(report):
@@ -149,8 +190,15 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
         # reference plays the same sessions in each grade.
         command += ["--scoring", "v2", "--reference", v2["reference"],
                     "--anchor-jobs", str(jobs)]
-        if "eta" in v2:
-            command += ["--eta", str(v2["eta"])]
+        # The settings the task's own verifier grades with.
+        for flag, value in v2["flags"]:
+            command += [flag, value]
+        if "informed" in v2:
+            command += ["--informed", v2["informed"]]
+    # A v2 task's informed rung: told each session's latent state, as the
+    # verifier tells its informed bot (`mtx grade --informed`).
+    if rung.get("tell_latent"):
+        command.append("--tell-latent")
     # The steps of the rungs whose mark displacement is read, and of nop's,
     # the baseline.
     if "push" in rung or rung["name"] == "nop":
@@ -846,7 +894,7 @@ def main():
             problems = probe_config_problems(config)
             if problems:
                 raise SystemExit("probe gate: " + "; ".join(problems))
-            probes = {"reference": os.path.join(ROOT, "bench/tasks", args.task, "reference")}
+            probes = probe_grading(args.task, config)
     sets = []
     set_dirs = []
     for k in range(args.sets):

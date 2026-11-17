@@ -247,7 +247,12 @@ impl Allowed {
                 .as_ref()
                 .is_none_or(|sides| sides.iter().any(|s| s.to_string() == side))
         };
-        Self::of_bounds(a.max_position, a.min_position, allows("buy"), allows("sell"))
+        Self::of_bounds(
+            a.max_position,
+            a.min_position,
+            allows("buy"),
+            allows("sell"),
+        )
     }
 }
 
@@ -975,10 +980,7 @@ mod tests {
     fn a_two_sided_mandate_keeps_the_two_sided_coin() {
         let coins = (0..200u64).map(|seed| {
             CoinFlip {
-                frame: Frame {
-                    seed,
-                    ..frame(100)
-                },
+                frame: Frame { seed, ..frame(100) },
                 tag: TAG_COIN,
                 size: 1.0,
                 blocks: 1,

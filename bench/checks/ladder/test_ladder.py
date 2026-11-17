@@ -559,6 +559,93 @@ class ProbeGate(unittest.TestCase):
                 self.assertIn("MTX_PROBE_SESSIONS=72", f.read())
 
 
+class ProbeGradingSettings(unittest.TestCase):
+    """The probe grades use the task's own v2 settings: what its verifier passes."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def task(self, script):
+        folder = os.path.join(self.tmp.name, "bench/tasks/t-spcx/tests")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "test.sh"), "w") as f:
+            f.write(script)
+
+    def command(self, grading):
+        seen = []
+
+        def fake(command, **_):
+            seen.append(command)
+            with open(command[command.index("--report") + 1], "w") as f:
+                json.dump({}, f)
+            return subprocess.CompletedProcess(command, 0)
+
+        out = os.path.join(self.tmp.name, "out")
+        os.makedirs(out)
+        real = ladder.subprocess.run
+        ladder.subprocess.run = fake
+        try:
+            ladder.run_grade("mtx", "snap", "fam", 12, 2, {"name": "p", "dir": "bots/starter"},
+                             "secret", out, os.path.join(out, "p.json"), 0, grading)
+        finally:
+            ladder.subprocess.run = real
+        return seen[0]
+
+    def test_the_verifiers_flags_reach_the_probe_grade(self):
+        self.task("mtx grade --draw fam \\\n  --loss-weight 2 --risk-weight=0.5 \\\n"
+                  "  --anchor-floor 0.1 # --risk-weight 9\n")
+        config = {"rungs": []}
+        command = self.command(ladder.probe_grading("t-spcx", config, self.tmp.name))
+        for flag, value in (("--loss-weight", "2"), ("--risk-weight", "0.5"),
+                            ("--anchor-floor", "0.1")):
+            self.assertEqual(command[command.index(flag) + 1], value)
+        self.assertEqual(command.count("--risk-weight"), 1)
+        self.assertNotIn("--informed", command)
+
+    def test_a_verifier_without_flags_leaves_the_graders_defaults(self):
+        self.task("mtx grade --draw fam\n")
+        command = self.command(ladder.probe_grading("t-spcx", {"rungs": []}, self.tmp.name))
+        for flag in ladder.VERIFIER_FLAGS + ("--informed",):
+            self.assertNotIn(flag, command)
+
+    def test_a_verifier_that_runs_the_informed_bot_has_the_probes_graded_against_it(self):
+        self.task("mtx grade --informed /opt/mtx/anchors/fam-informed --reference /x\n")
+        config = {"anchors": {"reference": "reference", "informed": "informed"},
+                  "rungs": [{"name": "informed", "dir": "bench/tasks/t-spcx/checks/bots/informed"}]}
+        command = self.command(ladder.probe_grading("t-spcx", config, self.tmp.name))
+        self.assertEqual(
+            command[command.index("--informed") + 1],
+            os.path.join(self.tmp.name, "bench/tasks/t-spcx/checks/bots/informed"),
+        )
+
+    def test_an_informed_verifier_needs_an_informed_anchor_in_the_ladder_file(self):
+        self.task("mtx grade --informed /opt/mtx/anchors/fam-informed\n")
+        with self.assertRaises(SystemExit):
+            ladder.probe_grading("t-spcx", {"rungs": []}, self.tmp.name)
+
+    def test_a_repeated_flag_is_refused(self):
+        self.task("mtx grade --loss-weight 1 --loss-weight 2\n")
+        with self.assertRaises(SystemExit):
+            ladder.probe_grading("t-spcx", {"rungs": []}, self.tmp.name)
+
+    def test_every_tasks_probe_grade_matches_its_verifier(self):
+        tasks = os.path.join(ladder.ROOT, "bench/tasks")
+        for task in sorted(os.listdir(tasks)):
+            test = os.path.join(tasks, task, "tests/test.sh")
+            if not os.path.isfile(test):
+                continue
+            with open(test) as f:
+                script = f.read()
+            with open(os.path.join(tasks, task, "checks/ladder.json")) as f:
+                config = json.load(f)
+            grading = ladder.probe_grading(task, config)
+            self.assertEqual(
+                dict(grading["flags"]),
+                dict(ladder.verifier_flags(script, ladder.VERIFIER_FLAGS)), task)
+            self.assertEqual("informed" in grading, "--informed" in script, task)
+
+
 TWIN = ladder.TWIN
 
 

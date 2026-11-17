@@ -98,11 +98,16 @@ supplies its own (see the task's ladder file).
   fails if the penalty is removed); the ladder's copy of the scoring is checked
   against the grader on every grade.
 - **Honest** follows the reference in a share `q` of sessions (a seeded draw)
-  and holds a full-cap coin flip in the rest: a mixture of a bot with edge and
-  one without. Its per-session Sharpe is between the two and depends on the
-  task's reference. `calibrate.py` solves `q` for a target Sharpe from a
-  finished ladder's `reference` and `coin-flip-full` reports; the gate judges
-  each honest rung on the Sharpe it measured.
+  and holds a coin flip in the rest, sized (`MTX_PROBE_SIZE`) so its
+  session-PnL spread is the reference's: a mixture of a bot with edge and one
+  without, at the reference's risk. A full-cap coin gambles far past it: its
+  drawdowns are the near-breach charge's to tax and some of its sessions
+  breach, so a probe built on it scores at or below nothing whatever its edge
+  (the first 72-session run showed it). Its per-session Sharpe is between the
+  two and depends on the task's reference. `calibrate.py` solves the size and
+  `q` for a target Sharpe from a finished ladder's `reference` and
+  `coin-flip-full` reports; the gate judges each honest rung on the Sharpe it
+  measured.
 
 ## A task opts in
 
@@ -115,7 +120,7 @@ supplies its own (see the task's ladder file).
    which has all of them) and `"probes": {}`.
 3. Run `just ladder <task>` with `coin-flip-full` and `reference`, then
    `python3 -I bench/checks/probes/calibrate.py target/ladder/<task>` and set
-   each honest rung's `MTX_PROBE_BLEND`.
+   each honest rung's `MTX_PROBE_SIZE` and `MTX_PROBE_BLEND`.
 
 The task's v1 grade is unchanged: the ladder only adds `--scoring v2` and the
 reference's own run to each rung's grade.

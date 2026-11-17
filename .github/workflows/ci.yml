@@ -121,6 +121,10 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+      - name: Probe bots
+        # bench/checks/probes is outside the workspace: its format, lint and
+        # tests, and the calibration's, run here.
+        run: just probes-check
       - name: mtx-kit, every feature
         # The workspace builds mtx-kit with the features its users ask for;
         # the rest (adapters no bot uses yet, test-util) only build here.
