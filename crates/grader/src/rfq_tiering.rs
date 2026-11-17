@@ -138,8 +138,7 @@ impl RfqTieringFamily {
         let correlation = round3(rng.range_f64(self.correlation));
         let asks_per_client = round2(rng.range_f64(self.asks_per_client));
         let tolerance_bps = round3(rng.range_f64(self.tolerance_bps));
-        let per_100_slots =
-            round3(f64::from(clients) * asks_per_client * 100.0 / duration as f64);
+        let per_100_slots = round3(f64::from(clients) * asks_per_client * 100.0 / duration as f64);
         let shape = Shape {
             clients,
             informed_share,

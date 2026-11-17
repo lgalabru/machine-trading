@@ -68,7 +68,11 @@ pub enum Tag {
 pub enum Answer {
     Decline,
     /// `bp` past the index, for `size` SPCX (the whole request without).
-    Quote { bp: f64, size: Option<f64>, tag: Tag },
+    Quote {
+        bp: f64,
+        size: Option<f64>,
+        tag: Tag,
+    },
 }
 
 /// The desk's view at a request.
@@ -405,7 +409,11 @@ impl Told {
         };
         let informed = v["wallets"]["rfq-informed"]
             .as_array()
-            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|x| x.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default();
         Self {
             informed,
