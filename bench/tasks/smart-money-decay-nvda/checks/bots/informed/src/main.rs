@@ -1,11 +1,9 @@
-//! The flash-crash reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
-//! run loop. The anchor hidden sets are scored against runs this way.
+//! The informed bot, scoring v2's 1: the reference's machinery, told which
+//! wallets are informed and which are decoys (`MTX_REGIME`), and nothing of
+//! the session's draws. It follows the informed wallets' takes from the
+//! first one and leaves the decoys alone.
 
-#[cfg(not(target_arch = "wasm32"))]
 fn main() -> mtx_kit::BotResult {
-    mtx_kit::run(mtx_bot_smart_money_decay_informed::Reference::default())
+    use mtx_bot_smart_money_decay::{Flow, Mode};
+    mtx_kit::run(Flow::new(Mode::Informed))
 }
-
-// The component is the library: a wasm build has no process to run.
-#[cfg(target_arch = "wasm32")]
-fn main() {}

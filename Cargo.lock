@@ -5023,6 +5023,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-smart-money-decay"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.8.1",
+ "bs58",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-smart-money-decay-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-smart-money-decay",
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-smart-money-decay-naive"
+version = "0.1.0"
+dependencies = [
+ "mtx-bot-smart-money-decay",
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-spot-smoke"
 version = "0.1.0"
 dependencies = [

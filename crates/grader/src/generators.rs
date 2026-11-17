@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
     error::Result,
+    flow_reading::FlowFamily,
     making::MakingFamily,
     scenario::{Scenario, Shape, ShockFamily},
     weekend::{WeekendFamily, WeekendShape},
@@ -84,6 +85,17 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "smart-money-decay",
+        practice: |prefix, count, seed| FlowFamily::nvda().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| {
+            shaped(
+                FlowFamily::nvda().draw_set("hidden", count, seed),
+                tell,
+                flow_latent,
             )
         },
     },
@@ -206,6 +218,13 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
 ];
+
+/// Who is who: the wallets of the informed and of the decoys, as the
+/// session seats them. Not when the moves come, which way or how far, nor
+/// when each decoy fades.
+fn flow_latent(_: &crate::flow_reading::Shape) -> Value {
+    json!({ "roster": ["informed", "decoy"] })
+}
 
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
 /// one draw that makes it, so all of it is the session's future.

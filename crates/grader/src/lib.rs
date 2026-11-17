@@ -6,6 +6,7 @@ pub mod chain;
 pub mod crank;
 mod error;
 pub mod faults;
+pub mod flow_reading;
 pub mod generators;
 pub mod grade;
 pub mod guard;

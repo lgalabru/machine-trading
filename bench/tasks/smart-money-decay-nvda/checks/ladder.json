@@ -1,54 +1,74 @@
 {
-  "anchors": {
-    "informed": "informed",
-    "reference": "reference"
-  },
+  "family": "smart-money-decay",
   "count": 72,
-  "exploits": {
-    "below": "informed",
-    "bots": [],
-    "max_profitable": 0.75
+  "min_rule_odds": 0.85,
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
   },
-  "family": "flash-crash",
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "follow-flow",
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "follow-flow"
+      }
+    },
+    {
+      "name": "fade-flow",
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "fade-flow"
+      }
+    },
+    {
+      "name": "momentum",
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "momentum"
+      }
+    },
+    {
+      "name": "most-active",
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "most-active"
+      }
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/smart-money-decay-nvda/reference"
+    },
+    {
+      "name": "informed",
+      "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/informed",
+      "tell_latent": true
+    }
+  ],
   "gates": {
     "informed": [
       "informed"
     ],
     "non_reading": [
       "nop",
-      "blind-long",
-      "blind-short"
+      "follow-flow",
+      "fade-flow",
+      "momentum"
     ]
   },
-  "min_rule_odds": 0.85,
-  "probes": {},
   "rules": [
-    "max(blind-long, blind-short) < reference",
-    "reference < informed < hindsight"
+    "max(follow-flow, fade-flow, momentum) < reference",
+    "most-active < reference",
+    "reference < informed"
   ],
-  "rungs": [
-    {
-      "dir": "bots/starter",
-      "name": "nop"
-    },
-    {
-      "dir": "bench/checks/ladder/blind-long",
-      "may_breach": true,
-      "name": "blind-long"
-    },
-    {
-      "dir": "bench/checks/ladder/blind-short",
-      "may_breach": true,
-      "name": "blind-short"
-    },
-    {
-      "dir": "bench/tasks/smart-money-decay-nvda/reference",
-      "name": "reference"
-    },
-    {
-      "dir": "bench/tasks/smart-money-decay-nvda/checks/bots/informed",
-      "name": "informed",
-      "tell_latent": true
-    }
-  ]
+  "exploits": {
+    "below": "informed",
+    "bots": [],
+    "max_profitable": 0.75
+  },
+  "probes": {}
 }
