@@ -1414,16 +1414,6 @@ impl PerpAccount {
         }
     }
 
-    /// What `held` adds to the account's value: the asset at the index, and
-    /// with the scenario's `over_idle_desk`, less what the desk's starting
-    /// asset gained since.
-    fn desk_value(&self, held: &DeskHoldings) -> f64 {
-        match (&self.desk, &self.desk_start) {
-            (Some(desk), Some(start)) if desk.over_idle => held.base_usd_over_idle(start),
-            _ => held.base_usd(),
-        }
-    }
-
     async fn mark_ticks(&self, market: &MarketState) -> Result<u64> {
         let hawkeye = self.phoenix.hawkeye(self.bot);
         let symbol = &market.scenario.symbol;

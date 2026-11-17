@@ -393,6 +393,8 @@ impl AccumulateFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            markets: Vec::new(),
+            joint: None,
         };
         (scenario, shape)
     }

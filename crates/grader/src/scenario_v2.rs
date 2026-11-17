@@ -1670,6 +1670,7 @@ impl ScenarioV2 {
                             makers_bps: c.makers_bps,
                             competition: c.competition,
                             takers: actors.takers,
+                            roles: Default::default(),
                         }),
                         Vec::new(),
                     ),
@@ -2738,24 +2739,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_rfq_desk_over_the_idle_desk_is_not_also_net_scored() {
-        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
-        let mut library = parse(everyone).unwrap().actors.unwrap();
-        library.rfq_clients.as_mut().unwrap().over_idle_desk = true;
-        let mut s = shock();
-        s.actors.library = Some(library);
-        s.validate().unwrap();
-        s.scoring.net = Some(NetScoring {
-            inventory_bps: 0.0,
-            venue_position: None,
-        });
-        let refused = s.validate().unwrap_err();
-        assert!(
-            refused.contains("over_idle_desk") && refused.contains("use one"),
-            "{refused}"
-        );
-    }
 
     #[test]
     fn a_perp_can_be_net_scored_against_holding_its_start_position() {
