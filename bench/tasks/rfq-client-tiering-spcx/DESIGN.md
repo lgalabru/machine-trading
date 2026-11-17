@@ -150,6 +150,10 @@ weighted); every blind rung is near 0 or below. The perp front-runner
 grades as quote-all: the order sheet cuts its perp trades to the mandate's
 0.001 SPCX.
 
+The fast model (`gate0-seed-81..84`, 1,000 sessions each, with the
+index's measured 0.45 bp offset and a 1 bp margin) gives 5.3 to 18x the
+best careful rung, order 0.905 to 0.977, the reference at 0.49 to 0.53.
+
 ### Earlier generations (reach 0.2 to 0.5 bp a 0.021 SPCX trade size)
 
 Each set is 72 fresh sessions; "best careful" counts side-skew, "best blind"
@@ -185,7 +189,7 @@ rung below the reference, below the informed bot, on 2,000 bootstrapped
   paid. Side-skew, which reads the flow but not who sent it, is the rung to
   watch: 0.16 to 0.41 of the informed bot.
 
-The fast model (`gate0-seed-51..53`, 1,000 sessions each) agrees: 3.0 to 3.4x
+v1's fast model (seeds 51 to 53, 1,000 sessions each; in the branch's history) agreed: 3.0 to 3.4x
 the best careful rung, order 0.99, the reference at 0.54 to 0.58.
 
 ## Departures from the card

@@ -1,0 +1,19 @@
+seed 81 sessions 1000 overrides {}
+picked: fixed_width w=12, size_tier n>=10q, side_skew W=80,lean=0.1
+rung             total     mean      sd    low s   high s
+nop                0.0   0.0000   0.000   0.0000   0.0000
+quote_all       -662.0  -0.6620   4.543  -0.1187  -1.1861
+quote_wide      -833.2  -0.8332   2.790  -0.5674  -1.0895
+fixed_width     -389.9  -0.3899   1.816  -0.2967  -0.4797
+size_tier         57.9   0.0579   1.146   0.1054   0.0121
+side_skew        276.7   0.2767   2.659   0.4189   0.1395
+markouts        -491.0  -0.4910   3.938  -0.0291  -0.9367
+reference        795.3   0.7953   2.143   0.7655   0.8240
+told            1508.3   1.5083   3.234   1.6316   1.3894
+told / best careful rung (side_skew): 5.45  (need >= 2)
+told / best rung that reads nothing of the session (size_tier): 26.05
+  nop_lt_ref: 1.000, naive_lt_ref: 0.996, careful_lt_ref: 0.926, ref_lt_told: 0.990, told_2x: 0.935
+order (nop, naive, careful < reference < told) holds on 0.916 of 2000 72-session sets (need >= 0.85); with told >= 2x careful: 0.887
+v2 weighted, share of told's: nop 0.00, quote_all -1.14, quote_wide -1.06, fixed_width -0.50, size_tier -0.04, side_skew -0.06, markouts -0.91, reference 0.49, told 1.00
+reference per-session Sharpe 0.37; told per-session Sharpe 0.47
+requests per session 85

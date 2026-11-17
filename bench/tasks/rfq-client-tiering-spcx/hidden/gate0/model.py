@@ -20,7 +20,7 @@ their setting on a training set of their own. The reference learns the tolerance
 
     python3 model.py <seed> '<overrides as JSON>' <sessions>
 
-The recorded runs (`gate0-seed-*.txt`) use the family as built: `python3 model.py 51 '{}' 1000`.
+The recorded runs (`gate0-seed-81..84.txt`) use the family as built: `python3 model.py 81 '{}' 1000`.
 """
 
 import json
