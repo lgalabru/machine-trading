@@ -15,9 +15,7 @@
 //! over the last 30 slots past 1.2 TSLA either way sets the side, with the
 //! cap, until six slots after the verdict.
 
-use mtx_bot_event_follow_through::{
-    FLOW_SLOTS, Headline, Hold, Watch, flow_side, go_to, mid,
-};
+use mtx_bot_event_follow_through::{FLOW_SLOTS, Headline, Hold, Watch, flow_side, go_to, mid};
 use mtx_kit::{log, prelude::*, venue::PhoenixVenue};
 
 /// The strategy.

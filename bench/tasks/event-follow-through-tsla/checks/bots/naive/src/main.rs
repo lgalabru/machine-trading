@@ -46,7 +46,12 @@ impl Strategy for Naive {
                 .trader_account(&mtx_kit::venue::key(&session.authority)?)
                 .to_string();
             let accounts = Watch::every_trader(&own)?;
-            self.watch = Some(Watch::new(&venue, &session.symbol, accounts, FLOW_SLOTS + 20)?);
+            self.watch = Some(Watch::new(
+                &venue,
+                &session.symbol,
+                accounts,
+                FLOW_SLOTS + 20,
+            )?);
         }
         Ok(())
     }
@@ -94,10 +99,9 @@ impl Strategy for Naive {
             }
             Mode::NetFlow => {
                 if self.headline.settled.is_some() && open {
-                    let net: f64 = self
-                        .watch
-                        .as_ref()
-                        .map_or(0.0, |w| w.changes(self.headline.flow_slots(at)).iter().sum());
+                    let net: f64 = self.watch.as_ref().map_or(0.0, |w| {
+                        w.changes(self.headline.flow_slots(at)).iter().sum()
+                    });
                     if net.abs() >= 2.0 * FLOW_UNITS {
                         self.hold.want(net.signum(), at);
                     }

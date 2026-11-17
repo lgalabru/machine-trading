@@ -235,7 +235,10 @@ impl Headline {
                 let moved = oracle / self.back(30) - 1.0;
                 if at + 20 >= EVENT_FROM && moved.abs() > 0.005 {
                     self.jumped = Some((at, moved.signum()));
-                    log(&format!("slot {at}: the headline jumped {:+.2}%", moved * 100.0));
+                    log(&format!(
+                        "slot {at}: the headline jumped {:+.2}%",
+                        moved * 100.0
+                    ));
                 }
             }
             (Some((jumped, _)), None, _) => {
@@ -252,7 +255,10 @@ impl Headline {
                 let moved = oracle / self.back((at - settled).min(20)) - 1.0;
                 if moved.abs() > 0.0015 {
                     self.verdict = Some((at, moved.signum()));
-                    log(&format!("slot {at}: the verdict moved {:+.2}%", moved * 100.0));
+                    log(&format!(
+                        "slot {at}: the verdict moved {:+.2}%",
+                        moved * 100.0
+                    ));
                 }
             }
             _ => {}

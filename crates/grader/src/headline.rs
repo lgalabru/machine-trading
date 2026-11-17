@@ -222,7 +222,12 @@ impl HeadlineFamily {
             informed_horizon_slots,
             decoy_horizon_slots,
         );
-        let mandate = Mandate::perp(VENUE, &self.symbol, self.max_position, self.max_drawdown_usd);
+        let mandate = Mandate::perp(
+            VENUE,
+            &self.symbol,
+            self.max_position,
+            self.max_drawdown_usd,
+        );
         let shape = Shape {
             event_slot,
             jump_end_slot,
