@@ -438,6 +438,7 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
     })
 }
 
+#[cfg(feature = "generators")]
 /// Who the informed trader is (its taker account's wallet, through the
 /// roster) and the book's process: the grader's maker's half-spread, quote
 /// size and look delay, and the makers' backstop. Not whether the session
