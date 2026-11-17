@@ -425,5 +425,5 @@ impl<P: Policy + Default> Default for Desk<P> {
 /// The task's reference: the desk with the reference's policy.
 pub type Bot = Desk<Reference>;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "export"))]
 mtx_kit::export!(Bot);

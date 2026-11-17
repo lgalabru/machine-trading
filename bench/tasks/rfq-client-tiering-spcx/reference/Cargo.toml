@@ -19,6 +19,12 @@ path = "src/lib.rs"
 name = "mtx-rfq-client-tiering"
 path = "src/main.rs"
 
+# `export`: the crate is the task's component. The informed bot and the
+# ladder's rungs build on its desk without it.
+[features]
+default = ["export"]
+export = []
+
 [dependencies]
 serde_json = "1"
 

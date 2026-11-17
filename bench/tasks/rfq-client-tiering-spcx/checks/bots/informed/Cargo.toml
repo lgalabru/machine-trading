@@ -7,9 +7,10 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
-# The strategy, and the process the ladder and calibration run (`bin/bot`):
-# only the ladder and the verifier hand a bot its session's latent state.
+# The strategy: a component on wasm32-wasip2 (`bot.wasm`; RFQs reach only
+# components), and a library for the process below.
 [lib]
+crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [[bin]]
@@ -17,5 +18,10 @@ name = "mtx-rfq-client-tiering-informed"
 path = "src/main.rs"
 
 [dependencies]
-mtx-bot-rfq-client-tiering = { path = "../../../reference" }
+mtx-bot-rfq-client-tiering = { path = "../../../reference", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../../../../../crates/kit", default-features = false, features = ["component", "venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mtx-kit = { path = "../../../../../../crates/kit" }

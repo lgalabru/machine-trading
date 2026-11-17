@@ -52,3 +52,6 @@ impl Policy for Informed {
 
 /// The informed bot: the desk with the told policy.
 pub type Bot = mtx_bot_rfq_client_tiering::Desk<Informed>;
+
+#[cfg(target_arch = "wasm32")]
+mtx_kit::export!(Bot);

@@ -7,10 +7,16 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
-[[bin]]
-name = "mtx-rfq-client-tiering-naive"
-path = "src/main.rs"
+# Each rung a component on wasm32-wasip2: RFQs reach components only.
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
 
 [dependencies]
-mtx-bot-rfq-client-tiering = { path = "../../../reference" }
+mtx-bot-rfq-client-tiering = { path = "../../../reference", default-features = false }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../../../../../crates/kit", default-features = false, features = ["component", "venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 mtx-kit = { path = "../../../../../../crates/kit" }

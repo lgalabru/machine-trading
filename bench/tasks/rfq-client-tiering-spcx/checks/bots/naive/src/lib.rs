@@ -1,6 +1,8 @@
 //! The ladder's careful rungs that don't read who is who: told the reach
 //! (`tolerance_bps`, from `MTX_REGIME`) and nothing else they use, they
-//! answer by a fixed rule. `MTX_NAIVE` picks the rule:
+//! answer by a fixed rule. RFQs reach components only, and a component
+//! has no environment, so each rung is its own build: `MTX_NAIVE` (and the
+//! rule's settings) at build time picks the rule.
 //!
 //! - `quote-all`: every request just inside its reach;
 //! - `quote-wide`: every request 3 bp past its reach;
@@ -14,7 +16,7 @@ use mtx_bot_rfq_client_tiering::{Answer, Ask, Desk, EPS_BP, Policy, Tag, Told, V
 use mtx_kit::prelude::*;
 
 #[derive(Default)]
-struct Naive {
+pub struct Naive {
     rule: String,
     told: Told,
     width: f64,
@@ -23,18 +25,18 @@ struct Naive {
     lean: f64,
 }
 
-fn env(name: &str, default: f64) -> f64 {
-    std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+fn setting(value: Option<&str>, default: f64) -> f64 {
+    value.and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 impl Policy for Naive {
     fn start(&mut self, session: &Session) {
         self.told = Told::read(session);
-        self.rule = std::env::var("MTX_NAIVE").unwrap_or_else(|_| "quote-all".into());
-        self.width = env("MTX_WIDTH", 1.5);
-        self.tier_n = env("MTX_TIER_N", 20.0);
-        self.window = env("MTX_WINDOW", 80.0) as u64;
-        self.lean = env("MTX_LEAN", 0.1);
+        self.rule = option_env!("MTX_NAIVE").unwrap_or("quote-all").to_string();
+        self.width = setting(option_env!("MTX_WIDTH"), 1.5);
+        self.tier_n = setting(option_env!("MTX_TIER_N"), 20.0);
+        self.window = setting(option_env!("MTX_WINDOW"), 80.0) as u64;
+        self.lean = setting(option_env!("MTX_LEAN"), 0.1);
     }
 
     fn answer(&mut self, view: &View<'_>, ask: &Ask) -> Answer {
@@ -70,6 +72,8 @@ impl Policy for Naive {
     }
 }
 
-fn main() -> BotResult {
-    mtx_kit::run(Desk::new(Naive::default()))
-}
+/// A rung: the desk with its rule.
+pub type Bot = Desk<Naive>;
+
+#[cfg(target_arch = "wasm32")]
+mtx_kit::export!(Bot);
