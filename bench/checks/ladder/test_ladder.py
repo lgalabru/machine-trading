@@ -4,6 +4,7 @@ import gzip
 import importlib.util
 import json
 import os
+import re
 import statistics
 import subprocess
 import tempfile
@@ -765,6 +766,143 @@ class ProbeGradingSettings(unittest.TestCase):
 
 
 TWIN = ladder.TWIN
+
+
+def zoo_config(zoo=None, **more):
+    config = {"rungs": [{"name": "nop", "dir": "bots/starter"},
+                        {"name": "reference", "dir": "r"},
+                        {"name": "told", "dir": "t", "tell_regime": True}],
+              "gates": {"informed": ["told"], "non_reading": ["nop"]}, **more}
+    if zoo is not None:
+        config["zoo"] = zoo
+    return config
+
+
+class StrategyZoo(unittest.TestCase):
+    def test_the_zoo_lists_the_crates_rungs(self):
+        with open(os.path.join(HERE, "../zoo/src/lib.rs")) as f:
+            names = re.findall(r'Self::\w+ => "([a-z-]+)",', f.read())
+        self.assertEqual(names, ladder.ZOO)
+
+    def test_a_ladder_without_a_zoo_section_runs_every_rung_enforced(self):
+        zoo = ladder.zoo_section(zoo_config())
+        self.assertEqual(zoo["rungs"], ladder.ZOO)
+        self.assertTrue(zoo["enforce"])
+        self.assertFalse(zoo["declared"])
+        self.assertEqual(zoo["informed"], ["told"])
+        rungs = ladder.zoo_rungs(zoo)
+        self.assertEqual(rungs[0], {"name": "zoo-twap", "dir": "bench/checks/zoo",
+                                    "env": {"MTX_ZOO": "twap"}, "may_breach": True, "zoo": True})
+
+    def test_a_v2_task_compares_with_its_informed_anchor(self):
+        config = zoo_config(anchors={"reference": "reference", "informed": "told"},
+                            gates={"informed": ["told", "nop"], "non_reading": []})
+        self.assertEqual(ladder.zoo_section(config)["informed"], ["told"])
+
+    def test_skips_and_lists_narrow_the_zoo_and_each_skip_says_why(self):
+        zoo = ladder.zoo_section(zoo_config({"rungs": ["twap", "dump", "fade"],
+                                             "skip": {"dump": "no job"}}))
+        self.assertEqual(zoo["rungs"], ["twap", "fade"])
+        for bad in ({"rungs": ["ghost"]}, {"rungs": "some"}, {"skip": {"dump": " "}},
+                    {"skip": {"ghost": "x"}}, {"enforce": False}, {"enforce": "no"},
+                    {"hybrid": "h", "hybrid_exempt": "x"}, {"hybrid_exempt": ""},
+                    {"informed": "ghost"}, {"loosen": True}, {"rungs": ["dump", "dump"]}):
+            with self.assertRaises(SystemExit, msg=bad):
+                ladder.zoo_section(zoo_config(bad))
+        clash = zoo_config()
+        clash["rungs"].append({"name": "zoo-dump", "dir": "x"})
+        with self.assertRaises(SystemExit):
+            ladder.zoo_section(clash)
+        zoo = ladder.zoo_section(zoo_config({"enforce": False, "why": "an existing task"}))
+        self.assertFalse(zoo["enforce"])
+
+    def test_the_hybrid_runs_the_best_zoo_rung_told_what_the_informed_rung_is(self):
+        config = zoo_config({"hybrid": "h"})
+        zoo = ladder.zoo_section(config)
+        config["rungs"] += ladder.zoo_rungs(zoo)
+        config["rungs"].append({"name": "mine", "dir": "m", "zoo": True, "arm": "my-arm"})
+        config["rungs"].append({"name": "other", "dir": "o", "zoo": True})
+        reports = {"reference": report([1.0]), "zoo-dump": report([3.0]),
+                   "zoo-fade": report([-2.0]), "mine": report([5.0]), "other": report([9.0])}
+        self.assertEqual(ladder.hybrid_arm(config, reports), "my-arm")
+        del reports["mine"]
+        self.assertEqual(ladder.hybrid_arm(config, reports), "dump")
+        rung = ladder.hybrid_rung(config, zoo, "dump")
+        self.assertEqual(rung, {"name": "zoo-hybrid", "dir": "h", "env": {"MTX_ZOO": "dump"},
+                                "may_breach": True, "tell_regime": True})
+
+
+def zoo_sets(rungs, sets=1):
+    return [{name: report(pnl, breached) for name, (pnl, breached) in rungs.items()}
+            for _ in range(sets)]
+
+
+def zoo_verdicts(rungs, members, min_odds=0.85, hybrid=False, sets=1):
+    zoo = ladder.zoo_section(zoo_config({"hybrid": "h"} if hybrid else {}))
+    checks = ladder.zoo_checks(zoo_sets(rungs, sets), zoo, members, min_odds)
+    return {c["id"]: c for c in checks}
+
+
+class ZooRules(unittest.TestCase):
+    ref = [10.0, 12.0, 8.0, 11.0, 9.0, 10.0, 12.0, 8.0, 11.0, 9.0, 10.0, 10.0]
+    told = [40.0, 38.0, 42.0, 41.0, 39.0, 40.0, 38.0, 42.0, 41.0, 39.0, 40.0, 40.0]
+
+    def rungs(self, **more):
+        return {"reference": (self.ref, ()), "told": (self.told, ()), **more}
+
+    def test_a_weak_zoo_rung_passes_both_rules(self):
+        v = zoo_verdicts(self.rungs(weak=([1.0, -1.0] * 6, ())), ["weak"])
+        self.assertEqual(v["below_reference:weak"]["verdict"], "pass")
+        self.assertEqual(v["far_from_informed:weak"]["verdict"], "pass")
+
+    def test_a_shortcut_over_the_reference_fails_with_confidence(self):
+        v = zoo_verdicts(self.rungs(short=([x + 5 for x in self.ref], ())), ["short"])
+        self.assertEqual(v["below_reference:short"]["verdict"], "fail")
+        self.assertTrue(v["below_reference:short"]["point_violated"])
+        self.assertEqual(v["far_from_informed:short"]["verdict"], "pass")
+
+    def test_a_rung_near_the_reference_is_inconclusive_with_the_point_violated(self):
+        near = [x + (3.0 if i % 2 else -2.5) for i, x in enumerate(self.ref)]
+        v = zoo_verdicts(self.rungs(near=(near, ())), ["near"])
+        self.assertEqual(v["below_reference:near"]["verdict"], "inconclusive")
+        self.assertTrue(v["below_reference:near"]["point_violated"])
+
+    def test_a_rung_near_the_informed_bot_fails_the_signal_bar(self):
+        v = zoo_verdicts(self.rungs(close=([30.0] * 12, ())), ["close"])
+        self.assertEqual(v["far_from_informed:close"]["verdict"], "fail")
+
+    def test_a_v1_rung_with_a_breach_totals_0(self):
+        v = zoo_verdicts(self.rungs(breach=([50.0] * 12, (3,))), ["breach"])
+        self.assertEqual(v["below_reference:breach"]["verdict"], "pass")
+        self.assertEqual(v["below_reference:breach"]["total"], 0.0)
+
+    def test_a_hybrid_that_beats_the_informed_bot_past_noise_fails_the_anchor(self):
+        better = [x + 4 for x in self.told]
+        v = zoo_verdicts(self.rungs(**{"zoo-hybrid": (better, ())}), [], hybrid=True)
+        self.assertEqual(v["anchor_strength"]["verdict"], "fail")
+
+    def test_a_hybrid_within_noise_is_inconclusive_and_one_below_passes(self):
+        noisy = [x + (6.0 if i % 2 else -5.5) for i, x in enumerate(self.told)]
+        v = zoo_verdicts(self.rungs(**{"zoo-hybrid": (noisy, ())}), [], hybrid=True)
+        self.assertEqual(v["anchor_strength"]["verdict"], "inconclusive")
+        self.assertFalse(v["anchor_strength"]["point_violated"])
+        worse = [x - 1 for x in self.told]
+        v = zoo_verdicts(self.rungs(**{"zoo-hybrid": (worse, ())}), [], hybrid=True)
+        self.assertEqual(v["anchor_strength"]["verdict"], "pass")
+
+    def test_a_hybrid_that_did_what_the_informed_bot_did_has_no_power(self):
+        v = zoo_verdicts(self.rungs(**{"zoo-hybrid": (list(self.told), ())}), [], hybrid=True)
+        self.assertEqual(v["anchor_strength"]["verdict"], "no_power")
+
+    def test_without_an_informed_rung_only_the_reference_rule_runs(self):
+        zoo = ladder.zoo_section(zoo_config(gates={}))
+        checks = ladder.zoo_checks(zoo_sets({"reference": (self.ref, ()), "z": ([0.0] * 12, ())}),
+                                   zoo, ["z"], 0.85)
+        self.assertEqual([c["id"] for c in checks], ["below_reference:z"])
+
+    def test_every_set_counts(self):
+        v = zoo_verdicts(self.rungs(weak=([1.0] * 12, ())), ["weak"], sets=3)
+        self.assertEqual(v["below_reference:weak"]["sets"], 3)
 
 
 if __name__ == "__main__":

@@ -36,6 +36,13 @@ without that confidence is `inconclusive`, and one that holds is `pass`. A
 probe that never traded, went fatal without being meant to, or (the breacher)
 never breached is `no_power`.
 
+Every ladder also runs the strategy zoo (bench/checks/zoo): generic strong
+strategies that are told nothing, graded like any rung, under the ladder
+file's `zoo` section (all of them when it has none). Each must stay under the
+reference and under half the informed rung, with the order rules' bootstrap,
+and a hybrid of the informed bot with the best zoo rung must not beat the
+informed bot by more than noise (see `zoo_checks`).
+
 Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
        [--min-rule-odds P] [--public-seed LABEL] [--config FILE]
@@ -918,6 +925,236 @@ def probe_checks(config, sets, count):
     return out
 
 
+# --- the strategy zoo --------------------------------------------------------
+#
+# Generic strategies told nothing (bench/checks/zoo). A ladder file's `zoo`
+# section picks them; without one, every rung runs and the checks are enforced.
+
+ZOO_DIR = "bench/checks/zoo"
+# The zoo's rungs, as `MTX_ZOO` names them (the crate's `Kind::ALL`).
+ZOO = ["twap", "random-twap", "dump", "late", "front-load", "wait-close",
+       "rest-touch", "odd-lot", "inside-maker", "rest-mid", "good-price",
+       "range-break", "momentum", "fade",
+       "follow-flow", "fade-flow", "most-active", "biggest-trader", "copy-everyone",
+       "size-follow", "size-fade"]
+ZOO_PREFIX = "zoo-"
+HYBRID = "zoo-hybrid"
+# A zoo rule broken with this much bootstrap confidence fails a fast set too.
+ZOO_CONFIDENCE = 0.95
+# The far-from-informed bar: a zoo rung under this share of the informed rung
+# (the signal gate's 2x).
+ZOO_INFORMED_SHARE = 0.5
+ZOO_KEYS = {"rungs", "skip", "enforce", "why", "informed", "hybrid", "hybrid_exempt"}
+
+
+def nonempty(text):
+    return isinstance(text, str) and bool(text.strip())
+
+
+def zoo_section(config):
+    """The ladder file's `zoo` section, read: which zoo rungs run (`rungs`:
+    "all" or a list, minus `skip`, each with its reason), whether the checks
+    are enforced (`enforce`, default true; false needs `why`), the informed
+    rung they compare with (`informed`; default the v2 informed anchor, else
+    the signal gate's informed rungs), and the anchor-strength hybrid
+    (`hybrid`: the task's hybrid crate, or `hybrid_exempt`: why not). Raises
+    SystemExit on a malformed section."""
+    raw = config.get("zoo", {})
+    problems = []
+    if not isinstance(raw, dict):
+        raise SystemExit("zoo: the section must be an object")
+    problems += [f"zoo can't set {k!r}" for k in sorted(set(raw) - ZOO_KEYS)]
+    chosen = raw.get("rungs", "all")
+    if chosen == "all":
+        chosen = list(ZOO)
+    elif not (isinstance(chosen, list) and all(isinstance(n, str) for n in chosen)):
+        problems.append("zoo.rungs must be \"all\" or a list of the zoo's rungs")
+        chosen = []
+    unknown = [n for n in chosen if n not in ZOO]
+    if unknown:
+        problems.append(f"zoo.rungs names rungs the zoo doesn't have: {', '.join(unknown)}")
+    if len(set(chosen)) != len(chosen):
+        problems.append("zoo.rungs names a rung twice")
+    skip = raw.get("skip", {})
+    if not isinstance(skip, dict):
+        problems.append("zoo.skip must map rungs to the reason each doesn't apply")
+        skip = {}
+    for name, why in skip.items():
+        if name not in ZOO:
+            problems.append(f"zoo.skip names {name!r}, not a zoo rung")
+        if not nonempty(why):
+            problems.append(f"zoo.skip.{name} must say why the rung doesn't apply")
+    enforce = raw.get("enforce", True)
+    if not isinstance(enforce, bool):
+        problems.append("zoo.enforce must be true or false")
+    if enforce is False and not nonempty(raw.get("why")):
+        problems.append("zoo.enforce false must say why in zoo.why")
+    if "hybrid" in raw and "hybrid_exempt" in raw:
+        problems.append("zoo.hybrid and zoo.hybrid_exempt exclude each other")
+    if "hybrid" in raw and not nonempty(raw["hybrid"]):
+        problems.append("zoo.hybrid must name the task's hybrid crate")
+    if "hybrid_exempt" in raw and not nonempty(raw["hybrid_exempt"]):
+        problems.append("zoo.hybrid_exempt must say why")
+    names = {r["name"] for r in config["rungs"]}
+    clashes = sorted(n for n in names if n.startswith(ZOO_PREFIX) and n[len(ZOO_PREFIX):] in ZOO)
+    if clashes or HYBRID in names:
+        problems.append(f"rung names the zoo generates: {', '.join(clashes + [HYBRID] * (HYBRID in names))}")
+    informed = raw.get("informed")
+    if informed is not None:
+        if informed not in names:
+            problems.append(f"zoo.informed names no rung: {informed!r}")
+        informed = [informed]
+    else:
+        anchor = (config.get("anchors") or {}).get("informed")
+        informed = [anchor] if anchor else list((config.get("gates") or {}).get("informed", []))
+    if problems:
+        raise SystemExit("zoo: " + "; ".join(problems))
+    return {
+        "rungs": [n for n in chosen if n not in skip],
+        "skip": dict(skip),
+        "enforce": enforce,
+        "why": raw.get("why"),
+        "informed": informed,
+        "hybrid": raw.get("hybrid"),
+        "hybrid_exempt": raw.get("hybrid_exempt"),
+        "declared": "zoo" in config,
+    }
+
+
+def zoo_rungs(zoo):
+    """The ladder rungs the zoo section adds: one process each, `MTX_ZOO` set."""
+    return [{"name": ZOO_PREFIX + n, "dir": ZOO_DIR, "env": {"MTX_ZOO": n},
+             "may_breach": True, "zoo": True} for n in zoo["rungs"]]
+
+
+def zoo_members(config):
+    """Every rung the zoo checks hold: the zoo's own and the task's (`"zoo":
+    true` in its ladder file)."""
+    return [r["name"] for r in config["rungs"] if r.get("zoo")]
+
+
+def hybrid_rung(config, zoo, arm):
+    """The hybrid rung: the task's hybrid crate, running the informed bot
+    with the zoo rung `arm`, told what the informed rung is told."""
+    informed = next(r for r in config["rungs"] if r["name"] == zoo["informed"][0])
+    rung = {"name": HYBRID, "dir": zoo["hybrid"], "env": {"MTX_ZOO": arm}, "may_breach": True}
+    for flag in ("tell_latent", "tell_regime"):
+        if informed.get(flag):
+            rung[flag] = True
+    return rung
+
+
+def hybrid_arm(config, reports):
+    """The zoo rung the hybrid runs on a set: the best by graded total of the
+    rungs it can run (the zoo's, and a task rung that names its `arm`)."""
+    arms = [(r["name"], r["env"]["MTX_ZOO"] if r.get("dir") == ZOO_DIR else r.get("arm"))
+            for r in config["rungs"] if r.get("zoo")]
+    arms = [(name, arm) for name, arm in arms if arm and name in reports]
+    if not arms:
+        return None
+    t = totals(reports)
+    return max(arms, key=lambda a: t[a[0]])[1]
+
+
+def session_rows(reports):
+    """Each rung's per-session values on the task's grade and whether its
+    total is 0 whatever the sessions (a disqualified rung under v1), so a
+    resample's total is `0 if zeroed else sum(values[i])`, as `totals`."""
+    if GRADE_BASIS == "v2" and all(r.get("v2") for r in reports.values()):
+        return {n: ([s["bot_usd"] for s in r["v2"]["sessions"]], False) for n, r in reports.items()}
+    return {n: (pnls(r), disqualified(r)) for n, r in reports.items()}
+
+
+def zoo_checks(sets, zoo, members, min_rule_odds):
+    """The zoo's rules, over the sets. Each check is `{id, kind, rungs,
+    verdict, point_violated, odds, detail}`; verdict `pass`, `fail`,
+    `inconclusive` or `no_power`, as the probe checks:
+
+    - `below_reference`: every zoo rung under the reference, as the order
+      rules hold (`zoo < reference`): on every set, and in at least
+      `min_rule_odds` of a bootstrap over each set's sessions. Broken in at
+      least `ZOO_CONFIDENCE` of the bootstrap, it fails; broken short of that,
+      it is `inconclusive` with the point violated (the full gate fails it).
+    - `far_from_informed`: every zoo rung under half the best informed rung
+      (`zoo < informed / 2`), the same way.
+    - `anchor_strength`: the hybrid (the informed bot, with the best zoo rung
+      in its idle steps) against the informed bot on the same sessions,
+      paired: it fails when the hybrid's total over every set is higher in at
+      least `ZOO_CONFIDENCE` of the bootstrap; a higher total short of that is
+      `inconclusive` without a point violation (noise); a hybrid that did
+      exactly what the informed bot did in every session is `no_power`.
+    """
+    rows = [session_rows(reports) for reports in sets]
+    informed = [n for n in zoo["informed"] if all(n in r for r in rows)]
+    hybrid = all(HYBRID in r for r in rows) and bool(rows)
+    needed = set(members) | {"reference"} | set(informed) | ({HYBRID} if hybrid else set())
+    rng = random.Random(0)
+    draws = []
+    for r in rows:
+        n = len(r["reference"][0])
+        draws.append([[rng.randrange(n) for _ in range(n)] for _ in range(BOOTSTRAP_DRAWS)])
+
+    def total(row, idx):
+        values, zeroed = row
+        return 0.0 if zeroed else sum(values[i] for i in idx)
+
+    full = [{name: total(r[name], range(len(r[name][0]))) for name in needed} for r in rows]
+    boot = [[{name: total(r[name], idx) for name in needed} for idx in d]
+            for r, d in zip(rows, draws)]
+
+    def best_informed(t):
+        return max(t[n] for n in informed)
+
+    out = []
+
+    def rule(check, kind, rung, lower, upper, label):
+        holding = [lower(t) < upper(t) for t in full]
+        odds = statistics.fmean(statistics.fmean(lower(t) < upper(t) for t in b) for b in boot)
+        ok = all(holding) and odds >= min_rule_odds
+        verdict = "pass" if ok else ("fail" if odds <= 1 - ZOO_CONFIDENCE else "inconclusive")
+        out.append({"id": check, "kind": kind, "rungs": [rung], "verdict": verdict,
+                    "point_violated": not ok, "odds": odds,
+                    "sets_holding": sum(holding), "sets": len(holding),
+                    "total": sum(lower(t) for t in full), "bar": sum(upper(t) for t in full),
+                    "detail": f"{rung} ${sum(lower(t) for t in full):.0f} against {label} "
+                              f"${sum(upper(t) for t in full):.0f}: holds on {sum(holding)}/"
+                              f"{len(holding)} sets, bootstrap odds {odds:.2f}"})
+
+    for m in members:
+        rule(f"below_reference:{m}", "below_reference", m,
+             lambda t, m=m: t[m], lambda t: t["reference"], "the reference")
+        if informed:
+            rule(f"far_from_informed:{m}", "far_from_informed", m, lambda t, m=m: t[m],
+                 lambda t: ZOO_INFORMED_SHARE * best_informed(t),
+                 f"half of {'max(' + ', '.join(informed) + ')' if len(informed) > 1 else informed[0]}")
+
+    if hybrid and informed:
+        base = zoo["informed"][0]
+        point = sum(t[HYBRID] - t[base] for t in full)
+        beats = statistics.fmean(
+            sum(b[k][HYBRID] - b[k][base] for b in boot) > 0 for k in range(BOOTSTRAP_DRAWS))
+        same = all(abs(a - b) < 0.005 for r in rows
+                   for a, b in zip(r[HYBRID][0], r[base][0])) and \
+            all(r[HYBRID][1] == r[base][1] for r in rows)
+        if same:
+            verdict = "no_power"
+        elif point > 0 and beats >= ZOO_CONFIDENCE:
+            verdict = "fail"
+        elif point > 0:
+            verdict = "inconclusive"
+        else:
+            verdict = "pass"
+        out.append({"id": "anchor_strength", "kind": "anchor_strength", "rungs": [HYBRID, base],
+                    "verdict": verdict, "point_violated": verdict == "fail", "odds": beats,
+                    "total": sum(t[HYBRID] for t in full), "bar": sum(t[base] for t in full),
+                    "detail": f"the hybrid ${sum(t[HYBRID] for t in full):.0f} against {base} "
+                              f"${sum(t[base] for t in full):.0f} (paired, odds it is higher "
+                              f"{beats:.2f})" + ("; it did exactly what the informed bot did: "
+                                                 "the zoo rung found no idle step to trade"
+                                                 if same else "")})
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("task")
@@ -961,6 +1198,20 @@ def main():
                 raise SystemExit("probe gate: " + "; ".join(problems))
             probes = probe_grading(args.task, config)
     grading = rung_grading(args.task, config, probes)
+    zoo = zoo_section(config)
+    config["rungs"] = config["rungs"] + zoo_rungs(zoo)
+    if zoo["hybrid"]:
+        if not os.path.isfile(os.path.join(ROOT, zoo["hybrid"], "run.sh")):
+            raise SystemExit(f"zoo.hybrid: no run.sh in {zoo['hybrid']}")
+        if len(zoo["informed"]) != 1:
+            raise SystemExit("zoo.hybrid: name the one informed rung it wraps in zoo.informed")
+    members = zoo_members(config)
+    arms = []
+
+    def rung_v2(rung):
+        # On a v1 task a zoo rung is compared on its v1 grade: no v2 run needed.
+        return None if GRADE_BASIS == "v1" and rung.get("zoo") else grading
+
     sets = []
     set_dirs = []
     for k in range(args.sets):
@@ -983,11 +1234,24 @@ def main():
             futures = {
                 rung["name"]: pool.submit(
                     grade, args.mtx, args.snapshot, config["family"], count, args.jobs,
-                    rung, secret, set_dir, users, grading,
+                    rung, secret, set_dir, users, rung_v2(rung),
                 )
                 for rung in config["rungs"]
             }
             reports = {name: future.result() for name, future in futures.items()}
+        # The hybrid runs the best zoo rung of this set beside the informed bot.
+        arm = hybrid_arm(config, reports) if zoo["hybrid"] and zoo["informed"] else None
+        if arm:
+            marker = os.path.join(set_dir, f"{HYBRID}.arm")
+            cached = os.path.join(set_dir, f"{HYBRID}.json")
+            if os.path.exists(cached) and (not os.path.exists(marker) or open(marker).read() != arm):
+                os.remove(cached)
+            with open(marker, "w") as f:
+                f.write(arm)
+            reports[HYBRID] = grade(args.mtx, args.snapshot, config["family"], count, args.jobs,
+                                    hybrid_rung(config, zoo, arm), secret, set_dir, users,
+                                    rung_v2({"zoo": True}))
+        arms.append(arm)
         sets.append(reports)
         print(f"set {k + 1} (reference ${totals(reports)['reference']:.0f}): " + ", ".join(
             f"{name} {s:.2f}" for name, s in skills(reports).items()
@@ -1016,7 +1280,7 @@ def main():
         "probes_exempt": exempt,
     }
     print("\nskill by set (reference = 1, hindsight = the bound; a disqualified rung is 0):")
-    names = [r["name"] for r in config["rungs"]] + ["hindsight"]
+    names = [r["name"] for r in config["rungs"]] + [HYBRID] * any(arms) + ["hindsight"]
     table = [skills(reports) for reports in sets]
     for name in names:
         row = [t[name] for t in table]
@@ -1148,6 +1412,29 @@ def main():
                      if check.get("violation_odds") is not None else ""))
             if check["verdict"] in ("fail", "no_power"):
                 failed.append(f"probe {check['id']} {check['verdict']}")
+
+    print("\nstrategy zoo (told nothing; " + ("enforced" if zoo["enforce"] else
+          f"information only: {zoo['why']}") + "):")
+    checks = zoo_checks(sets, zoo, members, min_rule_odds)
+    hybrid_status = ("checked" if any(arms) else "absent") if zoo["hybrid"] else (
+        "exempt" if zoo["hybrid_exempt"] else "absent")
+    summary["zoo"] = {
+        "status": "checked", "declared": zoo["declared"], "enforce": zoo["enforce"],
+        "why": zoo["why"], "rungs": members, "skipped": zoo["skip"],
+        "informed": zoo["informed"], "hybrid_status": hybrid_status,
+        "hybrid_exempt": zoo["hybrid_exempt"], "hybrid_arms": arms, "checks": checks,
+    }
+    for name, why in sorted(zoo["skip"].items()):
+        print(f"  skip {ZOO_PREFIX}{name}: {why}")
+    for check in checks:
+        label = {"pass": "ok  ", "fail": "FAIL", "inconclusive": "?   ", "no_power": "NOPW"}[
+            check["verdict"]]
+        print(f"  {label} {check['id']}: {check['detail']}")
+        if zoo["enforce"] and (check["verdict"] == "fail" or check["point_violated"]):
+            failed.append(f"zoo {check['id']}")
+    if hybrid_status != "checked":
+        print(f"  anchor strength: {hybrid_status}"
+              + (f" ({zoo['hybrid_exempt']})" if zoo["hybrid_exempt"] else ""))
 
     summary["failed"] = failed
     with open(os.path.join(out, "summary.json"), "w") as f:

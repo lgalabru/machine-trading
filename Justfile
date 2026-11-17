@@ -68,6 +68,13 @@ probes-check:
     python3 -I bench/checks/probes/test_calibrate.py
     python3 -I bench/checks/ladder/test_ladder.py
 
+# The strategy zoo's crate (outside the workspace, like the probes): format,
+# lint, tests. CI runs it.
+zoo-check:
+    cargo +nightly fmt --manifest-path bench/checks/zoo/Cargo.toml -- --check
+    cargo clippy --manifest-path bench/checks/zoo/Cargo.toml --all-targets -- -D warnings
+    cargo test --manifest-path bench/checks/zoo/Cargo.toml
+
 snapshot-build name *flags:
     cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 

@@ -291,6 +291,9 @@ pub struct LadderSummary {
     /// summaries).
     #[serde(default)]
     pub pnls: Vec<BTreeMap<String, Vec<f64>>>,
+    /// The strategy zoo (absent in older summaries).
+    #[serde(default)]
+    pub zoo: Option<ZooSummary>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -354,6 +357,45 @@ pub struct ProbeResult {
     /// the full gate fails on it.
     #[serde(default)]
     pub point_violated: bool,
+}
+
+/// The strategy zoo's part of the ladder (`ladder.py`'s `zoo_checks`):
+/// generic strategies told nothing, held under the reference and under half
+/// the informed rung, and the anchor-strength hybrid.
+#[derive(Debug, Deserialize)]
+pub struct ZooSummary {
+    /// Whether a failure fails the gate: false only for a task whose ladder
+    /// file says why (`zoo.why`); its failures are information.
+    pub enforce: bool,
+    #[serde(default)]
+    pub why: Option<String>,
+    /// Zoo rungs the ladder file leaves out, each with its reason.
+    #[serde(default)]
+    pub skipped: BTreeMap<String, String>,
+    /// `checked`, `exempt` (`hybrid_exempt` says why) or `absent`.
+    pub hybrid_status: String,
+    #[serde(default)]
+    pub hybrid_exempt: Option<String>,
+    pub checks: Vec<ZooResult>,
+}
+
+/// One zoo rule's verdict: `pass`, `fail` (broken with confidence),
+/// `inconclusive` or `no_power`.
+#[derive(Debug, Deserialize)]
+pub struct ZooResult {
+    /// `below_reference`, `far_from_informed` or `anchor_strength`.
+    pub kind: String,
+    pub verdict: String,
+    pub detail: String,
+    /// The rule doesn't hold as the order rules require (every set, the
+    /// bootstrap floor): the full gate fails it.
+    #[serde(default)]
+    pub point_violated: bool,
+    /// The rung's total over every set and the bar it is held under.
+    #[serde(default)]
+    pub total: Option<f64>,
+    #[serde(default)]
+    pub bar: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1043,6 +1085,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
     checks.push(signal_gate(summary, gate));
     checks.push(exploit_check(summary, fast));
     checks.push(probe_check(summary, fast));
+    checks.extend(zoo_checks(summary, fast));
     checks.push(Check::from(
         GRADED,
         "ladder-clean",
@@ -1259,6 +1302,160 @@ fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
         )
     };
     Check::pass(GRADED, id, title, detail)
+}
+
+/// The zoo's three checks: every zoo rung under the reference, every one
+/// under half the informed rung, and the hybrid of the informed bot and the
+/// best zoo rung no better than the informed bot past noise. A rule broken
+/// with confidence fails; one that doesn't hold as the order rules require
+/// fails the full gate and is inconclusive on a fast set; the hybrid fails
+/// only with confidence. A task whose ladder file sets `zoo.enforce` false
+/// (Ludo's four, which predate the zoo) gets a warning instead of a failure.
+pub fn zoo_checks(summary: &LadderSummary, fast: bool) -> Vec<Check> {
+    const BELOW: (&str, &str) = (
+        "zoo-below-reference",
+        "Strategies told nothing stay under the reference",
+    );
+    const FAR: (&str, &str) = (
+        "zoo-far-from-informed",
+        "Strategies told nothing stay under half the informed rung",
+    );
+    const ANCHOR: (&str, &str) = (
+        "anchor-strength",
+        "The informed bot plus the best zoo rung doesn't beat it",
+    );
+    let Some(zoo) = summary.zoo.as_ref() else {
+        let why =
+            "the ladder's summary has no strategy zoo: rerun it with this build's `just ladder`";
+        return vec![
+            Check::not_run(SOLVABLE, BELOW.0, BELOW.1, why),
+            Check::not_run(SOLVABLE, FAR.0, FAR.1, why),
+            Check::not_run(GRADED, ANCHOR.0, ANCHOR.1, why),
+        ];
+    };
+    // An unenforced zoo reports what it would fail.
+    let settle = |check: Check| -> Check {
+        if zoo.enforce || check.status != Status::Fail {
+            return check;
+        }
+        Check::warn(
+            check.section,
+            check.id,
+            check.title,
+            format!(
+                "information only ({}): {}",
+                zoo.why.as_deref().unwrap_or("not enforced"),
+                check.detail
+            ),
+        )
+    };
+    let skipped = if zoo.skipped.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "; skipped: {}",
+            zoo.skipped
+                .iter()
+                .map(|(rung, why)| format!("{rung} ({why})"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let rule = |section: &'static str, (id, title): (&'static str, &'static str), kind: &str| {
+        let results: Vec<&ZooResult> = zoo.checks.iter().filter(|c| c.kind == kind).collect();
+        if results.is_empty() {
+            return Check::not_run(
+                section,
+                id,
+                title,
+                if kind == "far_from_informed" {
+                    "the ladder file names no informed rung (`anchors.informed`, `gates.informed` or `zoo.informed`)"
+                } else {
+                    "no zoo rung ran"
+                },
+            );
+        }
+        let failed: Vec<String> = results
+            .iter()
+            .filter(|c| c.verdict == "fail" || (!fast && c.point_violated))
+            .map(|c| c.detail.clone())
+            .collect();
+        let unsure: Vec<String> = results
+            .iter()
+            .filter(|c| c.verdict == "inconclusive" && fast)
+            .map(|c| c.detail.clone())
+            .collect();
+        let check = if !failed.is_empty() {
+            Check::fail(section, id, title, failed.join("; "))
+        } else if !unsure.is_empty() {
+            Check::new(
+                section,
+                id,
+                title,
+                Status::Inconclusive,
+                format!("inconclusive at fast size: {}", unsure.join("; ")),
+            )
+        } else {
+            let closest = results
+                .iter()
+                .filter_map(|c| Some((c, c.total? - c.bar?)))
+                .max_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(c, _)| format!("; the closest: {}", c.detail))
+                .unwrap_or_default();
+            Check::pass(
+                section,
+                id,
+                title,
+                format!("{} zoo rungs hold{closest}{skipped}", results.len()),
+            )
+        };
+        settle(check)
+    };
+    let mut checks = vec![
+        rule(SOLVABLE, BELOW, "below_reference"),
+        rule(SOLVABLE, FAR, "far_from_informed"),
+    ];
+    let (id, title) = ANCHOR;
+    let anchor = match zoo.hybrid_status.as_str() {
+        "exempt" => Check::not_run(
+            GRADED,
+            id,
+            title,
+            format!(
+                "exempt: {}",
+                zoo.hybrid_exempt.as_deref().unwrap_or("no reason given")
+            ),
+        ),
+        "checked" => match zoo.checks.iter().find(|c| c.kind == "anchor_strength") {
+            None => Check::not_run(GRADED, id, title, "no informed rung to compare with"),
+            Some(c) => match c.verdict.as_str() {
+                "fail" => Check::fail(GRADED, id, title, c.detail.clone()),
+                "pass" => Check::pass(GRADED, id, title, c.detail.clone()),
+                "no_power" => Check::new(
+                    GRADED,
+                    id,
+                    title,
+                    Status::Inconclusive,
+                    format!("no power: {}", c.detail),
+                ),
+                _ => Check::new(
+                    GRADED,
+                    id,
+                    title,
+                    Status::Inconclusive,
+                    format!("within noise: {}", c.detail),
+                ),
+            },
+        },
+        _ => Check::fail(
+            GRADED,
+            id,
+            title,
+            "the ladder file names no hybrid: add `zoo.hybrid` (bench/checks/zoo/README.md) or `zoo.hybrid_exempt` with a reason",
+        ),
+    };
+    checks.push(settle(anchor));
+    checks
 }
 
 /// The last lines of a command's output, joined.
@@ -1997,6 +2194,7 @@ mod tests {
             probes_status: None,
             probes_exempt: None,
             pnls: vec![],
+            zoo: None,
         }
     }
 
@@ -2475,6 +2673,129 @@ mod tests {
         fine.point_violated = false;
         s.probes = Some(vec![fine]);
         assert_eq!(probe_check(&s, false).status, Status::Inconclusive);
+    }
+
+    fn zoo_result(id: &str, kind: &str, verdict: &str, point_violated: bool) -> ZooResult {
+        ZooResult {
+            kind: kind.into(),
+            verdict: verdict.into(),
+            detail: format!("{id}: {verdict}"),
+            point_violated,
+            total: Some(10.0),
+            bar: Some(20.0),
+        }
+    }
+
+    fn zoo(enforce: bool, hybrid_status: &str, checks: Vec<ZooResult>) -> ZooSummary {
+        ZooSummary {
+            enforce,
+            why: (!enforce).then(|| "predates the zoo".to_string()),
+            skipped: BTreeMap::new(),
+            hybrid_status: hybrid_status.into(),
+            hybrid_exempt: (hybrid_status == "exempt").then(|| "no library".to_string()),
+            checks,
+        }
+    }
+
+    fn zoo_statuses(zoo: Option<ZooSummary>, fast: bool) -> Vec<(&'static str, Status)> {
+        let mut s = summary(&[&[("nop", 0.0), ("reference", 50.0)]]);
+        s.zoo = zoo;
+        zoo_checks(&s, fast)
+            .into_iter()
+            .map(|c| (c.id, c.status))
+            .collect()
+    }
+
+    #[test]
+    fn a_zoo_rung_over_the_reference_fails_and_a_noisy_one_waits_for_the_full_gate() {
+        let sure = zoo(
+            true,
+            "exempt",
+            vec![
+                zoo_result("below_reference:zoo-dump", "below_reference", "fail", true),
+                zoo_result(
+                    "far_from_informed:zoo-dump",
+                    "far_from_informed",
+                    "pass",
+                    false,
+                ),
+            ],
+        );
+        assert_eq!(
+            zoo_statuses(Some(sure), true),
+            [
+                ("zoo-below-reference", Status::Fail),
+                ("zoo-far-from-informed", Status::Pass),
+                ("anchor-strength", Status::NotRun),
+            ]
+        );
+        let noisy = || {
+            zoo(
+                true,
+                "exempt",
+                vec![
+                    zoo_result("below_reference:zoo-dump", "below_reference", "pass", false),
+                    zoo_result(
+                        "far_from_informed:zoo-dump",
+                        "far_from_informed",
+                        "inconclusive",
+                        true,
+                    ),
+                ],
+            )
+        };
+        assert_eq!(zoo_statuses(Some(noisy()), true)[1].1, Status::Inconclusive);
+        assert_eq!(zoo_statuses(Some(noisy()), false)[1].1, Status::Fail);
+    }
+
+    #[test]
+    fn an_unenforced_zoo_warns_instead_of_failing() {
+        let z = zoo(
+            false,
+            "absent",
+            vec![zoo_result(
+                "below_reference:zoo-dump",
+                "below_reference",
+                "fail",
+                true,
+            )],
+        );
+        let statuses = zoo_statuses(Some(z), false);
+        assert_eq!(statuses[0].1, Status::Warn);
+        assert_eq!(statuses[1].1, Status::NotRun);
+        assert_eq!(statuses[2].1, Status::Warn);
+    }
+
+    #[test]
+    fn the_anchor_fails_only_with_confidence_and_an_enforced_task_names_its_hybrid() {
+        let anchor = |verdict: &str| {
+            zoo(
+                true,
+                "checked",
+                vec![zoo_result(
+                    "anchor_strength",
+                    "anchor_strength",
+                    verdict,
+                    verdict == "fail",
+                )],
+            )
+        };
+        let status = |z| zoo_statuses(Some(z), false)[2].1;
+        assert_eq!(status(anchor("fail")), Status::Fail);
+        assert_eq!(status(anchor("inconclusive")), Status::Inconclusive);
+        assert_eq!(status(anchor("no_power")), Status::Inconclusive);
+        assert_eq!(status(anchor("pass")), Status::Pass);
+        assert_eq!(status(zoo(true, "absent", vec![])), Status::Fail);
+        assert_eq!(status(zoo(true, "exempt", vec![])), Status::NotRun);
+    }
+
+    #[test]
+    fn an_older_summary_without_a_zoo_is_not_run() {
+        assert!(
+            zoo_statuses(None, true)
+                .iter()
+                .all(|(_, s)| *s == Status::NotRun)
+        );
     }
 
     #[test]
