@@ -138,7 +138,13 @@ pub const GENERATORS: &[Generator] = &[
     },
     Generator {
         name: "rfq-tiering",
-        practice: |prefix, count, seed| RfqTieringFamily::spcx().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                RfqTieringFamily::spcx().draw_set(prefix, count, seed),
+                false,
+                rfq_tiering_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 RfqTieringFamily::spcx().draw_set("hidden", count, seed),
