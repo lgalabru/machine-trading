@@ -850,8 +850,11 @@ def probe_checks(config, sets, count):
         add(f"honest:{n}", "honest", [n], v, detail, raw=base_raw[n], sharpe=s)
     near = [n for n in HONEST
             if not unusable[n] and NEAR_LINE[0] <= measured[n] <= NEAR_LINE[1]]
+    # Twelve sessions' Sharpe is one or two sessions': no honest rung is sure
+    # to land in the band, so a short set doesn't judge it (as luck5).
+    missing = "inconclusive" if count < LUCK5_MIN_SESSIONS else "no_power"
     add("honest:near-line", "honest", HONEST,
-        {"verdict": "pass" if near else "no_power", "violation_odds": None,
+        {"verdict": "pass" if near else missing, "violation_odds": None,
          "point_violated": not near},
         f"honest probes near the {PAYS_FROM} line (measured {NEAR_LINE[0]}-{NEAR_LINE[1]}): "
         f"{', '.join(near) or 'none: the pay line is untested'}")

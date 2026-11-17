@@ -290,6 +290,17 @@ class ProbeGate(unittest.TestCase):
         got = self.checks(**{"honest-0.2": [1.25, -0.75] * (self.N // 2)})
         self.assertEqual(got["honest:near-line"]["verdict"], "pass")
 
+    def test_a_short_set_cannot_judge_the_near_line_rung(self):
+        # The Sharpe of twelve sessions is one session's: no honest rung is
+        # sure to land in the band, so a short set reports it, and only a
+        # full-size one holds the task to it.
+        sets = self.ladder()
+        short = {c["id"]: c for c in ladder.probe_checks({}, sets, 12)}
+        self.assertEqual(short["honest:near-line"]["verdict"], "inconclusive")
+        self.assertTrue(short["honest:near-line"]["point_violated"])
+        full = {c["id"]: c for c in ladder.probe_checks({}, sets, 72)}
+        self.assertEqual(full["honest:near-line"]["verdict"], "no_power")
+
     def test_the_fatal_crash_is_gated_and_must_go_fatal(self):
         twin = [4.0] * self.N
         worse = {"bot": [-9.0] * 10 + twin[10:]}
