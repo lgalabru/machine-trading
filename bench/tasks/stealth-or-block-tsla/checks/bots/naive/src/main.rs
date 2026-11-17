@@ -18,6 +18,7 @@ fn main() -> mtx_kit::BotResult {
         .and_then(|m| Mode::parse(&m))
         .ok_or("MTX_NAIVE names no rung")?;
     let mut flow = Flow::new(mode);
-    flow.params.knobs(|name| std::env::var(format!("MTX_FLOW_{name}")).ok());
+    flow.params
+        .knobs(|name| std::env::var(format!("MTX_FLOW_{name}")).ok());
     mtx_kit::run(flow)
 }

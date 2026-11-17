@@ -10,7 +10,8 @@ fn main() -> mtx_kit::BotResult {
         .and_then(|m| Mode::parse(&m))
         .unwrap_or(Mode::Reference);
     let mut flow = Flow::new(mode);
-    flow.params.knobs(|name| std::env::var(format!("MTX_FLOW_{name}")).ok());
+    flow.params
+        .knobs(|name| std::env::var(format!("MTX_FLOW_{name}")).ok());
     mtx_kit::run(flow)
 }
 

@@ -527,7 +527,11 @@ mod tests {
                     assert!((x.level_pct + y.level_pct).abs() < 0.01 + x.level_pct.abs() * 0.01);
                 }
             }
-            assert!(met * 10 >= first.0.path.len() * 9, "{met} of {}", first.0.path.len());
+            assert!(
+                met * 10 >= first.0.path.len() * 9,
+                "{met} of {}",
+                first.0.path.len()
+            );
         }
         for (scenario, _) in &a {
             scenario.validate().unwrap();
@@ -562,11 +566,11 @@ mod tests {
         let family = StealthBlockFamily::tsla();
         let model = family.model();
         for (_, shape) in family.draw_set("t", 10, 2) {
-            assert_eq!(
-                model.calendar().kind_at(shape.start_unix),
+            assert_eq!(model.calendar().kind_at(shape.start_unix), Some("regular"));
+            assert_ne!(
+                model.calendar().kind_at(shape.start_unix - 61),
                 Some("regular")
             );
-            assert_ne!(model.calendar().kind_at(shape.start_unix - 61), Some("regular"));
         }
     }
 }

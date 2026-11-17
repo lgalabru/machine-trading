@@ -355,7 +355,8 @@ impl Flow {
         let b = p.block_slots;
         while self.scored < self.blocks.len() && (self.scored as u64 + 2) * b <= now {
             let k = self.scored as u64;
-            let (Some(from), Some(to)) = (self.mid_at((k + 1) * b), self.mid_at((k + 2) * b)) else {
+            let (Some(from), Some(to)) = (self.mid_at((k + 1) * b), self.mid_at((k + 2) * b))
+            else {
                 break;
             };
             let moved = (to / from - 1.0) * 1e4;
