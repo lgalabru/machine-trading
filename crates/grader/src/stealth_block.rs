@@ -47,8 +47,8 @@ use crate::{
 const TSLA_CALIBRATION: &str =
     include_str!("../../../calibration/market/tsla.20261113.8b7bca8e.toml");
 
-const JUMP_SOURCE: &str = "JUMP_REGIME_MEASUREMENT.md Table 2: Phoenix 1 m marks, 09:31-10:30, \
-     calibration 5-sigma rule; stated divided by vol_mult 2.2, which still scales stated sizes";
+const JUMP_SOURCE: &str =
+    "JUMP_REGIME_MEASUREMENT.md Table 2: Phoenix 1 m marks, 09:31-10:30, calibration 5-sigma rule";
 
 /// Which size class the informed trade in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -173,7 +173,6 @@ impl StealthBlockFamily {
         let mut calibration =
             Calibration::parse(TSLA_CALIBRATION).expect("TSLA's calibration is valid");
         calibration.sha256 = sha256_hex(TSLA_CALIBRATION.as_bytes());
-        let size = |pct: f64| (pct / self.vol_mult * 10_000.0).round() / 10_000.0;
         MarketModel::new(
             calibration,
             ModelSpec {
@@ -184,8 +183,8 @@ impl StealthBlockFamily {
                 jumps: true,
                 jump_rate_per_hour: Some(self.jump_rate_per_hour),
                 jump_size: Some(JumpSize {
-                    abs_median_pct: size(self.jump_median_pct),
-                    abs_p90_pct: size(self.jump_p90_pct),
+                    abs_median_pct: self.jump_median_pct,
+                    abs_p90_pct: self.jump_p90_pct,
                     source: JUMP_SOURCE.into(),
                 }),
                 ..ModelSpec::default()
