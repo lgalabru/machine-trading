@@ -597,14 +597,14 @@ impl CarryFamily {
 
     /// `count` sessions named `<prefix>-<n>`, stratified by the day: half
     /// positioning days, half discovery days, so a set isn't tilted toward
-    /// fading or following by the luck of the draw.
+    /// fading or following by the luck of the draw, in a shuffled order.
     pub fn draw_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<(Scenario, Shape)> {
         let split = (self.informed_share[0].1 + self.informed_share[1].0) / 2.0;
         let day = |share: f64| usize::from(share >= split);
         let mut quotas = [count / 2, count - count / 2];
-        let mut sessions = Vec::with_capacity(count);
+        let mut drawn = Vec::with_capacity(count);
         let mut draw = 0u64;
-        while sessions.len() < count {
+        while drawn.len() < count {
             draw += 1;
             let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(draw);
             let cell = day(self.informed_share(draw_seed));
@@ -612,10 +612,13 @@ impl CarryFamily {
                 continue;
             }
             quotas[cell] -= 1;
-            let name = format!("{prefix}-{}", sessions.len() + 1);
-            sessions.push(self.draw(&name, draw_seed));
+            drawn.push(draw_seed);
         }
-        sessions
+        crate::scenario::shuffled(drawn, seed)
+            .into_iter()
+            .enumerate()
+            .map(|(i, draw_seed)| self.draw(&format!("{prefix}-{}", i + 1), draw_seed))
+            .collect()
     }
 }
 

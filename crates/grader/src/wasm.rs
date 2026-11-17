@@ -655,7 +655,8 @@ impl WasmStrategy {
 pub struct Account {
     pub value_usd: f64,
     pub pnl_usd: f64,
-    /// Below the session's highest value so far.
+    /// Below the session's highest value so far; in a net-scored session,
+    /// net of what holding the start would have gained.
     pub drawdown_usd: f64,
     pub position: f64,
     /// Since the step before: the net of what filled meanwhile.
