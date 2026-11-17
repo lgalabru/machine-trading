@@ -3,4 +3,6 @@
 flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
+spoof-or-iceberg-exit mtx-bot-spoof-or-iceberg-exit mtx-spoof-or-iceberg-exit bench/tasks/spoof-or-iceberg-exit-qqq/reference
+spoof-or-iceberg-exit-informed mtx-bot-spoof-or-iceberg-exit-informed mtx-spoof-or-iceberg-exit-informed bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/informed
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
