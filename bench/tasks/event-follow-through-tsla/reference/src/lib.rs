@@ -308,10 +308,13 @@ pub fn flow_side(net: f64) -> Option<f64> {
     (net.abs() >= FLOW_UNITS).then(|| net.signum())
 }
 
+/// One step's takes: when, the oracle then, and each account's change.
+type Takes = (u64, f64, Vec<(usize, f64)>);
+
 /// Each account's takes, marked out against the oracle.
 #[derive(Debug, Clone, Default)]
 pub struct Markouts {
-    pending: VecDeque<(u64, f64, Vec<(usize, f64)>)>,
+    pending: VecDeque<Takes>,
     /// Takes, and their markouts' sum and sum of squares, in basis points.
     stats: Vec<(u32, f64, f64)>,
 }
