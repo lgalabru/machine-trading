@@ -1098,12 +1098,16 @@ pub(crate) fn jittered(rng: &mut Rng, base: u64, jitter: f64, floor: u64) -> u64
     drawn.max(floor as i64) as u64
 }
 
+/// The spread of a deliberate size (a push, a wall, a slice) when a card
+/// sets none: lognormal at 0.3, about 50 to 80 percent either way at two
+/// sigmas, whatever the market's own trade sizes spread to.
+pub(crate) const DEFAULT_SIZE_SIGMA: f64 = 0.3;
+
 /// A size in base units: `mult` trade sizes of the market, drawn
-/// lognormally around it at `sigma`, or at the market's own sigma without
-/// one, so the draws spread as the market's ordinary trades do. The draw is
-/// cut at two sigmas either way.
+/// lognormally around it at `sigma`, or at [`DEFAULT_SIZE_SIGMA`] without
+/// one. The draw is cut at two sigmas either way.
 pub(crate) fn sized(scale: &Scale, rng: &mut Rng, mult: f64, sigma: Option<f64>) -> f64 {
-    let sigma = sigma.unwrap_or(scale.trade_size_sigma);
+    let sigma = sigma.unwrap_or(DEFAULT_SIZE_SIGMA);
     if sigma == 0.0 {
         return scale.trade_size * mult;
     }

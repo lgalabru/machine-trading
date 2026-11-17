@@ -58,8 +58,8 @@ pub struct StopHunter {
     #[serde(default = "ten")]
     pub trigger_bps: f64,
     /// Its push, in market trade sizes: the median of what it draws each
-    /// time, lognormally at `size_sigma` (by default the market's own
-    /// `trade_size_sigma`, so its pushes read as large trades of the flow).
+    /// time, lognormally at `size_sigma` (by default 0.3, about 50 to
+    /// 80 percent either way at two sigmas).
     #[serde(default = "ten")]
     pub push_mult: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,6 +108,8 @@ enum State {
     Pushed {
         side: Side,
         size: f64,
+        /// The wallet's position before the push, to trade back what filled.
+        before: Option<f64>,
         /// The slot it trades back at.
         until: u64,
         wallet: usize,
@@ -139,6 +141,7 @@ impl Hunter {
             State::Pushed {
                 side,
                 size,
+                before,
                 until,
                 wallet,
             } => {
@@ -152,7 +155,20 @@ impl Hunter {
                     Side::Ask => now.book_usd * (1.0 - reach),
                 };
                 let wallet = &self.wallets[wallet];
-                wallet.take(now.at, back, size, limit).await;
+                // What the push filled, when the seat says: a push cut by its
+                // limit is traded back as far as it went, not as far as drawn.
+                let filled = match (before, wallet.seat().position().await) {
+                    (Some(before), Ok(now)) => (now - before).abs(),
+                    _ => size,
+                };
+                let size = if filled.is_finite() {
+                    filled.min(size)
+                } else {
+                    size
+                };
+                if size > 0.0 {
+                    wallet.take(now.at, back, size, limit).await;
+                }
                 wallet.count("reversals", 1);
                 let cooldown = jittered(
                     &mut self.rng,
@@ -206,6 +222,7 @@ impl Hunter {
                     1 => 0,
                     n => self.rng.below(n),
                 };
+                let before = self.wallets[wallet].seat().position().await.ok();
                 if self.wallets[wallet].take(now.at, side, size, limit).await {
                     self.wallets[wallet].count("pushes", 1);
                     let hold = jittered(
@@ -217,6 +234,7 @@ impl Hunter {
                     self.state = State::Pushed {
                         side,
                         size,
+                        before,
                         until: now.at + hold,
                         wallet,
                     };
@@ -274,6 +292,37 @@ mod tests {
         );
         let tally = &ledger.report().actors[0];
         assert_eq!((tally.counts["pushes"], tally.counts["reversals"]), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn it_trades_back_what_the_push_filled_not_what_it_drew() {
+        let (book, log) = Book::new("h", 100.20, 100.30);
+        let top = book.top.clone();
+        let position = book.position.clone();
+        let (wallet, _) = wallet(book);
+        let spec = StopHunter {
+            wallets: 1,
+            level_step_usd: 1.0,
+            trigger_bps: 10.0,
+            push_mult: 10.0,
+            size_sigma: Some(0.0),
+            overshoot_ticks: 3,
+            hold_slots: 10,
+            cooldown_slots: 100,
+            limit_bps: 50.0,
+            jitter: 0.0,
+            active: None,
+        };
+        let mut hunter = Hunter::new(spec, scale(), vec![wallet], Rng::new([1; 32]));
+        *top.lock().unwrap() = (Some(100.04), Some(100.08));
+        hunter.after_blocks(&at(4, 100.0)).await;
+        // The book gave it a quarter of the 10 it asked for.
+        *position.lock().unwrap() = -2.5;
+        hunter.after_blocks(&at(14, 99.9)).await;
+        assert_eq!(
+            log.lock().unwrap().last().unwrap(),
+            "h take Bid 2.500 at 100.40"
+        );
     }
 
     #[tokio::test]

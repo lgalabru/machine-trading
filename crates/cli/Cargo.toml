@@ -3,10 +3,18 @@ name = "mtx-cli"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
+publish = false
 
 [[bin]]
 name = "mtx"
 path = "src/main.rs"
+
+[features]
+default = ["generate"]
+# Drawing scenarios from a task's family: `mtx scenario generate` and
+# `mtx grade --draw`. The agent image builds `--no-default-features`, so an
+# agent can't sample the distribution the hidden set is drawn from.
+generate = ["mtx-grader/generators"]
 
 [dependencies]
 anyhow.workspace = true

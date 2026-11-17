@@ -52,8 +52,7 @@ pub struct Iceberg {
     #[serde(default = "one_tick")]
     pub distance_ticks: u64,
     /// What it shows at a time, in market trade sizes: the median of each
-    /// slice, which is drawn lognormally at `size_sigma` (by default the
-    /// market's own `trade_size_sigma`).
+    /// slice, which is drawn lognormally at `size_sigma` (by default 0.3).
     #[serde(default = "one")]
     pub display_mult: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
