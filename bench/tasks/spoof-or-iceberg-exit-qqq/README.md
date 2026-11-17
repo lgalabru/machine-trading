@@ -40,10 +40,11 @@ Gate 0 on the engine, four 36-session hidden sets (total PnL over 144 sessions):
 | hold and sell late | $35 | +0.24 |
 | trust the depth (a bid wall means support) | $217 | +1.50 |
 | sell evenly over the session | $313 | +2.18 |
+| rest an ask at the touch, sell the rest late | $393 | +2.73 |
 | reference | $822 | +5.71 |
 | informed bot | $2,014 | +13.99 |
 
-The reference's weighted PnL is 0.37 of the informed bot's (by 36-session set: 0.50, 0.06, 0.62, 0.32), with a per-session Sharpe of 0.43; the order (every rung that doesn't read the walls' owners < reference < informed) holds on 0.951 of bootstrapped 72-session sets.
+The reference's weighted PnL is 0.37 of the informed bot's (by 36-session set: 0.50, 0.06, 0.62, 0.32), with a per-session Sharpe of 0.43; the order (every rung that doesn't read the walls' owners < reference < informed) holds on 0.938 of bootstrapped 72-session sets.
 
 ## Realism limits
 

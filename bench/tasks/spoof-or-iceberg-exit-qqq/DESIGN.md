@@ -116,13 +116,16 @@ rung a component, bootstrapped 72-session sets. Walls 8 to 36 ticks out.
 | late | 35 | 0.24 | -0.01 |
 | trust-depth | 217 | 1.50 | -0.10 |
 | twap | 313 | 2.18 | -0.07 |
+| passive (rests an ask at the touch, sells the rest late) | 393 | 2.73 | 0.11 |
 | reference | 822 | 5.71 | 0.37 |
 | informed | 2014 | 13.99 | 1.00 |
 
-- Signal gate: informed / best non-reading (twap) = 6.43 (need 2); holds
-  on 1.000 of bootstrapped sets.
-- Order `max(twap, late, trust-depth, fade-walls) < reference < informed`
-  holds on 0.951 of bootstrapped sets (need 0.85).
+- Signal gate: informed / best non-reading (passive) = 5.13 (need 2);
+  holds on 1.000 of bootstrapped sets.
+- Order `max(twap, late, passive, trust-depth, fade-walls) < reference <
+  informed` holds on 0.938 of bootstrapped sets (need 0.85). `passive` was
+  added after the early agent check, whose bot sold passively after the
+  jump; it was graded on the same four sets after the rest.
 - Strength band: reference 0.37 of informed, v2-weighted (band 0.2 to
   0.7, target 0.5 or under; by set 0.50, 0.06, 0.62, 0.32); per-session
   Sharpe 0.43.
