@@ -7,7 +7,7 @@ each version learned. It is card 2 of the batch-4 cards
 (`JUMP_REGIME_MEASUREMENT.md`). The departures from the card are listed
 last.
 
-Status: Gate 0 on prototypes (see `hidden/gate0/README.md`).
+Status: Gate 0 FAILED on version 2, the one rework (`hidden/gate0/README.md`); stopped.
 
 ## Thesis
 
