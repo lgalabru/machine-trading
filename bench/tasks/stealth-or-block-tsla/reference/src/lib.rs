@@ -94,29 +94,40 @@ pub struct Params {
 
 impl Params {
     pub fn of(mode: Mode) -> Self {
+        // Each rung's knobs are its best on 72 recorded sessions (gate 0's
+        // replay model, `hidden/gate0/model.py`); the reference takes the
+        // informed bot's.
         let base = Params {
-            look_slots: 20,
-            hold_slots: 150,
-            threshold: 4.0,
+            look_slots: 80,
+            hold_slots: 80,
+            threshold: 6.0,
             size_cut: 0.08,
             size_share: 1.0,
-            momentum_bps: 15.0,
+            momentum_bps: 40.0,
             block_slots: 75,
             min_block_net: 3.0,
-            t_cut: 1.5,
+            t_cut: 1.0,
             t_margin: 0.5,
             min_blocks: 4,
         };
         match mode {
             Mode::Reference | Mode::Informed => base,
-            Mode::FollowSmall | Mode::FollowLarge => Params {
-                look_slots: 40,
-                threshold: 6.0,
+            Mode::FollowSmall => Params {
+                look_slots: 160,
+                threshold: 12.0,
+                hold_slots: 150,
+                ..base
+            },
+            Mode::FollowLarge => Params {
+                look_slots: 160,
+                threshold: 12.0,
+                hold_slots: 40,
                 ..base
             },
             Mode::FollowAll => Params {
-                look_slots: 40,
-                threshold: 8.0,
+                look_slots: 80,
+                threshold: 12.0,
+                hold_slots: 80,
                 ..base
             },
             Mode::SmallFollowAll => Params {
@@ -127,9 +138,9 @@ impl Params {
                 ..base
             },
             Mode::Momentum => Params {
-                look_slots: 40,
+                look_slots: 20,
                 hold_slots: 150,
-                momentum_bps: 25.0,
+                momentum_bps: 40.0,
                 ..base
             },
         }
