@@ -104,9 +104,7 @@ impl BotEnv {
             self.max_position,
             self.max_drawdown_usd,
         );
-        mandate.term = Some(Term {
-            until_slot: self.end_slot,
-        });
+        mandate.term = Some(Term::until(self.end_slot));
         Ok(mandate)
     }
 
@@ -195,7 +193,7 @@ mod tests {
             mandate_path: None,
         };
         let mandate = env.mandate().unwrap();
-        assert_eq!(mandate.term, Some(Term { until_slot: 480 }));
+        assert_eq!(mandate.term, Some(Term::until(480)));
         assert_eq!(
             mandate.universe[0].instrument.to_string(),
             "phoenix:perp:SPCX"
