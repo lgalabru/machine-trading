@@ -256,7 +256,7 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
             } else if Path::new(&target).exists() {
                 realism::check_scenarios(&cal, &target, &load_scenarios(Path::new(&target))?)
             } else if let Some(generator) = generators::generator(&target) {
-                let scenarios = (generator.practice)("check", count, seed);
+                let scenarios = generator.practice("check", count, seed);
                 realism::check_scenarios(&cal, &target, &scenarios)
             } else {
                 anyhow::bail!(
