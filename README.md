@@ -86,7 +86,9 @@ records intentions (`target_position`, `quote`, `buy`, `sell`, `bid`,
 `mtx_kit::rpc` reads anything else from the chain.
 `mtx bot practice --task <name>` practises another task in `bench/tasks`,
 and scenarios `mtx scenario generate` draws can be graded too:
-`mtx bot practice more/*.json`. `mtx bot check` and `mtx bot pack` check
+`mtx bot practice more/*.json` (on your own machine: the agents' image of a
+task made by `mtx task new` holds an `mtx` with no generator, so an agent has
+only the task's practice set). `mtx bot check` and `mtx bot pack` check
 a bot directory and package its source. The strategy is `src/lib.rs`, and
 `just build` builds it into `bot.wasm`, the one file the grader loads: no
 files, network or clock inside, and the same result on any machine.
