@@ -38,6 +38,9 @@ use crate::{Cli, authoring, scoring_text, tasks};
 /// The ladder's extra gate: the best informed policy must make at least this
 /// many times the best one that doesn't read the task's signal.
 const DEFAULT_MIN_RATIO: f64 = 2.0;
+/// The least the best non-reading rung is taken to earn (total PnL over every
+/// set), so losing rungs don't make the informed bot's multiple unbounded.
+const MIN_BASELINE_USD: f64 = 25.0;
 /// The strength band by default: the reference's weighted PnL as a share of
 /// the informed bot's, so there is room above and below 0.5.
 const DEFAULT_BAND: [f64; 2] = [0.2, 0.7];
@@ -282,7 +285,7 @@ pub struct RuleResult {
     pub odds: f64,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ExploitResult {
     pub bot: String,
     pub ok: bool,
@@ -309,6 +312,10 @@ pub struct ExploitResult {
     pub below_odds: Option<f64>,
     #[serde(default)]
     pub reached_bound: Option<bool>,
+    /// The most it may earn as a multiple of the reference (absent in older
+    /// summaries: no test).
+    #[serde(default)]
+    pub max_ratio: Option<f64>,
     /// `pass`, `fail` or `no_power`: a pushing bot that moved the mark too
     /// little proves nothing by losing.
     #[serde(default)]
@@ -471,7 +478,9 @@ pub fn strength_band(
         "weighted (k = {k}) over {} sessions: reference ${e_ref:.0}, informed ${e_inf:.0}, ratio {ratio:.2} in [{low}, {high}]; reference Sharpe {s:.2} (at least {min_sharpe})",
         reference.len()
     );
-    match (misses.is_empty(), fast) {
+    // A reference that loses money is no thin edge a short set might hide: it
+    // fails in fast mode as in full.
+    match (misses.is_empty(), fast && e_ref > 0.0) {
         (true, _) => Check::pass(SOLVABLE, id, title, measured),
         (false, true) => Check::new(
             SOLVABLE,
@@ -712,20 +721,18 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
         (Ok(i), Ok(b)) => (i, b),
         (Err(e), _) | (_, Err(e)) => return Check::fail(SOLVABLE, id, title, e),
     };
-    let floor = baseline.1.max(0.0);
+    // The best non-reading rung's actual PnL, held to a small positive floor
+    // so that rungs that all lose don't make the ratio infinite trivially.
+    let floor = baseline.1.max(MIN_BASELINE_USD);
     let ok = informed.1 > 0.0 && informed.1 >= ratio * floor;
-    let multiple = if floor > 0.0 {
-        format!("{:.1}x", informed.1 / floor)
-    } else {
-        "unbounded".to_string()
-    };
+    let multiple = format!("{:.1}x", informed.1 / floor);
     Check::from(
         SOLVABLE,
         id,
         title,
         ok,
         format!(
-            "{} ${:.0} vs {} ${:.0}: {multiple}, need {ratio:.0}x ({} set{})",
+            "{} ${:.0} vs {} ${:.0} (floor ${MIN_BASELINE_USD:.0}): {multiple}, need {ratio:.0}x ({} set{})",
             informed.0,
             informed.1,
             baseline.0,
@@ -735,10 +742,6 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
         ),
     )
 }
-
-/// Why a fast set whose reference lost money can't settle the reference and
-/// order checks.
-const THIN_SAMPLE: &str = "The reference lost money on this small sample; the task's edge is too thin to judge in fast mode, and the full ladder decides";
 
 /// The checks the ladder answers: the reference and nop anchors, the order,
 /// the signal gate, the exploit bots, clean runs.
@@ -750,9 +753,6 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .iter()
         .filter_map(|s| s.get("reference").copied())
         .collect();
-    // A short set can lose money by chance for a task whose reference has a
-    // thin edge: that says nothing for or against the task.
-    let thin = fast && reference.iter().any(|r| *r <= 0.0);
     let reference_pnl = format!(
         "reference total PnL per set: {}",
         reference
@@ -761,23 +761,13 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
             .collect::<Vec<_>>()
             .join(", ")
     );
-    checks.push(if thin {
-        Check::new(
-            SOLVABLE,
-            "reference-scores-1",
-            "Reference is the 1.0 line (makes money on every set)",
-            Status::Inconclusive,
-            format!("{reference_pnl}. {THIN_SAMPLE}"),
-        )
-    } else {
-        Check::from(
-            SOLVABLE,
-            "reference-scores-1",
-            "Reference is the 1.0 line (makes money on every set)",
-            reference.len() == sets && reference.iter().all(|r| *r > 0.0),
-            reference_pnl,
-        )
-    });
+    checks.push(Check::from(
+        SOLVABLE,
+        "reference-scores-1",
+        "Reference is the 1.0 line (makes money on every set)",
+        reference.len() == sets && reference.iter().all(|r| *r > 0.0),
+        reference_pnl,
+    ));
     let nop: Vec<f64> = summary
         .totals
         .iter()
@@ -824,15 +814,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
             .collect::<Vec<_>>()
             .join("; ")
     };
-    checks.push(if thin && !broken.is_empty() {
-        Check::new(
-            SOLVABLE,
-            "ladder-order",
-            "Skill ladder keeps its order",
-            Status::Inconclusive,
-            format!("{order_detail}. {THIN_SAMPLE}"),
-        )
-    } else {
+    checks.push({
         Check::from(
             SOLVABLE,
             "ladder-order",
@@ -891,6 +873,11 @@ fn exploit_breaches(e: &ExploitResult, fast: bool) -> Vec<(bool, String)> {
         return e.reasons.iter().map(|r| (true, r.clone())).collect();
     };
     let mut out = Vec::new();
+    if let (Some(ratio), Some(max)) = (e.ratio, e.max_ratio)
+        && ratio > max
+    {
+        out.push((!fast, format!("{ratio:.2}x the reference, over {max}x")));
+    }
     if e.reached_bound == Some(true) {
         out.push((true, "reached the bound".to_string()));
     }
@@ -1816,6 +1803,17 @@ mod tests {
     const INFORMED: &[f64] = &[120.0, 30.0, 80.0, 90.0, -20.0, 60.0];
 
     #[test]
+    fn a_reference_that_loses_money_fails_the_band_even_on_a_fast_set() {
+        let k = scoring_text::Settings::default();
+        let losing = sessions(&[&[
+            ("reference", &[-5.0, -2.0, 4.0, -6.0, 1.0, -2.0][..]),
+            ("informed", INFORMED),
+        ]]);
+        let check = strength_band(&losing, &anchors(), &k, true);
+        assert_eq!(check.status, Status::Fail, "{}", check.detail);
+    }
+
+    #[test]
     fn a_reference_in_the_band_passes_and_one_outside_fails() {
         let k = scoring_text::Settings::default();
         // Weighted at k = 1.5: the reference 130, the informed bot 350.
@@ -1986,15 +1984,35 @@ mod tests {
     }
 
     #[test]
-    fn a_losing_baseline_is_unbounded_but_the_informed_policy_must_profit() {
+    fn a_losing_baseline_is_held_to_a_small_positive_floor_not_to_nothing() {
+        // Losing rungs make the ratio unbounded, so the informed policy must
+        // beat the floor instead: 2 x $25.
+        let s = summary(&[&[("told", 100.0), ("fade", -5.0)]]);
+        let check = signal_gate(&s, &gate(&["told"], &["fade"]));
+        assert_eq!(check.status, Status::Pass, "{}", check.detail);
+        // The actual PnL and the floor are in the detail.
+        assert!(check.detail.contains("-5"), "{}", check.detail);
+        assert!(check.detail.contains("floor $25"), "{}", check.detail);
         let s = summary(&[&[("told", 10.0), ("fade", -5.0)]]);
-        assert_eq!(
-            signal_gate(&s, &gate(&["told"], &["fade"])).status,
-            Status::Pass
-        );
+        let check = signal_gate(&s, &gate(&["told"], &["fade"]));
+        assert_eq!(check.status, Status::Fail, "{}", check.detail);
         let s = summary(&[&[("told", -1.0), ("fade", -5.0)]]);
         assert_eq!(
             signal_gate(&s, &gate(&["told"], &["fade"])).status,
+            Status::Fail
+        );
+    }
+
+    #[test]
+    fn a_baseline_over_the_floor_is_the_best_rungs_actual_pnl() {
+        let s = summary(&[&[("told", 90.0), ("fade", 40.0), ("follow", -300.0)]]);
+        assert_eq!(
+            signal_gate(&s, &gate(&["told"], &["fade", "follow"])).status,
+            Status::Pass
+        );
+        let s = summary(&[&[("told", 70.0), ("fade", 40.0), ("follow", -300.0)]]);
+        assert_eq!(
+            signal_gate(&s, &gate(&["told"], &["fade", "follow"])).status,
             Status::Fail
         );
     }
@@ -2085,6 +2103,46 @@ mod tests {
         let report = Report::new("t", "fast", "abc".into(), vec![exploit_check(&s, true)]);
         assert!(report.passed);
         assert!(report.markdown().contains("1 inconclusive"));
+    }
+
+    #[test]
+    fn an_exploit_over_its_multiple_of_the_reference_fails_the_exploit_check() {
+        let over = ExploitResult {
+            bot: "rich".into(),
+            ok: true,
+            ratio: Some(3.0),
+            max_ratio: Some(2.0),
+            profitable: 0.2,
+            sessions: Some(72),
+            profitable_sessions: Some(14),
+            max_profitable: Some(0.75),
+            reached_bound: Some(false),
+            ..Default::default()
+        };
+        let check = |e: ExploitResult, fast: bool| {
+            let mut s = summary(&[]);
+            s.exploits.push(e);
+            exploit_check(&s, fast)
+        };
+        let c = check(over.clone(), false);
+        assert_eq!(c.status, Status::Fail, "{}", c.detail);
+        assert!(
+            c.detail.contains("3.00x") && c.detail.contains("2x"),
+            "{}",
+            c.detail
+        );
+        // A fast set's ratio is noisy: the full ladder decides.
+        assert_eq!(check(over.clone(), true).status, Status::Inconclusive);
+        let within = ExploitResult {
+            ratio: Some(1.5),
+            ..over.clone()
+        };
+        assert_eq!(check(within, false).status, Status::Pass);
+        let none = ExploitResult {
+            ratio: None,
+            ..over
+        };
+        assert_eq!(check(none, false).status, Status::Pass);
     }
 
     #[test]
@@ -2222,7 +2280,7 @@ mod tests {
     }
 
     #[test]
-    fn a_reference_that_lost_money_on_a_fast_sample_is_inconclusive_not_failed() {
+    fn a_reference_that_lost_money_fails_in_fast_mode_as_in_full() {
         let mut s = summary(&[&[
             ("nop", 0.0),
             ("reference", -38.0),
@@ -2240,8 +2298,8 @@ mod tests {
         let status =
             |checks: &[Check], id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         let fast = ladder_checks(&s, &g, true);
-        assert_eq!(status(&fast, "reference-scores-1"), Status::Inconclusive);
-        assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
+        assert_eq!(status(&fast, "reference-scores-1"), Status::Fail);
+        assert_eq!(status(&fast, "ladder-order"), Status::Fail);
         let full = ladder_checks(&s, &g, false);
         assert_eq!(status(&full, "reference-scores-1"), Status::Fail);
         assert_eq!(status(&full, "ladder-order"), Status::Fail);

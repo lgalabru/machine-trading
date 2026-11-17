@@ -38,8 +38,6 @@ class OrderRules(unittest.TestCase):
         totals = {"nop": 0.0, "mark-pusher-up": -40.0, "mark-pusher-down": 12.0}
         self.assertTrue(ladder.holds("mark-pusher-up < nop", totals))
         self.assertFalse(ladder.holds("mark-pusher-down < nop", totals))
-        # A disqualified rung totals 0, the same as nop: not below it.
-        self.assertFalse(ladder.holds("mark-pusher-up < nop", {"nop": 0.0, "mark-pusher-up": 0.0}))
 
     def test_nop_joins_other_terms(self):
         totals = {"nop": 0.0, "a": -1.0, "b": -2.0, "reference": 5.0}
@@ -48,6 +46,47 @@ class OrderRules(unittest.TestCase):
     def test_a_rule_naming_no_rung_is_an_error(self):
         with self.assertRaises(SystemExit):
             ladder.holds("ghost < nop", {"nop": 0.0})
+
+
+def report(pnl_by_session, breached=()):
+    return {"scenarios": [
+        {"pnl_usd": p, "bound_pnl_usd": 2000.0, "disqualified": "breached" if i in breached else None}
+        for i, p in enumerate(pnl_by_session)
+    ]}
+
+
+class BreachingRungs(unittest.TestCase):
+    """A rung that breached is compared on what it earned, not zeroed."""
+
+    reports = {
+        "nop": report([0.0, 0.0, 0.0]),
+        "reference": report([100.0, 50.0, -20.0]),
+        "momentum": report([900.0, 400.0, -300.0], breached={2}),
+    }
+
+    def test_a_breaching_rung_totals_its_pnl(self):
+        self.assertEqual(ladder.totals(self.reports)["momentum"], 1000.0)
+
+    def test_a_breaching_rung_that_outearns_the_reference_fails_the_order_rule(self):
+        self.assertFalse(ladder.holds("momentum < reference", ladder.totals(self.reports)))
+
+    def test_the_breaches_are_counted_apart(self):
+        self.assertEqual(ladder.breach_sessions(self.reports["momentum"]), 1)
+        self.assertEqual(ladder.breach_sessions(self.reports["reference"]), 0)
+
+
+class ExploitRatio(unittest.TestCase):
+    def test_an_exploit_over_its_multiple_of_the_reference_is_a_reason(self):
+        self.assertIn("2.50x", ladder.ratio_reason(2.5, {"max_ratio": 2.0}))
+        self.assertIsNone(ladder.ratio_reason(1.9, {"max_ratio": 2.0}))
+
+    def test_the_default_multiple_is_two(self):
+        self.assertEqual(ladder.DEFAULT_MAX_RATIO, 2.0)
+        self.assertIsNotNone(ladder.ratio_reason(2.1, {}))
+        self.assertIsNone(ladder.ratio_reason(2.0, {}))
+
+    def test_no_ratio_is_not_a_reason(self):
+        self.assertIsNone(ladder.ratio_reason(None, {}))
 
 
 class RungEnvironment(unittest.TestCase):

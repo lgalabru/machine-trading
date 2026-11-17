@@ -23,9 +23,9 @@ finished ladder) adjust a run.
 | | a v2 task: both anchors named in its ladder file, the informed bot written; the verifier grades with `--scoring v2-headline` (v2 as the one score) and the instruction's scoring rules are current; it opts into the probe gate | `mtx task status` |
 | Solvable and fair | the reference makes money on every set (it is the 1.0 line); doing nothing scores 0 | ladder |
 | | the skill ladder keeps its order, on every set and in the bootstrap | ladder |
-| | the best informed policy makes at least 2x the best non-reading one | ladder rungs |
+| | the best informed policy makes at least 2x the best non-reading one's actual PnL, or a $25 floor when every non-reading rung does worse | ladder rungs |
 | | the oracle (the reference) scores skill 1.0, or under scoring v2 0.5 before the near-breach charge and any breach penalty (`score_v2_raw_before_charge`), with `reward` v2's score and no `skill` beside it; the charge, anchored on the informed bot's drawdowns, can take a reference that draws down deeper under 0.5 by design, and is reported beside it, not checked; nop scores 0 under Harbor | full: `just harbor-checks` |
-| | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive) | ladder, per-session PnL |
+| | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive, unless the reference loses money, which fails) | ladder, per-session PnL |
 | | no task's verifier tells the graded bot anything (`--tell-latent`, `--tell-regime`) | `tests/test.sh` |
 | | a v2 task's verifier runs its informed bot on the hidden set: `tests/test.sh` draws its set, grades only a component and passes `--informed /opt/mtx/anchors/<anchor>-informed`, which `bench/image/anchors.txt` builds from the ladder's informed anchor, and that bot is written (v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh`, `anchors.txt` |
 | Graded correctly | the exploit bots stay inside their limits (a pushing bot that moved the mark too little is `no_power`, and fails); no rung is refused or disqualified | ladder |
@@ -43,10 +43,17 @@ every run grades the same sessions and a verdict doesn't flip with the draw.
 It is never a hidden set: hidden sets come from fresh 256-bit secrets, and
 `MTX_EVAL_SEED` is never used here.
 
-A task whose reference edge is thin (market-making's is about $3 a session
-against $15 of noise) can lose money on twelve sessions by chance. Then the
-reference and order checks are `inconclusive`, not failed: the edge is too
-thin to judge in fast mode, and the full ladder decides.
+A reference that loses money fails in fast mode as in full: the reference
+check and the order check fail, and so does the strength band. A short set
+can lose money by chance for a thin edge, but a gate that passes a losing
+reference can't fail, so it is not tolerated.
+
+Rungs are compared on the PnL they earned, a breach included (a breached
+session stops out, and its loss is in the total); the breaches are counted
+beside. Zeroing a rung that breached let one that out-earned the reference
+pass `rung < reference`. An exploit bot may also earn at most
+`exploits.max_ratio` times the reference (2 unless the ladder file says); in
+a fast set a bot over it is `inconclusive`.
 
 Twelve sessions can't carry the full ladder's thresholds, so fast mode
 loosens two of them. The bootstrap floor drops to 0.5: the order must still
