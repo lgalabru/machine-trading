@@ -10,14 +10,14 @@
 //! under the same mandate, costs and latency as any bot.
 //!
 //! - **The informed trader** sends noise like every account, and a burst
-//!   ahead of a move. Phoenix names traders by their account, a PDA of the
-//!   wallet, so it reads that account's NVDA position every step. Its
-//!   noise trades now and then, either way; its burst trades often and one
-//!   way: `BURST_TRADES` or more changes within `BURST_SLOTS`, at least
-//!   `BURST_UNITS` net and nearly all of it the same way, is the burst, and
-//!   its sign is the move's. (The book fills sells more easily than buys
-//!   while the grader's maker leans short, so a slow net drift says
-//!   nothing.)
+//!   ahead of a move. It reads the orders that wallet sends, filled or not
+//!   (`getSignaturesForAddress`, then each transaction's Phoenix market
+//!   order: its side and size): its noise orders come now and then, either
+//!   way; its burst comes often and one way. `BURST_TRADES` or more orders
+//!   within `BURST_SLOTS`, at least `BURST_UNITS` net and nearly all of it
+//!   the same way, is the burst, and its sign is the move's. Orders, not
+//!   fills: a burst order the book doesn't fill says as much as one it
+//!   does.
 //! - **Up:** it buys the rest of the order at once, at the maker when it can
 //!   and on the backstop when it must, paying up to 60 bp over the broker.
 //! - **Down:** it buys nothing, and rests nothing, until the fall has
@@ -29,12 +29,13 @@
 
 use std::collections::VecDeque;
 
+use serde_json::{Value, json};
+
 use mtx_bot_perp_accumulate::{Order, number_after, round_down_cents, round_lots};
 use mtx_kit::{
     log,
     prelude::*,
-    rpc_account,
-    venue::{PhoenixVenue, key, phoenix_rise::accounts::trader::Trader},
+    venue::{PhoenixVenue, key},
 };
 
 /// The informed trader's net change, in NVDA, within a window of slots,
@@ -61,13 +62,15 @@ pub struct Informed {
     order: Order,
     maker_bps: f64,
     pace: f64,
-    /// The informed trader's Phoenix account, NVDA's asset id and a base
-    /// lot in NVDA.
-    trader: String,
-    asset_id: u64,
+    /// The informed trader's wallet, Phoenix's program and a base lot in
+    /// NVDA.
+    wallet: String,
+    program: String,
     lot: f64,
-    /// Its position at recent steps.
-    seen: VecDeque<(u64, f64)>,
+    /// The newest of its transactions read.
+    last_signature: Option<String>,
+    /// Its recent orders: slot, and size signed by side (buy positive).
+    orders: VecDeque<(u64, f64)>,
     /// The move's sign once its burst showed.
     sign: f64,
     high: f64,
@@ -78,21 +81,75 @@ pub struct Informed {
 }
 
 impl Informed {
-    /// The informed trader's NVDA position, in NVDA.
-    fn informed_position(&self) -> f64 {
-        let Ok(Some(data)) = rpc_account(&self.trader) else {
-            return 0.0;
+    /// The orders the informed wallet sent since the last read: each
+    /// Phoenix market order's slot and size, signed by side.
+    fn new_orders(&mut self) -> Vec<(u64, f64)> {
+        let mut options = json!({ "limit": 100, "commitment": "confirmed" });
+        if let Some(last) = &self.last_signature {
+            options["until"] = json!(last);
+        }
+        let Ok(text) = rpc("getSignaturesForAddress", &json!([self.wallet, options]).to_string())
+        else {
+            return Vec::new();
         };
-        let Ok(trader) = Trader::try_from_account_bytes(&data) else {
-            return 0.0;
+        let Ok(Value::Array(list)) = serde_json::from_str::<Value>(&text) else {
+            return Vec::new();
         };
-        trader
-            .positions()
-            .find(|(asset, _)| *asset == self.asset_id)
-            .map_or(0.0, |(_, p)| {
-                p.to_position().base_lot_position.as_inner() as f64 * self.lot
-            })
+        if let Some(newest) = list.first().and_then(|e| e["signature"].as_str()) {
+            self.last_signature = Some(newest.to_string());
+        }
+        let mut out = Vec::new();
+        for entry in list.iter().rev() {
+            let Some(signature) = entry["signature"].as_str() else {
+                continue;
+            };
+            let params = json!([
+                signature,
+                { "encoding": "json", "maxSupportedTransactionVersion": 0, "commitment": "confirmed" }
+            ]);
+            let Ok(text) = rpc("getTransaction", &params.to_string()) else {
+                continue;
+            };
+            let Ok(tx) = serde_json::from_str::<Value>(&text) else {
+                continue;
+            };
+            let slot = tx["slot"].as_u64().unwrap_or(0);
+            let message = &tx["transaction"]["message"];
+            let keys = message["accountKeys"].as_array().cloned().unwrap_or_default();
+            for ix in message["instructions"].as_array().into_iter().flatten() {
+                let program = ix["programIdIndex"]
+                    .as_u64()
+                    .and_then(|i| keys.get(i as usize))
+                    .and_then(Value::as_str);
+                if program != Some(self.program.as_str()) {
+                    continue;
+                }
+                if let Some(order) = ix["data"].as_str().and_then(|d| market_order(d, self.lot)) {
+                    out.push((slot, order));
+                }
+            }
+        }
+        out
     }
+}
+
+/// A Phoenix market order's size, signed by side (buy positive), from its
+/// instruction data: an 8-byte discriminant, then the order packet, an
+/// immediate-or-cancel (2), its side (0 bid, 1 ask), an optional price in
+/// ticks, and the base lots.
+fn market_order(data: &str, lot: f64) -> Option<f64> {
+    let bytes = bs58::decode(data).into_vec().ok()?;
+    if bytes.len() < 11 || bytes[8] != 2 {
+        return None;
+    }
+    let sign = match bytes[9] {
+        0 => 1.0,
+        1 => -1.0,
+        _ => return None,
+    };
+    let at = if bytes[10] == 1 { 19 } else { 11 };
+    let lots = u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?);
+    Some(sign * lots as f64 * lot)
 }
 
 impl Strategy for Informed {
@@ -111,13 +168,13 @@ impl Strategy for Informed {
             .ok_or("MTX_REGIME names no informed wallet")?;
         let venue = PhoenixVenue::from_json(&session.venue)?;
         let market = venue.market(&session.symbol)?;
-        self.trader = venue.trader_account(&key(wallet)?).to_string();
-        self.asset_id = u64::from(market.asset_id);
+        key(wallet)?;
+        self.wallet = wallet.to_string();
+        self.program = mtx_kit::venue::phoenix_rise::ix::PHOENIX_PROGRAM_ID.to_string();
         self.lot = venue.lots_to_base_units(market, 1);
-        log(&format!(
-            "informed trader {wallet}, account {}",
-            self.trader
-        ));
+        // Everything it sent before the session is history, not flow.
+        self.new_orders();
+        log(&format!("informed trader {wallet}"));
         Ok(())
     }
 
@@ -130,35 +187,31 @@ impl Strategy for Informed {
         let t = self.order.progress(slot);
         orders.cancel_all();
 
-        // The informed trader's burst, read off its position.
+        // The informed trader's burst, read off the orders it sends.
         if self.sign == 0.0 {
-            let now = self.informed_position();
-            self.seen.push_back((slot, now));
+            for order in self.new_orders() {
+                self.orders.push_back(order);
+            }
             while self
-                .seen
+                .orders
                 .front()
                 .is_some_and(|(s, _)| s + BURST_SLOTS < slot)
             {
-                self.seen.pop_front();
+                self.orders.pop_front();
             }
-            let moved = now - self.seen.front().map_or(now, |(_, p)| *p);
-            let changes: Vec<f64> = self
-                .seen
+            let net: f64 = self.orders.iter().map(|(_, q)| q).sum();
+            let traded: f64 = self.orders.iter().map(|(_, q)| q.abs()).sum();
+            let same_way = self
+                .orders
                 .iter()
-                .zip(self.seen.iter().skip(1))
-                .map(|((_, a), (_, b))| b - a)
-                .filter(|d| d.abs() > 1e-9)
-                .collect();
-            let traded: f64 = changes.iter().map(|d| d.abs()).sum();
-            let same_way = changes.iter().filter(|d| d.signum() == moved.signum()).count();
-            if moved.abs() >= BURST_UNITS
+                .filter(|(_, q)| q.signum() == net.signum())
+                .count();
+            if net.abs() >= BURST_UNITS
                 && same_way >= BURST_TRADES
-                && moved.abs() >= BURST_ONE_WAY * traded
+                && net.abs() >= BURST_ONE_WAY * traded
             {
-                self.sign = moved.signum();
-                log(&format!(
-                    "slot {slot}: the informed trader moved {moved:+.3}"
-                ));
+                self.sign = net.signum();
+                log(&format!("slot {slot}: the informed trader sent {net:+.3} one way"));
             }
         }
         // Where a fall stands: the session's high, and its low since then.

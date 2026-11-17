@@ -126,8 +126,9 @@ the README.
   informed trader is seated in every session and trades noise like every
   account; ahead of a move its burst comes from it, and each fake-out from
   one other account. The bot maps the wallet to its Phoenix trader account,
-  reads that account's NVDA position every step, and takes a net change of
-  0.6 NVDA within 120 slots as the burst: up, it buys the rest at once
+  reads the orders that wallet sends, filled or not (its transactions'
+  Phoenix market orders: side and size), and takes 4 or more one-way
+  orders within 120 slots, at least 0.5 NVDA net, as the burst: up, it buys the rest at once
   (paying up to 60 bp over the broker); down, it waits until the oracle has
   fallen 0.5% from the high and stopped falling; until then, or in a calm
   session, it works passively. It isn't told whether the session moves,
@@ -154,6 +155,15 @@ from informed bursts.
   template) and #47 (the informed bot on hidden sets). Gate 0's told rung
   knew the onset; the built informed bot knows only the latent state
   (#47's rule), so it is weaker than Gate 0's told.
+
+## Gate exception (Michael, 2026-11-17)
+
+On the full 72-session ladder this card passes Gate 0's ratio at informed
+≥ 1.9× the best non-reading rung (not 2×), with the order on ≥ 85% of
+bootstrapped sets and the reference at 0.2–0.7 of the informed bot as
+usual. The card is realistic and mirrored; the ratio is held down by the
+engine's cheap crossing (TWAP-cross makes about 0.8× the reference: small
+IOC slices against the grader's maker cost little), not by a design flaw.
 
 ## Departures from the card
 

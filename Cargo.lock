@@ -4998,8 +4998,10 @@ dependencies = [
 name = "mtx-bot-perp-accumulate-informed"
 version = "0.1.0"
 dependencies = [
+ "bs58",
  "mtx-bot-perp-accumulate",
  "mtx-kit",
+ "serde_json",
 ]
 
 [[package]]
