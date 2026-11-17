@@ -4925,6 +4925,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-closeout-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+ "solana-compute-budget-interface",
+ "tracing",
+]
+
+[[package]]
 name = "mtx-bot-dip-buyer"
 version = "0.1.0"
 dependencies = [
