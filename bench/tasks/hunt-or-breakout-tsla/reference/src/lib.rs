@@ -10,12 +10,14 @@
 //! three things:
 //!
 //! - **The leader.** One account that took a large clip in a single step
-//!   just before the run is a pusher. A hunter then goes quiet until it
-//!   trades back; an informed trader who happened to take a large clip
-//!   keeps trading the run's way, so the bot watches the pusher for a few
-//!   slots. An account that pushed a run earlier in the session and then
-//!   traded straight back out of it is a known hunter: a run it leads is
-//!   faded at once, whoever else joins.
+//!   just before the run is a pusher: a stop hunter, or an informed
+//!   breaker sweeping through the level, alike in size and both flat
+//!   before. Each trades back out of its run a little later. One whose run
+//!   the oracle never followed is a known hunter, one whose run it followed
+//!   a known breaker: a run either leads later is faded or followed at
+//!   once, whoever else joins. An informed trader who happened to take a
+//!   large clip keeps trading the run's way, so the bot watches an unknown
+//!   pusher for a few slots.
 //! - **The crowd.** Two or more accounts that built a position the run's
 //!   way over the half-minute before it (before anyone chasing the run
 //!   could) are informed flow.
@@ -335,6 +337,9 @@ const ORACLE_BPS: f64 = 6.0;
 /// Slots it watches a pusher after the run: a hunter goes quiet until it
 /// trades back; an informed trader who took a large clip keeps trading.
 const QUIET_SLOTS: u64 = 14;
+/// How far the oracle must have followed a run, in basis points, by the
+/// time its pusher trades back, for the pusher to be a breaker.
+const FOLLOWED_BPS: f64 = 15.0;
 
 /// A run it has seen and not yet classified.
 #[derive(Debug, Clone, Copy)]
@@ -360,7 +365,9 @@ pub struct Reference {
     /// Accounts seen pushing a run and then trading back out.
     hunters: Vec<usize>,
     /// Pushes that led a run, by account: the slot, awaiting a trade back.
-    led: BTreeMap<usize, (u64, f64)>,
+    led: BTreeMap<usize, (u64, f64, f64)>,
+    /// Accounts seen pushing a run the oracle then followed: breakers.
+    breakers: Vec<usize>,
     /// Steps each account's position moved with the book, and against it.
     with_book: Vec<u32>,
     against_book: Vec<u32>,
@@ -414,6 +421,9 @@ impl Reference {
         if self.hunters.contains(&p) {
             return Some(Bet::Fade);
         }
+        if self.breakers.contains(&p) {
+            return Some(Bet::Follow);
+        }
         // Did the pusher keep trading the run's way?
         let kept = self
             .watch
@@ -423,22 +433,21 @@ impl Reference {
         if kept {
             return Some(Bet::Follow);
         }
-        if slot < run.at + QUIET_SLOTS {
-            return None;
-        }
-        if run.crowd < 2 {
-            return (run.dir * (mid - run.level) > 0.0).then_some(Bet::Fade);
-        }
+        // A pusher it doesn't know yet: a hunter's run or a breaker's. The
+        // oracle creeping the run's way is a break; one that hasn't moved
+        // once the pusher has gone quiet is a hunt (after a crowd led too,
+        // it waits longer for the oracle).
         if moved >= ORACLE_BPS {
             return Some(Bet::Follow);
         }
-        if slot >= run.at + ORACLE_SLOTS {
+        let wait = if run.crowd < 2 { QUIET_SLOTS } else { ORACLE_SLOTS };
+        if slot >= run.at + wait {
             return (run.dir * (mid - run.level) > 0.0).then_some(Bet::Fade);
         }
         None
     }
 
-    fn learn(&mut self, slot: u64, mid: Option<f64>) {
+    fn learn(&mut self, slot: u64, mid: Option<f64>, oracle: f64) {
         let changes = self.watch.last_changes();
         if self.with_book.len() != changes.len() {
             self.with_book = vec![0; changes.len()];
@@ -463,14 +472,22 @@ impl Reference {
                 continue;
             }
             let way = c.signum();
-            if let Some((at, led)) = self.led.get(&i).copied() {
+            if let Some((at, led, oracle_then)) = self.led.get(&i).copied() {
                 if led == -way && at + 120 >= slot {
-                    if !self.hunters.contains(&i) {
+                    // It traded back out of a run it led: a hunter if the
+                    // oracle never followed, a breaker if it did.
+                    let followed = led * (oracle / oracle_then - 1.0) * 10_000.0 >= FOLLOWED_BPS;
+                    let (list, what) = if followed {
+                        (&mut self.breakers, "a breaker")
+                    } else {
+                        (&mut self.hunters, "a hunter")
+                    };
+                    if !list.contains(&i) {
+                        list.push(i);
                         log(&format!(
-                            "slot {slot}: account {} pushed a run and came back",
+                            "slot {slot}: account {} is {what}",
                             self.watch.accounts[i]
                         ));
-                        self.hunters.push(i);
                     }
                     self.led.remove(&i);
                     continue;
@@ -502,7 +519,7 @@ impl Strategy for Reference {
         orders.cancel_all();
         self.watch.read(slot)?;
         let now = mid(market);
-        self.learn(slot, now);
+        self.learn(slot, now, market.oracle);
         let Some(mid) = now else {
             return Ok(());
         };
@@ -523,7 +540,7 @@ impl Strategy for Reference {
                     .and_then(|p| self.watch.now().get(p).copied())
                     .unwrap_or(0.0);
                 if let Some(p) = pusher {
-                    self.led.insert(p, (slot, dir));
+                    self.led.insert(p, (slot, dir, oracle));
                 }
                 self.pending = Some(Pending {
                     dir,

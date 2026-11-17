@@ -19,7 +19,7 @@ import statistics
 import sys
 
 NON_READING = ["fade", "follow"]
-PARTIAL = ["wait-oracle"]
+PARTIAL = ["wait-oracle", "push-fade"]
 K = 1.5
 
 
@@ -88,6 +88,9 @@ def main():
         ref = pnl["reference"]
         sd = statistics.pstdev(ref)
         print(f"reference per-session Sharpe {statistics.mean(ref) / sd if sd else 0:.2f} (need >= 0.25)")
+    if "push-fade" in pnl:
+        beat = sum(sum(pnl["informed"][i] for i in d) > sum(pnl["push-fade"][i] for i in d) for d in draws)
+        print(f"informed > push-fade (the first screen's bot, untold) on {beat / resamples:.3f} of bootstrapped sets")
 
 
 if __name__ == "__main__":

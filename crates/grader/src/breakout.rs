@@ -19,8 +19,11 @@
 //! - **A break** leaves the book there for a lead drawn from the same range
 //!   as the hunts' hold, while the oracle starts to follow (a creep, drawn,
 //!   under the walk's noise at first); then the level jumps on through the
-//!   book to the break's continuation and stays. Informed wallets, who see
-//!   the level ahead, trade it before it goes.
+//!   book to the break's continuation and stays. An informed breaker sweeps
+//!   through the level a couple of slots before, from one of two wallets of
+//!   its own, exactly as the hunter pushes (sizes and holds from the same
+//!   ranges, from a wallet that was flat), and trades back out a hold later;
+//!   informed wallets, who see the level ahead, trade it before it goes.
 //! - **Mirrored.** What a follower makes from the excursion on in a break is
 //!   drawn to match what it loses in a hunt (the excursion plus the
 //!   approach), so a policy that trades every run the same way nets about
@@ -96,6 +99,10 @@ pub struct Shape {
     /// are.
     pub horizon_slots: u64,
     pub informed_wallets: u32,
+    /// The informed breakers' sweep, in the market's trade sizes, and how
+    /// long they hold it.
+    pub sweep_mult: f64,
+    pub sweep_hold_slots: u64,
 }
 
 /// The family's parameters. Every range is inclusive.
@@ -245,6 +252,10 @@ impl BreakoutFamily {
         let hold_slots = rng.range_u64(self.hold_slots);
         let trigger_bps = round2(rng.range_f64(self.trigger_bps));
         let push_mult = round2(rng.range_f64(self.push_mult));
+        // The informed breakers' sweeps: the same sizes and holds as the
+        // hunter's, drawn on their own.
+        let sweep_mult = round2(rng.range_f64(self.push_mult));
+        let sweep_hold_slots = rng.range_u64(self.hold_slots);
         let horizon_slots = rng.range_u64(self.horizon_slots);
         let informed_wallets = rng.range_u64(self.informed_wallets) as u32;
 
@@ -336,9 +347,9 @@ impl BreakoutFamily {
         let actors = self.actors(
             model,
             &events,
-            hold_slots,
             trigger_bps,
-            push_mult,
+            (push_mult, hold_slots),
+            (sweep_mult, sweep_hold_slots),
             horizon_slots,
             informed_wallets,
         );
@@ -350,6 +361,8 @@ impl BreakoutFamily {
             level_step_usd: self.level_step_usd,
             horizon_slots,
             informed_wallets,
+            sweep_mult,
+            sweep_hold_slots,
         };
         let description = format!(
             "{}: round levels every ${}; position within {} either way",
@@ -480,17 +493,31 @@ impl BreakoutFamily {
         &self,
         model: &MarketModel,
         events: &[Event],
-        hold_slots: u64,
         trigger_bps: f64,
-        push_mult: f64,
+        (push_mult, hold_slots): (f64, u64),
+        (sweep_mult, sweep_hold_slots): (f64, u64),
         horizon_slots: u64,
         informed_wallets: u32,
     ) -> Library {
-        let hunts: Vec<u64> = events
-            .iter()
-            .filter(|e| e.kind == "hunt")
-            .map(|e| e.slot.saturating_sub(HUNTER_EARLY_SLOTS))
-            .collect();
+        let pushes = |kind: &str| -> Vec<u64> {
+            events
+                .iter()
+                .filter(|e| e.kind == kind)
+                .map(|e| e.slot.saturating_sub(HUNTER_EARLY_SLOTS))
+                .collect()
+        };
+        let push = |push_mult, hold_slots, at_slots| StopHunter {
+            wallets: 2,
+            level_step_usd: self.level_step_usd,
+            trigger_bps,
+            push_mult,
+            overshoot_ticks: 100,
+            hold_slots,
+            cooldown_slots: 0,
+            at_slots,
+            limit_bps: 80.0,
+            active: None,
+        };
         Library {
             scale: Self::scale(model),
             noise: vec![Noise {
@@ -505,6 +532,7 @@ impl BreakoutFamily {
                 horizon_slots,
                 edge_bps: self.informed_edge_bps,
                 sees: Sees::Level,
+                sweeps: Some(push(sweep_mult, sweep_hold_slots, pushes("break"))),
                 intensity_mult: self.informed_intensity,
                 size_mult: self.informed_size,
                 limit_bps: 80.0,
@@ -519,18 +547,7 @@ impl BreakoutFamily {
                 limit_bps: 80.0,
                 active: None,
             }],
-            stop_hunters: vec![StopHunter {
-                wallets: 2,
-                level_step_usd: self.level_step_usd,
-                trigger_bps,
-                push_mult,
-                overshoot_ticks: 100,
-                hold_slots,
-                cooldown_slots: 0,
-                at_slots: hunts,
-                limit_bps: 80.0,
-                active: None,
-            }],
+            stop_hunters: vec![push(push_mult, hold_slots, pushes("hunt"))],
             ..Library::default()
         }
     }
@@ -649,6 +666,21 @@ mod tests {
             assert_eq!(hunter.hold_slots, shape.hold_slots);
             assert_eq!(actors.informed.len(), 1);
             assert_eq!(actors.informed[0].sees, Sees::Level);
+            // Every break is led by an informed sweep, drawn as a hunt's push.
+            let sweeps = actors.informed[0].sweeps.as_ref().unwrap();
+            let breaks: Vec<u64> = shape
+                .events
+                .iter()
+                .filter(|e| e.kind == "break")
+                .map(|e| e.slot - HUNTER_EARLY_SLOTS)
+                .collect();
+            assert_eq!(sweeps.at_slots, breaks);
+            assert_eq!(sweeps.wallets, hunter.wallets);
+            for push in [sweeps, hunter] {
+                assert!((300.0..=600.0).contains(&push.push_mult), "{push:?}");
+                assert!((10..=60).contains(&push.hold_slots), "{push:?}");
+                assert_eq!(push.trigger_bps, shape.trigger_bps);
+            }
             assert!(!actors.noise.is_empty() && !actors.chasers.is_empty());
         }
     }

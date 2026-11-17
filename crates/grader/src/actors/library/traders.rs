@@ -96,6 +96,14 @@ pub struct Informed {
     pub edge_bps: f64,
     #[serde(default, skip_serializing_if = "Sees::is_book")]
     pub sees: Sees,
+    /// Sweeps that lead the informed traders' moves: from wallets of their
+    /// own (listed as informed), each a single large take through a round
+    /// level at a scheduled slot, traded back out a hold later, as a stop
+    /// hunter's push is. Set the schedule (`at_slots`) where the moves
+    /// start: a reader then can't tell a sweep from a hunt by its size or
+    /// by the wallet having been flat, only by who sent it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sweeps: Option<super::StopHunter>,
     #[serde(default = "one")]
     pub intensity_mult: f64,
     #[serde(default = "one")]
@@ -117,6 +125,9 @@ impl Informed {
         finite_at_least_zero("edge_bps", self.edge_bps)?;
         finite_positive("intensity_mult", self.intensity_mult)?;
         finite_positive("size_mult", self.size_mult)?;
+        if let Some(sweeps) = &self.sweeps {
+            sweeps.validate().map_err(|e| format!("sweeps: {e}"))?;
+        }
         finite_positive("limit_bps", self.limit_bps)
     }
 }
@@ -539,6 +550,7 @@ mod tests {
             horizon_slots: 20,
             edge_bps: 50.0,
             sees: Sees::Book,
+            sweeps: None,
             intensity_mult: 10.0,
             size_mult: 1.0,
             limit_bps: 50.0,
@@ -580,6 +592,7 @@ mod tests {
             horizon_slots: 20,
             edge_bps: 50.0,
             sees: Sees::Level,
+            sweeps: None,
             intensity_mult: 10.0,
             size_mult: 1.0,
             limit_bps: 50.0,
