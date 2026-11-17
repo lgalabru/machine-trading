@@ -1122,7 +1122,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 engine.forced_close_paid((-(change + closable)).max(0) as u64);
             }
             close.orders.extend(done.orders);
-            if crate::risk::is_flat(done.position) {
+            if done.flat {
                 close.flat = true;
                 session_end = slot;
                 break;
@@ -1314,11 +1314,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     let end_value_usd = report.end_value_usd;
     // Flat on every market: a session on several lists each in `markets`.
-    let flat = crate::risk::is_flat(report.end_position)
+    let flat = crate::risk::is_flat(report.end_position, report.base_lots_decimals)
         && report
             .markets
             .iter()
-            .all(|m| crate::risk::is_flat(m.end_position));
+            .all(|m| crate::risk::is_flat(m.end_position, m.base_lots_decimals));
     // A stop-out's close settles at the session's end; a liquidation's
     // is the keeper's own account of its stretch.
     for close in &mut report.forced_closes {

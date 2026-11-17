@@ -1935,8 +1935,8 @@ impl Account for PerpAccount {
     /// [`MAX_CLOSE_ORDERS_PER_STEP`] orders go round the markets in symbol
     /// order, one order to each market still open per round, so one market
     /// can't take every order while another's exposure runs on; a market
-    /// whose book took nothing gets no more this step. The position it
-    /// reports is the largest one left; on several markets, each order names
+    /// whose book took nothing gets no more this step. It reports whether
+    /// every market is flat after them; on several markets, each order names
     /// its market.
     async fn force_close(
         &mut self,
@@ -1962,7 +1962,7 @@ impl Account for PerpAccount {
             let mut sent_any = false;
             for (i, (market, seat)) in self.markets.iter().zip(&seats).enumerate() {
                 let position = positions[i];
-                if is_flat(position) || stuck[i] {
+                if is_flat(position, market.market.base_lots_decimals) || stuck[i] {
                     continue;
                 }
                 if orders.len() >= MAX_CLOSE_ORDERS_PER_STEP {
@@ -2003,15 +2003,11 @@ impl Account for PerpAccount {
                 break;
             }
         }
-        let left =
-            positions.iter().copied().fold(
-                0.0_f64,
-                |left, p| if p.abs() > left.abs() { p } else { left },
-            );
-        Ok(Closing {
-            orders,
-            position: left,
-        })
+        let flat = positions
+            .iter()
+            .zip(&self.markets)
+            .all(|(p, m)| is_flat(*p, m.market.base_lots_decimals));
+        Ok(Closing { orders, flat })
     }
 
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
