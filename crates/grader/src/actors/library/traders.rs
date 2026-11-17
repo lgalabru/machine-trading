@@ -10,6 +10,9 @@
 //! Chasers and decoys are directional flow that knows nothing: summed with
 //! the informed, they blur what the market's net flow says, so only a
 //! reader who keeps each wallet's record can tell the informed apart.
+//!
+//! The informed and decoys may be [`Shy`]: they hide their trading for a
+//! while once one account keeps following it.
 
 use std::sync::Arc;
 
@@ -17,8 +20,11 @@ use async_trait::async_trait;
 use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
 
-use super::{Rng, Scale, Wallet, Window, finite_at_least_zero, finite_positive};
-use crate::actors::{Actor, ActorsReport, Moment};
+use super::{
+    Rng, Scale, Wallet, Window, finite_at_least_zero, finite_positive,
+    shy::{Copier, Shy, ShyWatch},
+};
+use crate::actors::{Actor, ActorsReport, Moment, StepFlow};
 
 fn one() -> f64 {
     1.0
@@ -80,6 +86,9 @@ pub struct Informed {
     pub limit_bps: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<Window>,
+    /// How it reacts to being copied, if it minds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shy: Option<Shy>,
 }
 
 impl Informed {
@@ -89,6 +98,9 @@ impl Informed {
         }
         if self.horizon_slots == 0 {
             return Err("horizon_slots must be at least 1".into());
+        }
+        if let Some(shy) = &self.shy {
+            shy.validate()?;
         }
         finite_at_least_zero("edge_bps", self.edge_bps)?;
         finite_positive("intensity_mult", self.intensity_mult)?;
@@ -155,6 +167,9 @@ pub struct Decoy {
     pub size_mult: f64,
     #[serde(default = "fifty")]
     pub limit_bps: f64,
+    /// How it reacts to being copied, if it minds: its wallets together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shy: Option<Shy>,
 }
 
 impl Decoy {
@@ -171,6 +186,9 @@ impl Decoy {
             .is_none_or(|until| until <= self.informed_for.from)
         {
             return Err("informed_for needs an until after its from".into());
+        }
+        if let Some(shy) = &self.shy {
+            shy.validate()?;
         }
         finite_at_least_zero("edge_bps", self.edge_bps)?;
         finite_positive("intensity_mult", self.intensity_mult)?;
@@ -205,6 +223,7 @@ fn moved_bps(path: &(dyn Fn(u64) -> Moment + Send + Sync), now: &Moment, back: u
 }
 
 /// Takes `size` on `side` from a random one of `wallets`, around `price`.
+/// Whether it landed.
 async fn take_one(
     wallets: &[Wallet],
     rng: &mut Rng,
@@ -213,14 +232,39 @@ async fn take_one(
     size: f64,
     price: f64,
     limit_bps: f64,
-) {
+) -> bool {
     let wallet = &wallets[rng.below(wallets.len())];
     let reach = limit_bps / 10_000.0;
     let limit = match side {
         Side::Bid => price * (1.0 + reach),
         Side::Ask => price * (1.0 - reach),
     };
-    wallet.take(at, side, size, limit).await;
+    wallet.take(at, side, size, limit).await
+}
+
+/// A shy trader's watch over `wallets`, if `shy` says it is one.
+fn watch(shy: Option<Shy>, wallets: &[Wallet]) -> Option<ShyWatch> {
+    let shy = shy?;
+    let own = wallets.iter().map(Wallet::pubkey).collect();
+    Some(ShyWatch::new(shy, own, wallets.first()?.ledger.clone()))
+}
+
+/// Start a shy trader's step at `at`: what it keeps of its size and
+/// horizon, all of them if it isn't shy.
+fn begin_shy(shy: &mut Option<ShyWatch>, wallets: &[Wallet], at: u64) -> f64 {
+    let Some(watch) = shy.as_mut() else {
+        return 1.0;
+    };
+    if let Some(copier) = watch.begin(at) {
+        wallets[0].count("throttles", 1);
+        if copier == Copier::Bot {
+            wallets[0].count("throttles_by_bot", 1);
+        }
+    }
+    if watch.throttled(at) {
+        wallets[0].count("throttled_steps", 1);
+    }
+    watch.keep(at)
 }
 
 pub(super) struct NoiseTrader {
@@ -285,6 +329,7 @@ pub(super) struct InformedTrader {
     path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
     rng: Rng,
     last: Option<u64>,
+    shy: Option<ShyWatch>,
 }
 
 impl InformedTrader {
@@ -295,6 +340,7 @@ impl InformedTrader {
         path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
         rng: Rng,
     ) -> Self {
+        let shy = watch(spec.shy, &wallets);
         Self {
             spec,
             scale,
@@ -302,14 +348,21 @@ impl InformedTrader {
             path,
             rng,
             last: None,
+            shy,
         }
     }
 
-    /// The side it trades `at`, if the move ahead is past its edge.
-    fn side(&self, now: &Moment) -> Option<Side> {
-        let ahead = (self.path)(now.at + self.spec.horizon_slots).book_usd;
+    /// The side it trades `at`, if the move `horizon` slots ahead is past
+    /// its edge.
+    fn side(&self, now: &Moment, horizon: u64) -> Option<Side> {
+        let ahead = (self.path)(now.at + horizon).book_usd;
         side_of((ahead / now.book_usd - 1.0) * 10_000.0, self.spec.edge_bps)
     }
+}
+
+/// `share` of `horizon`, at least a slot.
+fn kept(horizon: u64, share: f64) -> u64 {
+    ((horizon as f64 * share).round() as u64).max(1)
 }
 
 #[async_trait]
@@ -317,18 +370,19 @@ impl Actor for InformedTrader {
     async fn before_blocks(&mut self, last: &Moment) {
         let slots = last.at - self.last.unwrap_or(0);
         self.last = Some(last.at);
+        let keep = begin_shy(&mut self.shy, &self.wallets, last.at);
         if !Window::holds(&self.spec.active, last.at) {
             return;
         }
-        let Some(side) = self.side(last) else {
+        let Some(side) = self.side(last, kept(self.spec.horizon_slots, keep)) else {
             return;
         };
         let n = self
             .rng
             .poisson(self.scale.per_slot() * self.spec.intensity_mult * slots as f64);
         for _ in 0..n {
-            let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult);
-            take_one(
+            let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult) * keep;
+            let landed = take_one(
                 &self.wallets,
                 &mut self.rng,
                 last.at,
@@ -338,8 +392,21 @@ impl Actor for InformedTrader {
                 self.spec.limit_bps,
             )
             .await;
+            if landed && let Some(shy) = self.shy.as_mut() {
+                shy.filled(last.at, side, size);
+            }
         }
         self.wallets[0].count("informed_steps", 1);
+    }
+
+    fn wants_flow(&self) -> bool {
+        self.shy.is_some()
+    }
+
+    async fn flow(&mut self, flow: &StepFlow) {
+        if let Some(shy) = self.shy.as_mut() {
+            shy.bot(flow);
+        }
     }
 
     async fn report(&mut self, _: &mut ActorsReport) {}
@@ -417,6 +484,7 @@ pub(super) struct DecoyTrader {
     path: Arc<dyn Fn(u64) -> Moment + Send + Sync>,
     rng: Rng,
     last: Option<u64>,
+    shy: Option<ShyWatch>,
 }
 
 impl DecoyTrader {
@@ -434,6 +502,7 @@ impl DecoyTrader {
             .map(|_| from + rng.below(span as usize) as u64)
             .collect();
         let views = vec![None; wallets.len()];
+        let shy = watch(spec.shy, &wallets);
         Self {
             spec,
             scale,
@@ -443,15 +512,16 @@ impl DecoyTrader {
             path,
             rng,
             last: None,
+            shy,
         }
     }
 
     /// The side `wallet` trades `at`: ahead of the path before it fades,
-    /// its view after.
-    fn side(&mut self, wallet: usize, now: &Moment) -> Option<Side> {
+    /// looking `keep` of its horizon ahead, its view after.
+    fn side(&mut self, wallet: usize, now: &Moment, keep: f64) -> Option<Side> {
         let horizon = self.spec.horizon_slots;
         if now.at < self.fades[wallet] {
-            let ahead = (self.path)(now.at + horizon).book_usd;
+            let ahead = (self.path)(now.at + kept(horizon, keep)).book_usd;
             return side_of((ahead / now.book_usd - 1.0) * 10_000.0, self.spec.edge_bps);
         }
         match self.views[wallet] {
@@ -474,20 +544,34 @@ impl Actor for DecoyTrader {
     async fn before_blocks(&mut self, last: &Moment) {
         let slots = last.at - self.last.unwrap_or(0);
         self.last = Some(last.at);
+        let keep = begin_shy(&mut self.shy, &self.wallets, last.at);
         let rate = self.scale.per_slot() * self.spec.intensity_mult / self.wallets.len() as f64;
         for wallet in 0..self.wallets.len() {
-            let Some(side) = self.side(wallet, last) else {
+            let Some(side) = self.side(wallet, last, keep) else {
                 continue;
             };
             for _ in 0..self.rng.poisson(rate * slots as f64) {
-                let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult);
+                let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult) * keep;
                 let reach = self.spec.limit_bps / 10_000.0;
                 let limit = match side {
                     Side::Bid => last.book_usd * (1.0 + reach),
                     Side::Ask => last.book_usd * (1.0 - reach),
                 };
-                self.wallets[wallet].take(last.at, side, size, limit).await;
+                let landed = self.wallets[wallet].take(last.at, side, size, limit).await;
+                if landed && let Some(shy) = self.shy.as_mut() {
+                    shy.filled(last.at, side, size);
+                }
             }
+        }
+    }
+
+    fn wants_flow(&self) -> bool {
+        self.shy.is_some()
+    }
+
+    async fn flow(&mut self, flow: &StepFlow) {
+        if let Some(shy) = self.shy.as_mut() {
+            shy.bot(flow);
         }
     }
 
@@ -497,7 +581,10 @@ impl Actor for DecoyTrader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::actors::library::tests::{Book, at, scale, wallet};
+    use crate::actors::{
+        VenueFlow,
+        library::tests::{Book, at, scale, wallet},
+    };
 
     #[tokio::test]
     async fn informed_traders_take_the_way_the_path_goes_ahead_of_it() {
@@ -514,6 +601,7 @@ mod tests {
             size_mult: 1.0,
             limit_bps: 50.0,
             active: None,
+            shy: None,
         };
         let mut informed =
             InformedTrader::new(spec, scale(), vec![wallet], path, Rng::new([3; 32]));
@@ -529,6 +617,65 @@ mod tests {
             "{log:?}"
         );
         assert_eq!(ledger.report().actors[0].counts["informed_steps"], 1);
+    }
+
+    #[tokio::test]
+    async fn a_shy_informed_trader_trades_smaller_and_later_once_copied() {
+        let (book, log) = Book::new("i", 99.0, 101.0);
+        let (wallet, ledger) = wallet(book);
+        // Up 1% from slot 200.
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> =
+            Arc::new(|s| at(s, if s >= 200 { 101.0 } else { 100.0 }));
+        let spec = Informed {
+            wallets: 1,
+            horizon_slots: 100,
+            edge_bps: 50.0,
+            intensity_mult: 1.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            active: None,
+            shy: Some(Shy {
+                detect_slots: 4,
+                copy_share: 0.5,
+                fills: 3,
+                throttle: 0.2,
+                cooldown_slots: 1_000,
+            }),
+        };
+        spec.validate().unwrap();
+        let mut informed =
+            InformedTrader::new(spec, scale(), vec![wallet], path, Rng::new([8; 32]));
+        assert!(informed.wants_flow());
+        // It buys ahead of the rise, and the bot buys more than it right
+        // after, step after step.
+        let copying = StepFlow {
+            bot: vec![VenueFlow {
+                market: "test".into(),
+                bought: 10.0,
+                sold: 0.0,
+            }],
+        };
+        for s in (102..=112).step_by(2) {
+            informed.before_blocks(&at(s, 100.0)).await;
+            informed.flow(&copying).await;
+        }
+        let early = std::mem::take(&mut *log.lock().unwrap());
+        assert!(
+            early.iter().any(|l| l == "i take Bid 1.000 at 100.50"),
+            "{early:?}"
+        );
+        assert!(ledger.report().actors[0].counts["throttles"] >= 1);
+        // Throttled, it looks a fifth of its horizon ahead: from slot 150
+        // the rise is out of sight, and from 180 it buys a fifth the size.
+        informed.before_blocks(&at(150, 100.0)).await;
+        assert!(log.lock().unwrap().is_empty());
+        informed.before_blocks(&at(186, 100.0)).await;
+        let late = log.lock().unwrap().clone();
+        assert!(!late.is_empty());
+        assert!(
+            late.iter().all(|l| l == "i take Bid 0.200 at 100.50"),
+            "{late:?}"
+        );
     }
 
     #[tokio::test]
@@ -619,6 +766,7 @@ mod tests {
             intensity_mult: 1.0,
             size_mult: 1.0,
             limit_bps: 50.0,
+            shy: None,
         };
         let mut decoy = DecoyTrader::new(spec, scale(), vec![wallet], path, Rng::new([6; 32]));
         assert!((150..200).contains(&decoy.fades[0]));

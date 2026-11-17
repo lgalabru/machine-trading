@@ -48,6 +48,7 @@ mod liquidator;
 mod pool;
 mod refill;
 pub mod rfq;
+mod shy;
 mod spoofer;
 mod stop_hunter;
 mod traders;
@@ -68,6 +69,7 @@ pub use self::{
     pool::{Pool, PoolRole},
     refill::Refill,
     rfq::{DeskReport, RfqBoard, RfqClients, RfqSeat, Settlement, SwapError, Swaps, Token},
+    shy::Shy,
     spoofer::Spoofer,
     stop_hunter::StopHunter,
     traders::{Chaser, Decoy, Informed, Noise},
@@ -218,6 +220,17 @@ impl Library {
             .filter(|(_, f)| f.on_send)
             .map(|(i, _)| format!("actors.front_runners[{i}]"))
             .collect()
+    }
+
+    /// Whether any of its traders is shy (see [`Shy`]).
+    pub fn has_shy(&self) -> bool {
+        self.informed.iter().any(|i| i.shy.is_some()) || self.decoys.iter().any(|d| d.shy.is_some())
+    }
+
+    /// Whether some actor reads the bot's trading step by step: the
+    /// front-runners and the shy traders.
+    pub fn watches_bot(&self) -> bool {
+        !self.front_runners.is_empty() || self.has_shy()
     }
 
     pub fn validate(&self) -> Result<(), String> {
@@ -379,6 +392,11 @@ impl Library {
         seed: &dyn Fn(&str, u32) -> [u8; 32],
     ) -> Built {
         let ledger = Ledger::new(self.record);
+        let ledger = if self.has_shy() {
+            ledger.keeping_takes()
+        } else {
+            ledger
+        };
         let mut seats = seats.into_iter();
         let mut take =
             |n: u32| -> Vec<Shared> { seats.by_ref().take(n as usize).map(Shared::from).collect() };
@@ -746,6 +764,9 @@ struct LedgerState {
     record: bool,
     actors: Vec<ActorTally>,
     tape: Vec<TapeEntry>,
+    /// Every take that landed, in order, when a shy trader watches them:
+    /// the slot, the wallet, the side and the size.
+    takes: Option<Vec<(u64, Pubkey, Side, f64)>>,
 }
 
 impl Ledger {
@@ -754,7 +775,37 @@ impl Ledger {
             record,
             actors: Vec::new(),
             tape: Vec::new(),
+            takes: None,
         })))
+    }
+
+    /// The same ledger, keeping every take that lands for the shy traders
+    /// (see [`shy`]).
+    fn keeping_takes(self) -> Self {
+        self.state().takes = Some(Vec::new());
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_takes() -> Self {
+        Self::new(false).keeping_takes()
+    }
+
+    /// `wallet` took `size` on `side` at `at`, if the ledger keeps takes.
+    pub(crate) fn took(&self, at: u64, wallet: Pubkey, side: Side, size: f64) {
+        if let Some(takes) = self.state().takes.as_mut() {
+            takes.push((at, wallet, side, size));
+        }
+    }
+
+    /// The takes kept from the `from`th on.
+    fn takes_from(&self, from: usize) -> Vec<(u64, Pubkey, Side, f64)> {
+        self.state()
+            .takes
+            .as_ref()
+            .and_then(|takes| takes.get(from..))
+            .map(<[_]>::to_vec)
+            .unwrap_or_default()
     }
 
     fn state(&self) -> std::sync::MutexGuard<'_, LedgerState> {
@@ -895,6 +946,9 @@ impl Wallet {
             ..self.entry(at, "take", sent.is_ok())
         };
         self.ledger.note(self.actor, entry, Done::Took(side));
+        if sent.is_ok() {
+            self.ledger.took(at, self.pubkey, side, size);
+        }
         sent.is_ok()
     }
 
