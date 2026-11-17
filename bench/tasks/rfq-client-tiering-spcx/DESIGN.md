@@ -228,6 +228,33 @@ main than it was before the merge: 0.35 to 0.38 of the reference then, 0.95
 and 1.25 now, and 0.67 on the control with `hit_rate` 1.0. The blind rungs
 stay far below.
 
+**Diagnosis (same secret as set 1, `hit_rate` 1.0 wherever it exists, total PnL over 72 sessions):**
+
+| Build | Side-skew | Reference | Informed | Informed / side-skew |
+| --- | --- | --- | --- | --- |
+| (a) pre-merge base (main 4faade898) | 29.85 | 56.69 | 94.03 | 3.15 |
+| (b) base + #113 | 29.85 | 56.69 | 94.03 | 3.15 |
+| (c) base + #114 | 43.40 | 64.88 | 89.05 | 2.05 |
+| main with both (the control above) | 43.40 | 64.88 | 89.05 | 2.05 |
+
+- #113 changes nothing on this family: (b) matches (a) to the cent.
+- At `hit_rate` 1.0, #114 changes no distribution for RFQ clients, only the
+  draws: its hit/miss draw takes one number from the clients' stream on
+  every informed request, even when it can't miss, so every later request
+  (who asks, which side, what size; 5,711 requests in (a), 5,724 in (c)) is
+  a new realisation of the same family. The side-skew gain from (a) to (c)
+  is that resampling.
+- What moves the family is `hit_rate` 0.85 itself. A mistaken informed
+  client values SPCX the wrong way, so it declines a quote at the reach and
+  costs the desk nothing, and its request misleads a side read. Every desk
+  that quotes the flow then pays informed clients less (about 0.7 of the
+  toxicity), and knowing who they are is worth that much less. In the model,
+  the informed bot over side-skew goes from 9.1x and 6.9x at 1.0 to 2.6x and
+  2.5x at 0.85 (seeds 92, 93). In the engine, on set 1, the reference loses
+  20% and side-skew gains 15% (`engine-v3-hit*`). Quoting informed clients
+  whose request goes against the other informed flow doesn't win it back
+  (model).
+
 ## Departures from the card
 
 | Card | Built | Why |
