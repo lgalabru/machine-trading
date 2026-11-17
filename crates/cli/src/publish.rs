@@ -1682,7 +1682,15 @@ mod tests {
         refuse_mixed_tasks(&batch, std::slice::from_ref(&a)).unwrap();
         let out = tmp.join("out");
         std::fs::create_dir_all(&out).unwrap();
-        copy_release(&batch, std::slice::from_ref(&a), &out, "9.9.9", &Value::Null, &[]).unwrap();
+        copy_release(
+            &batch,
+            std::slice::from_ref(&a),
+            &out,
+            "9.9.9",
+            &Value::Null,
+            &[],
+        )
+        .unwrap();
         // The release records the file publish judged by, so export reads the
         // same one even once the local task is guarded.
         let recorded = out.join("tasks/local-spcx/task.toml");
@@ -1779,9 +1787,21 @@ mod tests {
             .join("../")
             .join(format!("res-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&results).unwrap();
+        // Each trial ran codex on an open task, which publish allows.
+        let open = root
+            .path
+            .join("../")
+            .join(format!("open-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&open).unwrap();
+        std::fs::write(open.join("task.toml"), "[agent]\nuser = \"agent\"\n").unwrap();
         for trial in review::discover(&root.path) {
             std::fs::create_dir_all(trial.join("agent")).unwrap();
             std::fs::write(trial.join("agent/trajectory.json"), "{}").unwrap();
+            let mut result = review::read_json(&trial.join("result.json")).unwrap();
+            result["agent_info"]["name"] = json!("codex");
+            result["config"] = json!({"agent": {"name": "codex"},
+                "task": {"name": null, "path": open}});
+            std::fs::write(trial.join("result.json"), result.to_string()).unwrap();
         }
         (root.path, results)
     }
