@@ -21,6 +21,10 @@
 //! - the task tables in `README.md` and `bench/tasks/README.md`, between
 //!   their `mtx:tasks` markers;
 //! - each task's `solution/`: a copy of its reference, but `main.rs`;
+//! - each task's `tests/anchor.digest`, what the engine does to its anchors
+//!   (kept as committed while its inputs are unchanged; `mtx task sync`
+//!   plays the anchors when they changed, `--anchors` always:
+//!   [`crate::anchors`]);
 //! - each task's `tests/task.fingerprint`, the hash the verifier writes into
 //!   every report ([`crate::versions::fingerprint`]);
 //! - the scoring rules in a v2 task's `instruction.md`, between its
@@ -53,6 +57,20 @@ pub struct Task {
     pub reference: Reference,
     /// The ladder bots' crates, `bench/tasks/<dir>/checks/bots/*`.
     pub check_bots: Vec<String>,
+    /// A v2 task's informed bot, which the verifier runs on its hidden sets
+    /// beside the reference: the crate of the ladder's `anchors.informed`
+    /// rung, when it names one with a crate.
+    pub informed: Option<InformedBot>,
+}
+
+/// A v2 task's informed bot crate, as the image builds it into
+/// `/opt/mtx/anchors/<anchor>-informed` ([`Task::informed_anchor`]).
+#[derive(Debug, Clone)]
+pub struct InformedBot {
+    pub package: String,
+    pub bin: String,
+    /// The crate's directory, from the repository's root.
+    pub dir: String,
 }
 
 /// The reference bot's crate, `reference/Cargo.toml`.
@@ -67,6 +85,12 @@ impl Task {
     /// The reference crate's directory, from the repository's root.
     pub fn reference_dir(&self) -> String {
         format!("bench/tasks/{}/reference", self.dir)
+    }
+
+    /// Where the image puts the informed bot for the verifier, under
+    /// `/opt/mtx/anchors`: beside the reference's anchor.
+    pub fn informed_anchor(&self) -> String {
+        format!("{}-informed", self.mtx.anchor())
     }
 }
 
@@ -214,21 +238,22 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
             parsed.task.name
         );
     }
-    let cargo = folder.join("reference/Cargo.toml");
-    let manifest: CargoToml =
-        toml::from_str(&std::fs::read_to_string(&cargo).with_context(|| {
-            format!(
-                "{}: a task's reference bot is its reference/ crate",
-                cargo.display()
-            )
-        })?)
-        .with_context(|| cargo.display().to_string())?;
-    let reference = Reference {
-        bin: manifest
-            .bin
-            .first()
-            .map_or_else(|| manifest.package.name.clone(), |b| b.name.clone()),
-        package: manifest.package.name,
+    let reference = crate_of(&folder.join("reference")).with_context(|| {
+        format!(
+            "{}: a task's reference bot is its reference/ crate",
+            folder.join("reference/Cargo.toml").display()
+        )
+    })?;
+    let informed = if mtx.headline == Headline::V2 {
+        informed_dir(root, &dir).and_then(|informed| {
+            crate_of(&root.join(&informed)).ok().map(|bot| InformedBot {
+                package: bot.package,
+                bin: bot.bin,
+                dir: informed,
+            })
+        })
+    } else {
+        None
     };
     let mut check_bots: Vec<String> = std::fs::read_dir(folder.join("checks/bots"))
         .into_iter()
@@ -249,7 +274,40 @@ pub fn load_one(root: &Path, dir: String) -> Result<Task> {
         mtx,
         reference,
         check_bots,
+        informed,
     })
+}
+
+/// A bot crate's package, and the binary it runs as a process.
+fn crate_of(dir: &Path) -> Result<Reference> {
+    let cargo = dir.join("Cargo.toml");
+    let manifest: CargoToml = toml::from_str(&std::fs::read_to_string(&cargo)?)
+        .with_context(|| cargo.display().to_string())?;
+    Ok(Reference {
+        bin: manifest
+            .bin
+            .first()
+            .map_or_else(|| manifest.package.name.clone(), |b| b.name.clone()),
+        package: manifest.package.name,
+    })
+}
+
+/// The directory of the bot a task's ladder names as its informed anchor
+/// (`anchors.informed`, a rung's name), from the repository's root.
+pub fn informed_dir(root: &Path, task: &str) -> Option<String> {
+    let path = root
+        .join("bench/tasks")
+        .join(task)
+        .join("checks/ladder.json");
+    let ladder: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    let name = ladder["anchors"]["informed"].as_str()?;
+    ladder["rungs"]
+        .as_array()?
+        .iter()
+        .find(|r| r["name"] == name)?["dir"]
+        .as_str()
+        .map(str::to_string)
 }
 
 /// `items` without repeats, in order.
@@ -306,13 +364,25 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
         format!(
             "# {GENERATED}\n# <anchor> <package> <binary> <directory>, one per task.\n{}\n",
             join(
-                &|t| format!(
-                    "{} {} {} {}",
-                    t.mtx.anchor(),
-                    t.reference.package,
-                    t.reference.bin,
-                    t.reference_dir()
-                ),
+                &|t| {
+                    let mut lines = format!(
+                        "{} {} {} {}",
+                        t.mtx.anchor(),
+                        t.reference.package,
+                        t.reference.bin,
+                        t.reference_dir()
+                    );
+                    if let Some(informed) = &t.informed {
+                        lines += &format!(
+                            "\n{} {} {} {}",
+                            t.informed_anchor(),
+                            informed.package,
+                            informed.bin,
+                            informed.dir
+                        );
+                    }
+                    lines
+                },
                 "\n"
             )
         )
@@ -384,6 +454,23 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
                 with_practice_scoring(&text, &practice_scoring(&script)).into_bytes(),
             );
         }
+        // The anchor digest stays as committed while its inputs are the
+        // ones it was played from; otherwise it is pending, and stale until
+        // `mtx task sync` plays the anchors (it can't, here: no sessions).
+        let (inputs, informed) = crate::anchors::inputs(root, &task.dir, &|path| {
+            files
+                .get(path)
+                .cloned()
+                .or_else(|| std::fs::read(root.join(path)).ok())
+        })?;
+        let digest = match crate::anchors::committed(root, &task.dir) {
+            Some(d) if d.inputs == inputs && d.informed == informed => d,
+            _ => crate::anchors::Digest::pending(&inputs, informed),
+        };
+        files.insert(
+            folder.join(crate::anchors::DIGEST_FILE),
+            digest.text().into_bytes(),
+        );
         // Last: it reads the files above as they will be.
         let fingerprint = crate::versions::fingerprint(root, &task.dir, &|path| {
             files
@@ -544,6 +631,25 @@ fn dataset_with(text: &str, tasks: &[Task]) -> Result<String> {
     Ok(out)
 }
 
+/// Play the anchors of every task whose digest was written for other inputs
+/// (or of all of them, with `force`) and write the digests. Slow, and Linux
+/// only: [`crate::anchors::compute`].
+pub fn sync_anchor_digests(root: &Path, force: bool) -> Result<()> {
+    for task in load(root)? {
+        let read = |p: &Path| std::fs::read(root.join(p)).ok();
+        let (inputs, informed) = crate::anchors::inputs(root, &task.dir, &read)?;
+        let current = crate::anchors::committed(root, &task.dir).is_some_and(|d| {
+            d.inputs == inputs && d.informed == informed && !d.digest.starts_with("pending")
+        });
+        if force || !current {
+            eprintln!("{}: playing the anchors for tests/anchor.digest", task.dir);
+            let digest = crate::anchors::compute(root, &task.dir)?;
+            crate::anchors::write(root, &task.dir, &digest)?;
+        }
+    }
+    Ok(())
+}
+
 /// Write every generated file. Returns the ones that changed.
 pub fn sync(root: &Path) -> Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
@@ -594,6 +700,7 @@ mod tests {
                 bin: "mtx-x".into(),
             },
             check_bots: vec![],
+            informed: None,
         }
     }
 

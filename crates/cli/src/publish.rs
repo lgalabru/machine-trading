@@ -198,6 +198,7 @@ pub fn roots(first: Root, results: &Path) -> Vec<Root> {
 /// `artifacts`, nothing is uploaded either: the release goes there whole (as
 /// `<artifacts>/<version>`) and `<results>/<version>` is its slim release
 /// (see [`crate::slim`]).
+#[allow(clippy::too_many_arguments)]
 pub fn publish(
     batch: &Path,
     version: &str,
@@ -754,7 +755,7 @@ fn session_key(file: &Path) -> Option<String> {
     serde_json::to_string(&value).ok()
 }
 
-fn strip_volatile(value: &mut Value) {
+pub(crate) fn strip_volatile(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for key in VOLATILE {

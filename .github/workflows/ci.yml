@@ -241,6 +241,68 @@ jobs:
           name: gates-${{ matrix.task }}
           path: target/gates
 
+  # Whether the engine could have changed what a task does: a change under
+  # `crates/`, to `Cargo.lock` or to `rust-toolchain`. A manual run always
+  # checks.
+  engine-changed:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.engine.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Did the engine change
+        id: engine
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          case "$EVENT" in
+            pull_request) changed="$(git diff --name-only "origin/$BASE_REF...HEAD" -- crates Cargo.lock rust-toolchain)" ;;
+            push) git cat-file -e "$BEFORE^{commit}" 2>/dev/null \
+                    && changed="$(git diff --name-only "$BEFORE" HEAD -- crates Cargo.lock rust-toolchain)" || changed=all ;;
+            *) changed=all ;;
+          esac
+          if [ -n "$changed" ]; then echo "changed=true" >> "$GITHUB_OUTPUT"; else echo "changed=false" >> "$GITHUB_OUTPUT"; fi
+          echo "engine changed: ${changed:-no}"
+
+  # Hash behaviour, not source: each task's `tests/anchor.digest` is what the
+  # engine does to its reference (and informed bot) on a fixed public draw.
+  # An engine, kit or dependency change that alters it altered what the task
+  # does: bump GRADER_VERSION and run `mtx task sync --anchors`, which moves
+  # the task's fingerprint. A change that doesn't leaves the fingerprints
+  # alone. Reference-only sessions: minutes, not the ladder.
+  anchor-digests:
+    needs: [ci-image, rust, engine-changed]
+    if: needs.engine-changed.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: ${{ needs.ci-image.outputs.image }}
+      # Process anchors run as their own users; the grader switches to them.
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain and libraries
+        if: needs.ci-image.outputs.prebuilt != 'true'
+        run: bash bench/ci/setup.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gates
+      - name: Build mtx and the references
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --release --locked -p mtx-cli
+          for task in bench/tasks/*/; do
+            just --justfile "$task/reference/Justfile" build
+          done
+      - name: Anchor digests are unchanged
+        run: target/release/mtx task anchor-digest --check
+
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.
   image:

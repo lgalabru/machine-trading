@@ -245,24 +245,53 @@ no calibration, because the verifier grades the reference on them every
 time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
 
 **Versions.** Every grade report carries `versions`: the task's fingerprint
-(`mtx task fingerprint <task>`) and a hash of the scoring spec (v1's, or v2's
-with its settings). The fingerprint hashes what changes what a task measures:
-`task.toml` without its cosmetic keys, `instruction.md`, `tests/test.sh`, the
-practice scenarios, the anchors' sources, the generator's parameters and a draw
-as large as the verifier's, every file of the snapshot, and the source the
-engine and the anchors build from (`crates/grader`, `crates/kit`,
-`crates/core`, `Cargo.lock`, `rust-toolchain`). `mtx task sync` writes it to
-`tests/task.fingerprint` (the verifier reads it from `/tests`), and `mtx task
-check` and CI fail when it is stale: after editing anything above, run `mtx
-task sync` and commit the file. A change to the engine or the kit moves every
-task's fingerprint, which is the point: its scores aren't on the old scale.
-When a scoring constant changes, bump `CODE_VERSION` (v2) or
-`V1_CODE_VERSION` and re-pin the spec hash test. `bench publish`, `review`,
-`compare` and `rescore` refuse to mix trials of one task with different
-versions, or with none, unless `--allow-version-mismatch` is given (the
-output then lists the mismatch); `bench rescore --scoring ...` puts the
-trials on one scoring spec, so it checks only the fingerprint. Not covered:
-the Surfpool or image build behind the grader beyond what `Cargo.lock` pins.
+(`mtx task fingerprint <task>`), a hash of the scoring spec (v1's, or v2's
+with its settings) and, for information only, the commit `mtx` was built from
+(`engine`, never compared). The fingerprint hashes what changes what a task
+measures: `task.toml` without its cosmetic keys, `instruction.md`,
+`tests/test.sh`, the practice scenarios, the anchors' sources, the
+generator's parameters and a draw as large as the verifier's, every file of
+the snapshot (the files git tracks: an untracked swap file or a gitignored
+`surfnet.json` never counts), `GRADER_VERSION` and `tests/anchor.digest`.
+
+It hashes the engine's behaviour, not its source. Most engine PRs (a new
+venue, a test, a comment, a refactor) leave every task as it was, and a
+fingerprint that moved with each would be overridden as routine. Instead
+`tests/anchor.digest` holds the SHA-256 of the sessions the task's reference
+(and its informed bot, when the task has one; the file says which) plays on a
+fixed public draw, without wall times, compute units and signatures: exactly
+the fields the identity proof below ignores. An engine, kit or dependency
+change that alters what the anchors do moves it, and so the fingerprint.
+
+- CI's `anchor-digests` job runs on every change under `crates/`,
+  `Cargo.lock` or `rust-toolchain`, plays the anchors again and fails if a
+  digest differs from the committed one. That is the signal that the change
+  altered a task's behaviour: **bump `GRADER_VERSION`**
+  (`crates/grader/src/versions.rs`) and run `mtx task sync --anchors`.
+  The rule: `GRADER_VERSION` is bumped whenever an identity proof differs, and
+  for engine changes only bots meet (a guard's rule, a disqualification) that
+  the anchors don't show.
+- `mtx task sync` writes the digest when the anchors' inputs (their sources,
+  the snapshot, the family's parameters, the draw's settings) changed since it
+  was written, and with `--anchors` always. It plays sessions: Linux, as root,
+  `just` and Surfpool installed, the references built (`just --justfile
+  bench/tasks/<task>/reference/Justfile build`). `mtx task anchor-digest
+  [task] [--check]` plays them without writing.
+- `mtx task sync` also writes the fingerprint to `tests/task.fingerprint` (the
+  verifier reads it from `/tests`); `mtx task check` and CI fail when either
+  file is stale. After editing anything above, run `mtx task sync` and commit
+  both files. `mtx task fingerprint` and `sync` refuse when the running `mtx`
+  was built from other engine source than the checkout's (the family
+  parameters and `GRADER_VERSION` come from the binary): rebuild, or pass
+  `--allow-stale-binary`.
+
+When a scoring constant changes, bump `CODE_VERSION` (v2) or `V1_CODE_VERSION`
+and re-pin the spec hash test. `bench publish`, `review`, `compare` and
+`rescore` refuse to mix trials of one task with different versions, or with
+none, unless `--allow-version-mismatch` is given (the output then lists the
+mismatch); `bench rescore --scoring ...` puts the trials on one scoring spec,
+so it checks only the fingerprint. Not covered: the Surfpool or image build
+behind the grader beyond what `Cargo.lock` pins.
 
 The scenario file format, v1 and v2, is in [scenario-format.md](scenario-format.md).
 How bots are scored is in [grading.md](grading.md).
@@ -323,9 +352,9 @@ instruction. `mtx task status <name>` says which steps are done;
    strategy that uses its risk budget. The informed bot
    (`checks/bots/informed/`, a copy of the reference marked
    `TODO(informed)` until you write it) is the 1: it reads every fact the
-   task's data could tell in principle (the ladder hands it the session's
-   regime, `tell_regime`) and nothing about the session's future
-   randomness. Both stay named in `checks/ladder.json`'s `anchors`. Freeze
+   task's data could tell in principle (the session's latent state, which
+   the verifier hands it with `mtx grade --informed` and the ladder with
+   `tell_latent`) and nothing about the session's future randomness. Both stay named in `checks/ladder.json`'s `anchors`. Freeze
    both, and record their hashes in `DESIGN.md`, before any model run
    (`guide anchors`).
 5. **Calibrate.** Draw the practice scenarios, then calibrate them with the
@@ -355,15 +384,15 @@ instruction. `mtx task status <name>` says which steps are done;
 10. **Gates.** `mtx gates <name> --fast` while building, then
     `mtx gates <name>` before a release: it refuses a v2 task without both
     anchors, with a reference outside the strength band (a floored one
-    included), with stale scoring rules, or whose verifier can't run the
-    informed bot on the hidden set; that last needs `mtx grade --informed`,
-    which isn't built yet, so no v2 task is releasable until it is (see
-    [gates](gates.md)).
+    included), with stale scoring rules, or whose verifier doesn't run the
+    informed bot on the hidden set (`--informed`, from where the image
+    builds it; see [gates](gates.md)).
 11. **Identity.** The anchors replay byte for byte (`mtx grade --replay 3`,
     which `mtx gates` runs), and a change to the grader or the CLI leaves
     the existing tasks' reports identical to `origin/main`'s on the same
     hidden set, but for wall times and the per-session keypair's
-    signatures.
+    signatures. If an identity proof differs, bump `GRADER_VERSION` and run
+    `mtx task sync --anchors` (CI's `anchor-digests` job fails until you do).
 
 ## Release
 

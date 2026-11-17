@@ -21,6 +21,41 @@ use serde_json::{Value, json};
 pub const VERIFIER_FINGERPRINT: &str = "/tests/task.fingerprint";
 /// The file `mtx task sync` writes, under a task's folder.
 pub const FINGERPRINT_FILE: &str = "tests/task.fingerprint";
+/// Refuse to write a fingerprint with a binary built from other engine
+/// source than the checkout's: the family's parameters and the grader's
+/// version in it come from the binary, so a stale installed `mtx` would
+/// write a wrong value. A binary built outside git, or a checkout that
+/// isn't one, can't be compared: it goes on.
+pub fn require_fresh_binary(root: &Path, allow: bool) -> Result<()> {
+    let built = option_env!("MTX_SOURCE_STAMP");
+    let here = crate::source_stamp::of(root).map(|(stamp, _)| stamp);
+    match (built, here) {
+        (Some(built), Some(here)) if built != here => {
+            let message = format!(
+                "this mtx was built from other engine source than the checkout's (built from {}, \
+                 checkout at {}): the family parameters and the grader's version in a fingerprint \
+                 come from the binary. Rebuild it (`cargo build --release -p mtx-cli`) and run that one",
+                option_env!("MTX_ENGINE_STAMP").unwrap_or("an unknown commit"),
+                crate::source_stamp::engine_label(root).unwrap_or_default(),
+            );
+            if allow {
+                eprintln!("warning: {message}");
+                Ok(())
+            } else {
+                bail!("{message}\n(--allow-stale-binary goes on anyway)")
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// `mtx task check`: say so, loudly, when the binary is stale, but go on.
+pub fn warn_stale_binary(root: &Path) {
+    if let Err(e) = require_fresh_binary(root, false) {
+        eprintln!("warning: {e}");
+    }
+}
+
 /// What a missing stamp reads as.
 pub const UNVERSIONED: &str = "unversioned";
 
@@ -38,14 +73,6 @@ pub fn recorded_fingerprint(given: Option<String>, file: &Path) -> Option<String
 const FAMILY_SEED: u64 = 0x7461_736b_6670;
 /// The size of the draw when a verifier names none: the hidden sets' own.
 const FAMILY_COUNT: usize = 72;
-
-/// What the engine and the anchors' builds read, beyond the task's folder:
-/// the crates they link (the grader's own, the kit, the core), the lockfile
-/// and the toolchain. Any edit moves every task's fingerprint, and
-/// `mtx task sync` writes the new ones: a change to how a session plays or
-/// an anchor prices a fill can't go unversioned.
-const BUILD_DIRS: &[&str] = &["crates/grader", "crates/kit", "crates/core"];
-const BUILD_FILES: &[&str] = &["Cargo.lock", "rust-toolchain"];
 
 /// The hidden draw's size, from the verifier's `--count`.
 fn draw_count(script: &str) -> usize {
@@ -89,9 +116,11 @@ const COSMETIC_KEYS: &[&str] = &[
 /// output); the scenario family and its parameters, as the bytes of a fixed
 /// public draw of its generator, as large as the verifier's, and the
 /// generator's parameters; every file of the snapshot; the grader's version
-/// and the source the engine and the anchors build from (see
-/// [`BUILD_DIRS`]). Out: READMEs, DESIGN.md, the checks' ladder and other bots, the
-/// verifier's Dockerfile.
+/// and `tests/anchor.digest`, which says what the engine does to the
+/// anchors (see [`crate::anchors`]). The files are the ones git tracks
+/// (see [`tracked_files`]). Out: READMEs, DESIGN.md, the checks' ladder and
+/// other bots, the verifier's Dockerfile, and the engine's source: an edit
+/// to it moves a fingerprint only if it changes how the anchors play.
 pub fn fingerprint(
     root: &Path,
     task: &str,
@@ -124,27 +153,22 @@ pub fn fingerprint(
         .join("\n");
     parts.push(("environment/Dockerfile".into(), dockerfile.into_bytes()));
     for dir in ["environment/practice", "reference", "checks/bots/informed"] {
-        for rel in files_under(root, &folder.join(dir), &["target", "bin", "node_modules"]) {
+        for rel in tracked_files(root, &folder.join(dir), &["target", "bin", "node_modules"]) {
             let bytes = read(&rel).unwrap_or_default();
             parts.push((rel.display().to_string(), bytes));
         }
     }
     if let Some(snapshot) = snapshot {
         let dir = PathBuf::from("snapshots").join(&snapshot);
-        for rel in files_under(root, &dir, &[]) {
+        for rel in tracked_files(root, &dir, &[]) {
             let bytes = read(&rel).unwrap_or_default();
             parts.push((rel.display().to_string(), bytes));
         }
     }
-    for dir in BUILD_DIRS {
-        for rel in files_under(root, Path::new(dir), &["target"]) {
-            let bytes = read(&rel).unwrap_or_default();
-            parts.push((rel.display().to_string(), bytes));
-        }
-    }
-    for rel in BUILD_FILES {
-        parts.push((rel.to_string(), read(Path::new(rel)).unwrap_or_default()));
-    }
+    parts.push((
+        crate::anchors::DIGEST_FILE.into(),
+        get(crate::anchors::DIGEST_FILE).unwrap_or_default(),
+    ));
     let family = mtx_grader::generators::generator(&generator)
         .with_context(|| format!("{task}: no generator {generator}"))?;
     let script = String::from_utf8_lossy(&get("tests/test.sh").unwrap_or_default()).to_string();
@@ -167,7 +191,7 @@ pub fn fingerprint(
 fn strip(value: &mut toml::Value) {
     match value {
         toml::Value::Table(table) => {
-            table.retain(|k, _| !COSMETIC_KEYS.iter().any(|c| *c == k));
+            table.retain(|k, _| !COSMETIC_KEYS.contains(&k));
             table.iter_mut().for_each(|(_, v)| strip(v));
         }
         toml::Value::Array(items) => items.iter_mut().for_each(strip),
@@ -175,28 +199,72 @@ fn strip(value: &mut toml::Value) {
     }
 }
 
-/// The source files under `dir` (relative to `root`), sorted: those on
-/// disk, without any directory named in `skip` (build output).
-fn files_under(root: &Path, dir: &Path, skip: &[&str]) -> Vec<PathBuf> {
-    fn walk(root: &Path, dir: &Path, skip: &[&str], out: &mut Vec<PathBuf>) {
+/// The files under `dir` (relative to `root`), sorted: those git tracks
+/// (in the index), without any directory named in `skip` (build output).
+/// Untracked files (an editor's swap file, a scratch note) and ignored ones
+/// (a snapshot's 175 MB `surfnet.json`) never count, so two checkouts of one
+/// commit agree. A root that isn't a git checkout of its own (a scratch copy)
+/// reads the disk instead.
+pub(crate) fn tracked_files(root: &Path, dir: &Path, skip: &[&str]) -> Vec<PathBuf> {
+    let mut out = match git_files(root, dir) {
+        Some(files) => files,
+        None => disk_files(root, dir),
+    };
+    out.retain(|rel| {
+        let name = rel.file_name().map(|n| n.to_string_lossy().to_string());
+        !matches!(name.as_deref(), Some("bot.wasm" | ".DS_Store"))
+            && !rel
+                .components()
+                .any(|c| skip.contains(&c.as_os_str().to_string_lossy().as_ref()))
+    });
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// What git lists under `dir`, if `root` is the top of a git checkout.
+fn git_files(root: &Path, dir: &Path) -> Option<Vec<PathBuf>> {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+    };
+    let top = git(&["rev-parse", "--show-toplevel"])?;
+    let top = PathBuf::from(String::from_utf8_lossy(&top.stdout).trim());
+    if top.canonicalize().ok()? != root.canonicalize().ok()? {
+        return None;
+    }
+    let listed = git(&["ls-files", "-z", "--", &dir.to_string_lossy()])?;
+    Some(
+        listed
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|f| !f.is_empty())
+            .map(|f| PathBuf::from(String::from_utf8_lossy(f).to_string()))
+            .collect(),
+    )
+}
+
+fn disk_files(root: &Path, dir: &Path) -> Vec<PathBuf> {
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
             return;
         };
         for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            let rel = dir.join(&name);
+            let rel = dir.join(entry.file_name());
             if entry.path().is_dir() {
-                if !skip.contains(&name.as_str()) {
-                    walk(root, &rel, skip, out);
-                }
-            } else if !matches!(name.as_str(), "bot.wasm" | ".DS_Store") {
+                walk(root, &rel, out);
+            } else {
                 out.push(rel);
             }
         }
     }
     let mut out = Vec::new();
-    walk(root, dir, skip, &mut out);
-    out.sort();
+    walk(root, dir, &mut out);
     out
 }
 
@@ -208,6 +276,8 @@ pub struct Stamp {
     pub task: String,
     pub fingerprint: Option<String>,
     pub scoring: Option<String>,
+    /// The commit the grading `mtx` was built from: shown, not compared.
+    pub engine: Option<String>,
 }
 
 impl Stamp {
@@ -219,6 +289,7 @@ impl Stamp {
             task: task.to_string(),
             fingerprint: get("task_fingerprint"),
             scoring: get("scoring_hash"),
+            engine: get("engine"),
         }
     }
 }
@@ -364,6 +435,7 @@ pub fn by_task(stamps: &[Stamp]) -> Value {
             json!({
                 "task_fingerprint": one(|s| &s.fingerprint),
                 "scoring_hash": one(|s| &s.scoring),
+                "engine": one(|s| &s.engine),
             }),
         );
     }
@@ -380,6 +452,7 @@ pub(crate) mod tests {
             task: task.into(),
             fingerprint: fp.map(Into::into),
             scoring: sc.map(Into::into),
+            engine: None,
         }
     }
 
@@ -467,7 +540,24 @@ pub(crate) mod tests {
         let from = crate::authoring::repo_root().join("bench/tasks").join(task);
         let to = root.join("bench/tasks").join(task);
         crate::authoring::copy_dir(&from, &to, &["target", "bin"]).unwrap();
+        git(&root, &["init", "-q"]);
+        track(&root);
         root
+    }
+
+    fn git(root: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    /// What `git add` does to a file a test wrote.
+    fn track(root: &Path) {
+        git(root, &["add", "-A"]);
     }
 
     /// The fingerprint with `rel` replaced by `f` of it, then put back.
@@ -535,7 +625,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_engine_the_anchors_build_from_and_the_whole_snapshot_are_in_the_fingerprint() {
+    fn the_whole_snapshot_the_anchor_digest_and_the_grader_version_are_in_the_fingerprint() {
         let task = "flash-crash-spcx";
         let root = scratch(task);
         let base = fingerprint(&root, task, &disk(&root)).unwrap();
@@ -547,31 +637,74 @@ pub(crate) mod tests {
             .to_string();
         let mut seen = vec![base];
         for rel in [
-            "crates/grader/src/session.rs",
-            "crates/kit/src/fill.rs",
-            "crates/core/src/lib.rs",
-            "Cargo.lock",
-            "rust-toolchain",
-            &format!("snapshots/{snapshot}/exchange.json"),
-            &format!("snapshots/{snapshot}/surfnet.json.gz"),
+            format!("snapshots/{snapshot}/exchange.json"),
+            format!("snapshots/{snapshot}/surfnet.json.gz"),
+            format!("bench/tasks/{task}/{}", crate::anchors::DIGEST_FILE),
         ] {
-            let path = root.join(rel);
+            let path = root.join(&rel);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, "one").unwrap();
+            track(&root);
             let one = fingerprint(&root, task, &disk(&root)).unwrap();
             std::fs::write(&path, "two").unwrap();
             let two = fingerprint(&root, task, &disk(&root)).unwrap();
             assert_ne!(one, two, "{rel}");
             assert!(!seen.contains(&one), "{rel}");
             seen.push(one);
-            std::fs::remove_file(&path).unwrap();
         }
-        // Build output is no source.
-        let junk = root.join("crates/kit/target/x");
-        std::fs::create_dir_all(junk.parent().unwrap()).unwrap();
-        let before = fingerprint(&root, task, &disk(&root)).unwrap();
-        std::fs::write(&junk, "x").unwrap();
-        assert_eq!(before, fingerprint(&root, task, &disk(&root)).unwrap());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_engines_source_is_not_in_the_fingerprint_but_its_behaviour_is() {
+        let task = "flash-crash-spcx";
+        let root = scratch(task);
+        let base = fingerprint(&root, task, &disk(&root)).unwrap();
+        // A doc comment in the kit, a comment in the grader, a new file in
+        // core, a lockfile and a toolchain: none changes what a task does
+        // (an engine edit that does shows in the anchor digest, played by CI).
+        for rel in [
+            "crates/kit/src/lib.rs",
+            "crates/grader/tests/files.rs",
+            "crates/core/NOTES.md",
+            "Cargo.lock",
+            "rust-toolchain",
+        ] {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "/// x\n").unwrap();
+            track(&root);
+            assert_eq!(
+                base,
+                fingerprint(&root, task, &disk(&root)).unwrap(),
+                "{rel}"
+            );
+        }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn files_git_doesnt_track_never_count() {
+        let task = "flash-crash-spcx";
+        let root = scratch(task);
+        let base = fingerprint(&root, task, &disk(&root)).unwrap();
+        let folder = root.join("bench/tasks").join(task);
+        // An editor's swap file and a stray note, in the anchors' and the
+        // practice folders; build output.
+        for rel in [
+            "reference/src/.main.rs.swp",
+            "reference/NOTES",
+            "environment/practice/practice-1.json.orig",
+            "reference/target/x",
+        ] {
+            let path = folder.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "x").unwrap();
+        }
+        assert_eq!(base, fingerprint(&root, task, &disk(&root)).unwrap());
+        // Added to the index, a file counts.
+        track(&root);
+        assert_ne!(base, fingerprint(&root, task, &disk(&root)).unwrap());
         std::fs::remove_dir_all(&root).unwrap();
     }
 

@@ -224,6 +224,10 @@ pub struct Competitor {
     pub competitor_bps: f64,
     /// How the grader's own maker competes.
     pub competition: Competition,
+    /// Where the snapshot's makers are widened to, when it isn't
+    /// `competitor_bps` (see [`Making::makers_bps`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub makers_bps: Option<f64>,
 }
 
 /// The transaction layer.
@@ -506,6 +510,7 @@ impl Actors {
                 competitor_bps: competitor.competitor_bps,
                 competition: competitor.competition,
                 takers: self.takers.clone(),
+                makers_bps: competitor.makers_bps,
             }
             .validate(duration_slots)
             .map_err(|reason| format!("making: {reason}"));
@@ -625,6 +630,7 @@ impl ScenarioV2 {
         self.venues_are_one_kind()?;
         self.flows_do_not_mix()?;
         self.library_is_for_perps()?;
+        self.one_score_over_holding()?;
         self.takers_pricing_is_valid()?;
         if self.venues.spot.is_some() {
             self.spot_is_alone()?;
@@ -862,6 +868,29 @@ impl ScenarioV2 {
     /// only those, so a wider universe would go unenforced. It has no term
     /// (the session sets it); a perp mandate has a drawdown limit.
     fn mandate_covers_the_market(&self) -> Result<(), String> {
+        // A session prices only its own market at each measurement, so no
+        // session can enforce a rule across instruments until sessions
+        // trade several markets.
+        if self.mandate.universe.iter().any(|a| a.hedge.is_some()) {
+            return Err(
+                "mandate: a hedge needs its two instruments priced together, and no session \
+                 prices more than its own market yet"
+                    .into(),
+            );
+        }
+        if self
+            .mandate
+            .limits
+            .exposures
+            .iter()
+            .any(|e| e.weights.len() > 1)
+        {
+            return Err(
+                "mandate: an exposure across several instruments needs them priced together, \
+                 and no session prices more than its own market yet"
+                    .into(),
+            );
+        }
         if let Some(lending) = &self.venues.lending {
             let mut wanted = lending.instruments();
             let mut universe: Vec<InstrumentRef> = self
@@ -908,6 +937,38 @@ impl ScenarioV2 {
         }
         if self.venues.perp.is_some() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
+        }
+        // No session tells the bot's taker fills from its maker fills yet.
+        if self.mandate.universe.iter().any(|a| a.taking.is_some()) {
+            return Err(
+                "mandate: no session records taker fills yet, so none can enforce taking".into(),
+            );
+        }
+        // Every session starts flat, so an exposure bounded by a fraction of
+        // its start would be bounded at zero. Lifted once sessions can start
+        // with positions.
+        if self
+            .mandate
+            .limits
+            .exposures
+            .iter()
+            .any(|e| e.max_abs_fraction_of_start.is_some())
+        {
+            return Err(
+                "mandate: max_abs_fraction_of_start needs a session that starts with positions; \
+                 every session starts flat"
+                    .into(),
+            );
+        }
+        // Only a perp session prices the account at each measurement.
+        if (self.venues.spot.is_some() || self.venues.lending.is_some())
+            && self.mandate.checks_samples()
+        {
+            return Err(
+                "mandate: notional limits and hedges are for perp scenarios; \
+                 a spot or lending session doesn't check them"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -1029,6 +1090,25 @@ impl ScenarioV2 {
         Ok(())
     }
 
+    /// `scoring.net` and an RFQ desk's `over_idle_desk` both score over
+    /// holding the start, with different price references and drawdown
+    /// series: a scenario picks one.
+    fn one_score_over_holding(&self) -> Result<(), String> {
+        let over_idle = self
+            .actors
+            .library
+            .as_ref()
+            .and_then(|l| l.rfq_clients.as_ref())
+            .is_some_and(|rfq| rfq.over_idle_desk);
+        if over_idle && self.scoring.net.is_some() {
+            return Err(
+                "actors.rfq_clients.over_idle_desk and scoring.net both score over holding the start: use one"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
     /// The actor library trades a perp's book: a spot or lending session has none.
     fn library_is_for_perps(&self) -> Result<(), String> {
         if (self.venues.spot.is_some() || self.venues.lending.is_some())
@@ -1138,6 +1218,7 @@ impl ScenarioV2 {
                     competitor_bps: c.competitor_bps,
                     competition: c.competition,
                     takers,
+                    makers_bps: c.makers_bps,
                 }),
                 None,
                 Vec::new(),
@@ -1267,6 +1348,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 Some(Competitor {
                     competitor_bps: making.competitor_bps,
                     competition: making.competition,
+                    makers_bps: making.makers_bps,
                 }),
                 None,
                 making.takers.clone(),
@@ -1395,6 +1477,8 @@ pub enum ParseError {
 
 #[cfg(test)]
 mod tests {
+    use mtx_core::mandate::{Exposure, Hedge};
+
     use super::*;
     use crate::{making::MakingFamily, scenario::ShockFamily, weekend::WeekendFamily};
 
@@ -1620,6 +1704,61 @@ mod tests {
         s.mandate.limits.max_drawdown_usd = None;
         assert!(s.validate().unwrap_err().contains("drawdown"));
 
+        // A perp session checks notional limits; a spot session doesn't yet.
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert!(s.validate().unwrap_err().contains("notional"));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate
+            .limits
+            .exposures
+            .push(Exposure::max_abs_fraction_of_start(
+                "net",
+                [(s.perp_instrument(), 1.0)].into(),
+                0.5,
+            ));
+        assert!(s.validate().unwrap_err().contains("starts flat"));
+        s.mandate.limits.exposures[0].max_abs_fraction_of_start = None;
+        s.mandate.limits.exposures[0].max_abs_usd = Some(1_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        assert!(s.validate().unwrap_err().contains("taking"));
+        // Review probe: hedges and exposures across instruments validated,
+        // and no session could enforce them. They're refused, and say why.
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        let both: Vec<_> = s
+            .mandate
+            .universe
+            .iter()
+            .map(|a| (a.instrument.clone(), 1.0))
+            .collect();
+        assert_eq!(both.len(), 2);
+        s.mandate
+            .limits
+            .exposures
+            .push(Exposure::max_abs_usd("net", both, 1_000.0));
+        assert_eq!(s.mandate.validate(), Ok(()));
+        assert!(
+            s.validate()
+                .unwrap_err()
+                .contains("an exposure across several instruments")
+        );
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        let against = s.mandate.universe[0].instrument.clone();
+        s.mandate.universe[1].hedge = Some(Hedge::new(against, 1.0));
+        assert_eq!(s.mandate.validate(), Ok(()));
+        assert!(s.validate().unwrap_err().contains("a hedge needs"));
+
         let mut s = shock();
         s.scoring.bound_usd = Some(f64::NAN);
         assert!(s.scoring.validate().is_err());
@@ -1661,6 +1800,25 @@ mod tests {
         let mut s = shock();
         s.schema = 1;
         assert!(s.validate().unwrap_err().contains("schema"));
+    }
+
+    #[test]
+    fn an_rfq_desk_over_the_idle_desk_is_not_also_net_scored() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let mut library = parse(everyone).unwrap().actors.unwrap();
+        library.rfq_clients.as_mut().unwrap().over_idle_desk = true;
+        let mut s = shock();
+        s.actors.library = Some(library);
+        s.validate().unwrap();
+        s.scoring.net = Some(NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        let refused = s.validate().unwrap_err();
+        assert!(
+            refused.contains("over_idle_desk") && refused.contains("use one"),
+            "{refused}"
+        );
     }
 
     #[test]

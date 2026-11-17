@@ -433,7 +433,7 @@ pub fn rescore_trials(
     if scoring.scoring != Scoring::V1 {
         mixed.retain(|m| m.field == "task fingerprint");
     }
-    crate::versions::enforce(&format!("{}", root.label), &mixed, allow_version_mismatch)?;
+    crate::versions::enforce(&root.label.to_string(), &mixed, allow_version_mismatch)?;
     let mut rows = Vec::new();
     // Each task's v2 grades, by model, for the comparison across runs.
     let mut graded: BTreeMap<String, Vec<Graded>> = BTreeMap::new();
@@ -847,6 +847,7 @@ mod tests {
         let versions = Versions {
             task_fingerprint: Some("ff".into()),
             scoring_hash: Some("old".into()),
+            engine: None,
         };
         let verdict: Verdict = serde_json::from_value(json!({
             "versions": {"task_fingerprint": "ff", "scoring_hash": "old"}

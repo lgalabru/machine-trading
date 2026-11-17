@@ -1,0 +1,377 @@
+//! What the engine does to a task's anchors: `tests/anchor.digest`.
+//!
+//! A task's fingerprint can't hash the engine's source: most engine changes
+//! (a new venue, a test, a comment) leave every task's scores where they
+//! were, and a fingerprint that moves every time is one nobody reads. So it
+//! hashes the engine's *behaviour* on the task instead. The digest is the
+//! SHA-256 of the sessions the task's reference (and its informed bot, when
+//! the task has one) plays on a small fixed public draw of its scenario
+//! family, without the fields that differ from run to run by the machine or
+//! by chance (`publish::VOLATILE`: wall and turn times, compute units,
+//! signatures). It is committed beside the fingerprint and is one of its
+//! inputs: an engine, kit or dependency change that alters what the anchors
+//! do moves it, and so moves the fingerprint; one that doesn't, doesn't.
+//!
+//! - `mtx task sync` writes it when the anchors' inputs changed, and with
+//!   `--anchors` always (it plays the sessions: Linux, the references built,
+//!   `just` and Surfpool installed, as the verifier has them);
+//! - `mtx task check` fails when the anchors' inputs changed since it was
+//!   written (the `inputs` line);
+//! - `mtx task anchor-digest --check`, which CI runs on every change to
+//!   `crates/`, `Cargo.lock` or `rust-toolchain`, plays the sessions again
+//!   and fails if the digest differs: the engine changed what the task does.
+//!   Then bump `GRADER_VERSION` and run `mtx task sync --anchors`.
+
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+use anyhow::{Context, Result, bail};
+use mtx_grader::versions::hash_parts;
+use serde_json::Value;
+
+/// Under a task's folder.
+pub const DIGEST_FILE: &str = "tests/anchor.digest";
+
+/// The secret the public draw comes from: public on purpose, never a
+/// hidden set's.
+const SECRET: &str = "mtx-anchor-digest/public-draw/2026-11/xxxxxxxx";
+/// Sessions in the draw: small enough for a CI job, and enough that each
+/// of a family's strata is in it.
+pub const SESSIONS: usize = 12;
+/// The digest file's format.
+const FORMAT: &str = "1";
+
+/// The anchors the digest covers, as the file names them.
+const REFERENCE_ONLY: &str = "reference (this task has no informed bot)";
+const REFERENCE_AND_INFORMED: &str = "reference and informed bot";
+
+/// A digest file's fields.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Digest {
+    /// A hash of what the sessions are played from (see [`inputs`]).
+    pub inputs: String,
+    /// A hash of the sessions' results.
+    pub digest: String,
+    pub informed: bool,
+}
+
+impl Digest {
+    pub fn text(&self) -> String {
+        format!(
+            "# Written by `mtx task sync`; do not edit.\n\
+             # What the engine does to this task's anchors on a fixed public draw\n\
+             # ({SESSIONS} sessions of the task's family): the SHA-256 of their results,\n\
+             # without wall times, compute units and signatures. CI recomputes it when\n\
+             # the engine changes (`mtx task anchor-digest --check`); a difference\n\
+             # means the engine changed what this task does: bump GRADER_VERSION and\n\
+             # run `mtx task sync --anchors`.\n\
+             format: {FORMAT}\n\
+             anchors: {}\n\
+             inputs: {}\n\
+             digest: {}\n",
+            if self.informed {
+                REFERENCE_AND_INFORMED
+            } else {
+                REFERENCE_ONLY
+            },
+            self.inputs,
+            self.digest
+        )
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        let field = |key: &str| {
+            text.lines()
+                .find_map(|l| l.strip_prefix(key)?.strip_prefix(": "))
+                .map(|v| v.trim().to_string())
+        };
+        Some(Self {
+            inputs: field("inputs")?,
+            digest: field("digest")?,
+            informed: field("anchors")?.starts_with(REFERENCE_AND_INFORMED),
+        })
+    }
+
+    /// What the file holds for a task whose digest hasn't been played yet.
+    pub fn pending(inputs: &str, informed: bool) -> Self {
+        Self {
+            inputs: inputs.to_string(),
+            digest: "pending: run `mtx task sync --anchors` on Linux".to_string(),
+            informed,
+        }
+    }
+}
+
+/// What a task's digest is played from: the anchors' sources, the snapshot,
+/// the family's parameters and the draw's settings. Not the engine: that is
+/// what the digest measures.
+pub fn inputs(
+    root: &Path,
+    task: &str,
+    read: &dyn Fn(&Path) -> Option<Vec<u8>>,
+) -> Result<(String, bool)> {
+    let meta = Meta::of(root, task, read)?;
+    let folder = PathBuf::from("bench/tasks").join(task);
+    let mut dirs = vec![folder.join("reference")];
+    if let Some(informed) = &meta.informed {
+        dirs.push(PathBuf::from(informed));
+    }
+    let mut parts: Vec<(String, Vec<u8>)> = vec![
+        ("format".into(), FORMAT.into()),
+        ("secret".into(), SECRET.into()),
+        ("sessions".into(), SESSIONS.to_string().into_bytes()),
+        ("v2 sessions".into(), vec![u8::from(meta.v2_sessions)]),
+        ("generator".into(), meta.generator.clone().into_bytes()),
+        (
+            "parameters".into(),
+            (mtx_grader::generators::generator(&meta.generator)
+                .with_context(|| format!("{task}: no generator {}", meta.generator))?
+                .params)()
+            .into_bytes(),
+        ),
+    ];
+    let snapshot = PathBuf::from("snapshots").join(&meta.snapshot);
+    dirs.push(snapshot);
+    for dir in &dirs {
+        for rel in crate::versions::tracked_files(root, dir, &["target", "bin", "node_modules"]) {
+            parts.push((rel.display().to_string(), read(&rel).unwrap_or_default()));
+        }
+    }
+    Ok((
+        hash_parts(parts.iter().map(|(l, b)| (l.as_str(), b.as_slice()))),
+        meta.informed.is_some(),
+    ))
+}
+
+struct Meta {
+    generator: String,
+    snapshot: String,
+    /// The informed bot's crate, from the repository's root.
+    informed: Option<String>,
+    v2_sessions: bool,
+}
+
+impl Meta {
+    fn of(root: &Path, task: &str, read: &dyn Fn(&Path) -> Option<Vec<u8>>) -> Result<Self> {
+        let folder = PathBuf::from("bench/tasks").join(task);
+        let toml_text =
+            read(&folder.join("task.toml")).with_context(|| format!("{task}: no task.toml"))?;
+        let toml: toml::Value = toml::from_str(&String::from_utf8_lossy(&toml_text))
+            .with_context(|| format!("{task}/task.toml"))?;
+        let generator = toml["metadata"]["mtx"]["generator"]
+            .as_str()
+            .with_context(|| format!("{task}: no [metadata.mtx] generator"))?
+            .to_string();
+        let snapshot = toml["metadata"]["snapshot"]
+            .as_str()
+            .with_context(|| format!("{task}: no [metadata] snapshot"))?
+            .to_string();
+        let script = read(&folder.join("tests/test.sh")).unwrap_or_default();
+        let v2_sessions = String::from_utf8_lossy(&script).contains("--v2-sessions");
+        let informed = crate::tasks::load_one(root, task.to_string())
+            .ok()
+            .and_then(|t| t.informed)
+            .map(|i| i.dir);
+        Ok(Self {
+            generator,
+            snapshot,
+            informed,
+            v2_sessions,
+        })
+    }
+}
+
+/// Play the sessions and digest them. Needs what the verifier has: the
+/// references built (`just --justfile bench/tasks/<task>/reference/Justfile
+/// build`), `just`, Surfpool, and Linux (a process bot runs as its own user).
+/// The graded bot is the reference itself: only the anchors' sessions count.
+pub fn compute(root: &Path, task: &str) -> Result<Digest> {
+    let read = |p: &Path| std::fs::read(root.join(p)).ok();
+    let (inputs, informed) = inputs(root, task, &read)?;
+    let meta = Meta::of(root, task, &read)?;
+    let folder = root.join("bench/tasks").join(task);
+
+    let work = std::env::temp_dir().join(format!("mtx-anchors-{}", uuid::Uuid::new_v4().simple()));
+    let result = play(root, &folder, &meta, &work);
+    let digest = result.and_then(|()| digest_of(&work.join("details"), informed));
+    let _ = std::fs::remove_dir_all(&work);
+    Ok(Digest {
+        inputs,
+        digest: digest.with_context(|| format!("{task}: anchor digest"))?,
+        informed,
+    })
+}
+
+/// An anchor as the image ships it: the Justfile and the built process.
+fn stage_anchor(from: &Path, to: &Path) -> Result<()> {
+    let bin = from.join("bin/bot");
+    if !bin.is_file() {
+        bail!(
+            "{} isn't built: run `just --justfile {} build`",
+            from.display(),
+            from.join("Justfile").display()
+        );
+    }
+    std::fs::create_dir_all(to.join("bin"))?;
+    std::fs::copy(from.join("Justfile"), to.join("Justfile"))?;
+    std::fs::copy(&bin, to.join("bin/bot"))?;
+    Ok(())
+}
+
+fn play(root: &Path, folder: &Path, meta: &Meta, work: &Path) -> Result<()> {
+    let reference = work.join("reference");
+    stage_anchor(&folder.join("reference"), &reference)?;
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .current_dir(root)
+        .env("MTX_EVAL_SEED", SECRET)
+        .env_remove("MTX_JOBS")
+        .args(["grade", "--draw", &meta.generator])
+        .args(["--count", &SESSIONS.to_string()])
+        .arg("--reference")
+        .arg(&reference);
+    if let Some(informed) = &meta.informed {
+        let staged = work.join("informed");
+        stage_anchor(&root.join(informed), &staged)?;
+        command.arg("--informed").arg(&staged);
+    }
+    command
+        .args(["--anchor-jobs", "4", "--jobs", "4", "--trusted"])
+        .arg("--snapshot")
+        .arg(root.join("snapshots").join(&meta.snapshot))
+        .arg("--bot")
+        .arg(&reference)
+        .arg("--logs")
+        .arg(work.join("logs"))
+        .arg("--details")
+        .arg(work.join("details"));
+    if meta.v2_sessions {
+        command.arg("--v2-sessions");
+    }
+    let out = command
+        .stdout(std::process::Stdio::null())
+        .output()
+        .context("running `mtx grade`")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let tail: Vec<&str> = err.lines().rev().take(15).collect();
+        bail!(
+            "`mtx grade` failed ({}); the anchors play on Linux, as root, with just and surfpool installed:\n{}",
+            out.status,
+            tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+        );
+    }
+    Ok(())
+}
+
+/// The hash of each anchor's session files, in order, without their
+/// volatile fields.
+fn digest_of(details: &Path, informed: bool) -> Result<String> {
+    let mut parts: Vec<(String, Vec<u8>)> = Vec::new();
+    for role in ["reference", "informed"] {
+        if role == "informed" && !informed {
+            continue;
+        }
+        let dir = details.join(role);
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .with_context(|| dir.display().to_string())?
+            .flatten()
+            .map(|e| e.path())
+            .collect();
+        files.sort();
+        if files.len() < SESSIONS {
+            bail!("{role}: {} sessions, not {SESSIONS}", files.len());
+        }
+        for file in files {
+            let mut json = Vec::new();
+            flate2::read::GzDecoder::new(std::fs::File::open(&file)?)
+                .read_to_end(&mut json)
+                .with_context(|| file.display().to_string())?;
+            let mut value: Value = serde_json::from_slice(&json)?;
+            crate::publish::strip_volatile(&mut value);
+            let name = file.file_name().unwrap_or_default().to_string_lossy();
+            parts.push((format!("{role}/{name}"), serde_json::to_vec(&value)?));
+        }
+    }
+    Ok(hash_parts(
+        parts.iter().map(|(l, b)| (l.as_str(), b.as_slice())),
+    ))
+}
+
+/// The committed digest file of a task, if it parses.
+pub fn committed(root: &Path, task: &str) -> Option<Digest> {
+    let text =
+        std::fs::read_to_string(root.join("bench/tasks").join(task).join(DIGEST_FILE)).ok()?;
+    Digest::parse(&text)
+}
+
+/// Write a task's digest file.
+pub fn write(root: &Path, task: &str, digest: &Digest) -> Result<()> {
+    let path = root.join("bench/tasks").join(task).join(DIGEST_FILE);
+    std::fs::create_dir_all(path.parent().context("no parent")?)?;
+    std::fs::write(&path, digest.text()).with_context(|| path.display().to_string())
+}
+
+/// `mtx task anchor-digest --check`: play the sessions and compare with the
+/// committed digest. Returns the tasks whose digest differs, with why.
+pub fn check(root: &Path, task: &str) -> Result<Option<String>> {
+    let read = |p: &Path| std::fs::read(root.join(p)).ok();
+    let (now, _) = inputs(root, task, &read)?;
+    let Some(committed) = committed(root, task) else {
+        return Ok(Some(format!(
+            "{task}: no {DIGEST_FILE}: run `mtx task sync --anchors`"
+        )));
+    };
+    if committed.inputs != now {
+        return Ok(Some(format!(
+            "{task}: {DIGEST_FILE} was written for other anchors, snapshot or draw settings: run `mtx task sync`"
+        )));
+    }
+    let played = compute(root, task)?;
+    if played.digest != committed.digest {
+        return Ok(Some(format!(
+            "{task}: the anchors play differently: digest {} was {}. An engine, kit or dependency \
+             change altered what this task does. Bump GRADER_VERSION (crates/grader/src/versions.rs) \
+             and run `mtx task sync --anchors`",
+            short(&played.digest),
+            short(&committed.digest)
+        )));
+    }
+    Ok(None)
+}
+
+fn short(hash: &str) -> &str {
+    hash.get(..12).unwrap_or(hash)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_file_round_trips_and_names_what_it_covers() {
+        let d = Digest {
+            inputs: "aa".into(),
+            digest: "bb".into(),
+            informed: false,
+        };
+        assert!(d.text().contains("no informed bot"));
+        assert_eq!(Digest::parse(&d.text()), Some(d.clone()));
+        let both = Digest {
+            informed: true,
+            ..d
+        };
+        assert_eq!(Digest::parse(&both.text()), Some(both));
+        assert_eq!(Digest::parse("nothing"), None);
+    }
+
+    #[test]
+    fn a_pending_file_never_matches_a_played_digest() {
+        let pending = Digest::pending("aa", false);
+        assert!(pending.digest.starts_with("pending"));
+        assert_ne!(pending.digest.len(), 64);
+    }
+}
