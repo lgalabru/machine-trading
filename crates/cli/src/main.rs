@@ -207,11 +207,13 @@ enum Command {
         /// whatever the rest do); the report covers the sessions up to it.
         #[arg(long)]
         stop_on_disqualify: bool,
-        /// Run the sessions under scoring v2's rules: drawdowns are sampled
-        /// every slot, and the bot's seed in each session is salted with the
-        /// grade's secret, so it can't tell which session it is in. (A
-        /// breach's stop-out is the scenario's own `stop_out`.) For a task
-        /// scored by v2; off, sessions run as they always have.
+        /// Run the sessions under scoring v2's rules: positions are sampled
+        /// every slot, the bot's seed in each session is salted with the
+        /// grade's secret (as in every drawn grade), so it can't tell which
+        /// session it is in, and a session that starts holding something is
+        /// also run by a bot that does nothing, whose PnL is v2's 0 there.
+        /// (A breach's stop-out is the scenario's own `stop_out`.) For a
+        /// task scored by v2; off, sessions run as they always have.
         #[arg(long)]
         v2_sessions: bool,
         /// Grade the bot only if it is a strategy component (a bot.wasm): the
@@ -288,8 +290,9 @@ enum Command {
         /// scenario's `informed_pnl_usd`, scoring v2's 1, instead.
         #[arg(long)]
         informed: bool,
-        /// Sample drawdowns every slot, as `mtx grade --v2-sessions` does,
-        /// so the drawdowns saved anchor a v2 grade at its granularity.
+        /// Run the sessions under v2's rules, as `mtx grade --v2-sessions`
+        /// does, so the anchors saved are measured as a v2 grade measures
+        /// them.
         #[arg(long)]
         v2_sessions: bool,
         /// Draw the scenarios from this generator instead of reading files,
@@ -1579,6 +1582,7 @@ async fn run() -> Result<()> {
                     None => mtx_grader::grade::v1_spec_hash(),
                 }),
             };
+            v2_scores_every_session(stop_on_disqualify, v2.as_ref())?;
             #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut regimes: Option<Vec<String>> = None;
             #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
@@ -1590,6 +1594,10 @@ async fn run() -> Result<()> {
             // every grade of it signs the same; otherwise from a fresh one.
             #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut keys = SessionKeys::random();
+            #[cfg(feature = "generate")]
+            let drawn_set = draw.is_some();
+            #[cfg(not(feature = "generate"))]
+            let drawn_set = false;
             #[cfg(feature = "generate")]
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
@@ -1629,10 +1637,7 @@ async fn run() -> Result<()> {
             if let Some(path) = &reward {
                 remove_if_present(path)?;
             }
-            // Under v2's rules a bot's seed can't name its session.
-            if v2_sessions {
-                keys = keys.salt_strategy_seeds();
-            }
+            keys = grade_keys(keys, drawn_set, v2_sessions);
             let options = |jobs: usize, anchor_jobs: usize| GradeOptions {
                 snapshot_dir: &sessions.snapshot,
                 bot_dir: &sessions.bot,
@@ -1874,7 +1879,7 @@ async fn run() -> Result<()> {
                     let dir = practice_dir.as_deref().context("--practice needs --out")?;
                     if informed && !v2_sessions {
                         anyhow::bail!(
-                            "--practice --informed needs --v2-sessions: a v2 grade samples the drawdown every slot, and the practice anchors must be measured the same way"
+                            "--practice --informed needs --v2-sessions: the practice anchors must be measured under the rules a v2 grade runs by"
                         );
                     }
                     let drawn = (generator.practice_drawn)(&practice_prefix, practice_count, seed)?;
@@ -2105,6 +2110,32 @@ fn eval_seed() -> anyhow::Result<(u64, String, SessionKeys)> {
     ))
 }
 
+/// The keys a grade runs its sessions with: a bot's seed is a hash of its
+/// session's name unless the grade's secret salts it, and a name says which
+/// session of a drawn set it is.
+fn grade_keys(keys: SessionKeys, drawn: bool, v2_sessions: bool) -> SessionKeys {
+    if drawn || v2_sessions {
+        keys.salt_strategy_seeds()
+    } else {
+        keys
+    }
+}
+
+/// Scoring v2 scores every session of the set: a grade that stops at the
+/// bot's first breach would leave it a truncated one.
+fn v2_scores_every_session(
+    stop_on_disqualify: bool,
+    v2: Option<&mtx_grader::scoring_v2::Params>,
+) -> anyhow::Result<()> {
+    if stop_on_disqualify && v2.is_some() {
+        anyhow::bail!(
+            "--stop-on-disqualify ends the grade at the bot's first breach, and scoring v2 \
+             scores every session: drop one of them"
+        );
+    }
+    Ok(())
+}
+
 fn remove_if_present(path: &std::path::Path) -> anyhow::Result<()> {
     match std::fs::remove_file(path) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
@@ -2129,11 +2160,48 @@ fn report_to_write<'a>(
 mod tests {
     #[cfg(feature = "generate")]
     use clap::Parser;
+    use mtx_grader::keys::SessionKeys;
     #[cfg(feature = "generate")]
     use mtx_grader::scenario::ShockFamily;
 
     #[cfg(feature = "generate")]
     use super::{Cli, keep_other_anchors, save_anchors, set_anchors};
+    use super::{grade_keys, v2_scores_every_session};
+
+    #[test]
+    fn a_drawn_grade_salts_what_its_bots_seed_says_of_their_session() {
+        let seed = |keys: &SessionKeys| {
+            keys.role("bot")
+                .session(2, "hidden-3")
+                .strategy_seed("hidden-3")
+        };
+        let named = mtx_core::turns::scenario_seed("hidden-3");
+        let fresh = || SessionKeys::from_eval_seed(b"a batch secret of at least 32 bytes..");
+        assert_ne!(seed(&grade_keys(fresh(), true, false)), named);
+        assert_ne!(seed(&grade_keys(fresh(), true, true)), named);
+        assert_ne!(seed(&grade_keys(fresh(), false, true)), named);
+        // Scenario files graded by hand keep the seed their name gives.
+        assert_eq!(seed(&grade_keys(fresh(), false, false)), named);
+        // And a drawn set's salt is the batch's: the same in every grade.
+        assert_eq!(
+            seed(&grade_keys(fresh(), true, false)),
+            seed(&grade_keys(fresh(), true, true))
+        );
+    }
+
+    #[test]
+    fn v2_grades_every_session_so_it_refuses_a_grade_that_stops_at_the_first_breach() {
+        let v2 = mtx_grader::scoring_v2::Params::new(mtx_grader::scoring_v2::Ceiling::Informed {
+            eta_override: None,
+        });
+        let refused = v2_scores_every_session(true, Some(&v2))
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("--stop-on-disqualify"), "{refused}");
+        assert!(v2_scores_every_session(false, Some(&v2)).is_ok());
+        // Under v1 the flag is the verifiers' own.
+        assert!(v2_scores_every_session(true, None).is_ok());
+    }
 
     #[cfg(feature = "generate")]
     #[test]
