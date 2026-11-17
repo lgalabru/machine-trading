@@ -212,7 +212,21 @@ markout record at odds 0.7), never one markout; both anchors read the
 identified clients' latest side as the move, which a mistaken request
 sometimes gets wrong.
 
-Gate 0 on main with `hit_rate` 0.85 (HITRATE_RESULTS).
+Gate 0 on main after #113 and #114, fresh 72-session sets (`engine-v3-*`):
+
+| Set | Informed / best careful | Informed / best blind | Order holds | Reference, weighted share | Side-skew, weighted share |
+| --- | --- | --- | --- | --- | --- |
+| `hit_rate` 0.85, set 1 | 1.64 (side-skew) | 3.77 (quote-all) | **0.511** | 0.63 | 0.49 |
+| same set, `hit_rate` 1.0 (control) | 2.05 (side-skew) | 13.1 (size-tier) | **0.820** | 0.73 | 0.33 |
+| `hit_rate` 0.85, set 2 | 1.65 (side-skew) | 15.2 (size-tier) | **0.307** | 0.47 | 0.50 |
+
+**It fails.** On both sets at 0.85, side-skew (which reads the request
+flow, not who sent it) earns as much as the reference or more, and the
+informed bot is under 2x it. The paired control shows the mistakes cost
+the informed bot about a fifth of its margin, but side-skew is stronger on
+main than it was before the merge: 0.35 to 0.38 of the reference then, 0.95
+and 1.25 now, and 0.67 on the control with `hit_rate` 1.0. The blind rungs
+stay far below.
 
 ## Departures from the card
 
