@@ -311,6 +311,7 @@ enum Command {
         /// neutral one (the generator's states the draw in prose).
         /// `--informed` needs `--v2-sessions`. What `--out` already holds
         /// for the other anchor is kept.
+        #[cfg(feature = "generate")]
         #[arg(
             long,
             value_parser = generator_names(),
@@ -320,15 +321,19 @@ enum Command {
         practice: Option<String>,
         /// Where the practice files are written, as `mtx scenario generate
         /// --out` writes them.
+        #[cfg(feature = "generate")]
         #[arg(long, requires = "practice")]
         out: Option<PathBuf>,
         /// Names are `<prefix>-<n>`.
+        #[cfg(feature = "generate")]
         #[arg(long, default_value = "practice", requires = "practice")]
         practice_prefix: String,
+        #[cfg(feature = "generate")]
         #[arg(long, default_value_t = 6, requires = "practice")]
         practice_count: usize,
         /// The seed the practice set was generated with (`mtx scenario
         /// generate --seed`): the same scenarios, so the files match.
+        #[cfg(feature = "generate")]
         #[arg(long, requires = "practice")]
         practice_seed: Option<u64>,
     },
@@ -1707,15 +1712,21 @@ async fn run() -> Result<()> {
             count,
             #[cfg(feature = "generate")]
             anchors,
+            #[cfg(feature = "generate")]
             practice,
+            #[cfg(feature = "generate")]
             out,
+            #[cfg(feature = "generate")]
             practice_prefix,
+            #[cfg(feature = "generate")]
             practice_count,
+            #[cfg(feature = "generate")]
             practice_seed,
         } => {
             let mut keys = SessionKeys::random();
             #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut latent: Option<Vec<String>> = None;
+            #[cfg(feature = "generate")]
             let practice_dir = out;
             #[cfg(feature = "generate")]
             let mut scenarios: Vec<(Option<PathBuf>, Scenario)> = match (&draw, &practice) {
@@ -1791,6 +1802,7 @@ async fn run() -> Result<()> {
             if let Some(path) = &anchors {
                 save_anchors(path, scenarios.iter().map(|(_, s)| s))?;
             }
+            #[cfg(feature = "generate")]
             if let Some(dir) = &practice_dir {
                 std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
                 for (_, scenario) in &scenarios {
@@ -1808,6 +1820,7 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "generate")]
 /// Save a practice file as v1 without the per-account role maps a family
 /// draws for the host-side informed run: the file goes into the agent's image.
 fn save_practice(scenario: &Scenario, path: &Path) -> Result<()> {
@@ -1817,6 +1830,7 @@ fn save_practice(scenario: &Scenario, path: &Path) -> Result<()> {
     std::fs::write(path, text).with_context(|| path.display().to_string())
 }
 
+#[cfg(feature = "generate")]
 /// A practice file that is already in `--out` keeps its anchors the
 /// calibration doesn't run, if it is the scenario the family draws at the
 /// seed (whatever its description, which a calibration rewrites): a file
