@@ -113,6 +113,15 @@ pub struct RfqClients {
     pub desk_base: f64,
     #[serde(default)]
     pub desk_usdc: f64,
+    /// Score the desk over the idle desk: the session's PnL, and the
+    /// drawdown its mandate is audited by, leave out what `desk_base` of
+    /// the asset would have made held through the session, its move at the
+    /// reference price. The desk's earnings from its fills and from the
+    /// inventory they leave stay in. A desk that quotes nothing then scores
+    /// exactly 0. By default the asset the desk starts with counts as the
+    /// session's value, and its move is the desk's PnL.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub over_idle_desk: bool,
 }
 
 impl Default for RfqClients {
@@ -129,6 +138,7 @@ impl Default for RfqClients {
             two_way_share: half(),
             desk_base: 0.0,
             desk_usdc: 0.0,
+            over_idle_desk: false,
         }
     }
 }
@@ -698,6 +708,15 @@ pub(super) struct Clients {
 }
 
 impl Clients {
+    /// The clients that are informed, by the ids their requests carry
+    /// (`c<n>-<k>` is the `k`th request of `c<n>`).
+    fn informed_ids(&self) -> Vec<String> {
+        (0..self.informed.len())
+            .filter(|i| self.informed[*i])
+            .map(|i| format!("c{i}"))
+            .collect()
+    }
+
     pub fn new(
         spec: RfqClients,
         scale: Scale,
@@ -908,6 +927,10 @@ impl Actor for Clients {
 
     async fn after_blocks(&mut self, now: &Moment) {
         self.send_requests(now);
+    }
+
+    fn roster(&self) -> Vec<(String, Vec<String>)> {
+        vec![("rfq-informed".to_string(), self.informed_ids())]
     }
 
     async fn report(&mut self, _: &mut ActorsReport) {}
@@ -1408,6 +1431,13 @@ mod tests {
             Rng::new([1; 32]),
         );
         assert_eq!(clients.informed.iter().filter(|i| **i).count(), 3);
+        let told = clients.roster();
+        assert_eq!(told[0].0, "rfq-informed");
+        assert_eq!(told[0].1.len(), 3);
+        assert!(told[0].1.iter().all(|id| {
+            let i: usize = id[1..].parse().unwrap();
+            clients.informed[i]
+        }));
         let informed = clients.informed.iter().position(|i| *i).unwrap();
         let plain = clients.informed.iter().position(|i| !*i).unwrap();
         assert_eq!(clients.value(informed, &at(20, 100.0)), 101.0);

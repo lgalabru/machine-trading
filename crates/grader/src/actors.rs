@@ -94,6 +94,13 @@ pub trait Actor: Send + Sync {
         None
     }
 
+    /// Who is who among its parts, as identity facts the grader may tell the
+    /// task's informed bot (see [`library::Roster`]): each is a kind and the
+    /// names (a wallet's address, a client's id) it holds. Nothing by default.
+    fn roster(&self) -> Vec<(String, Vec<String>)> {
+        Vec::new()
+    }
+
     /// What it did, into the session's report.
     async fn report(&mut self, report: &mut ActorsReport);
 }
