@@ -174,9 +174,22 @@ impl FlowFamily {
     }
 
     fn draw_with(&self, model: &MarketModel, name: &str, seed: u64) -> (Scenario, Shape) {
+        self.draw_on(model, name, seed, |seed, duration| model.draw(seed, duration))
+    }
+
+    /// [`FlowFamily::draw`], with the calibration's own path drawn by `path`
+    /// from a seed and the session's length: a joint draw with other
+    /// markets, say. The moves are laid on what it returns.
+    pub fn draw_on(
+        &self,
+        model: &MarketModel,
+        name: &str,
+        seed: u64,
+        path: impl FnOnce(u64, u64) -> ModelPath,
+    ) -> (Scenario, Shape) {
         let mut rng = SplitMix64(seed);
         let duration = rng.range_u64(self.duration);
-        let mut index = model.draw(rng.next_u64(), duration);
+        let mut index = path(rng.next_u64(), duration);
         let median_jump_pct = model.calibration.fair_value.jumps.abs_size_median_pct;
 
         let horizon_slots = rng.range_u64(self.horizon_slots);
@@ -315,6 +328,8 @@ impl FlowFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            markets: Vec::new(),
+            joint: None,
         };
         (scenario, shape)
     }
@@ -352,7 +367,7 @@ fn uneven_ramp(rng: &mut SplitMix64, n: usize) -> Vec<f64> {
 
 /// Lays a move of `size_pct` on the path from `onset` over `ramp` slots, in
 /// the ramp's uneven steps, and holds it after.
-fn lay_move(path: &mut ModelPath, onset: u64, ramp: u64, size_pct: f64, steps: &[f64]) {
+pub(crate) fn lay_move(path: &mut ModelPath, onset: u64, ramp: u64, size_pct: f64, steps: &[f64]) {
     let lift = (1.0 + size_pct / 100.0).ln();
     let n = steps.len() as u64;
     for (slot, level) in path.log_levels.iter_mut().enumerate() {

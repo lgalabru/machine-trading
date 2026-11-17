@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
+    cross_asset::CrossFamily,
     error::Result,
     flow_reading::FlowFamily,
     making::MakingFamily,
@@ -138,12 +139,35 @@ pub const GENERATORS: &[Generator] = &[
     },
     Generator {
         name: "smart-money-decay",
-        practice: |prefix, count, seed| FlowFamily::nvda().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                FlowFamily::nvda().draw_set(prefix, count, seed),
+                false,
+                flow_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 FlowFamily::nvda().draw_set("hidden", count, seed),
                 tell,
                 flow_latent,
+            )
+        },
+    },
+    Generator {
+        name: "cross-asset-lead",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                CrossFamily::qqq().draw_set(prefix, count, seed),
+                false,
+                cross_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                CrossFamily::qqq().draw_set("hidden", count, seed),
+                tell,
+                cross_latent,
             )
         },
     },
@@ -277,6 +301,12 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
 /// session seats them. Not when the moves come, which way or how far, nor
 /// when each decoy fades.
 fn flow_latent(_: &crate::flow_reading::Shape) -> Value {
+    json!({ "roster": ["informed", "decoy"] })
+}
+
+/// NVDA's roster, as the flow-reading family's: not its moves, nor what
+/// share of them QQQ carries.
+fn cross_latent(_: &crate::cross_asset::Shape) -> Value {
     json!({ "roster": ["informed", "decoy"] })
 }
 

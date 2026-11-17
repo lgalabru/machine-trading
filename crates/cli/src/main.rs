@@ -1313,7 +1313,7 @@ async fn run() -> Result<()> {
             let mut written = Vec::new();
             for scenario in scenarios {
                 let path = out.join(format!("{}.json", scenario.name));
-                scenario.save(&path)?;
+                scenario.save_any(&path)?;
                 written.push(path);
             }
             serde_json::to_string_pretty(&written)?
