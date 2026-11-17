@@ -1716,7 +1716,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         checks.push(full_only(
             GRADED,
             "keypair-probe",
-            "A bot can't read the grader's keypairs",
+            "A bot can't read the grader's secret, temp dirs or keypairs",
         ));
     } else {
         // Harbor adds a job directory per run and the checks read the last
@@ -1751,9 +1751,9 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         checks.push(Check::from(
             GRADED,
             "keypair-probe",
-            "A bot can't read the grader's keypairs",
+            "A bot can't read the grader's secret, temp dirs or keypairs",
             ok,
-            if ok { "no keypair readable".into() } else { d },
+            if ok { "no surface readable".into() } else { d },
         ));
         if tasks::guarded(root, task) {
             let (ok, d) = run_in(root, "just", &["network-probe", task], false)?;
