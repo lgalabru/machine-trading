@@ -14,15 +14,21 @@
 //! errors above zero and `t_margin` above the other's, with `min_blocks`
 //! scored blocks in each, it commits to that class for the session.
 //!
-//! The position is the cap the way the committed class's net flow over the
-//! last `look_slots` points, when it is `threshold` takes or more, held
-//! `hold_slots`.
+//! The test keeps running, and the class follows it when it turns.
+//!
+//! The position is the cap the way the chosen class's net flow over the
+//! last `look_slots` (at least the informed's longest horizon) points, when
+//! it is `threshold` takes or more and `min_wallets` of the class's wallets
+//! are each net that way, held `hold_slots`. It never reverses in one step:
+//! facing the other way it goes flat, and takes the new side only if the
+//! next read agrees. The informed traders are each wrong now and then, so
+//! no single take or wallet sets the position.
 //!
 //! The same machinery runs the ladder's rungs ([`Mode`]): the informed bot,
 //! told the class, follows it from the first take; the rungs that don't read
 //! the classes follow one class, all flow, or the price's move.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use mtx_kit::{
     log,
@@ -90,6 +96,12 @@ pub struct Params {
     pub t_cut: f64,
     pub t_margin: f64,
     pub min_blocks: u64,
+    /// Whether the class may change after the first commitment, when the
+    /// test turns.
+    pub switch: bool,
+    /// Distinct wallets whose net flow in the window must agree with a
+    /// signal (the class readers only): never a single wallet's takes.
+    pub min_wallets: usize,
 }
 
 impl Params {
@@ -98,17 +110,19 @@ impl Params {
         // replay model, `hidden/gate0/model.py`); the reference follows with
         // the informed bot's, and its class test is tuned the same way.
         let base = Params {
-            look_slots: 80,
-            hold_slots: 40,
-            threshold: 6.0,
+            look_slots: 150,
+            hold_slots: 80,
+            threshold: 10.0,
             size_cut: 0.04,
             size_share: 1.0,
             momentum_bps: 40.0,
             block_slots: 40,
-            min_block_net: 3.0,
-            t_cut: 1.5,
+            min_block_net: 2.0,
+            t_cut: 0.5,
             t_margin: 0.5,
             min_blocks: 3,
+            switch: true,
+            min_wallets: 2,
         };
         match mode {
             Mode::Reference | Mode::Informed => base,
@@ -179,6 +193,9 @@ impl Params {
         if let Some(v) = u("MIN_BLOCKS") {
             self.min_blocks = v;
         }
+        if let Some(v) = u("MIN_WALLETS") {
+            self.min_wallets = v as usize;
+        }
     }
 }
 
@@ -189,9 +206,10 @@ pub enum Class {
     Large,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Take {
     at: u64,
+    wallet: String,
     /// Side: +1 a buy, -1 a sell.
     side: f64,
     class: Class,
@@ -304,7 +322,28 @@ impl Flow {
                 window.filter(|t| t.class == class).map(|t| t.side).sum()
             }
         };
-        (net.abs() >= p.threshold.max(1.0)).then(|| net.signum())
+        if net.abs() < p.threshold.max(1.0) {
+            return None;
+        }
+        let dir = net.signum();
+        if matches!(self.mode, Mode::Reference | Mode::Informed) {
+            // Agreement across wallets: enough of the class's wallets must
+            // be net that way over the window, so no one wallet's view (each
+            // is wrong now and then) sets the position.
+            let class = self.class?;
+            let mut by: HashMap<&str, f64> = HashMap::new();
+            for t in self
+                .recent
+                .iter()
+                .filter(|t| t.at + p.look_slots > now && t.class == class)
+            {
+                *by.entry(t.wallet.as_str()).or_default() += t.side;
+            }
+            if by.values().filter(|v| **v * dir > 0.0).count() < p.min_wallets {
+                return None;
+            }
+        }
+        Some(dir)
     }
 
     fn read_tape(&mut self, now: u64) {
@@ -337,7 +376,12 @@ impl Flow {
                 self.blocks.resize(block + 1, [0.0, 0.0]);
             }
             self.blocks[block][class as usize] += side;
-            self.recent.push_back(Take { at, side, class });
+            self.recent.push_back(Take {
+                at,
+                wallet,
+                side,
+                class,
+            });
         }
         while self
             .recent
@@ -368,7 +412,7 @@ impl Flow {
             }
             self.scored += 1;
         }
-        if self.class.is_some() || self.mode != Mode::Reference {
+        if self.mode != Mode::Reference || (self.class.is_some() && !p.switch) {
             return;
         }
         let (ts, tl) = (self.tests[0].t(), self.tests[1].t());
@@ -376,12 +420,13 @@ impl Flow {
         if !enough {
             return;
         }
+        let before = self.class;
         if ts > p.t_cut && ts - tl > p.t_margin {
             self.class = Some(Class::Small);
         } else if tl > p.t_cut && tl - ts > p.t_margin {
             self.class = Some(Class::Large);
         }
-        if self.class.is_some() {
+        if self.class != before {
             self.committed_at = Some(now);
             log(&format!(
                 "flow: committed to {:?} at slot {now} (t small {ts:.2}, large {tl:.2})",
@@ -433,8 +478,13 @@ impl Strategy for Flow {
             self.read_tape(now);
             self.test_classes(now);
         }
+        let reads_class = matches!(self.mode, Mode::Reference | Mode::Informed);
         if now >= self.hold_until {
             match self.signal(now) {
+                // No flips: a class reader facing the other way goes flat
+                // first, and takes the new side only if the next read still
+                // says so.
+                Some(dir) if reads_class && dir * self.dir < 0.0 => self.dir = 0.0,
                 Some(dir) => {
                     if dir != self.dir {
                         self.entries += 1;

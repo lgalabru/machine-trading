@@ -52,7 +52,7 @@ def load(report_path, details_dir, scen_dir):
                 book.append((st["at"], st["mark_usd"], st["mark_usd"]))
         lib = s["actors"]
         takes = sorted(
-            (e["at"], 1 if e["side"] == "bid" else -1, e["size"])
+            (e["at"], 1 if e["side"] == "bid" else -1, e["size"], e["wallet"])
             for e in lib["tape"]
             if e["action"] == "take" and e["ok"]
         )
@@ -163,9 +163,9 @@ def run(s, policy, p):
         mids.append((at, mid))
         # takes confirmed by the previous slot are visible this step
         while i < len(takes) and takes[i][0] < at:
-            t_at, side, size = takes[i]
+            t_at, side, size, wallet = takes[i]
             c = cls(size)
-            recent.append((t_at, side, c))
+            recent.append((t_at, side, c, wallet))
             b = t_at // B
             blocks.setdefault(b, {"small": 0.0, "large": 0.0})[c] += side
             i += 1
@@ -204,7 +204,18 @@ def run(s, policy, p):
                     net = 0.0
                 if abs(net) >= max(p["thr"], 1):
                     sig = 1.0 if net > 0 else -1.0
-            if sig is not None:
+                    if policy in ("informed", "reference") and chosen is not None:
+                        by = {}
+                        for t in recent:
+                            if t[2] == chosen:
+                                by[t[3]] = by.get(t[3], 0) + t[1]
+                        if sum(1 for v in by.values() if v * sig > 0) < p.get("min_wallets", 2):
+                            sig = None
+            if sig is not None and policy in ("informed", "reference") and direction * sig < 0:
+                # no flips: a reversal goes flat first, and re-enters only if
+                # the next read still says so
+                direction = 0.0
+            elif sig is not None:
                 direction = sig
                 hold_until = at + p["hold"]
             else:
@@ -222,7 +233,7 @@ def run(s, policy, p):
 
 
 GRIDS = {
-    "informed": dict(look=[10, 20, 40, 80], thr=[1, 2, 3, 4, 6], hold=[40, 80, 150, 250]),
+    "informed": dict(look=[150, 200, 300], thr=[3, 4, 6, 8, 12], hold=[40, 80, 150, 250], min_wallets=[2]),
     "small": dict(look=[20, 40, 80, 160], thr=[2, 3, 4, 6, 8, 12], hold=[40, 80, 150, 250]),
     "large": dict(look=[20, 40, 80, 160], thr=[2, 3, 4, 6, 8, 12], hold=[40, 80, 150, 250]),
     "all": dict(look=[20, 40, 80, 160], thr=[3, 4, 6, 8, 12, 16, 24], hold=[40, 80, 150, 250]),
