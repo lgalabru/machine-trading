@@ -398,7 +398,10 @@ mod tests {
         let toxic = drawn.iter().filter(|(_, s)| s.day == "toxic").count();
         assert!((70..=130).contains(&toxic), "{toxic} toxic");
         let no_jump = drawn.iter().filter(|(_, s)| s.jumps.is_empty()).count();
-        assert!((20..=90).contains(&no_jump), "{no_jump} sessions without a jump");
+        assert!(
+            (20..=90).contains(&no_jump),
+            "{no_jump} sessions without a jump"
+        );
         for (scenario, shape) in &drawn {
             let actors = scenario.actors.as_ref().unwrap();
             assert_eq!(actors.informed.len(), 1);
@@ -410,7 +413,10 @@ mod tests {
             } else {
                 (shape.algo_intensity, shape.fund_intensity)
             };
-            assert!((busy * family.quiet_share - light).abs() < 0.01, "{shape:?}");
+            assert!(
+                (busy * family.quiet_share - light).abs() < 0.01,
+                "{shape:?}"
+            );
             assert_eq!(actors.algos[0].size_mult, actors.informed[0].size_mult);
         }
     }

@@ -95,10 +95,14 @@ pub fn make(market: &Market, orders: &mut Orders) {
     };
     let held = market.position.size;
     if held < QUOTE_MAX {
-        orders.bid(bid, QUOTE_SIZE.min(market.cap - held)).post_only();
+        orders
+            .bid(bid, QUOTE_SIZE.min(market.cap - held))
+            .post_only();
     }
     if held > -QUOTE_MAX {
-        orders.ask(ask, QUOTE_SIZE.min(market.cap + held)).post_only();
+        orders
+            .ask(ask, QUOTE_SIZE.min(market.cap + held))
+            .post_only();
     }
 }
 
