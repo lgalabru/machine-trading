@@ -34,6 +34,7 @@ impl Surfaces {
             .env("PROBE_PROC", self.root.join("proc"))
             .env("PROBE_TMP", self.root.join("tmp"))
             .env("PROBE_VERIFIER", self.root.join("absent-tests"))
+            .env("PROBE_LOGS", self.root.join("logs/verifier"))
             .env("PROBE_KEYDIRS", self.root.join("keys"))
             .output()
             .unwrap();
@@ -117,9 +118,48 @@ fn readable_grader_dirs_and_verifier_files_fail() {
         .env("PROBE_PROC", s.root.join("proc"))
         .env("PROBE_TMP", s.root.join("tmp"))
         .env("PROBE_VERIFIER", s.root.join("tests"))
+        .env("PROBE_LOGS", s.root.join("logs/verifier"))
         .env("PROBE_KEYDIRS", s.root.join("keys"))
         .output()
         .unwrap();
     let log = String::from_utf8_lossy(&out.stdout);
     assert!(log.contains("surface=verifier status=LEAK"), "{log}");
+}
+
+#[test]
+fn a_readable_reference_log_fails_but_the_bots_own_log_passes() {
+    let s = Surfaces::new("logs");
+    let bot = s.root.join("logs/verifier/bot");
+    std::fs::create_dir_all(&bot).unwrap();
+    std::fs::write(bot.join("hidden-1.log"), "slot 1: the bot's own line").unwrap();
+    let (clear, log) = s.run();
+    assert!(clear, "{log}");
+    assert!(log.contains("surface=verifier status=clear"), "{log}");
+
+    std::fs::create_dir_all(bot.join("reference")).unwrap();
+    std::fs::write(bot.join("reference/hidden-1.log"), "slot 9: backing off").unwrap();
+    let (clear, log) = s.run();
+    assert!(!clear, "{log}");
+    assert!(log.contains("surface=verifier status=LEAK"), "{log}");
+    assert_eq!(log.matches("LEAK verifier").count(), 1, "{log}");
+}
+
+#[test]
+fn the_seed_in_the_bots_own_environment_fails_without_printing_it() {
+    let s = Surfaces::new("ownenv");
+    let out = Command::new("bash")
+        .arg(script())
+        .env("PROBE_ONCE", "1")
+        .env("MTX_EVAL_SEED", "planted-own-env-not-a-secret")
+        .env("HOME", s.root.join("tmp/mtx-session-own"))
+        .env("PROBE_PROC", s.root.join("proc"))
+        .env("PROBE_TMP", s.root.join("tmp"))
+        .env("PROBE_VERIFIER", s.root.join("absent-tests"))
+        .env("PROBE_LOGS", s.root.join("logs/verifier"))
+        .env("PROBE_KEYDIRS", s.root.join("keys"))
+        .output()
+        .unwrap();
+    let log = String::from_utf8_lossy(&out.stdout);
+    assert!(log.contains("surface=environ status=LEAK"), "{log}");
+    assert!(!log.contains("planted-own-env"), "{log}");
 }

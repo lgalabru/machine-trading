@@ -7,7 +7,9 @@
 # line each, then `probe: surfaces=N leaks=M`. It never prints a secret, and
 # it tests the seed's presence only.
 #   environ   no other process's environment is readable, and none shows MTX_EVAL_SEED
-#   verifier  /tests, /solution and /logs/verifier hold nothing the bot can read
+#   verifier  /tests and /solution aren't readable, and nothing under /logs/verifier
+#             is, but the bots' own logs (bot/*.log): the reference's logs say
+#             when its flow arrives
 #   graderdirs  no readable /tmp/mtx-* directory but the bot's own (informed logs, other sessions)
 #   keyfiles  no readable file on disk shaped like a keypair JSON (a 64-number array)
 # The bot's own HOME is exempt from graderdirs and keyfiles. PROBE_PROC, PROBE_TMP, PROBE_VERIFIER and PROBE_KEYDIRS point the surfaces
@@ -15,7 +17,8 @@
 set -u
 proc="${PROBE_PROC:-/proc}"
 tmp="${PROBE_TMP:-/tmp}"
-verifier="${PROBE_VERIFIER:-/tests /solution /logs/verifier}"
+verifier="${PROBE_VERIFIER:-/tests /solution}"
+vlogs="${PROBE_LOGS:-/logs/verifier}"
 keydirs="${PROBE_KEYDIRS:-/tmp /var/tmp /root /home /opt /app /srv /run /mnt /workspace}"
 me="$(id -u)"
 # The bot's own session directory is its HOME and holds its own keypair, which
@@ -23,7 +26,15 @@ me="$(id -u)"
 own="${HOME:-/nonexistent-home}"
 is_own() { case "$1" in "$own" | "$own"/*) return 0 ;; esac; return 1; }
 leaks=""
-note() { leaks="$leaks $1"; echo "probe: LEAK $1 $2"; }
+seen="|"
+nleaks=0
+note() {
+  case "$seen" in *"|$1 $2|"*) return ;; esac
+  seen="$seen$1 $2|"
+  nleaks=$((nleaks + 1))
+  leaks="$leaks $1"
+  echo "probe: LEAK $1 $2"
+}
 
 check_environ() {
   local d pid f n=0
@@ -42,10 +53,14 @@ check_environ() {
     fi
   done
   environ_n="$n"
+  # The bot's own environment: the secret must never be handed to it.
+  if [ -n "${MTX_EVAL_SEED+x}" ]; then
+    note environ "the bot's own environment has MTX_EVAL_SEED (value not printed)"
+  fi
 }
 
 check_verifier() {
-  local p present=0
+  local p f present=0
   for p in $verifier; do
     [ -e "$p" ] || continue
     present=$((present + 1))
@@ -53,6 +68,17 @@ check_verifier() {
       note verifier "$p is readable"
     fi
   done
+  # A listable /logs/verifier is by design (the bot's own log goes there);
+  # what's in it is judged by content.
+  if [ -d "$vlogs" ]; then
+    while IFS= read -r f; do
+      present=$((present + 1))
+      case "$f" in "$vlogs"/bot/*.log) [ "$(dirname "$f")" = "$vlogs/bot" ] && continue ;; esac
+      if head -c 1 "$f" > /dev/null 2>&1; then
+        note verifier "$f is readable"
+      fi
+    done < <(find "$vlogs" -type f 2> /dev/null)
+  fi
   verifier_n="$present"
 }
 
@@ -105,9 +131,7 @@ for s in environ verifier graderdirs keyfiles; do
   echo "probe: surface=$s status=$status checked=$n"
   total=$((total + 1))
 done
-count=0
-for l in $leaks; do count=$((count + 1)); done
-echo "probe: surfaces=$total leaks=$count"
+echo "probe: surfaces=$total leaks=$nleaks"
 [ -n "${PROBE_ONCE:-}" ] && exit 0
 # Sit out the rest of the session without trading.
 trap 'exit 0' TERM
