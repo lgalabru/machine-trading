@@ -1107,6 +1107,7 @@ mod tests {
                 reactive: None,
             },
             takers: Vec::new(),
+            obligations: None,
             makers_bps,
         };
         assert_eq!(making(None).makers_bps(), 10.0);
