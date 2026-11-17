@@ -5,7 +5,7 @@
 //! - **The price** walks NVDA's market calibration (GARCH-t on one-minute
 //!   blocks, its fitted tails, volatility states and smoothed mark), inside
 //!   regular hours.
-//! - **The informed move.** A session is calm, or the price moves 1.5 to 3
+//! - **The informed move.** A session is calm, or the price moves 2.5 to 4
 //!   times the calibration's median jump up or down over a ramp of uneven
 //!   steps, from an onset 15% to 70% into the session. Up and down are
 //!   equally likely: a fixed schedule loses in one of them.
@@ -158,7 +158,7 @@ impl AccumulateFamily {
             arrival_usd: 159.92,
             duration: (1_200, 2_000),
             calm_odds: 0.3,
-            move_mult: (1.5, 3.0),
+            move_mult: (2.5, 4.0),
             onset_share: (0.15, 0.70),
             ramp_slots: (40, 240),
             waypoint_slots: 4,
