@@ -11,9 +11,13 @@
 //!
 //! - **The informed trader** sends noise like every account, and a burst
 //!   ahead of a move. Phoenix names traders by their account, a PDA of the
-//!   wallet, so it reads that account's NVDA position every step: a net
-//!   change of `BURST_UNITS` within `BURST_SLOTS` is the burst, and its sign
-//!   is the move's.
+//!   wallet, so it reads that account's NVDA position every step. Its
+//!   noise trades now and then, either way; its burst trades often and one
+//!   way: `BURST_TRADES` or more changes within `BURST_SLOTS`, at least
+//!   `BURST_UNITS` net and nearly all of it the same way, is the burst, and
+//!   its sign is the move's. (The book fills sells more easily than buys
+//!   while the grader's maker leans short, so a slow net drift says
+//!   nothing.)
 //! - **Up:** it buys the rest of the order at once, at the maker when it can
 //!   and on the backstop when it must, paying up to 40 bp over the broker.
 //! - **Down:** it buys nothing, and rests nothing, until the fall has
@@ -35,8 +39,11 @@ use mtx_kit::{
 
 /// The informed trader's net change, in NVDA, within a window of slots,
 /// that is its burst rather than its noise.
-const BURST_UNITS: f64 = 0.6;
+const BURST_UNITS: f64 = 0.5;
 const BURST_SLOTS: u64 = 120;
+const BURST_TRADES: usize = 4;
+/// The share of its traded size the burst's net must be.
+const BURST_ONE_WAY: f64 = 0.75;
 /// What it pays over the broker ahead of a rise, in basis points.
 const UP_EDGE_BPS: f64 = 40.0;
 /// Its largest buy a step ahead of a rise.
@@ -135,7 +142,19 @@ impl Strategy for Informed {
                 self.seen.pop_front();
             }
             let moved = now - self.seen.front().map_or(now, |(_, p)| *p);
-            if moved.abs() >= BURST_UNITS {
+            let changes: Vec<f64> = self
+                .seen
+                .iter()
+                .zip(self.seen.iter().skip(1))
+                .map(|((_, a), (_, b))| b - a)
+                .filter(|d| d.abs() > 1e-9)
+                .collect();
+            let traded: f64 = changes.iter().map(|d| d.abs()).sum();
+            let same_way = changes.iter().filter(|d| d.signum() == moved.signum()).count();
+            if moved.abs() >= BURST_UNITS
+                && same_way >= BURST_TRADES
+                && moved.abs() >= BURST_ONE_WAY * traded
+            {
                 self.sign = moved.signum();
                 log(&format!(
                     "slot {slot}: the informed trader moved {moved:+.3}"
