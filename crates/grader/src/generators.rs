@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
+    copy_shy::{CopyShyFamily, Shape as CopyShyShape},
     error::Result,
     making::MakingFamily,
     scenario::{Scenario, Shape, ShockFamily},
@@ -115,6 +116,23 @@ pub const GENERATORS: &[Generator] = &[
                 CarryFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 carry_latent,
+            )
+        },
+    },
+    Generator {
+        name: "copy-shy",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                CopyShyFamily::nvda().draw_set(prefix, count, seed),
+                false,
+                copy_shy_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                CopyShyFamily::nvda().draw_set("hidden", count, seed),
+                tell,
+                copy_shy_latent,
             )
         },
     },
@@ -253,6 +271,7 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("funding-carry", "funding", Knowable::Process),
     ("funding-carry", "cap_pct", Knowable::Process),
     ("funding-carry", "noise_pct", Knowable::Process),
+    ("copy-shy", "shy", Knowable::Process),
     ("weekend-gap", "informed", Knowable::Identity),
     ("weekend-gap", "informed_account", Knowable::Identity),
     ("weekend-gap", "worker", Knowable::Identity),
@@ -385,6 +404,14 @@ fn carry_latent(shape: &CarryShape) -> Value {
         "cap_pct": shape.cap_pct,
         "noise_pct": shape.noise_pct,
     })
+}
+
+/// Who is who (the fund's and the decoys' wallets) and the shy rule they
+/// all follow: how soon after its fills, and how much following flow, makes
+/// them hide, how much they keep and for how long. Not the path, nor when
+/// the fund trades or which way.
+fn copy_shy_latent(shape: &CopyShyShape) -> Value {
+    json!({ "roster": ["informed", "decoy"], "shy": shape.shy })
 }
 
 /// Who is who: whether an informed trader and a one-sided worker are

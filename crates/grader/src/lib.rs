@@ -3,6 +3,7 @@
 pub mod actors;
 pub mod carry;
 pub mod chain;
+pub mod copy_shy;
 pub mod crank;
 mod error;
 pub mod faults;
