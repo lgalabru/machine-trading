@@ -437,3 +437,6 @@ impl Strategy for Reference {
         Ok(())
     }
 }
+
+#[cfg(target_arch = "wasm32")]
+mtx_kit::export!(Reference);

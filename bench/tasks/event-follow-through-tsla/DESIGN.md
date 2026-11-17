@@ -5,9 +5,8 @@ README says what the task is; this says why it's built this way, and what
 each version learned. It is card B7 of the batch-2 cards
 (`TASK_CARDS_BATCH2.md`); the departures from the card are listed last.
 
-Status: Gate 0 on prototypes (the reference, the informed bot and the
-non-reading rungs). Nothing past Gate 0 is built: no practice set,
-instruction, images or probe rungs yet.
+Status: Gate 0 passed on two fresh secrets (pooled); full build on that
+reference and informed bot, frozen since Gate 0.
 
 ## Thesis
 
@@ -30,6 +29,26 @@ takes keep leading the price has information, one whose takes keep losing
 doesn't (Kyle 1985; Easley, Kiefer and O'Hara on informed order arrival;
 markouts are how desks score counterparties). The non-expert trades the
 chart: it rides the jump, fades it, or chases the second move.
+
+## How it differs from B2 (smart-money-decay-nvda)
+
+Both read who is informed from wallets' records, so the difference is what
+the record is read against and when it matters:
+
+- **B7 reads markouts after a scheduled print.** The two funds' records are
+  identical until the jump is done; the evidence starts at a known moment
+  (the headline's window is stated), and it is the sign of each fund's
+  markouts over the next tens of slots. The decision is one bet on the
+  verdict's sign, worth most early, against a deadline the bot can't see
+  (20 to 260 slots), with a cliff: flat earns nothing, the wrong fund's side
+  loses the verdict.
+- **B2 reads decay over the session.** Its wallets' edges fade at different
+  times through an unscheduled session; the skill is noticing when a once
+  informed wallet's record turns, and following and dropping wallets
+  continuously.
+- **B7's jump and verdict are event risk** B2 doesn't have: be flat through
+  a print whose sign nobody knows, then act on information that arrives only
+  after it.
 
 ## The central decision
 
@@ -87,10 +106,6 @@ learn the verdict's way.
 - **The decoy turns contrary, not random.** A random-view decoy leaves the
   net flow leaning the informed fund's way. `Decoy.after = contrary` (new in
   the actor library) mirrors it.
-- **Stated window, no drift statistics in the vars yet:** the instruction is
-  not written; it will state the headline window, the jump and verdict
-  ranges and their odds.
-
 ## Gate 0
 
 72 sessions from one fresh secret (`hidden/gate0/README.md`):

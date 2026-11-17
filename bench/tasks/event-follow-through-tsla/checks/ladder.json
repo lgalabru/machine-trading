@@ -1,31 +1,11 @@
 {
-  "anchors": {
-    "informed": "informed",
-    "reference": "reference"
-  },
-  "count": 72,
-  "exploits": {
-    "below": "informed",
-    "bots": [],
-    "max_profitable": 0.75
-  },
   "family": "event-follow-through",
-  "gates": {
-    "informed": [
-      "informed"
-    ],
-    "non_reading": [
-      "nop",
-      "blind-long",
-      "blind-short"
-    ]
-  },
+  "count": 72,
   "min_rule_odds": 0.85,
-  "probes": {},
-  "rules": [
-    "max(blind-long, blind-short) < reference",
-    "reference < informed < hindsight"
-  ],
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
+  },
   "rungs": [
     {
       "dir": "bots/starter",
@@ -42,13 +22,210 @@
       "name": "blind-short"
     },
     {
-      "dir": "bench/tasks/event-follow-through-tsla/reference",
-      "name": "reference"
+      "name": "ride",
+      "dir": "bench/tasks/event-follow-through-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "ride"
+      }
     },
     {
-      "dir": "bench/tasks/event-follow-through-tsla/checks/bots/informed",
+      "name": "fade",
+      "dir": "bench/tasks/event-follow-through-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "fade"
+      }
+    },
+    {
+      "name": "hold",
+      "dir": "bench/tasks/event-follow-through-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "hold"
+      },
+      "may_breach": true
+    },
+    {
+      "name": "chase",
+      "dir": "bench/tasks/event-follow-through-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "chase"
+      }
+    },
+    {
+      "name": "net-flow",
+      "dir": "bench/tasks/event-follow-through-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "net-flow"
+      }
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/event-follow-through-tsla/reference"
+    },
+    {
       "name": "informed",
+      "dir": "bench/tasks/event-follow-through-tsla/checks/bots/informed",
       "tell_latent": true
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip",
+        "MTX_PROBE_SIZE": "0.5"
+      },
+      "may_breach": true,
+      "name": "coin-flip-half"
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "coin-flip"
+      },
+      "may_breach": true,
+      "name": "coin-flip-full"
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "martingale"
+      },
+      "may_breach": true,
+      "name": "martingale"
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "hugger"
+      },
+      "may_breach": true,
+      "name": "limit-hugger"
+    },
+    {
+      "dir": "bench/checks/probes",
+      "env": {
+        "MTX_PROBE": "stop-lotto"
+      },
+      "may_breach": true,
+      "name": "stop-lotto"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "1.5"
+      },
+      "may_breach": true,
+      "name": "lever-1.5"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "2"
+      },
+      "may_breach": true,
+      "name": "lever-2"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_LEVER": "3"
+      },
+      "may_breach": true,
+      "name": "lever-3"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "reference",
+        "MTX_PROBE_BREACHES": "1000000",
+        "MTX_PROBE_LEVER": "3"
+      },
+      "may_breach": true,
+      "name": "breacher"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.000"
+      },
+      "may_breach": true,
+      "name": "honest-0.1"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.175"
+      },
+      "may_breach": true,
+      "name": "honest-0.2"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.401"
+      },
+      "may_breach": true,
+      "name": "honest-0.3"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.710"
+      },
+      "may_breach": true,
+      "name": "honest-0.5"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.175",
+        "MTX_PROBE_CRASH_BELOW": "0.03"
+      },
+      "may_breach": true,
+      "name": "crash-honest"
+    },
+    {
+      "dir": "bench/tasks/event-follow-through-tsla/checks/rungs/probe",
+      "env": {
+        "MTX_PROBE": "honest",
+        "MTX_PROBE_BLEND": "0.175",
+        "MTX_PROBE_CRASH": "fatal",
+        "MTX_PROBE_CRASH_BELOW": "0.03"
+      },
+      "may_breach": true,
+      "name": "crash-fatal"
     }
-  ]
+  ],
+  "gates": {
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop",
+      "blind-long",
+      "blind-short",
+      "ride",
+      "fade",
+      "hold",
+      "chase",
+      "net-flow"
+    ]
+  },
+  "rules": [
+    "max(blind-long, blind-short) < reference",
+    "max(ride, fade, hold, chase, net-flow) < reference",
+    "reference < informed < hindsight"
+  ],
+  "exploits": {
+    "bots": [],
+    "max_profitable": 0.75,
+    "below": "informed"
+  },
+  "probes": {}
 }
