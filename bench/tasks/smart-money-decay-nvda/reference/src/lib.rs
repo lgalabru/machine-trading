@@ -100,7 +100,7 @@ impl Params {
         match mode {
             Mode::Informed => Params {
                 look_slots: 10,
-                hold_slots: 10,
+                hold_slots: 40,
                 threshold: 0.0,
                 ..base
             },
@@ -117,7 +117,24 @@ impl Params {
                 threshold: 0.0,
                 ..base
             },
-            _ => base,
+            Mode::FollowFlow => Params {
+                look_slots: 40,
+                hold_slots: 40,
+                threshold: 4.0,
+                ..base
+            },
+            Mode::FadeFlow => Params {
+                look_slots: 10,
+                hold_slots: 10,
+                threshold: 6.0,
+                ..base
+            },
+            Mode::Momentum => Params {
+                look_slots: 4,
+                hold_slots: 80,
+                momentum_bps: 8.0,
+                ..base
+            },
         }
     }
 }
