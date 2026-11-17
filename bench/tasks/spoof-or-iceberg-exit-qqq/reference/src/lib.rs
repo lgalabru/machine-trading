@@ -4,14 +4,14 @@
 //! The order comes in the session's vars (`MTX_ORDER`'s quantity, the
 //! broker's `MTX_BROKER_HAIRCUT_BPS`).
 //!
-//! - **The book's owners.** Every step it reads Phoenix's QQQ orderbook
-//!   account, whose resting orders name their trader, and keeps the large
-//!   ones (walls) by owner.
+//! - **The walls.** Every step it reads Phoenix's QQQ orderbook account and
+//!   keeps the large resting orders near the touch (walls) by side and
+//!   price: one owner walls each side.
 //! - **Pulled or reloaded.** A wall that leaves the book unfilled while the
 //!   touch is within a few ticks of it was pulled on approach: its owner is
 //!   a spoofer. A wall that trades, or comes back at the same price at full
 //!   size after it went, reloaded: its owner is an iceberg. One of each
-//!   stands in a session, so knowing one owner names the other.
+//!   walls a session, one a side, so knowing one names the other.
 //! - **Acting on a known wall.** A spoofer's bid or an iceberg's ask says
 //!   the price is about to fall: it sells the rest at once. A spoofer's ask
 //!   or an iceberg's bid says it is about to rise: it holds.
@@ -90,7 +90,7 @@ pub fn number_after(text: &str, key: &str) -> Option<f64> {
 pub struct Rest {
     pub bid: bool,
     pub ticks: u64,
-    /// Its trader, as the book numbers them.
+    /// The book's slot for its trader: reused, so not an owner.
     pub trader: u32,
     pub seq: u64,
     /// What is left of it and what it was placed at, in QQQ.
@@ -197,12 +197,18 @@ pub fn sign_of(kind: Kind, bid: bool) -> f64 {
 }
 
 /// The walls on the book, step by step, and what their owners did.
+///
+/// The book's trader numbers are slots Phoenix reuses, not owners, so a
+/// wall is followed by its side and price. One owner walls each side in a
+/// session: the spoofer the side the jump goes against, the iceberg the
+/// other.
 #[derive(Debug, Clone, Default)]
 pub struct Walls {
     /// Last step's walls, by sequence number.
     last: BTreeMap<u64, Rest>,
-    /// Every owner seen walling, and what it showed itself to be.
-    pub owners: BTreeMap<u32, Option<Kind>>,
+    /// What the bids' owner and the asks' owner showed themselves to be.
+    pub bids: Option<Kind>,
+    pub asks: Option<Kind>,
     /// The walls standing now.
     pub now: Vec<Rest>,
 }
@@ -218,11 +224,8 @@ impl Walls {
         slot: u64,
     ) {
         let now = walls_in(book, tick_usd, bid, ask);
-        for r in &now {
-            self.owners.entry(r.trader).or_insert(None);
-        }
         for (seq, before) in &self.last {
-            if self.owners.get(&before.trader).copied().flatten().is_some() {
+            if self.kind(before.bid).is_some() {
                 continue;
             }
             let still = now.iter().find(|r| r.seq == *seq);
@@ -230,12 +233,9 @@ impl Walls {
                 Some(r) if r.size + 1e-9 < before.size => Some(Kind::Iceberg),
                 Some(_) => None,
                 None => {
-                    let back = now.iter().any(|r| {
-                        r.trader == before.trader
-                            && r.bid == before.bid
-                            && r.ticks == before.ticks
-                            && r.seq != *seq
-                    });
+                    let back = now
+                        .iter()
+                        .any(|r| r.bid == before.bid && r.ticks == before.ticks && r.seq != *seq);
                     let touch = if before.bid { bid } else { ask };
                     let gap = touch.map(|t| {
                         let p = before.ticks as f64 * tick_usd;
@@ -251,38 +251,36 @@ impl Walls {
                 }
             };
             if let Some(kind) = seen {
-                log(&format!("slot {slot}: owner {} is a {kind:?}", before.trader));
-                self.owners.insert(before.trader, Some(kind));
+                let side = if before.bid { "bids" } else { "asks" };
+                log(&format!("slot {slot}: the {side}' owner is a {kind:?}"));
+                // One of each: knowing one names the other.
+                let other = match kind {
+                    Kind::Spoofer => Kind::Iceberg,
+                    Kind::Iceberg => Kind::Spoofer,
+                };
+                if before.bid {
+                    (self.bids, self.asks) = (Some(kind), Some(other));
+                } else {
+                    (self.asks, self.bids) = (Some(kind), Some(other));
+                }
             }
-        }
-        // One spoofer and one iceberg: knowing one names the other.
-        let known: Vec<Kind> = self.owners.values().flatten().copied().collect();
-        let unknown: Vec<u32> = self
-            .owners
-            .iter()
-            .filter(|(_, k)| k.is_none())
-            .map(|(t, _)| *t)
-            .collect();
-        if known.len() == 1 && unknown.len() == 1 {
-            let other = match known[0] {
-                Kind::Spoofer => Kind::Iceberg,
-                Kind::Iceberg => Kind::Spoofer,
-            };
-            self.owners.insert(unknown[0], Some(other));
         }
         self.last = now.iter().map(|r| (r.seq, *r)).collect();
         self.now = now;
     }
 
-    /// What the standing walls of known owners say: `-1` a fall, `1` a
-    /// rise, `0` nothing known.
+    /// What a side's owner is, once known.
+    pub fn kind(&self, bid: bool) -> Option<Kind> {
+        if bid { self.bids } else { self.asks }
+    }
+
+    /// What the standing walls say: `-1` a fall, `1` a rise, `0` nothing
+    /// known.
     pub fn signal(&self) -> f64 {
-        for r in &self.now {
-            if let Some(Some(kind)) = self.owners.get(&r.trader) {
-                return sign_of(*kind, r.bid);
-            }
-        }
-        0.0
+        self.now
+            .iter()
+            .find_map(|r| self.kind(r.bid).map(|k| sign_of(k, r.bid)))
+            .unwrap_or(0.0)
     }
 }
 

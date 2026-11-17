@@ -19,7 +19,11 @@ A good bot profits here because it tells a wall that will be pulled from an orde
 
 ## The central decision
 
-<!-- TODO: the one decision the task is about, and the options that look defensible. -->
+Each step: sell the rest now, crossing the bid, or hold and leave it to a
+late sale or the broker. A wall says which, but only once its owner is
+known: the same bid wall means a fall (a spoofer's) or a rise (an
+iceberg's). Holding by default costs nothing on a rise and the whole fall
+on a fall; selling by default is the mirror. The read is worth the jump.
 
 ## Variants
 
@@ -47,20 +51,44 @@ touch, each its own 30 to 90 slots ahead:
 | Who owns a wall | the book's resting orders name their trader; the spoofer and the iceberg are fresh wallets every session | keeps each wall by owner | Phoenix's orderbook account (`getAccountInfo`), read every step |
 | Pulled on approach | the spoofer cancels once the touch is within 1 to 3 ticks of its wall | names that owner the spoofer; the other wall is then the iceberg | a wall gone, unfilled, with the touch a few ticks away |
 | Reloaded on a fill | the iceberg puts the same size back at the same price after any fill | names that owner the iceberg | a wall that shrank, or came back at its price at full size |
-| How often the book tests a wall | the walls stand 8 to 36 ticks behind the touch; the touch moves with the price and the makers' quotes | watches through the lead; acts when a test comes | the gap between each wall and the touch, step by step |
+| How often the book tests a wall | the walls stand 6 to 28 ticks behind the touch; the touch moves with the price and the makers' quotes | watches through the lead; acts when a test comes | the gap between each wall and the touch, step by step |
 | The broker | sells what is left at the close's index less 5 to 15 bp | sells late only while the bid, less the fee, beats it | the session's vars |
 
 ## No tells
 
-<!-- TODO: the audit: nothing in the path's shape gives away what a trader couldn't see. -->
+- Both walls draw their lead (30 to 90 slots), their distance behind the
+  touch (6 to 28 ticks) and their size (1 to 4 QQQ, in whole lots) from one
+  range each; only the side differs, and the side is the jump's.
+- Up and down are mirrored with equal odds (stratified in a set), so every
+  policy that ignores who owns a wall nets about the haircut less its costs.
+- Neither wall's owner trades on the other side while its wall stands
+  (`harvest_mult` 0): a spoofer selling into the bids it props up would
+  name itself at its first look.
+- Open for the full build: the book numbers its traders as they register,
+  and the actors register in a fixed order, so a trader's number may
+  repeat its role across sessions (the spoofer was trader 183 in most
+  Gate 0 sessions). The registration order needs drawing per session
+  before practice files ship.
 
 ## Detectability
 
 <!-- TODO: how early a good bot can tell the regime, measured on generated sets. -->
 
-## Fairness
+## The anchors (Gate 0 prototypes)
 
-<!-- TODO: what the agent is told, what it can learn from practice, and that the reference stays inside the mandate. -->
+- **The reference (0.5)** reads Phoenix's orderbook account every step and
+  keeps the walls (orders of 0.5 QQQ or more within 150 ticks of the
+  touch) by owner. A wall gone unfilled with the touch within 10 ticks was
+  pulled: a spoofer. A wall that shrank, or came back at its price, was
+  reloaded: an iceberg. One of each stands in a session, so one named
+  names the other. It sells the rest at once on a known fall signal, and
+  otherwise sells late while the bid beats the broker.
+- **The informed bot (1)** is told the session's roster: the spoofer's
+  wallet and the iceberg's (identity, `{"roster": ["spoofer", "iceberg"]}`).
+  Not the jump's direction, onset or size, nor where or when either wall
+  goes up. It learns each told wallet's trader number when that wallet
+  first walls (the order placed in the slot of the wallet's transaction,
+  from `getSignaturesForAddress`), and acts on the first wall it can name.
 
 ## Failure modes, priced
 

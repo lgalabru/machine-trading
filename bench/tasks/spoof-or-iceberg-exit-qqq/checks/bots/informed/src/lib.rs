@@ -8,18 +8,15 @@
 //! when or where either wall goes up, and it trades the same market under
 //! the same mandate, costs and latency as any bot.
 //!
-//! The book numbers its traders, so it learns each told wallet's number
-//! the first time that wallet walls: the order a wallet's transaction put
-//! on the book in that transaction's slot, read off the wallet's
-//! signatures. From then on it reads every wall by its owner: a spoofer's
+//! The book's trader numbers are slots Phoenix reuses, so it names a wall's
+//! owner by the slot the wall was placed in: the told wallet that sent a
+//! transaction in that slot (read off the wallet's signatures). A spoofer's
 //! bid or an iceberg's ask is a fall coming, and it sells the rest at once;
 //! a spoofer's ask or an iceberg's bid is a rise, and it holds. Otherwise
 //! it sells late, as the reference does.
 
-use std::collections::BTreeMap;
-
 use mtx_bot_spoof_or_iceberg_exit::{
-    BookReader, Kind, Order, Rest, WALL_MIN, sell_late, sell_now, sign_of, walls_in,
+    BookReader, Kind, Order, Rest, sell_late, sell_now, sign_of, walls_in,
 };
 use mtx_kit::{log, prelude::*};
 
@@ -30,8 +27,6 @@ pub struct Informed {
     book: BookReader,
     /// Each told wallet, and its kind.
     told: Vec<(String, Kind)>,
-    /// The book's number for each told wallet's trader, once known.
-    traders: BTreeMap<u32, Kind>,
     /// Slots each told wallet sent a transaction in.
     sent: Vec<Vec<u64>>,
     selling: bool,
@@ -47,7 +42,7 @@ fn wallet(told: &str, kind: &str) -> Option<String> {
 
 /// The slots of a wallet's latest transactions.
 fn sent_slots(wallet: &str) -> Vec<u64> {
-    let params = serde_json::json!([wallet, { "limit": 10, "commitment": "confirmed" }]);
+    let params = serde_json::json!([wallet, { "limit": 20, "commitment": "confirmed" }]);
     let Ok(answer) = rpc("getSignaturesForAddress", &params.to_string()) else {
         return Vec::new();
     };
@@ -61,32 +56,30 @@ fn sent_slots(wallet: &str) -> Vec<u64> {
 }
 
 impl Informed {
-    /// Learns the trader number of any told wallet that just put a wall up.
-    fn learn(&mut self, book: &[Rest]) {
-        if self.traders.len() == self.told.len() {
-            return;
-        }
-        for (i, (wallet, kind)) in self.told.clone().iter().enumerate() {
-            if self.traders.values().any(|k| k == kind) {
-                continue;
-            }
+    /// Reads the told wallets' transactions since the last step.
+    fn watch(&mut self) {
+        for (i, (wallet, _)) in self.told.iter().enumerate() {
             for slot in sent_slots(wallet) {
                 if !self.sent[i].contains(&slot) {
                     self.sent[i].push(slot);
                 }
             }
-            let mine: Vec<u32> = book
-                .iter()
-                .filter(|r| r.initial >= WALL_MIN && self.sent[i].contains(&r.slot))
-                .filter(|r| !self.traders.contains_key(&r.trader))
-                .map(|r| r.trader)
-                .collect();
-            if let Some(&trader) = mine.first()
-                && mine.iter().all(|t| *t == trader)
-            {
-                log(&format!("the {kind:?} {wallet} trades as {trader}"));
-                self.traders.insert(trader, *kind);
-            }
+        }
+    }
+
+    /// Whose a wall is: the told wallet that sent a transaction in the slot
+    /// it was placed in, when only one did.
+    fn owner(&self, wall: &Rest) -> Option<Kind> {
+        let senders: Vec<Kind> = self
+            .told
+            .iter()
+            .zip(&self.sent)
+            .filter(|(_, sent)| sent.contains(&wall.slot))
+            .map(|((_, kind), _)| *kind)
+            .collect();
+        match senders[..] {
+            [kind] => Some(kind),
+            _ => None,
         }
     }
 }
@@ -109,10 +102,10 @@ impl Strategy for Informed {
         orders.cancel_all();
         if !self.selling {
             let book = self.book.read();
-            self.learn(&book);
+            self.watch();
             let signal = walls_in(&book, self.book.tick_usd, market.best_bid, market.best_ask)
                 .iter()
-                .find_map(|r| self.traders.get(&r.trader).map(|k| sign_of(*k, r.bid)));
+                .find_map(|r| self.owner(r).map(|k| sign_of(k, r.bid)));
             if signal.is_some_and(|s| s < 0.0) {
                 log(&format!("slot {}: a fall is coming; selling", market.slot));
                 self.selling = true;
