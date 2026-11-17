@@ -201,6 +201,8 @@ pub struct Copier {
     /// times size.
     flow: VecDeque<(u64, f64)>,
     records: HashMap<String, Record>,
+    /// The wallets it has found credible so far.
+    found: HashSet<String>,
     /// The position it builds, and the slot it holds it until.
     target: f64,
     hold_until: u64,
@@ -226,6 +228,7 @@ impl Copier {
             queued: VecDeque::new(),
             flow: VecDeque::new(),
             records: HashMap::new(),
+            found: HashSet::new(),
             target: 0.0,
             hold_until: 0,
             copies: 0,
@@ -247,6 +250,23 @@ impl Copier {
                 && r.sum_bps / r.weight >= self.params.min_score_bps
                 && 2 * r.chased < r.takes
         })
+    }
+
+    /// Log each wallet the first time its record turns credible.
+    fn note_credible(&mut self, now: u64) {
+        if self.mode != Mode::Reference {
+            return;
+        }
+        let fresh: Vec<String> = self
+            .records
+            .keys()
+            .filter(|w| !self.found.contains(*w) && self.credible(w))
+            .cloned()
+            .collect();
+        for wallet in fresh {
+            log(&format!("copier: credible {wallet} at {now}"));
+            self.found.insert(wallet);
+        }
     }
 
     /// Whether a copier copies `wallet`'s takes.
@@ -476,6 +496,7 @@ impl Strategy for Copier {
         if !matches!(self.mode, Mode::Momentum | Mode::TwapLong | Mode::TwapShort) {
             self.read_tape(now, mid);
             self.mark_out(now, mid);
+            self.note_credible(now);
         }
         match self.mode {
             Mode::Reference | Mode::Informed | Mode::FullCopy => self.copy(now, cap),
