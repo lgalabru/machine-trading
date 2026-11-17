@@ -23,7 +23,7 @@ which one leans ahead of the price, and follows that maker's lean.
 ## The market
 
 - **Path.** TSLA's calibration from 09:31 New York on a drawn trading day,
-  3,000 slots, at the opening hour's measured regime (#111;
+  4,500 slots (3,000 before the rework), at the opening hour's measured regime (#111;
   `JUMP_REGIME_MEASUREMENT.md` Table 2): `vol_mult` 2.2, 3.9 jumps an hour,
   sizes median 0.382% and p90 0.652%. Mirrored pairs.
 - **Skewers** (the library's `skewers`, `docs/actors.md`). Three, each one

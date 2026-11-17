@@ -130,7 +130,7 @@ impl SkewMakerFamily {
     pub fn tsla() -> Self {
         Self {
             symbol: "TSLA".into(),
-            duration_slots: 3_000,
+            duration_slots: 4_500,
             vol_mult: 2.2,
             jump_rate_per_hour: 3.9,
             jump_median_pct: 0.382,
