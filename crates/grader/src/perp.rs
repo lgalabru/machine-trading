@@ -970,7 +970,8 @@ pub struct PerpFillRecord {
     pub base: f64,
     /// The worst level the fill reached (the highest for a buy, the lowest
     /// for a sell), where it differs from `price`, the average: the limit
-    /// prices judge it. Absent for a fill at one level, and in reports that
+    /// prices judge it. Absent for a fill at one level, for the maker of a
+    /// multi-level fill (judged at its average), and in reports that
     /// predate it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worst_price: Option<f64>,

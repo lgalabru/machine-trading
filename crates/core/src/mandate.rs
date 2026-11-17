@@ -1252,7 +1252,8 @@ pub struct ObservedTake {
 /// what price, in quote units per base unit, before fees. `price` is what
 /// the fill paid on average; `worst_price` is the worst level it reached
 /// (the highest for a buy, the lowest for a sell), equal to `price` for a
-/// fill at one level. The limit-price rule judges `worst_price`.
+/// fill at one level and for the maker of a multi-level fill, which is
+/// judged at its average. The limit-price rule judges `worst_price`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ObservedFill {
     pub instrument: InstrumentRef,
