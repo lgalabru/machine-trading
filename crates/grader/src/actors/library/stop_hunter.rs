@@ -161,7 +161,11 @@ impl Hunter {
                     (Some(before), Ok(now)) => (now - before).abs(),
                     _ => size,
                 };
-                let size = if filled.is_finite() { filled.min(size) } else { size };
+                let size = if filled.is_finite() {
+                    filled.min(size)
+                } else {
+                    size
+                };
                 if size > 0.0 {
                     wallet.take(now.at, back, size, limit).await;
                 }
