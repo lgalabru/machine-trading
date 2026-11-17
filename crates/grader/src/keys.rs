@@ -75,6 +75,7 @@ impl SessionKeys {
         SessionKeyring {
             keys: self,
             session: session.to_string(),
+            world: session.to_string(),
             salted: false,
         }
     }
@@ -93,10 +94,16 @@ pub struct RoleKeys<'a> {
 }
 
 impl<'a> RoleKeys<'a> {
-    /// The keys of the `index`th session, on `scenario`.
+    /// The keys of the `index`th session, on `scenario`. Its keypairs are
+    /// the role's own, but the world's randomness (see
+    /// [`SessionKeyring::seed`]) is the scenario's, whichever role plays it:
+    /// the reference, the informed bot, the bot that does nothing and the
+    /// bot meet the same actors drawing the same flow, so a strategy makes
+    /// the same as any of them as it does as the bot.
     pub fn session(&self, index: usize, scenario: &str) -> SessionKeyring<'a> {
         SessionKeyring {
             salted: self.keys.salted && self.role == "bot",
+            world: format!("world/{scenario}"),
             ..self
                 .keys
                 .session(&format!("{}/{index}/{scenario}", self.role))
@@ -108,6 +115,9 @@ impl<'a> RoleKeys<'a> {
 pub struct SessionKeyring<'a> {
     keys: &'a SessionKeys,
     session: String,
+    /// What the session's randomness is derived from: the scenario's name
+    /// for a grade's sessions, the same for every role that plays it.
+    world: String,
     salted: bool,
 }
 
@@ -119,10 +129,12 @@ impl SessionKeyring<'_> {
     }
 
     /// The seed of `role`'s randomness, the `index`th of its kind: the
-    /// grader's actors draw from it, so a session replays the same draws.
-    /// No key derives from it, and it is never written anywhere.
+    /// grader's actors draw from it, so a session replays the same draws,
+    /// and every role's session of a scenario draws the same (see
+    /// [`RoleKeys::session`]). No key derives from it, and it is never
+    /// written anywhere.
     pub fn seed(&self, role: &str, index: u32) -> [u8; 32] {
-        derive(SEED_DOMAIN, self.keys, &self.session, role, index)
+        derive(SEED_DOMAIN, self.keys, &self.world, role, index)
     }
 
     /// The seed the strategy gets for its randomness, in `scenario`: the
