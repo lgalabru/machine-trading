@@ -295,12 +295,7 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
 pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Value> {
     // Nothing that ran unguarded goes on a site.
     for root in &roots {
-        crate::publish::refuse_unguarded(
-            &crate::publish::repo_root(),
-            &root.path,
-            &discover(&root.path),
-            false,
-        )?;
+        crate::publish::refuse_unguarded(&root.path, &discover(&root.path), false)?;
     }
     let state = AppState {
         roots,
