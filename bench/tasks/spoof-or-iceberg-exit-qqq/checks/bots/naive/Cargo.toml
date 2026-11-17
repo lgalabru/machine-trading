@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 path = "src/lib.rs"
 
 [dependencies]
-mtx-bot-spoof-or-iceberg-exit = { path = "../../../reference", default-features = false }
+mtx-bot-spoof-or-iceberg-exit = { path = "../../../reference", features = ["embedded"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 mtx-kit = { path = "../../../../../../crates/kit", default-features = false, features = ["component", "venue"] }

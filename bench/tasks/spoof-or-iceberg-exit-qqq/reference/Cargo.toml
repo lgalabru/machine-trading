@@ -19,11 +19,11 @@ path = "src/lib.rs"
 name = "mtx-spoof-or-iceberg-exit"
 path = "src/main.rs"
 
-# `export`: the crate is the task's component. The informed bot and the
-# ladder's rungs build on its book reading without it.
+# `embedded`: the informed bot and the ladder's rungs build on its book
+# reading, and export their own component; without it the crate is the
+# task's component, as the solution copied into the starter is.
 [features]
-default = ["export"]
-export = []
+embedded = []
 
 [dependencies]
 

@@ -18,7 +18,7 @@ name = "mtx-spoof-or-iceberg-exit-informed"
 path = "src/main.rs"
 
 [dependencies]
-mtx-bot-spoof-or-iceberg-exit = { path = "../../../reference", default-features = false }
+mtx-bot-spoof-or-iceberg-exit = { path = "../../../reference", features = ["embedded"] }
 serde_json = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
