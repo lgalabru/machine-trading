@@ -88,6 +88,32 @@ class NetworkProbe(BaseAgent):
             raise RuntimeError("MTX_PROBE_MODEL must be <ipv4>:<port>")
         script = SCRIPT.replace("@MODEL_HOST@", match[1]).replace("@MODEL_PORT@", match[2])
         result = await environment.exec(command=script, timeout_sec=1800)
+        # A native Codex run on a guarded task is allowed only with web search
+        # off in the config.toml Harbor writes: build that config as the bench
+        # asks for it (bench/harness/models.py CODEX_AKS), put it in the
+        # container, and read it there.
+        web_off = "no"
+        try:
+            from harness.models import CODEX_AKS
+            from harbor.agents.installed.codex import Codex
+
+            codex = Codex(
+                logs_dir=self.logs_dir,
+                model_name="openai/probe",
+                version="0.0.0",
+                **{k: (v == "true" if v in ("true", "false") else v) for k, v in CODEX_AKS.items()},
+            )
+            import toml
+
+            config = toml.dumps(codex._build_effective_config())
+            put = await environment.exec(
+                command=f"cat > /tmp/codex-config.toml <<'EOF'\n{config}EOF\ngrep -qx 'web_search = \"disabled\"' /tmp/codex-config.toml && echo ok"
+            )
+            if (put.stdout or "").strip().endswith("ok"):
+                web_off = "yes"
+        except Exception as error:  # the check fails closed
+            (self.logs_dir / "codex-config-error.txt").write_text(str(error))
+        result.stdout = (result.stdout or "") + f"\nreach codex-web-search-off {web_off}\n"
         reached = {
             m[0]: m[1]
             for m in re.findall(r"^reach (\S+) (yes|no|skipped)$", result.stdout or "", re.M)

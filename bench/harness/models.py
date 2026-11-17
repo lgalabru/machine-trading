@@ -8,7 +8,8 @@ one's key and name before a batch spends anything.
     python3 -I models.py keys                      every variable that may hold a key
     python3 -I models.py token <name>              the model's token on the key proxy
     python3 -I models.py scan <dir>                files under <dir> holding a key, in any form
-    python3 -I models.py native-guard <tasks> <name>...  refuse `native:` models when a task is guarded
+    python3 -I models.py native-guard <tasks> <name>...  refuse native models a guarded task can't allow
+    python3 -I models.py codex-args                  the --ak flags native Codex runs with
 
 MTX_MODELS names another registry (the harness check's). A name that
 isn't in it is `openai/<model>` as given, or
@@ -180,26 +181,48 @@ def guarded_tasks(tasks: Path) -> list[str]:
     return found
 
 
-def native_guard(tasks: Path, names: list[str]) -> str | None:
-    """Why `names` can't run on `tasks`, or None. A native harness (Claude Code,
-    Codex) holds its provider's real key in the agent's environment, and its
-    provider's API, which a guarded task would have to allow, offers server-side
-    fetch and search tools: through them the agent could read the generator's
-    source. Guarded tasks run through Hermes's key proxy only (body_policy.py
-    refuses server tools there)."""
-    native = [n for n in names if n.startswith("native:")]
+# What `just bench` passes Harbor's Codex agent (`--ak`): web search off, in
+# the config.toml Harbor writes for the agent. The bench and the network probe
+# both read this, so the run and the check can't differ.
+CODEX_AKS = {"web_search": "disabled", "disable_web_search": "true"}
+
+
+def native_guard(tasks: Path, names: list[str], codex_aks: dict | None = None) -> str | None:
+    """Why `names` can't run on `tasks`, or None. A native harness holds its
+    provider's real key in the agent's environment, and its provider's API,
+    which a guarded task would have to allow, can offer server-side fetch and
+    search tools: through them the agent could read the generator's source.
+    - Claude Code: its server-side web_fetch can't be switched off from the
+      harness, so it never runs a guarded task.
+    - Codex runs one only with web search disabled (`web_search = "disabled"`
+      in the config Harbor writes) and only api.openai.com and chatgpt.com added to the allowlist (the Justfile's flags);
+      the network probe checks the config.
+    Everything else runs through Hermes's key proxy (body_policy.py refuses
+    server tools there)."""
     guarded = guarded_tasks(tasks)
-    if native and guarded:
+    if not guarded:
+        return None
+    aks = CODEX_AKS if codex_aks is None else codex_aks
+    refused = []
+    for name in names:
+        if not name.startswith("native:"):
+            continue
+        if name.startswith("native:openai/"):
+            if aks.get("web_search") != "disabled":
+                refused.append(f"{name} (Codex's web search is on)")
+        else:
+            refused.append(f"{name} (Claude Code's server-side web fetch can't be turned off)")
+    if refused:
         return (
-            f"{', '.join(native)}: native harnesses can't run guarded tasks ({', '.join(guarded)}): "
-            "their provider API, which the agent's network would have to allow, can fetch "
-            "and search the web for the agent. Run these models in Hermes (without `native:`)."
+            f"{', '.join(refused)}: can't run guarded tasks ({', '.join(guarded)}): "
+            "the provider API the agent's network would have to allow can fetch the web for it. "
+            "Run these models in Hermes (without `native:`), or native Codex with web search disabled."
         )
     return None
 
 
 def main():
-    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2, "native-guard": 3}
+    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2, "native-guard": 3, "codex-args": 1}
     if len(sys.argv) < 2 or sys.argv[1] not in commands or len(sys.argv) < 1 + commands[sys.argv[1]]:
         sys.exit(__doc__)
     command, names = sys.argv[1], sys.argv[2:]
@@ -213,6 +236,10 @@ def main():
         print("\n".join(key_names()))
     elif command == "token":
         print(route_token(entry(names[0])["route"]))
+    elif command == "codex-args":
+        for key, value in CODEX_AKS.items():
+            print("--ak")
+            print(f"{key}={value}")
     elif command == "native-guard":
         refusal = native_guard(Path(names[0]), names[1:])
         if refusal:

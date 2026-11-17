@@ -134,9 +134,10 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      helped or hurt by its harness. Its trials are labelled
      `gpt-6.1-sol · hermes`, apart from 0.11.0 and earlier, which ran in
      each provider's own harness; `native:<model>` still runs one that way,
-     on tasks with no guarded agent (a guarded task's agent can't reach
-     a provider's API, which would also fetch the web for it: `just bench`
-     refuses `native:` models while a task is guarded).
+     on a guarded task only for Codex with web search disabled (a
+     provider's API can fetch the web for the agent: `just bench` refuses
+     native Claude Code while a task is guarded, and `network-probe` checks
+     Codex's config).
      Its token counts come from Hermes's session; a cost only when Hermes
      knows the model's price. `effort` (left empty, each harness keeps its
      default) sets one reasoning effort for every harness; cross-family

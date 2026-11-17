@@ -463,7 +463,8 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     # A guarded task's agent can reach only its model's address and the crates
     # registry; a native harness would need its provider's API open, with its
     # real key in the agent's environment and the provider's server-side fetch
-    # and search tools behind it. Guarded tasks run through Hermes only.
+    # and search tools behind it. Guarded tasks run through Hermes, or native
+    # Codex with web search disabled; Claude Code is refused.
     python3 -I bench/harness/models.py native-guard {{tasks}} {{models}}
     for model in {{models}}; do
       case "$model" in
@@ -520,6 +521,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     # the key proxy's address to it (native harnesses don't run guarded tasks:
     # see native-guard above). A task on the public network ignores the flag.
     proxy_host() { local h="${proxy_url#*://}"; echo "${h%%:*}"; }
+    mapfile -t codex_aks < <(python3 -I bench/harness/models.py codex-args)
     run_model() {
       local model="$1"
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
@@ -530,7 +532,9 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           model="${model#native:}"
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
-            --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
+            --allow-agent-host api.openai.com --allow-agent-host chatgpt.com \
+            "${codex_aks[@]}" \
+            --ak version={{codex}}
           ;;
         native:*)
           model="${model#native:}"
@@ -767,12 +771,7 @@ leak-audit task="":
     # else its tag (a pinned reference not pulled here).
     task_image() {
       local want="$base-$1" ref
-      ref="$(python3 -I - "{{tasks}}/$1/task.toml" <<'PY'
-import sys, tomllib
-c = tomllib.load(open(sys.argv[1], "rb"))
-print(c.get("environment", {}).get("docker_image", ""))
-PY
-)"
+      ref="$(python3 -I -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("environment", {}).get("docker_image", ""))' "{{tasks}}/$1/task.toml")"
       if [ "${ref%@*}" != "$want" ]; then
         echo "LEAK: task.toml's docker_image for $1 is \"${ref:-<none>}\", not $want: Harbor runs that image, not the Dockerfile's" >&2
         return 1

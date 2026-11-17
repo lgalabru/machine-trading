@@ -48,7 +48,7 @@ record="$(find "$jobs/out" -name network.json | head -1)"
 python3 -I - "$record" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))["reached"]
-must = ["mtx-runs", "tls:crates.io", "tls:index.crates.io", "tls:static.crates.io", "cargo-registry", "model"]
+must = ["mtx-runs", "codex-web-search-off", "tls:crates.io", "tls:index.crates.io", "tls:static.crates.io", "cargo-registry", "model"]
 if r.get("chain") != "skipped":
     must.append("chain")
 must_not = ["tls:github.com", "tls:codeload.github.com", "tls:raw.githubusercontent.com",
