@@ -91,7 +91,46 @@ quote.
 
 ## Gate 0
 
-See below (filled in from the run).
+Engine run on runner-14 (`hidden/gate0/gate0.py`, untracked): one fresh
+72-session hidden set from a new secret (made on the box, never printed),
+every rung a strategy component graded with `mtx grade --draw skew-maker
+--trusted`, the informed rung with `--tell-latent`. Tuning before it used a
+separate probe secret only (a 48-session recording and its replay model).
+
+| Rung | Total | Mean | sd | v2-weighted share of informed |
+| --- | --- | --- | --- | --- |
+| most-skewed | -244 | -3.38 | 5.64 | -1.65 |
+| neutral | -126 | -1.75 | 3.35 | -0.79 |
+| mean-skew | -113 | -1.57 | 4.21 | -0.84 |
+| seat-a | -110 | -1.53 | 4.88 | -0.83 |
+| twap | -58 | -0.80 | 2.98 | -0.48 |
+| nop | 0 | 0 | 0 | 0 |
+| reference | 83 | 1.16 | 4.30 | 0.29 |
+| informed | 250 | 3.47 | 5.60 | 1.00 |
+
+- Signal gate: every non-reading rung loses; the best is `nop` at 0, so
+  informed / best non-reading is unbounded (need 2); informed is at least
+  twice the best non-reading rung on 1.000 of bootstrapped sets.
+- Order `max(nop, mean-skew, most-skewed, seat-a, twap, neutral) <
+  reference < informed` holds on 0.993 of 2,000 bootstrapped 72-session
+  sets (need 0.85).
+- Strength band: reference 0.29 of informed, v2-weighted at k = 1.5 (band
+  0.2 to 0.7; raw 0.33); its per-session Sharpe 0.27 (need 0.25). Informed's
+  Sharpe 0.62.
+- **Passed**, at the band's low end and just over the Sharpe floor: the
+  reference reads the informed maker only after one or two of its moves
+  (it follows a maker in about a third of sessions on the replay).
+
+## Risks for the full build
+
+- Thin margins: the band (0.29) and the reference's Sharpe (0.27) sit near
+  their floors on one set; the full ladder's sets should confirm them.
+- The maker lean rarely fills (the skewers and the bot's lean sit behind the
+  splines' 2.1 bp touch), so the task is a taker task in practice, as the
+  feasibility verdict expected; obligations or widened makers would change
+  that and need their own Gate 0.
+- `cargo test -p mtx-cli` fails `every_task_names_its_snapshot_and_practice_set`
+  until the full build's six practice sessions exist.
 
 ## Departures from the card
 
