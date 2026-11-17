@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use mtx_kit::Side;
 use serde::{Deserialize, Serialize};
 
-use super::{Scale, Wallet, Window, finite_positive};
+use super::{Rng, Scale, Wallet, Window, finite_positive};
 use crate::actors::{Actor, ActorsReport, Moment};
 
 fn ten() -> f64 {
@@ -30,10 +30,23 @@ fn fifty() -> f64 {
     50.0
 }
 
+fn one_wallet() -> u32 {
+    1
+}
+
+fn is_one(wallets: &u32) -> bool {
+    *wallets == 1
+}
+
 /// A stop hunter's settings.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct StopHunter {
+    /// The wallets it trades from. With several it pushes from one of them,
+    /// drawn each time, and trades back from the same one: a reader sees no
+    /// single address that hunts.
+    #[serde(default = "one_wallet", skip_serializing_if = "is_one")]
+    pub wallets: u32,
     /// The grid of obvious levels, in USD: every whole dollar at 1.0.
     pub level_step_usd: f64,
     /// How near the mid must come to a level, in basis points, before it
@@ -60,6 +73,9 @@ pub struct StopHunter {
 
 impl StopHunter {
     pub fn validate(&self) -> Result<(), String> {
+        if self.wallets == 0 {
+            return Err("wallets must be at least 1".into());
+        }
         finite_positive("level_step_usd", self.level_step_usd)?;
         finite_positive("trigger_bps", self.trigger_bps)?;
         finite_positive("push_mult", self.push_mult)?;
@@ -71,35 +87,43 @@ enum State {
     Waiting {
         from: u64,
     },
-    /// It pushed `side` for `size` at `at`.
+    /// It pushed `side` for `size` at `at`, from its `wallet`th wallet.
     Pushed {
         side: Side,
         size: f64,
         at: u64,
+        wallet: usize,
     },
 }
 
 pub(super) struct Hunter {
     spec: StopHunter,
     scale: Scale,
-    wallet: Wallet,
+    wallets: Vec<Wallet>,
+    rng: Rng,
     state: State,
 }
 
 impl Hunter {
-    pub fn new(spec: StopHunter, scale: Scale, wallet: Wallet) -> Self {
+    pub fn new(spec: StopHunter, scale: Scale, wallets: Vec<Wallet>, rng: Rng) -> Self {
         Self {
             spec,
             scale,
-            wallet,
+            wallets,
+            rng,
             state: State::Waiting { from: 0 },
         }
     }
 
     async fn look(&mut self, now: &Moment) {
-        let tick = self.wallet.seat().tick();
+        let tick = self.wallets[0].seat().tick();
         match self.state {
-            State::Pushed { side, size, at } => {
+            State::Pushed {
+                side,
+                size,
+                at,
+                wallet,
+            } => {
                 if now.at < at + self.spec.hold_slots {
                     return;
                 }
@@ -109,8 +133,9 @@ impl Hunter {
                     Side::Bid => now.book_usd * (1.0 + reach),
                     Side::Ask => now.book_usd * (1.0 - reach),
                 };
-                self.wallet.take(now.at, back, size, limit).await;
-                self.wallet.count("reversals", 1);
+                let wallet = &self.wallets[wallet];
+                wallet.take(now.at, back, size, limit).await;
+                wallet.count("reversals", 1);
                 self.state = State::Waiting {
                     from: now.at + self.spec.cooldown_slots,
                 };
@@ -119,7 +144,7 @@ impl Hunter {
                 if now.at < from || !Window::holds(&self.spec.active, now.at) {
                     return;
                 }
-                let Ok((Some(bid), Some(ask))) = self.wallet.seat().top().await else {
+                let Ok((Some(bid), Some(ask))) = self.wallets[0].seat().top().await else {
                     return;
                 };
                 let mid = (bid + ask) / 2.0;
@@ -142,12 +167,17 @@ impl Hunter {
                     (Side::Bid, above + overshoot)
                 };
                 let size = self.scale.trade_size * self.spec.push_mult;
-                if self.wallet.take(now.at, side, size, limit).await {
-                    self.wallet.count("pushes", 1);
+                let wallet = match self.wallets.len() {
+                    1 => 0,
+                    n => self.rng.below(n),
+                };
+                if self.wallets[wallet].take(now.at, side, size, limit).await {
+                    self.wallets[wallet].count("pushes", 1);
                     self.state = State::Pushed {
                         side,
                         size,
                         at: now.at,
+                        wallet,
                     };
                 }
             }
@@ -175,6 +205,7 @@ mod tests {
         let top = book.top.clone();
         let (wallet, ledger) = wallet(book);
         let spec = StopHunter {
+            wallets: 1,
             level_step_usd: 1.0,
             trigger_bps: 10.0,
             push_mult: 10.0,
@@ -184,7 +215,7 @@ mod tests {
             limit_bps: 50.0,
             active: None,
         };
-        let mut hunter = Hunter::new(spec, scale(), wallet);
+        let mut hunter = Hunter::new(spec, scale(), vec![wallet], Rng::new([1; 32]));
         // 25 bps over 100: too far.
         hunter.after_blocks(&at(2, 100.0)).await;
         assert!(log.lock().unwrap().is_empty());
@@ -200,5 +231,42 @@ mod tests {
         );
         let tally = &ledger.report().actors[0];
         assert_eq!((tally.counts["pushes"], tally.counts["reversals"]), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn with_several_wallets_each_hunt_runs_from_one_drawn_wallet_and_back() {
+        let ledger_seats = |name: &str| {
+            let (book, log) = Book::new(name, 100.04, 100.08);
+            (wallet(book).0, log)
+        };
+        let ((a, log_a), (b, log_b)) = (ledger_seats("a"), ledger_seats("b"));
+        let spec = StopHunter {
+            wallets: 2,
+            level_step_usd: 1.0,
+            trigger_bps: 10.0,
+            push_mult: 1.0,
+            overshoot_ticks: 3,
+            hold_slots: 2,
+            cooldown_slots: 0,
+            limit_bps: 50.0,
+            active: None,
+        };
+        let mut hunter = Hunter::new(spec, scale(), vec![a, b], Rng::new([9; 32]));
+        for hunt in 0..16 {
+            hunter.after_blocks(&at(10 * hunt, 100.0)).await;
+            hunter.after_blocks(&at(10 * hunt + 2, 100.0)).await;
+        }
+        let (a, b) = (log_a.lock().unwrap(), log_b.lock().unwrap());
+        assert!(
+            !a.is_empty() && !b.is_empty(),
+            "both wallets hunt: {a:?} {b:?}"
+        );
+        assert_eq!(a.len() + b.len(), 32);
+        // Each wallet's hunts are a push and its own reversal, in turn.
+        for log in [&*a, &*b] {
+            for pair in log.chunks(2) {
+                assert!(pair[0].contains("take Ask") && pair[1].contains("take Bid"));
+            }
+        }
     }
 }
