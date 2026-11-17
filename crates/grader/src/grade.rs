@@ -2088,6 +2088,89 @@ mod tests {
         assert!(one.v2.is_some());
     }
 
+    /// A perp session on NVDA and SPCX, flat at the start.
+    fn on_two_markets(pnl_usd: f64) -> SessionReport {
+        let mut multi = session(pnl_usd);
+        multi.markets = ["NVDA", "SPCX"]
+            .into_iter()
+            .map(|symbol| session::MarketReport {
+                symbol: symbol.into(),
+                start_mark_usd: 100.0,
+                end_mark_usd: 100.0,
+                start_position: 0.0,
+                end_position: 0.0,
+                valuation: "mark",
+                flow: None,
+                competitor: None,
+            })
+            .collect();
+        multi
+    }
+
+    /// Several markets have no one-market ceiling to read, but an informed
+    /// bot's PnL is the account's, whatever it traded.
+    #[test]
+    fn v2_scores_a_session_on_several_markets_against_the_informed_bot() {
+        let mut s = scenario(Some(100.0));
+        s.informed_pnl_usd = Some(400.0);
+        let mut report = score(vec![(on_two_markets(300.0), &s), (on_two_markets(50.0), &s)]);
+        report.score_v2(&v2()).unwrap();
+        let v2 = report.v2.as_ref().unwrap();
+        assert_eq!(v2.ceiling, "informed");
+        assert_eq!(v2.raw, 0.5 + 0.5 * 150.0 / 600.0);
+        // The cost-aware hindsight ceiling reads one market's marks and cap:
+        // without the informed bot there is none.
+        let plain = scenario(Some(100.0));
+        let mut fallback = score(vec![(on_two_markets(30.0), &plain)]);
+        fallback.anchors = vec![on_two_markets(30.0)];
+        let params = scoring_v2::Params::new(scoring_v2::Ceiling::Informed { eta_override: None });
+        let refused = fallback.score_v2(&params).unwrap_err().to_string();
+        assert!(refused.contains("one market"), "{refused}");
+    }
+
+    /// Doing nothing is 0 only where holding the start scores 0: a start
+    /// position on any market, not only the first, needs net scoring or an
+    /// order.
+    #[test]
+    fn v2_takes_a_start_position_on_any_market_only_when_scoring_nets_the_hold() {
+        let mut s = scenario(Some(100.0));
+        s.informed_pnl_usd = Some(400.0);
+        let mut held = on_two_markets(-40.0);
+        held.markets[0].start_position = 20.0;
+        held.markets[0].end_position = 20.0;
+        let refused = score(vec![(held.clone(), &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+        held.net = Some(crate::orders::NetReport {
+            value_change_usd: -40.0,
+            drift_usd: -40.0,
+            inventory_charge_usd: 0.0,
+            venue_charge_usd: 0.0,
+            venue_net: Vec::new(),
+        });
+        held.pnl_usd = 0.0;
+        score(vec![(held, &s)]).score_v2(&v2()).unwrap();
+    }
+
+    /// A bot that trades only the second market has traded.
+    #[test]
+    fn a_session_on_several_markets_traded_where_any_market_moved() {
+        let mut multi = on_two_markets(10.0);
+        multi.positions = ["NVDA", "SPCX"]
+            .into_iter()
+            .map(|symbol| PositionRange {
+                instrument: format!("phoenix:perp:{symbol}").parse().unwrap(),
+                lowest: 0.0,
+                highest: 0.0,
+            })
+            .collect();
+        assert!(!traded(&multi));
+        multi.positions[1].highest = 3.0;
+        assert!(traded(&multi));
+    }
+
     #[test]
     fn v2s_ceiling_is_the_informed_bot_when_every_scenario_has_one() {
         let mut s = scenario(Some(100.0));
