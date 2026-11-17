@@ -4925,6 +4925,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-copy-or-bait"
+version = "0.1.0"
+dependencies = [
+ "borsh 1.8.1",
+ "bs58",
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
 name = "mtx-bot-dip-buyer"
 version = "0.1.0"
 dependencies = [
