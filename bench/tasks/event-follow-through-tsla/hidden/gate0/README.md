@@ -45,3 +45,19 @@ fresh 72-session secret, with no tuning between the sets
 | ladder order, bootstrap (2000; 5000 seed 11) | 0.898; 0.910 | 0.968; 0.972 |
 | reference, weighted share of informed | 0.44 | 0.40 |
 | reference per-session Sharpe | 0.56 | 0.55 |
+
+## Re-gate after main's #114 and the reference fix (fails the order bar)
+
+Main's #114 gives the informed traders and decoys a `hit_rate` of 0.85 (each
+fund misreads the move for a horizon at a time). The reference now enters only
+on a reading held three steps, keeps an account's reading until its markouts
+fall under one standard error, and never turns round after entry. One fresh
+72-session secret, all rungs rebuilt (`gate0-run3-after-114.txt`):
+
+- informed / best non-reading (fade): 13.1; ≥ 2x on 0.936 of bootstraps;
+- ladder order: **0.796** of 2000 bootstraps (0.803 of 5000): under 0.85;
+- reference 0.26 of informed (loss-weighted), per-session Sharpe 0.25.
+
+The informed bot halved ($30.65 a session against $56 before #114): it
+changed side 50 times and lost 10 sessions ($799). The reference traded 33
+sessions and won 23 of them (30 of 35 before).
