@@ -1601,6 +1601,7 @@ impl Account for LendingAccount {
             position: first.supplied - first.borrowed,
             value_usd,
             pnl_usd: value_usd - self.start_value_usd,
+            hold_usd: 0.0,
             turn_ms: None,
             answered: None,
             fair_usd: None,
