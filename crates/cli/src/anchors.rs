@@ -8,9 +8,10 @@
 //! the task has one) plays on a small fixed public draw of its scenario
 //! family, without the fields that differ from run to run by the machine or
 //! by chance (`publish::VOLATILE`: wall and turn times, compute units,
-//! signatures). It is committed beside the fingerprint and is one of its
-//! inputs: an engine, kit or dependency change that alters what the anchors
-//! do moves it, and so moves the fingerprint; one that doesn't, doesn't.
+//! signatures; and a wasm strategy's fuel). It is committed beside the
+//! fingerprint and is one of its inputs: an engine, kit or dependency
+//! change that alters what the anchors do moves it, and so moves the
+//! fingerprint; one that doesn't, doesn't.
 //!
 //! - `mtx task sync --anchors` builds the anchors and plays the sessions
 //!   (Linux, `just` and Surfpool installed, as the verifier has them) and
@@ -25,6 +26,11 @@
 //!   engine changed what the task does. Then run `mtx task sync --anchors`
 //!   (its fingerprint moves with it; bump `GRADER_VERSION` only for changes
 //!   the digests can't see).
+//!
+//! A digest is played on x86_64 Linux, as CI and the verifier run: the
+//! sessions' floating point goes through the system's maths library, and
+//! an arm64 box plays some tasks (flash-crash, weekend-gap) differently. A
+//! failing check prints the file to commit.
 
 use std::{
     io::Read,
@@ -323,16 +329,39 @@ fn digest_of(details: &Path, informed: bool) -> Result<String> {
             flate2::read::GzDecoder::new(std::fs::File::open(&file)?)
                 .read_to_end(&mut json)
                 .with_context(|| file.display().to_string())?;
-            let mut value: Value = serde_json::from_slice(&json)?;
-            crate::publish::strip_volatile(&mut value);
             let name = file.file_name().unwrap_or_default().to_string_lossy();
-            parts.push((format!("{role}/{name}"), serde_json::to_vec(&value)?));
+            parts.push((format!("{role}/{name}"), behaviour(&json)?));
         }
     }
     Ok(hash_parts(
         parts.iter().map(|(l, b)| (l.as_str(), b.as_slice())),
     ))
 }
+
+/// What a session file says the anchor did: without the volatile fields,
+/// and without a wasm strategy's fuel, which differs between identical runs
+/// (`fuel_used`, `fuel_max_call`) and says nothing about what it traded.
+fn behaviour(json: &[u8]) -> Result<Vec<u8>> {
+    fn strip_fuel(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                for key in FUEL {
+                    map.remove(*key);
+                }
+                map.values_mut().for_each(strip_fuel);
+            }
+            Value::Array(items) => items.iter_mut().for_each(strip_fuel),
+            _ => {}
+        }
+    }
+    let mut value: Value = serde_json::from_slice(json)?;
+    crate::publish::strip_volatile(&mut value);
+    strip_fuel(&mut value);
+    Ok(serde_json::to_vec(&value)?)
+}
+
+/// A session's fuel fields, left out of the digest.
+const FUEL: &[&str] = &["fuel_used", "fuel_max_call"];
 
 /// The committed digest file of a task, if it parses.
 pub fn committed(root: &Path, task: &str) -> Option<Digest> {
@@ -390,12 +419,23 @@ fn judge(
     }
     let played = play()?;
     if played.digest != committed.digest {
+        let played_short = short(&played.digest).to_owned();
+        // The whole file, as for a pending digest: the sessions' floating
+        // point follows the machine's maths library, so a digest played on
+        // another architecture (an arm64 box) can differ from this one.
         return Ok(Some(format!(
-            "{task}: the anchors play differently: digest {} was {}. An engine, kit or dependency \
-             change altered what this task does. Run `mtx task sync --anchors` and commit the \
-             digest (it moves this task's fingerprint only)",
-            short(&played.digest),
-            short(&committed.digest)
+            "{task}: the anchors play differently: digest {played_short} was {}. An engine, kit or dependency \
+             change altered what this task does, or the committed digest was played on another \
+             architecture than this one ({}). Run `mtx task sync --anchors` on the architecture \
+             CI runs, or commit this as bench/tasks/{task}/{DIGEST_FILE} (then `mtx task sync` \
+             for the fingerprint):\n{}",
+            short(&committed.digest),
+            std::env::consts::ARCH,
+            Digest {
+                inputs: now.to_string(),
+                ..played
+            }
+            .text()
         )));
     }
     Ok(None)
@@ -438,6 +478,30 @@ mod tests {
             ..pending
         };
         assert!(!Digest::parse(&played.text()).unwrap().is_pending());
+    }
+
+    #[test]
+    fn fuel_and_wall_times_never_move_the_digest_but_trades_do() {
+        let session = |fuel: u64, wall: u64, pnl: f64| {
+            serde_json::to_vec(&serde_json::json!({
+                "report": {
+                    "pnl_usd": pnl,
+                    "wall_ms": wall,
+                    "turns": { "steps": 296, "fuel_used": fuel, "fuel_max_call": fuel / 7 },
+                },
+                "timeline": { "steps": [{ "k": 0, "position": 1.0, "turn_ms": wall }] },
+            }))
+            .unwrap()
+        };
+        let base = behaviour(&session(43_524_702_445, 10, 72.07)).unwrap();
+        assert_eq!(
+            base,
+            behaviour(&session(43_524_709_118, 99, 72.07)).unwrap()
+        );
+        assert_ne!(
+            base,
+            behaviour(&session(43_524_702_445, 10, 72.08)).unwrap()
+        );
     }
 
     fn played(digest: &str) -> Result<Digest> {
@@ -495,5 +559,7 @@ mod tests {
             .unwrap();
         assert!(why.contains("play differently"), "{why}");
         assert!(!why.contains("GRADER_VERSION"), "{why}");
+        let printed = Digest::parse(why.split_once(":\n").unwrap().1).unwrap();
+        assert_eq!(printed, file("aa", "dd"));
     }
 }
