@@ -130,9 +130,21 @@ the README.
   Phoenix market orders: side and size), and takes 4 or more one-way
   orders within 120 slots, at least 0.5 NVDA net, as the burst: up, it buys the rest at once
   (paying up to 60 bp over the broker); down, it waits until the oracle has
-  fallen 0.5% from the high and stopped falling; until then, or in a calm
-  session, it works passively. It isn't told whether the session moves,
-  which way, when or how far.
+  fallen 0.5% from the high and stopped falling. It also reads the oracle
+  as any bot can: a 0.25% break from its range over 150 slots, held 30
+  slots, is a move under way, and a burst read later overrules it. Until
+  a move, or in a calm session, it rests a one-unit bid a tick inside the
+  maker (a unit, not an odd lot) and catches up behind a back-loaded floor,
+  crossing only while the ask beats the broker. It isn't told whether the
+  session moves, which way, when or how far.
+
+  On the fast set (12 sessions, 2026-11-17, after #113/#114) three versions
+  were tried: the read-only bot ($182.6), the same plus the oracle break
+  ($178.0: one session where a false break down came before the burst),
+  and a version that capped early passive buying at a fifth of the order
+  and took asks at an even pace late ($170.9: worse in falling sessions).
+  The second is the anchor: the break is what the screen's agents did
+  (0.22-0.3%), and catches a move whose burst the read misses.
 
 ## Failure modes, priced
 

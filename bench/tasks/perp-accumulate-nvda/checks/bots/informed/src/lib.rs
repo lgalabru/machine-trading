@@ -18,18 +18,16 @@
 //!   the same way, is the burst, and its sign is the move's. Orders, not
 //!   fills: a burst order the book doesn't fill says as much as one it
 //!   does.
-//! - **The oracle** too: a break of 0.25% from its range over 150 slots is a
-//!   move under way, burst read or not.
+//! - **The oracle** too: a break of 0.25% from its range over 150 slots,
+//!   held 30 slots, is a move under way; a burst read later overrules it.
 //! - **Up:** it buys the rest of the order at once, at the maker when it can
 //!   and on the backstop when it must, paying up to 60 bp over the broker.
 //! - **Down:** it buys nothing, and rests nothing, until the fall has
 //!   landed (the oracle 0.5% under the session's high, and no new low for
 //!   80 slots), then works the rest as in a calm session.
-//! - **Until a move, or in a calm session:** it rests a bid of one unit at
-//!   the front of the book (a tick over the best bid, never within 1 bp of
-//!   the oracle), letting it buy at most a fifth of the order before 60% of
-//!   the session, while a burst can still come; from 80% on it takes the
-//!   asks that beat the broker at an even pace to the end.
+//! - **Until a burst, or in a calm session:** it rests a bid a tick inside
+//!   the maker and catches up behind a back-loaded floor, crossing only
+//!   while the ask beats the broker.
 
 use std::collections::VecDeque;
 
@@ -59,27 +57,18 @@ const LANDED: f64 = 0.005;
 const SETTLE_SLOTS: u64 = 80;
 /// From here on, in share of the session, it catches up whatever it saw.
 const LATE: f64 = 0.85;
-/// The oracle's break from its range over `BREAK_SLOTS` that marks a move,
-/// whatever the tape showed: well inside the smallest move (0.71%) and
-/// well outside the walk's noise over the window.
+/// The oracle's break from its range over `BREAK_SLOTS`, held for
+/// `BREAK_HOLD` slots, that marks a move whatever the tape showed: well
+/// inside the smallest move (0.71%) and outside the walk's noise there.
 const BREAK: f64 = 0.0025;
 const BREAK_SLOTS: u64 = 150;
-/// The share of the order its bid may buy before `QUIET`, while a burst
-/// can still come; after it, or once a fall has landed, all of it.
-const EARLY_SHARE: f64 = 0.2;
-const QUIET: f64 = 0.6;
-/// From here on, in share of the session, it takes the asks that beat the
-/// broker at an even pace to the end.
-const TAKE_FROM: f64 = 0.8;
-/// Its bid: one unit at the front of the book, never closer to the oracle
-/// than this.
-const BID_SIZE: f64 = 1.0;
-const BID_UNDER_BPS: f64 = 1.0;
+const BREAK_HOLD: u64 = 30;
 
 /// The strategy.
 #[derive(Default)]
 pub struct Informed {
     order: Order,
+    maker_bps: f64,
     pace: f64,
     /// The informed trader's wallet, Phoenix's program and a base lot in
     /// NVDA.
@@ -92,13 +81,16 @@ pub struct Informed {
     orders: VecDeque<(u64, f64)>,
     /// The move's sign once its burst showed.
     sign: f64,
+    /// Whether the burst was read (the oracle's break is overruled by it).
+    read: bool,
+    /// The oracle at recent steps, and the way it has been breaking since when.
+    oracles: VecDeque<(u64, f64)>,
+    breaking: Option<(f64, u64)>,
     high: f64,
     low: f64,
     low_at: u64,
     /// The share of the session at which a fall had landed.
     landed: Option<f64>,
-    /// The oracle at recent steps.
-    oracles: VecDeque<(u64, f64)>,
 }
 
 impl Informed {
@@ -185,6 +177,7 @@ impl Strategy for Informed {
             .var("MTX_REGIME")
             .ok_or("no MTX_REGIME: the informed bot is told the session's latent state")?;
         let n = |k: &str| number_after(told, &format!("\"{k}\""));
+        self.maker_bps = n("maker_bps").unwrap_or(4.0);
         self.pace = n("maker_size").unwrap_or(2.0) * 2.0 / n("react_slots").unwrap_or(6.0).max(2.0);
         let wallet = told
             .split("\"informed\":[\"")
@@ -213,7 +206,7 @@ impl Strategy for Informed {
         orders.cancel_all();
 
         // The informed trader's burst, read off the orders it sends.
-        if self.sign == 0.0 {
+        if !self.read {
             for order in self.new_orders() {
                 self.orders.push_back(order);
             }
@@ -236,23 +229,11 @@ impl Strategy for Informed {
                 && net.abs() >= BURST_ONE_WAY * traded
             {
                 self.sign = net.signum();
+                self.read = true;
                 log(&format!(
                     "slot {slot}: the informed trader sent {net:+.3} one way"
                 ));
             }
-        }
-        // Where a fall stands: the session's high, and its low since then.
-        if oracle > self.high {
-            (self.high, self.low, self.low_at) = (oracle, oracle, slot);
-        } else if oracle < self.low {
-            (self.low, self.low_at) = (oracle, slot);
-        }
-        if self.sign < 0.0
-            && self.landed.is_none()
-            && self.low < self.high * (1.0 - LANDED)
-            && slot >= self.low_at + SETTLE_SLOTS
-        {
-            self.landed = Some(t);
         }
         // The oracle's own break from its recent range: a move under way,
         // whether or not the burst was read.
@@ -271,63 +252,74 @@ impl Strategy for Informed {
                 .map(|(_, p)| *p)
                 .fold(f64::INFINITY, f64::min);
             let hi = self.oracles.iter().map(|(_, p)| *p).fold(0.0, f64::max);
-            if oracle >= lo * (1.0 + BREAK) {
-                self.sign = 1.0;
-                log(&format!("slot {slot}: the oracle broke up"));
+            let way = if oracle >= lo * (1.0 + BREAK) {
+                1.0
             } else if oracle <= hi * (1.0 - BREAK) {
-                self.sign = -1.0;
-                log(&format!("slot {slot}: the oracle broke down"));
+                -1.0
+            } else {
+                0.0
+            };
+            self.breaking = match self.breaking {
+                Some((w, since)) if w == way => Some((w, since)),
+                _ if way != 0.0 => Some((way, slot)),
+                _ => None,
+            };
+            if let Some((w, since)) = self.breaking
+                && slot >= since + BREAK_HOLD
+            {
+                self.sign = w;
+                log(&format!(
+                    "slot {slot}: the oracle broke {}",
+                    if w > 0.0 { "up" } else { "down" }
+                ));
             }
+        }
+        // Where a fall stands: the session's high, and its low since then.
+        if oracle > self.high {
+            (self.high, self.low, self.low_at) = (oracle, oracle, slot);
+        } else if oracle < self.low {
+            (self.low, self.low_at) = (oracle, slot);
+        }
+        if self.sign < 0.0
+            && self.landed.is_none()
+            && self.low < self.high * (1.0 - LANDED)
+            && slot >= self.low_at + SETTLE_SLOTS
+        {
+            self.landed = Some(t);
         }
         if left < 1e-3 {
             return Ok(());
         }
 
-        // Up: the rest now. Down: nothing until the fall has landed.
-        // Otherwise: a bid at the front of the book, a capped share of the
-        // order early (a burst can still come), and the asks that beat the
-        // broker late.
-        let landed = self.landed.is_some() || (self.sign < 0.0 && t > LATE);
-        if self.sign < 0.0 && !landed {
-            return Ok(());
-        }
-        let mut sent = 0.0;
-        if self.sign > 0.0 {
-            let limit = self.order.worth_usd(oracle, UP_EDGE_BPS);
-            if market.best_ask.is_some_and(|ask| ask <= limit) {
-                sent = round_lots(left.min(UP_SLICE.max(self.pace)));
-                if sent > 0.0 {
-                    orders.buy(sent, limit);
-                }
-            }
-            return Ok(());
-        }
-        let quiet_cap = if landed || t >= QUIET {
-            q
-        } else {
-            q * EARLY_SHARE
+        let calm_floor = |from: f64| {
+            let x = ((t - from) / (0.95 - from).max(0.05)).clamp(0.0, 1.0);
+            q * x.powi(3)
         };
-        let take_from = if landed { 0.0 } else { TAKE_FROM };
-        if t >= take_from {
-            // Behind an even pace to the end: take what beats the broker.
-            let start = self.landed.unwrap_or(take_from);
-            let x = ((t - start) / (0.97 - start).max(0.02)).clamp(0.0, 1.0);
-            let behind = (q * x - held).max(0.0);
-            let limit = self.order.worth_usd(oracle, 0.0);
-            if behind > 1e-3 && market.best_ask.is_some_and(|ask| ask <= limit) {
-                sent = round_lots(behind.min(self.pace.max(1.0)).min(left));
-                if sent > 0.0 {
-                    orders.buy(sent, limit);
-                }
+        let (floor, edge, size, rest) = if self.sign > 0.0 {
+            (q, UP_EDGE_BPS, UP_SLICE.max(self.pace), false)
+        } else if self.sign < 0.0 {
+            match self.landed {
+                Some(from) => (calm_floor(from), 0.0, self.pace.max(0.5), true),
+                None if t > LATE => (calm_floor(0.0), 0.0, self.pace.max(0.5), true),
+                None => return Ok(()),
+            }
+        } else {
+            (calm_floor(0.0), 0.0, self.pace.max(0.5), true)
+        };
+        let limit = self.order.worth_usd(oracle, edge);
+        let behind = (floor - held).max(0.0);
+        let mut sent = 0.0;
+        if behind > 1e-3 && market.best_ask.is_some_and(|ask| ask <= limit) {
+            sent = round_lots(behind.min(size).min(left));
+            if sent > 0.0 {
+                orders.buy(sent, limit);
             }
         }
-        let room = (quiet_cap - held - sent).max(0.0);
-        if room > 1e-3 {
-            let front = market.best_bid.map_or(0.0, |b| b + 0.01);
-            let fair_cap = oracle * (1.0 - BID_UNDER_BPS / 10_000.0);
-            let price = round_down_cents(front.min(fair_cap).min(self.order.max_buy_price));
-            let size = round_lots(BID_SIZE.min(room));
-            if size > 0.0 && price > 0.0 && market.best_ask.is_none_or(|ask| price < ask) {
+        if rest {
+            let bid = oracle * (1.0 - self.maker_bps / 10_000.0);
+            let price = round_down_cents((bid + 0.01).min(self.order.max_buy_price));
+            let size = round_lots(1.0f64.min(left - sent));
+            if size > 0.0 && market.best_ask.is_none_or(|ask| price < ask) {
                 orders.bid(price, size).post_only();
             }
         }
