@@ -951,6 +951,11 @@ ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="targ
         [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null ;;
       esac
     done
+    # The strategy zoo every ladder runs (bench/checks/zoo), and the task's
+    # anchor-strength hybrid, when its ladder file names one.
+    for bot in bench/checks/zoo $(jq -r '.zoo.hybrid // empty' "{{tasks}}/{{task}}/checks/ladder.json"); do
+      CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
+    done
     python3 -I bench/checks/ladder/ladder.py {{task}} --mtx "${CARGO_TARGET_DIR:-target}/release/mtx" \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}} \
       --out "{{out}}" ${count_args[@]+"${count_args[@]}"}

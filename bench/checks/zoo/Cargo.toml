@@ -1,0 +1,28 @@
+# The strategy zoo (see README.md). Outside the repository's workspace, like
+# the probe bots: it never ships in a task image. A task's hybrid crate
+# (`checks/rungs/hybrid`) depends on this one to run its informed bot beside
+# a zoo rung.
+[package]
+name = "mtx-zoo"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bot"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+borsh = "1"
+bs58 = "0.5"
+mtx-core = { path = "../../../crates/core" }
+mtx-kit = { path = "../../../crates/kit" }
+mtx-probes = { path = "../probes" }
+serde_json = "1"
+
+[workspace]
