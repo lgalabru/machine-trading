@@ -748,8 +748,7 @@ mod tests {
             trade_size: 1.0,
             trade_size_sigma: 1.0,
         };
-        let mut informed =
-            InformedTrader::new(spec, scale, vec![wallet], path, Rng::new([12; 32]));
+        let mut informed = InformedTrader::new(spec, scale, vec![wallet], path, Rng::new([12; 32]));
         assert!(informed.wants_flow());
         // From slot 3,000, a copier takes twice each of its takes, the slot
         // after, until the bait is set.
@@ -795,14 +794,20 @@ mod tests {
         assert!((0.4..=0.6).contains(&wa), "wrong {wa:.3} after");
         let pace = |v: &[&(u64, bool, f64)], set: bool| v.len() as f64 / active[&set] as f64;
         let (pb, pa) = (pace(&before, false), pace(&after, true));
-        assert!((0.75..=1.33).contains(&(pa / pb)), "pace {pb:.3} then {pa:.3}");
+        assert!(
+            (0.75..=1.33).contains(&(pa / pb)),
+            "pace {pb:.3} then {pa:.3}"
+        );
         let median = |v: &[&(u64, bool, f64)]| {
             let mut sizes: Vec<f64> = v.iter().map(|(.., size)| *size).collect();
             sizes.sort_by(f64::total_cmp);
             sizes[sizes.len() / 2]
         };
         let (mb, ma) = (median(&before), median(&after));
-        assert!((0.75..=1.33).contains(&(ma / mb)), "median size {mb:.3} then {ma:.3}");
+        assert!(
+            (0.75..=1.33).contains(&(ma / mb)),
+            "median size {mb:.3} then {ma:.3}"
+        );
     }
 
     #[tokio::test]

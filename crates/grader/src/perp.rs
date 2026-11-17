@@ -622,8 +622,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         rfqs = built.rfq;
         roster = built.roster;
         // The wallets every bot is told, as the market knows them.
-        public = crate::latent::public_wallets(&library.public, &roster)
-            .map_err(Error::Latent)?;
+        public = crate::latent::public_wallets(&library.public, &roster).map_err(Error::Latent)?;
     }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.

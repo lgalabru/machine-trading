@@ -423,7 +423,11 @@ mod tests {
         watch.filled(40, Side::Ask, 1.0);
         watch.filled(60, Side::Ask, 1.0);
         watch.filled(100, Side::Ask, 1.0);
-        let starts: Vec<(u64, usize)> = watch.open.iter().map(|r| (r.start, r.fills.len())).collect();
+        let starts: Vec<(u64, usize)> = watch
+            .open
+            .iter()
+            .map(|r| (r.start, r.fills.len()))
+            .collect();
         assert_eq!(starts, [(10, 2), (40, 2), (100, 1)]);
     }
 

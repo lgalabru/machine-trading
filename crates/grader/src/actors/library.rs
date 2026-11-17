@@ -342,9 +342,7 @@ impl Library {
         }
         for (i, kind) in self.public.iter().enumerate() {
             if kind.is_empty() || self.public[..i].contains(kind) {
-                return Err(format!(
-                    "actors.public: `{kind}` is empty or listed twice"
-                ));
+                return Err(format!("actors.public: `{kind}` is empty or listed twice"));
             }
         }
         Ok(())

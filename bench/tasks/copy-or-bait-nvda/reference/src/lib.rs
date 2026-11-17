@@ -384,7 +384,8 @@ impl Copier {
     }
 
     fn hold(&self) -> u64 {
-        self.rule.map_or(self.params.hold_slots, |r| r.horizon_slots)
+        self.rule
+            .map_or(self.params.hold_slots, |r| r.horizon_slots)
     }
 
     /// Score the runs whose markouts are in, for the reference's odds.
@@ -426,7 +427,10 @@ impl Copier {
                 .sum();
             terms.push(((prior / turns.len() as f64).ln() + l, *tau <= self.count));
         }
-        let top = terms.iter().map(|(l, _)| *l).fold(f64::NEG_INFINITY, f64::max);
+        let top = terms
+            .iter()
+            .map(|(l, _)| *l)
+            .fold(f64::NEG_INFINITY, f64::max);
         let total: f64 = terms.iter().map(|(l, _)| (l - top).exp()).sum();
         let gone: f64 = terms
             .iter()

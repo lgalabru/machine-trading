@@ -392,7 +392,11 @@ impl CopyOrBaitFamily {
                 if n > count {
                     break;
                 }
-                let path = if mirrored { mirror(&path) } else { path.clone() };
+                let path = if mirrored {
+                    mirror(&path)
+                } else {
+                    path.clone()
+                };
                 let mut draw = draw.clone();
                 draw.shape.mirrored = mirrored;
                 let scenario = self.scenario(&format!("{prefix}-{n}"), &path, &draw);
@@ -477,7 +481,10 @@ mod tests {
         let family = CopyOrBaitFamily::nvda();
         for (_, shape) in family.draw_set("t", 8, 3) {
             let rule = shape.rule().to_string();
-            assert!(!rule.contains("hit_rate") && !rule.contains("day"), "{rule}");
+            assert!(
+                !rule.contains("hit_rate") && !rule.contains("day"),
+                "{rule}"
+            );
         }
     }
 }
