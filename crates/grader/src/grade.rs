@@ -2276,6 +2276,51 @@ mod tests {
         score(vec![(held, &s)]).score_v2(&v2()).unwrap();
     }
 
+    /// What a bot that does nothing made is in the report, and a rescore
+    /// reads it back, so a grade scored again keeps its 0.
+    #[test]
+    fn a_grade_scored_again_keeps_what_the_nop_bot_made() {
+        let mut s = scenario(Some(100.0));
+        s.informed_pnl_usd = Some(400.0);
+        let mut report = score(vec![(session(30.0), &s)]);
+        report.scenarios[0].nop_pnl_usd = Some(10.0);
+        report.score_v2(&v2()).unwrap();
+        let raw = report.v2.as_ref().unwrap().raw;
+        assert_eq!(report.v2.as_ref().unwrap().nop_usd, 10.0);
+        let verdict: Verdict =
+            serde_json::from_value(serde_json::to_value(&report).unwrap()).unwrap();
+        let mut again = rescore(vec![(session(30.0), s)], verdict);
+        assert_eq!(again.scenarios[0].nop_pnl_usd, Some(10.0));
+        again.score_v2(&v2()).unwrap();
+        assert_eq!(again.v2.as_ref().unwrap().raw, raw);
+    }
+
+    /// With the nop bot's PnL measured, a start position the hold baseline
+    /// doesn't cover is no longer a reason to refuse: its drift is in the 0.
+    #[test]
+    fn a_measured_nop_scores_a_start_position_no_baseline_covers() {
+        let mut s = scenario(Some(100.0));
+        s.informed_pnl_usd = Some(400.0);
+        let mut held = session(-30.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let refused = score(vec![(held.clone(), &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+        let mut measured = score(vec![(held, &s)]);
+        measured.scenarios[0].nop_pnl_usd = Some(-30.0);
+        measured.score_v2(&v2()).unwrap();
+        // Doing nothing made -30, and so did the bot: it scores the 0.
+        assert_eq!(measured.v2.as_ref().unwrap().raw, 0.0);
+    }
+
     /// A bot that trades only the second market has traded.
     #[test]
     fn a_session_on_several_markets_traded_where_any_market_moved() {
