@@ -2652,8 +2652,8 @@ mod tests {
             assert!(root.join(&snapshot).is_dir(), "{snapshot}");
             // The snapshot the task's task.toml names, else the SPCX one the
             // first tasks share.
-            let toml = root.join("bench/tasks").join(&task.dir).join("task.toml");
-            let named = std::fs::read_to_string(toml)
+            let file = root.join("bench/tasks").join(&task.dir).join("task.toml");
+            let named = std::fs::read_to_string(file)
                 .ok()
                 .and_then(|t| toml::from_str::<toml::Value>(&t).ok())
                 .and_then(|t| Some(t.get("metadata")?.get("snapshot")?.as_str()?.to_string()))
