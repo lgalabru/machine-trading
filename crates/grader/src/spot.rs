@@ -161,6 +161,7 @@ impl SpotReport {
                 instrument: fill.instrument.clone(),
                 side: fill.side,
                 price: fill.price,
+                worst_price: fill.price,
             })
             .collect()
     }
@@ -884,6 +885,16 @@ struct SpotAccount {
 }
 
 impl SpotAccount {
+    /// What holding the start wallet's base would have gained by the time the
+    /// price is `price_usd`, in a net-scored session; 0 otherwise.
+    fn hold_usd(&self, price_usd: f64) -> f64 {
+        if self.scenario.net.is_some() {
+            self.start.wallet.base * (price_usd - self.start_price_usd)
+        } else {
+            0.0
+        }
+    }
+
     fn note(&mut self, reading: &Reading) {
         for instrument in &self.instruments {
             self.observed.record(instrument, reading.wallet.base);
@@ -944,8 +955,13 @@ impl Account for SpotAccount {
             0
         };
         let value_usd = now.wallet.value_usd;
-        self.peak_value_usd = self.peak_value_usd.max(value_usd);
-        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        // A net-scored session scores against holding the start wallet, and
+        // takes what holding gained off the drawdown.
+        let hold_usd = self.hold_usd(now.wallet.price_usd);
+        self.peak_value_usd = self.peak_value_usd.max(value_usd - hold_usd);
+        self.max_drawdown_usd = self
+            .max_drawdown_usd
+            .max(self.peak_value_usd - (value_usd - hold_usd));
         let record = StepRecord {
             k,
             at,
@@ -958,6 +974,7 @@ impl Account for SpotAccount {
             position: now.wallet.base,
             value_usd,
             pnl_usd: value_usd - self.start_value_usd,
+            hold_usd,
             turn_ms: None,
             answered: None,
             fair_usd: None,
@@ -1066,6 +1083,7 @@ impl Account for SpotAccount {
         let start = &self.start;
         let (start_value_usd, start_price_usd) = (self.start_value_usd, self.start_price_usd);
         let end_value_usd = end.wallet.value_usd;
+        let end_hold_usd = self.hold_usd(end.wallet.price_usd);
         let order = scenario.order.as_ref().map(|order| {
             let own: Vec<(Side, f64)> = fills.iter().map(|f| (f.side, f.base)).collect();
             order.report(
@@ -1126,9 +1144,10 @@ impl Account for SpotAccount {
             instrument,
             positions: observed.positions,
             positions_outside_universe: 0,
-            max_drawdown_usd: self
-                .max_drawdown_usd
-                .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            max_drawdown_usd: self.max_drawdown_usd.max(
+                self.peak_value_usd.max(end_value_usd - end_hold_usd)
+                    - (end_value_usd - end_hold_usd),
+            ),
             samples: Default::default(),
             term_start: Default::default(),
             valuation: "pyth",
@@ -1152,6 +1171,7 @@ impl Account for SpotAccount {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            obligations: None,
             tx_layer: None,
             lending: None,
             crank_refusals: done.crank_refusals,

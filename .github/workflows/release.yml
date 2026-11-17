@@ -90,14 +90,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and stage both images
+      - name: Build and stage the images
         env:
           STAGE: ${{ needs.check.outputs.stage }}
           VERSION: ${{ needs.check.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          for target in runtime dev; do
+          for target in runtime dev agent; do
             docker buildx build -f bench/image/Dockerfile --target "$target" \
               --platform "linux/$ARCH" \
               --cache-from "type=gha,scope=$target-$ARCH" --cache-to "type=gha,scope=$target-$ARCH,mode=max" \
@@ -130,7 +130,7 @@ jobs:
           VERSION: ${{ needs.check.outputs.version }}
         run: |
           set -euo pipefail
-          for pair in "runtime:$VERSION-runtime" "dev:$VERSION"; do
+          for pair in "runtime:$VERSION-runtime" "dev:$VERSION" "agent:$VERSION-agent"; do
             target="${pair%%:*}" tag="${pair#*:}"
             # A release is never overwritten: a version once out stays what it was.
             if docker buildx imagetools inspect "$REGISTRY/$IMAGE:$tag" > /dev/null 2>&1; then
