@@ -365,7 +365,11 @@ pub const JUMP_SLOTS: u64 = 10;
 impl JumpWatch {
     pub fn update(&mut self, slot: u64, oracle: f64) {
         self.seen.retain(|(s, _)| s + JUMP_SLOTS >= slot);
-        if self.seen.iter().any(|(_, o)| (oracle / o - 1.0).abs() > JUMP) {
+        if self
+            .seen
+            .iter()
+            .any(|(_, o)| (oracle / o - 1.0).abs() > JUMP)
+        {
             self.landed = true;
         }
         self.seen.push((slot, oracle));
