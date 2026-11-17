@@ -1,0 +1,383 @@
+{
+  "actors": {
+    "chasers": [
+      {
+        "intensity_mult": 16.0,
+        "limit_bps": 50.0,
+        "lookback_slots": 40,
+        "size_mult": 10.0,
+        "trigger_bps": 15.59,
+        "wallets": 2
+      }
+    ],
+    "decoys": [
+      {
+        "bursts": {
+          "gap_slots": [
+            163,
+            490
+          ],
+          "length_slots": [
+            29,
+            29
+          ]
+        },
+        "edge_bps": 38.87,
+        "horizon_slots": 29,
+        "informed_for": {
+          "from": 253,
+          "until": 761
+        },
+        "intensity_mult": 8.0,
+        "limit_bps": 50.0,
+        "size_mult": 10.0,
+        "wallets": 1
+      }
+    ],
+    "informed": [
+      {
+        "edge_bps": 38.87,
+        "horizon_slots": 29,
+        "intensity_mult": 24.0,
+        "limit_bps": 50.0,
+        "size_mult": 10.0,
+        "wallets": 3
+      }
+    ],
+    "noise": [
+      {
+        "flow_mult": 20.0,
+        "limit_bps": 50.0,
+        "size_mult": 10.0,
+        "wallets": 5
+      }
+    ],
+    "refill": {
+      "half_life_slots": [
+        17.27,
+        17.27
+      ],
+      "levels": 5,
+      "max_position_mult": 20.0,
+      "min_gap_ticks": 2.0,
+      "react_slots": 2,
+      "size_mult": 0.5
+    },
+    "scale": {
+      "trade_size": 0.015,
+      "trade_size_sigma": 1.04,
+      "trades_per_minute": 1.24
+    }
+  },
+  "close_out": {
+    "NVDA": {
+      "haircut_bps": 5.0
+    }
+  },
+  "description": "NVDA practice session",
+  "duration_slots": 1269,
+  "informed_max_drawdown_usd": 8.4,
+  "informed_pnl_usd": 52.39,
+  "mandate": {
+    "limits": {
+      "max_drawdown_usd": 500.0
+    },
+    "universe": [
+      {
+        "instrument": "phoenix:perp:NVDA",
+        "max_position": 30.0
+      }
+    ],
+    "version": "v0"
+  },
+  "market_model": {
+    "calibration": "nvda.20261113.903d1120",
+    "calibration_sha256": "442bb7bea15809f76b9c1b29221937caefc390cb2c37d6124720c7ea8dc01ebf",
+    "process": "regime_garch_t",
+    "regime_vol": [
+      0.3961132072937461,
+      1.7482109172087814
+    ],
+    "regimes": [
+      {
+        "name": "stressed",
+        "slot": 0
+      }
+    ],
+    "sessions": [
+      {
+        "name": "regular",
+        "slot": 0
+      }
+    ],
+    "slot_seconds": 0.25,
+    "start_unix": 1819203076,
+    "vol_mult": 1.0
+  },
+  "name": "practice-4",
+  "path": [
+    {
+      "level_pct": -0.005,
+      "slot": 20
+    },
+    {
+      "level_pct": -0.015,
+      "slot": 40
+    },
+    {
+      "level_pct": 0.009,
+      "slot": 60
+    },
+    {
+      "level_pct": -0.005,
+      "slot": 80
+    },
+    {
+      "level_pct": 0.001,
+      "slot": 100
+    },
+    {
+      "level_pct": -0.015,
+      "slot": 120
+    },
+    {
+      "level_pct": -0.016,
+      "slot": 140
+    },
+    {
+      "level_pct": -0.018,
+      "slot": 160
+    },
+    {
+      "level_pct": -0.007,
+      "slot": 180
+    },
+    {
+      "level_pct": -0.005,
+      "slot": 200
+    },
+    {
+      "level_pct": -0.024,
+      "slot": 220
+    },
+    {
+      "level_pct": -0.006,
+      "slot": 240
+    },
+    {
+      "level_pct": -0.009,
+      "slot": 260
+    },
+    {
+      "level_pct": 0.031,
+      "slot": 280
+    },
+    {
+      "level_pct": 0.052,
+      "slot": 300
+    },
+    {
+      "level_pct": 0.069,
+      "slot": 320
+    },
+    {
+      "level_pct": 0.559,
+      "slot": 324
+    },
+    {
+      "level_pct": 0.563,
+      "slot": 340
+    },
+    {
+      "level_pct": 0.587,
+      "slot": 360
+    },
+    {
+      "level_pct": 0.525,
+      "slot": 380
+    },
+    {
+      "level_pct": 0.475,
+      "slot": 400
+    },
+    {
+      "level_pct": 0.486,
+      "slot": 420
+    },
+    {
+      "level_pct": 0.461,
+      "slot": 440
+    },
+    {
+      "level_pct": 0.451,
+      "slot": 460
+    },
+    {
+      "level_pct": 0.438,
+      "slot": 480
+    },
+    {
+      "level_pct": 0.467,
+      "slot": 500
+    },
+    {
+      "level_pct": 0.451,
+      "slot": 520
+    },
+    {
+      "level_pct": 0.419,
+      "slot": 540
+    },
+    {
+      "level_pct": -0.072,
+      "slot": 556
+    },
+    {
+      "level_pct": -0.086,
+      "slot": 560
+    },
+    {
+      "level_pct": -0.106,
+      "slot": 580
+    },
+    {
+      "level_pct": -0.099,
+      "slot": 600
+    },
+    {
+      "level_pct": -0.091,
+      "slot": 620
+    },
+    {
+      "level_pct": -0.089,
+      "slot": 640
+    },
+    {
+      "level_pct": -0.105,
+      "slot": 660
+    },
+    {
+      "level_pct": -0.13,
+      "slot": 680
+    },
+    {
+      "level_pct": -0.147,
+      "slot": 700
+    },
+    {
+      "level_pct": -0.163,
+      "slot": 720
+    },
+    {
+      "level_pct": -0.165,
+      "slot": 740
+    },
+    {
+      "level_pct": -0.153,
+      "slot": 760
+    },
+    {
+      "level_pct": -0.14,
+      "slot": 780
+    },
+    {
+      "level_pct": -0.141,
+      "slot": 800
+    },
+    {
+      "level_pct": -0.154,
+      "slot": 820
+    },
+    {
+      "level_pct": -0.133,
+      "slot": 840
+    },
+    {
+      "level_pct": -0.127,
+      "slot": 860
+    },
+    {
+      "level_pct": -0.152,
+      "slot": 880
+    },
+    {
+      "level_pct": -0.182,
+      "slot": 900
+    },
+    {
+      "level_pct": -0.195,
+      "slot": 920
+    },
+    {
+      "level_pct": -0.176,
+      "slot": 940
+    },
+    {
+      "level_pct": -0.156,
+      "slot": 960
+    },
+    {
+      "level_pct": -0.14,
+      "slot": 980
+    },
+    {
+      "level_pct": -0.151,
+      "slot": 1000
+    },
+    {
+      "level_pct": -0.639,
+      "slot": 1016
+    },
+    {
+      "level_pct": -0.657,
+      "slot": 1040
+    },
+    {
+      "level_pct": -0.689,
+      "slot": 1060
+    },
+    {
+      "level_pct": -0.687,
+      "slot": 1080
+    },
+    {
+      "level_pct": -0.678,
+      "slot": 1100
+    },
+    {
+      "level_pct": -0.679,
+      "slot": 1120
+    },
+    {
+      "level_pct": -0.693,
+      "slot": 1140
+    },
+    {
+      "level_pct": -0.694,
+      "slot": 1160
+    },
+    {
+      "level_pct": -0.697,
+      "slot": 1180
+    },
+    {
+      "level_pct": -0.709,
+      "slot": 1200
+    },
+    {
+      "level_pct": -0.728,
+      "slot": 1220
+    },
+    {
+      "level_pct": -0.694,
+      "slot": 1240
+    },
+    {
+      "level_pct": -0.724,
+      "slot": 1260
+    }
+  ],
+  "reference_max_drawdown_usd": 7.81,
+  "reference_pnl_usd": 36.76,
+  "symbol": "NVDA"
+}
