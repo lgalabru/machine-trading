@@ -138,7 +138,13 @@ pub const GENERATORS: &[Generator] = &[
     },
     Generator {
         name: "event-follow-through",
-        practice: |prefix, count, seed| HeadlineFamily::tsla().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                HeadlineFamily::tsla().draw_set(prefix, count, seed),
+                false,
+                headline_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 HeadlineFamily::tsla().draw_set("hidden", count, seed),
