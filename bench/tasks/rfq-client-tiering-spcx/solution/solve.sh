@@ -1,0 +1,6 @@
+#!/bin/bash
+# Reference solution: the inventory-skewing maker from the task's reference/ in the
+# mtx repository, a strategy component built into the starter's place.
+set -euo pipefail
+cp /solution/src/lib.rs /app/bot/src/lib.rs
+just --justfile /app/bot/Justfile build

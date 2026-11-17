@@ -11,6 +11,7 @@ copy of Solana mainnet, restored with
 | [`flash-crash-spcx`](flash-crash-spcx) | Phoenix SPCX perp | fades crashes and squeezes that revert, and survives the ones that don't |
 | [`funding-carry-spcx`](funding-carry-spcx) | Phoenix SPCX perp | earns the premium and Phoenix's funding when the crowd's positioning opened the gap, follows when the index follows, and reads the session's own noise |
 | [`market-making-spcx`](market-making-spcx) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |
+| [`rfq-client-tiering-spcx`](rfq-client-tiering-spcx) | TODO: venue and instrument (market-making-spcx base) | prices each client to its reach and declines the clients whose requests turn out to be informed, learning who they are from a handful of requests per client |
 | [`weekend-gap-spcx`](weekend-gap-spcx) | Phoenix SPCX perp | reads which weekend flow knows where SPCX will open, and holds that gap into the reopen |
 <!-- mtx:tasks end -->
 

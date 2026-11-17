@@ -3,4 +3,6 @@
 flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
+rfq-client-tiering mtx-bot-rfq-client-tiering mtx-rfq-client-tiering bench/tasks/rfq-client-tiering-spcx/reference
+rfq-client-tiering-informed mtx-bot-rfq-client-tiering-informed mtx-rfq-client-tiering-informed bench/tasks/rfq-client-tiering-spcx/checks/bots/informed
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
