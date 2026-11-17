@@ -597,7 +597,8 @@ fn export_problem(sources: &[String]) -> Option<String> {
             }
         }
     }
-    (!found).then(|| "no mtx_kit::export! in solution/src: the oracle's bot is not a component".into())
+    (!found)
+        .then(|| "no mtx_kit::export! in solution/src: the oracle's bot is not a component".into())
 }
 
 /// No task's verifier tells the graded bot anything about its sessions:
@@ -1865,7 +1866,11 @@ mod tests {
 
     #[test]
     fn a_feature_gated_export_is_not_a_component_in_the_starter() {
-        let src = |attrs: &str| vec![format!("fn x() {{}}\n{attrs}\nmtx_kit::export!(Reference);\n")];
+        let src = |attrs: &str| {
+            vec![format!(
+                "fn x() {{}}\n{attrs}\nmtx_kit::export!(Reference);\n"
+            )]
+        };
         assert!(export_problem(&src("#[cfg(target_arch = \"wasm32\")]")).is_none());
         assert!(
             export_problem(&src(
@@ -1873,8 +1878,15 @@ mod tests {
             ))
             .is_none()
         );
-        assert!(export_problem(&src("#[cfg(all(target_arch = \"wasm32\", feature = \"export\"))]")).is_some());
-        assert!(export_problem(&src("#[cfg(feature = \"export\")]\n#[allow(dead_code)]")).is_some());
+        assert!(
+            export_problem(&src(
+                "#[cfg(all(target_arch = \"wasm32\", feature = \"export\"))]"
+            ))
+            .is_some()
+        );
+        assert!(
+            export_problem(&src("#[cfg(feature = \"export\")]\n#[allow(dead_code)]")).is_some()
+        );
         assert!(export_problem(&["fn x() {}".to_string()]).is_some());
     }
 
@@ -1887,7 +1899,6 @@ mod tests {
             assert_eq!(c.status, Status::Pass, "{name}: {}", c.detail);
         }
     }
-
 
     fn summary(sets: &[&[(&str, f64)]]) -> LadderSummary {
         LadderSummary {

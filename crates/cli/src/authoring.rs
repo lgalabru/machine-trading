@@ -1700,12 +1700,30 @@ mod tests {
             scaffold(&root, &spec).unwrap();
             let check = crate::gates::solution_exports_component(&root, name);
             assert_eq!(check.status, crate::gates::Status::Pass, "{}", check.detail);
-            let reference = read(&root.join("bench/tasks").join(name).join("reference/src/lib.rs"));
-            let solution = read(&root.join("bench/tasks").join(name).join("solution/src/lib.rs"));
-            assert_eq!(reference, solution, "the solution is the reference's source");
+            let reference = read(
+                &root
+                    .join("bench/tasks")
+                    .join(name)
+                    .join("reference/src/lib.rs"),
+            );
+            let solution = read(
+                &root
+                    .join("bench/tasks")
+                    .join(name)
+                    .join("solution/src/lib.rs"),
+            );
+            assert_eq!(
+                reference, solution,
+                "the solution is the reference's source"
+            );
             // The reference's own manifest declares no feature the export
             // waits on: what the solution is built with is the starter's.
-            let manifest = read(&root.join("bench/tasks").join(name).join("reference/Cargo.toml"));
+            let manifest = read(
+                &root
+                    .join("bench/tasks")
+                    .join(name)
+                    .join("reference/Cargo.toml"),
+            );
             assert!(!manifest.contains("[features]"), "{manifest}");
             std::fs::remove_dir_all(&root).unwrap();
         }
