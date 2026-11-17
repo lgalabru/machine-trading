@@ -1,0 +1,52 @@
+{
+  "family": "cross-asset-lead",
+  "count": 72,
+  "min_rule_odds": 0.85,
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
+  },
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "follow-nvda-flow",
+      "dir": "bench/tasks/cross-asset-lead-qqq/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "follow-nvda-flow"
+      }
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/cross-asset-lead-qqq/reference"
+    },
+    {
+      "name": "informed",
+      "dir": "bench/tasks/cross-asset-lead-qqq/checks/bots/informed",
+      "tell_latent": true
+    }
+  ],
+  "gates": {
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop",
+      "follow-nvda-flow"
+    ]
+  },
+  "rules": [
+    "follow-nvda-flow < reference",
+    "reference < informed"
+  ],
+  "exploits": {
+    "below": "informed",
+    "bots": [],
+    "max_profitable": 0.75
+  },
+  "probes": {
+    "exempt": "Gate 0 prototype: the probe gate runs on the full build"
+  }
+}

@@ -1,0 +1,19 @@
+72 sessions, 4 rungs
+rung                 total     mean       sd   win%       v2w
+follow-nvda-flow      -352    -4.89    21.27     32      -726
+nop                      0     0.00     0.00      0         0
+reference             1487    20.66    29.55     74      1368
+informed              4034    56.03    27.10    100      4034
+
+signal gate: informed 4034 / best non-reading (nop) 0 = inf (need >= 2)
+strength band: reference v2-weighted / informed's = 0.34 (band 0.2-0.7); raw 0.37
+reference per-session Sharpe 0.70 (need >= 0.25)
+  reference v2-weighted share of informed: 0.34
+  nop v2-weighted share of informed: 0.00
+  follow-nvda-flow v2-weighted share of informed: -0.18
+
+on 2000 bootstrapped 72-session sets:
+  order max(nop, follow-nvda-flow) < reference < informed holds on 1.000 (need >= 0.85)
+  informed >= 2x best non-reading on 1.000
+  both on 1.000
+set 1 (reference $1487): nop 0.00, follow-nvda-flow -0.24, reference 1.00, informed 2.71, hindsight 7.34
