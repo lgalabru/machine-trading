@@ -1,8 +1,8 @@
 {
   "description": "NVDA practice session",
   "duration_slots": 1461,
-  "informed_max_drawdown_usd": 15.37,
-  "informed_pnl_usd": 49.23,
+  "informed_max_drawdown_usd": 5.64,
+  "informed_pnl_usd": 29.4,
   "making": {
     "competition": {
       "floor_bps": 1.43,
@@ -1986,131 +1986,131 @@
       "slot": 920
     },
     {
-      "level_pct": 0.144,
+      "level_pct": 0.162,
       "slot": 940
     },
     {
-      "level_pct": 0.179,
+      "level_pct": 0.214,
       "slot": 948
     },
     {
-      "level_pct": 0.264,
+      "level_pct": 0.337,
       "slot": 960
     },
     {
-      "level_pct": 0.338,
+      "level_pct": 0.444,
       "slot": 968
     },
     {
-      "level_pct": 0.485,
+      "level_pct": 0.654,
       "slot": 980
     },
     {
-      "level_pct": 0.601,
+      "level_pct": 0.822,
       "slot": 988
     },
     {
-      "level_pct": 0.649,
+      "level_pct": 0.892,
       "slot": 996
     },
     {
-      "level_pct": 0.664,
+      "level_pct": 0.907,
       "slot": 1000
     },
     {
-      "level_pct": 0.756,
+      "level_pct": 1.041,
       "slot": 1008
     },
     {
-      "level_pct": 0.774,
+      "level_pct": 1.058,
       "slot": 1020
     },
     {
-      "level_pct": 0.803,
+      "level_pct": 1.088,
       "slot": 1040
     },
     {
-      "level_pct": 0.781,
+      "level_pct": 1.065,
       "slot": 1060
     },
     {
-      "level_pct": 0.821,
+      "level_pct": 1.106,
       "slot": 1080
     },
     {
-      "level_pct": 0.849,
+      "level_pct": 1.134,
       "slot": 1100
     },
     {
-      "level_pct": 0.837,
+      "level_pct": 1.121,
       "slot": 1120
     },
     {
-      "level_pct": 0.839,
+      "level_pct": 1.124,
       "slot": 1140
     },
     {
-      "level_pct": 0.844,
+      "level_pct": 1.129,
       "slot": 1160
     },
     {
-      "level_pct": 0.847,
+      "level_pct": 1.132,
       "slot": 1180
     },
     {
-      "level_pct": 0.829,
+      "level_pct": 1.114,
       "slot": 1200
     },
     {
-      "level_pct": 0.813,
+      "level_pct": 1.097,
       "slot": 1220
     },
     {
-      "level_pct": 0.805,
+      "level_pct": 1.089,
       "slot": 1240
     },
     {
-      "level_pct": 0.828,
+      "level_pct": 1.113,
       "slot": 1260
     },
     {
-      "level_pct": 0.832,
+      "level_pct": 1.117,
       "slot": 1280
     },
     {
-      "level_pct": 0.849,
+      "level_pct": 1.134,
       "slot": 1300
     },
     {
-      "level_pct": 0.858,
+      "level_pct": 1.143,
       "slot": 1320
     },
     {
-      "level_pct": 0.861,
+      "level_pct": 1.146,
       "slot": 1340
     },
     {
-      "level_pct": 0.872,
+      "level_pct": 1.157,
       "slot": 1360
     },
     {
-      "level_pct": 0.892,
+      "level_pct": 1.176,
       "slot": 1380
     },
     {
-      "level_pct": 0.898,
+      "level_pct": 1.183,
       "slot": 1400
     },
     {
-      "level_pct": 0.921,
+      "level_pct": 1.206,
       "slot": 1420
     },
     {
-      "level_pct": 0.948,
+      "level_pct": 1.233,
       "slot": 1440
     }
   ],
-  "reference_max_drawdown_usd": 1.76,
-  "reference_pnl_usd": 18.17,
+  "reference_max_drawdown_usd": 2.32,
+  "reference_pnl_usd": 26.71,
   "symbol": "NVDA"
 }
