@@ -1132,7 +1132,8 @@ fn stated_regime_bound(calibration: &Calibration, sessions: &[SessionPath]) -> O
         return None;
     }
     let jumps = &calibration.fair_value.jumps;
-    let (rate, median, p90, source) = match &jumps.opening {
+    let opening = super::opening::for_asset(&calibration.meta.asset);
+    let (rate, median, p90, source) = match opening {
         Some(o) => (
             o.per_hour,
             o.abs_size_median_pct,
@@ -1155,7 +1156,7 @@ fn stated_regime_bound(calibration: &Calibration, sessions: &[SessionPath]) -> O
         }
     };
     for spec in stated {
-        let allowed = match (spec.earnings_day, jumps.opening.as_ref()) {
+        let allowed = match (spec.earnings_day, opening) {
             (true, Some(o)) => o.earnings_per_hour.unwrap_or(rate),
             _ => rate,
         };

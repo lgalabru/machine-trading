@@ -1172,7 +1172,7 @@ impl Account for SpotAccount {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
-            takes_unjudged: false,
+            takes_unjudged: Vec::new(),
             obligations: None,
             tx_layer: None,
             lending: None,

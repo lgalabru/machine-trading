@@ -198,7 +198,7 @@ out of bounds.
 measurement, with the source cited in the family's description and in
 `source`. Reference measurement (2026-11-17): Phoenix 1 m mark candles from
 the calibration archives (NVDA from 2026-06-09, TSLA from 06-16, SPCX from
-06-12, SPY and QQQ from 09-09, to mid-November), jumps by the calibration's
+06-12, SPY and QQQ from 09-09; the archives end 2026-11-12, SPCX's 11-10), jumps by the calibration's
 rule (a 1 m regular-hours return beyond 5 robust sigmas of the trailing
 hour). Event days (CPI, NFP, FOMC, witching, earnings) do not raise the
 jump count above ordinary days (0.3 to 0.8 an hour all-session, against
@@ -238,16 +238,17 @@ so treat as ranges, and cap at the largest observed):
 Earnings gaps are 3 to 10 times an ordinary overnight gap (n of 1 to 2 per
 name): use the calendar's gap field, not an event.
 
-Each calibration file stores these measured values as `[fair_value.jumps.opening]`
-(`per_hour`, `abs_size_median_pct`, `abs_size_p90_pct`, `earnings_per_hour` where
-the data has shown it, and a `source` citing the table above), added after the
-fit from this measurement. The realism gate's `stated_regime_bound` check fails
-any session set whose spec states a `jump_rate_per_hour` above the opening
-rate, or a `jump_size` median or p90 above the opening window's. The TSLA
-earnings-reaction rate (6.7 an hour) is allowed only to a spec that sets
-`earnings_day = true`, which lifts the rate bound to `earnings_per_hour` and
-leaves the size bound where it is. A calibration without an opening
-measurement is bounded by its own all-session rate and sizes.
+These measured values are in `calibration/market/opening-windows.toml`, one
+table per asset (`per_hour`, the two sizes, `earnings_per_hour` where the data
+showed it, `measured_from`, `measured_through` and a `source`). The file is
+hand-maintained; the calibration files beside it stay as the fitter wrote them.
+The realism gate's `stated_regime_bound` check fails any session set whose
+spec states a `jump_rate_per_hour` above the opening rate, or a `jump_size`
+median or p90 above the opening window's. The TSLA earnings-reaction rate
+(6.7 an hour) is allowed only to a spec that sets `earnings_day = true`, which
+lifts the rate bound to `earnings_per_hour` and leaves the size bound where it
+is; the flag changes nothing for an asset with no allowance. An asset with no
+table is bounded by its calibration's own all-session rate and sizes.
 
 `mtx market-cal check --spec` draws with these fields like any other spec
 field. Jump events are not masked from the tail statistics, so it judges a

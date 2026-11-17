@@ -253,8 +253,8 @@ pub struct SessionReport {
     pub making_fills: Vec<crate::making::MakingFill>,
     /// The meter's positions and `making_fills` didn't add up, and no jump
     /// explained the difference: the takes can't be told.
-    #[serde(default, skip_serializing_if = "crate::making::is_false")]
-    pub takes_unjudged: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub takes_unjudged: Vec<mtx_core::mandate::InstrumentRef>,
     /// A market-making session with quoting obligations: how the bot met
     /// them (see [`crate::obligations`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -549,7 +549,7 @@ impl SessionReport {
         observed.term_start = self.term_start.clone();
         observed.takes =
             crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
-        observed.takes_unjudged = self.takes_unjudged;
+        observed.takes_unjudged = self.takes_unjudged.clone();
         observed
     }
 }

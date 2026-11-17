@@ -2202,6 +2202,11 @@ impl Account for PerpAccount {
             .map(|read| (read.fills, read.unjudged))
             .unwrap_or_default();
         let (making_fills, takes_unjudged) = making_fills;
+        let takes_unjudged = if takes_unjudged {
+            vec![self.own().instrument.clone()]
+        } else {
+            Vec::new()
+        };
         let obligations = self.quotes.as_ref().map(|quotes| {
             quotes.report(
                 scenario

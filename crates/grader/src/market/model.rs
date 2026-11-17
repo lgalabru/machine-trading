@@ -83,9 +83,10 @@ pub struct ModelSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<ScheduledEvent>,
     /// The session is an earnings-reaction day, stated: its jump rate may
-    /// reach the calibration's earnings allowance (`jumps.opening.earnings_per_hour`)
-    /// instead of the opening rate. A flag, not a rate: the realism checks
-    /// refuse it where the calibration has no such allowance.
+    /// reach the asset's earnings allowance (`earnings_per_hour` in
+    /// `calibration/market/opening-windows.toml`) instead of the opening
+    /// rate. A flag, not a rate: where the asset has no such allowance the
+    /// flag changes nothing (the opening rate still bounds the spec).
     #[serde(default, skip_serializing_if = "is_false")]
     pub earnings_day: bool,
     /// Gaps when a session opens (on by default).

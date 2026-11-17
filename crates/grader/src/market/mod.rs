@@ -20,6 +20,7 @@ pub mod calibration;
 pub mod correlation;
 pub mod joint;
 pub mod model;
+pub mod opening;
 pub mod realism;
 
 pub use calibration::Calibration;
