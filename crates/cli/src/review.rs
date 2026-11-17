@@ -310,6 +310,10 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
 /// and logs stay gzipped: the browser inflates them (`DecompressionStream`).
 /// The first root is the one the page opens on.
 pub fn export(roots: Vec<Root>, out: &FsPath, site: Option<&str>) -> Result<Value> {
+    // Nothing that ran unguarded goes on a site.
+    for root in &roots {
+        crate::publish::refuse_unguarded(&root.path, &discover(&root.path), false)?;
+    }
     let state = AppState {
         roots,
         trials: std::sync::Mutex::default(),

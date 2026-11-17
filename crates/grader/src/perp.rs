@@ -390,8 +390,20 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 .map(|(role, n)| opts.keys.keypair(role, n))
                 .collect();
             let pubkeys: Vec<Pubkey> = keypairs.iter().map(Signer::pubkey).collect();
-            let seats =
-                onboard_unique(&world, &phoenix, &own.perp, &rpc, internal.url(), keypairs).await?;
+            // Onboarded in an order drawn from the session's seed: listed
+            // role by role, the order of their first transactions would
+            // tell a bot reading the chain which wallets are of a kind.
+            let order = onboarding_order(opts.keys.seed("onboarding", 0), keypairs.len());
+            let seats = onboard_in_order(
+                &world,
+                &phoenix,
+                &own.perp,
+                &rpc,
+                internal.url(),
+                keypairs,
+                &order,
+            )
+            .await?;
             tracing::info!(wallets = seats.len(), "library actors ready");
             let seats: Vec<WalletSeat> = pubkeys
                 .into_iter()
@@ -802,6 +814,40 @@ async fn onboard_unique(
         .into_iter()
         .map(|keypair| perp.unique_seat(keypair, rpc_url))
         .collect()
+}
+
+/// The order `n` wallets are onboarded in: a permutation drawn from `seed`.
+fn onboarding_order(seed: [u8; 32], n: usize) -> Vec<usize> {
+    let mut rng = crate::actors::library::Rng::new(seed);
+    let mut order: Vec<usize> = (0..n).collect();
+    for i in (1..n).rev() {
+        order.swap(i, rng.below(i + 1));
+    }
+    order
+}
+
+/// [`onboard_unique`] with the wallets onboarded in `order` (the `i`th is
+/// `keypairs[order[i]]`), their seats returned in the keypairs' own order.
+async fn onboard_in_order(
+    world: &snapshot::OfflineWorld,
+    phoenix: &Phoenix,
+    perp: &PerpMarket,
+    rpc: &solana_rpc_client::rpc_client::RpcClient,
+    rpc_url: &str,
+    keypairs: Vec<Keypair>,
+    order: &[usize],
+) -> Result<Vec<Box<dyn Seat>>> {
+    let mut keypairs: Vec<Option<Keypair>> = keypairs.into_iter().map(Some).collect();
+    let drawn = order
+        .iter()
+        .map(|i| keypairs[*i].take().expect("each wallet once"))
+        .collect();
+    let mut seats = onboard_unique(world, phoenix, perp, rpc, rpc_url, drawn).await?;
+    let mut placed: Vec<Option<Box<dyn Seat>>> = (0..order.len()).map(|_| None).collect();
+    for (seat, i) in seats.drain(..).zip(order) {
+        placed[*i] = Some(seat);
+    }
+    Ok(placed.into_iter().flatten().collect())
 }
 
 /// What setup gives a starting position with: on `perp`, the session's
@@ -2528,6 +2574,56 @@ mod tests {
     use solana_account::Account;
 
     use super::*;
+
+    /// A session's seed, as the keys derive it: 32 bytes, all of them mixed.
+    fn seed_of(n: u64) -> [u8; 32] {
+        let mut z = n;
+        let mut seed = [0u8; 32];
+        for word in seed.chunks_mut(8) {
+            z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut x = z;
+            x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            word.copy_from_slice(&(x ^ (x >> 31)).to_le_bytes());
+        }
+        seed
+    }
+
+    #[test]
+    fn library_wallets_onboard_in_an_order_that_follows_no_role() {
+        let n = 12;
+        let mut sorted = onboarding_order(seed_of(1), n);
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..n).collect::<Vec<_>>(), "a permutation");
+        assert_eq!(
+            onboarding_order(seed_of(1), n),
+            onboarding_order(seed_of(1), n)
+        );
+        assert_ne!(
+            onboarding_order(seed_of(1), n),
+            onboarding_order(seed_of(2), n)
+        );
+        // Wallets are listed role by role: the first four are one role, the
+        // last four another. How early each role's wallets are onboarded,
+        // over many sessions, is the same for both to within a draw's
+        // noise: nothing in the order tells the roles apart.
+        let sessions = 2_000;
+        let mean_rank = |role: std::ops::Range<usize>| {
+            let total: usize = (0..sessions)
+                .flat_map(|session| {
+                    let order = onboarding_order(seed_of(session), n);
+                    role.clone()
+                        .map(move |wallet| order.iter().position(|w| *w == wallet).unwrap())
+                })
+                .sum();
+            total as f64 / (sessions as usize * role.len()) as f64
+        };
+        let (first, last) = (mean_rank(0..4), mean_rank(8..12));
+        assert!(
+            (first - 5.5).abs() < 0.3 && (last - 5.5).abs() < 0.3,
+            "{first} {last}"
+        );
+    }
 
     /// [`settle`] on the scenario's one market.
     fn settle_one(
