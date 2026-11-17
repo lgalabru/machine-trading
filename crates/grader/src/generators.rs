@@ -288,7 +288,6 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
-    ("perp-accumulate", "roster", Knowable::Identity),
     ("perp-accumulate", "maker_bps", Knowable::Process),
     ("perp-accumulate", "maker_size", Knowable::Process),
     ("perp-accumulate", "react_slots", Knowable::Process),
