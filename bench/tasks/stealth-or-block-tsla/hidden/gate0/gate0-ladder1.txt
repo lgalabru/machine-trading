@@ -1,0 +1,26 @@
+72 sessions, 8 rungs
+rung                 total     mean       sd   win%       v2w
+small-follow-all      -715    -9.93     9.26     15     -1110
+follow-small          -166    -2.30    27.44     35      -486
+nop                      0     0.00     0.00      0         0
+follow-all              22     0.30    19.93     44      -206
+momentum               129     1.80     8.37     17       129
+follow-large           238     3.31    23.52     36        68
+reference              239     3.32    27.57     25        81
+informed               629     8.73    36.65     57       366
+
+signal gate: informed 629 / best non-reading (follow-large) 238 = 2.64 (need >= 2)
+strength band: reference v2-weighted / informed's = 0.22 (band 0.2-0.7); raw 0.38
+reference per-session Sharpe 0.12 (need >= 0.25)
+  follow-small v2-weighted share of informed: -1.33
+  reference v2-weighted share of informed: 0.22
+  nop v2-weighted share of informed: 0.00
+  follow-large v2-weighted share of informed: 0.19
+  momentum v2-weighted share of informed: 0.35
+  follow-all v2-weighted share of informed: -0.56
+  small-follow-all v2-weighted share of informed: -3.03
+
+on 2000 bootstrapped 72-session sets:
+  order max(nop, small-follow-all, follow-small, follow-large, follow-all, momentum) < reference < informed holds on 0.385 (need >= 0.85)
+  informed >= 2x best non-reading on 0.565
+  both on 0.344
