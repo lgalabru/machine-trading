@@ -11,16 +11,19 @@
 //! session's future (where a move ends, when an order comes): the generator
 //! picks those fields, so the informed bot is held to them by construction.
 
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(feature = "generators")]
+use serde_json::json;
 
+#[cfg(feature = "generators")]
 use crate::{
     carry::{CarryFamily, Shape as CarryShape},
-    error::Result,
     flow_reading::FlowFamily,
     making::MakingFamily,
-    scenario::{Scenario, Shape, ShockFamily},
+    scenario::{Shape, ShockFamily},
     weekend::{WeekendFamily, WeekendShape},
 };
+use crate::{error::Result, scenario::Scenario};
 
 /// A hidden set as `mtx grade --draw` runs it (and a practice set as
 /// `mtx calibrate --practice` runs the informed bot on it).
@@ -68,6 +71,12 @@ impl Generator {
     }
 }
 
+/// Empty without the `generators` feature: the agent's `mtx` is built that
+/// way, so nothing in it can draw a scenario from a task's family.
+#[cfg(not(feature = "generators"))]
+pub const GENERATORS: &[Generator] = &[];
+
+#[cfg(feature = "generators")]
 pub const GENERATORS: &[Generator] = &[
     Generator {
         name: "flash-crash",
@@ -165,6 +174,7 @@ pub fn names() -> Vec<&'static str> {
     GENERATORS.iter().map(|g| g.name).collect()
 }
 
+#[cfg(feature = "generators")]
 /// A market-making hidden set, each scenario annotated with its informed
 /// orders and, when told, the regime as those orders by slot and side: what a
 /// perfect reader of the tape would know.
@@ -211,6 +221,7 @@ fn making_drawn(
     })
 }
 
+#[cfg(feature = "generators")]
 /// A hidden set drawn with each scenario's shape: annotated `{"shape": ..}`,
 /// with its `latent` state and, when told, the shape as the regime.
 fn shaped<S: serde::Serialize>(
@@ -279,6 +290,7 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "half_life_slots", Knowable::Process),
 ];
 
+#[cfg(feature = "generators")]
 /// Who is who: the wallets of the informed and of the decoys, as the
 /// session seats them. Not when the moves come, which way or how far, nor
 /// when each decoy fades.
@@ -391,12 +403,14 @@ pub fn latent_text_in(family: &str, text: &str) -> Vec<String> {
     hits
 }
 
+#[cfg(feature = "generators")]
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
 /// one draw that makes it, so all of it is the session's future.
 fn shock_latent(_: &Shape) -> Value {
     json!({})
 }
 
+#[cfg(feature = "generators")]
 /// The session's funding process and how its episodes behave: the informed
 /// share, the index's lag, how long a crowded premium holds, funding's
 /// settings and cap, and the index's noise. Not the episodes themselves:
@@ -412,6 +426,7 @@ fn carry_latent(shape: &CarryShape) -> Value {
     })
 }
 
+#[cfg(feature = "generators")]
 /// Who is who: whether an informed trader and a one-sided worker are
 /// seated, from which accounts, and the impact curve. Not which way the
 /// worker trades, where the weekend took the market, when anyone trades, or
@@ -430,6 +445,11 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_agents_build_holds_no_generator() {
+        assert_eq!(GENERATORS.is_empty(), !cfg!(feature = "generators"));
+    }
 
     #[test]
     fn names_are_unique_and_found() {
@@ -488,6 +508,7 @@ mod tests {
     /// A latent state is in a practice file as its members or in prose. The
     /// reserved members are caught outside `actors` and only there: the actor
     /// library's own `informed` and `worker` keys are configuration.
+    #[cfg(feature = "generators")]
     #[test]
     fn a_latent_in_a_practice_file_is_caught_and_an_actors_config_is_not() {
         assert_eq!(latent_keys_in(r#"{"roster": ["informed"]}"#), ["roster"]);
@@ -553,6 +574,7 @@ mod tests {
     /// principle ([`LATENT_FIELDS`]) or a family constant, the same in every
     /// session: a field that changes from session to session and isn't an
     /// actor's identity or the process is one of the session's draws.
+    #[cfg(feature = "generators")]
     #[test]
     fn the_latent_state_is_the_regime_and_never_the_future() {
         for g in GENERATORS {
@@ -616,6 +638,7 @@ mod tests {
 
     /// The check above would catch a draw handed over: a shock's direction
     /// varies from session to session and is classified as nothing.
+    #[cfg(feature = "generators")]
     #[test]
     fn a_shock_s_direction_is_a_draw() {
         let drawn = ShockFamily::spcx().draw_set("hidden", 64, 11);
