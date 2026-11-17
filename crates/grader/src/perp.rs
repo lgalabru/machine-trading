@@ -986,6 +986,13 @@ pub struct PerpFillRecord {
     /// Price in USDC per base unit, before fees, and size in base units.
     pub price: f64,
     pub base: f64,
+    /// The worst level the fill reached (the highest for a buy, the lowest
+    /// for a sell), where it differs from `price`, the average: the limit
+    /// prices judge it. Absent for a fill at one level, for the maker of a
+    /// multi-level fill (judged at its average), and in reports that
+    /// predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worst_price: Option<f64>,
     /// A fill of a forced close (the risk desk's `stop_out`, or the
     /// liquidation keeper's), made in the bot's account but not by the bot:
     /// it counts toward the position and the PnL, and the sides and price
@@ -1499,6 +1506,8 @@ impl PerpAccount {
                     side: recorded.fill.side,
                     price: grader_f64(recorded.fill.price),
                     base: grader_f64(recorded.fill.quantity),
+                    worst_price: (recorded.worst_price != recorded.fill.price)
+                        .then(|| grader_f64(recorded.worst_price)),
                     forced: false,
                 });
                 read.ids.push(recorded.fill.id);
@@ -2607,8 +2616,30 @@ mod tests {
             side,
             price: 100.0,
             base,
+            worst_price: None,
             forced: false,
         }
+    }
+
+    #[test]
+    fn a_fill_report_from_before_its_worst_level_still_loads() {
+        let old =
+            r#"{"at":2,"instrument":"phoenix:perp:SPCX","side":"buy","price":100.0,"base":1.0}"#;
+        let read: PerpFillRecord = serde_json::from_str(old).unwrap();
+        assert_eq!(read, fill(CoreSide::Buy, 1.0));
+        // A fill at one level writes none, so reports of those stay as they were.
+        assert!(
+            !serde_json::to_string(&read)
+                .unwrap()
+                .contains("worst_price")
+        );
+        let walked = PerpFillRecord {
+            worst_price: Some(100.5),
+            ..read
+        };
+        let again: PerpFillRecord =
+            serde_json::from_str(&serde_json::to_string(&walked).unwrap()).unwrap();
+        assert_eq!(again, walked);
     }
 
     #[test]

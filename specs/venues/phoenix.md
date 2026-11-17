@@ -53,9 +53,18 @@ cross-margin account.
   then an `OrderFilled` event for each resting order it took from and a
   `SplineFilled` event for each spline, each naming the maker's trader
   account, the maker's side, the price in ticks, `base_lots_filled` and
-  `quote_lots_filled`. Each run of fills is closed by a `TradeSummary` event
-  whose `trader` is the run's taker, on the side opposite the makers', and
-  which carries the fee the taker paid (`fee_in_quote_lots`). The taker need
+  `quote_lots_filled`. A fill's price is what it paid per base unit: an
+  order's fill is at its price in ticks, but a spline's can span several of
+  its ticks and names only the last it reached. For the taker that tick is
+  the fill's worst level (`worst_price`, which the mandate's limit prices
+  judge); for the spline's owner it is the best level, so the owner is
+  judged at the average; its
+  price is `quote_lots_filled` over `base_lots_filled`, after converting
+  lots to USDC and base units, never its tick. A spline's fill of no size
+  keeps its tick, and one of size for no quote lots is refused. Each run of
+  fills is closed by a `TradeSummary` event whose `trader` is the run's
+  taker, on the side opposite the makers', and which carries the fee the
+  taker paid (`fee_in_quote_lots`). The taker need
   not be the header's trader: an instruction can match two other parties (a
   spline that re-centres crosses a stale resting order) and logs that under
   the same header. The header's trader is the taker only for a run no

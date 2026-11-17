@@ -1650,6 +1650,7 @@ mod tests {
             side,
             price,
             base: 1.0,
+            worst_price: None,
             forced: false,
         };
         // A buy and a sell inside one step net to nothing; the sell is still
@@ -2554,6 +2555,7 @@ mod tests {
             side,
             price: 100.0,
             base: 70.0,
+            worst_price: None,
             forced,
         };
         liquidated.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
@@ -2605,6 +2607,7 @@ mod tests {
             side,
             price: 100.0,
             base: 70.0,
+            worst_price: None,
             forced,
         };
         stopped.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
@@ -2668,6 +2671,7 @@ mod tests {
             side,
             price: 100.0,
             base: 10.0,
+            worst_price: None,
             forced,
         };
         stopped.perp_fills = vec![
