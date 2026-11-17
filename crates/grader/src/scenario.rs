@@ -591,7 +591,7 @@ impl Scenario {
     /// every taker order, and the moves it trades or leans into, so a bound
     /// on the spread alone is one a bot can pass. A session on several
     /// markets has one per market: see [`Scenario::markets_bound_usd`].
-    pub fn bound_usd(&self, start_mark_usd: f64) -> f64 {
+    pub fn bound_usd(&self, start_mark_usd: f64, base_lots_decimals: i8) -> f64 {
         if let Some(spot) = &self.spot {
             return spot.bound_usd.unwrap_or(0.0);
         }
@@ -603,6 +603,7 @@ impl Scenario {
             self.max_position(),
             start_mark_usd,
             self.duration_slots,
+            base_lots_decimals,
         )
     }
 
@@ -610,28 +611,30 @@ impl Scenario {
     /// for as long as the path keeps it open, each at most the funding cap,
     /// at Phoenix's rate of the premium times the time over the funding
     /// period.
-    pub fn funding_bound_usd(&self, start_mark_usd: f64) -> f64 {
+    pub fn funding_bound_usd(&self, start_mark_usd: f64, base_lots_decimals: i8) -> f64 {
         self.flat_market().funding_bound_usd(
             self.max_position(),
             start_mark_usd,
             self.duration_slots,
+            base_lots_decimals,
         )
     }
 
     /// A session on several markets' bound: each market's
-    /// [`Scenario::bound_usd`] terms at its own cap and its own start mark
-    /// (`start_marks_usd`, by symbol), summed. A market missing from
-    /// `start_marks_usd` adds nothing.
-    pub fn markets_bound_usd(&self, start_marks_usd: &BTreeMap<String, f64>) -> f64 {
+    /// [`Scenario::bound_usd`] terms at its own cap, its own start mark and
+    /// its own lot size (`starts`, by symbol), summed. A market missing from
+    /// `starts` adds nothing.
+    pub fn markets_bound_usd(&self, starts: &BTreeMap<String, MarketStart>) -> f64 {
         self.market_scenarios()
             .iter()
             .filter_map(|market| {
-                let start = *start_marks_usd.get(&market.symbol)?;
+                let start = starts.get(&market.symbol)?;
                 Some(market.bound_usd(
                     self.bound_on,
                     self.max_position_of(&market.symbol),
-                    start,
+                    start.mark_usd,
                     self.duration_slots,
+                    start.base_lots_decimals,
                 ))
             })
             .sum()
@@ -722,6 +725,7 @@ impl MarketRef<'_> {
         max_position: f64,
         start_mark_usd: f64,
         duration_slots: u64,
+        base_lots_decimals: i8,
     ) -> f64 {
         let spread = self.making.map_or(0.0, |making| {
             making.spread_bound_usd(self.path, start_mark_usd)
@@ -734,7 +738,12 @@ impl MarketRef<'_> {
                 max_position,
                 start_mark_usd,
             )
-            + self.funding_bound_usd(max_position, start_mark_usd, duration_slots)
+            + self.funding_bound_usd(
+                max_position,
+                start_mark_usd,
+                duration_slots,
+                base_lots_decimals,
+            )
     }
 
     fn funding_bound_usd(
@@ -742,11 +751,13 @@ impl MarketRef<'_> {
         max_position: f64,
         start_mark_usd: f64,
         duration_slots: u64,
+        base_lots_decimals: i8,
     ) -> f64 {
         let Some(funding) = self.funding else {
             return 0.0;
         };
-        let cap_pct = funding.max_rate as f64 / 1_000.0 / start_mark_usd
+        let cap_pct = funding.max_rate as f64 * quote_lot_usd_per_base_unit(base_lots_decimals)
+            / start_mark_usd
             * 100.0
             * funding.period_seconds as f64
             / funding.interval_seconds as f64;
@@ -776,14 +787,15 @@ impl MarketRef<'_> {
             let to = ticks_at(waypoint.book_pct());
             let (mut moves, at) = market_move(perp_asset_map, self.symbol, from, to, waypoint.slot);
             // The makers stay at the book's level; the oracles go back to
-            // the index in the slot of the last step, before the uncross.
+            // the index in the slot of the last step and of the uncross,
+            // before it.
             if waypoint.premium_pct != 0.0 {
                 let uncross = moves.pop().expect("a move ends with its uncross");
                 moves.push(oracle_move(
                     perp_asset_map,
                     self.symbol,
                     ticks_at(waypoint.level_pct),
-                    at - SLOTS_BETWEEN_STEPS,
+                    at,
                 ));
                 moves.push(uncross);
             }
@@ -802,6 +814,22 @@ impl MarketRef<'_> {
             "mark"
         }
     }
+}
+
+/// A market's start of a session, as its bound reads it: the mark, and the
+/// lot size the funding cap is quoted in.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MarketStart {
+    pub mark_usd: f64,
+    /// The market's base lot is `10^-base_lots_decimals` base units.
+    pub base_lots_decimals: i8,
+}
+
+/// What one unit of a funding rate (quote lots per base lot, a quote lot
+/// being a micro-USD) is in USD per base unit, on a market whose base lot is
+/// `10^-base_lots_decimals` of a unit.
+fn quote_lot_usd_per_base_unit(base_lots_decimals: i8) -> f64 {
+    10f64.powi(i32::from(base_lots_decimals) - 6)
 }
 
 impl MarketScenario {
@@ -831,9 +859,15 @@ impl MarketScenario {
         max_position: f64,
         start_mark_usd: f64,
         duration_slots: u64,
+        base_lots_decimals: i8,
     ) -> f64 {
-        self.as_ref()
-            .bound_usd(bound_on, max_position, start_mark_usd, duration_slots)
+        self.as_ref().bound_usd(
+            bound_on,
+            max_position,
+            start_mark_usd,
+            duration_slots,
+            base_lots_decimals,
+        )
     }
 
     /// [`Scenario::funding_bound_usd`] for this market.
@@ -842,9 +876,14 @@ impl MarketScenario {
         max_position: f64,
         start_mark_usd: f64,
         duration_slots: u64,
+        base_lots_decimals: i8,
     ) -> f64 {
-        self.as_ref()
-            .funding_bound_usd(max_position, start_mark_usd, duration_slots)
+        self.as_ref().funding_bound_usd(
+            max_position,
+            start_mark_usd,
+            duration_slots,
+            base_lots_decimals,
+        )
     }
 
     /// The market's path as overrides (see [`Scenario::overrides`]).
@@ -1757,18 +1796,28 @@ mod tests {
                     scenario.valuation()
                 );
                 let start = 187.25;
-                let bound = scenario.bound_usd(start);
+                let bound = scenario.bound_usd(start, 3);
                 assert_eq!(
                     market.bound_usd(
                         scenario.bound_on,
                         scenario.max_position(),
                         start,
                         scenario.duration_slots,
+                        3,
                     ),
                     bound
                 );
                 assert_eq!(
-                    scenario.markets_bound_usd(&[(scenario.symbol.clone(), start)].into()),
+                    scenario.markets_bound_usd(
+                        &[(
+                            scenario.symbol.clone(),
+                            MarketStart {
+                                mark_usd: start,
+                                base_lots_decimals: 3
+                            }
+                        )]
+                        .into()
+                    ),
                     bound
                 );
                 if scenario.offhours.is_none() {
@@ -2394,9 +2443,39 @@ mod tests {
         assert!(late.validate().is_err());
     }
 
+    /// The funding cap is Phoenix's quote lots per base lot, so what it is in
+    /// USD depends on the market's lot: SOL's lot is 0.01, SPCX's 0.001 and
+    /// BTC's 0.0001.
+    #[test]
+    fn funding_bound_follows_the_markets_lot_size() {
+        let funded = Scenario {
+            funding: Some(Funding {
+                interval_seconds: 4,
+                period_seconds: 20,
+                max_rate: 1_000,
+                mark: None,
+            }),
+            path: vec![Waypoint {
+                premium_pct: 80.0,
+                ..Waypoint::at(0, 0.0)
+            }],
+            ..plain()
+        };
+        // The premium never binds: the cap does. At 3 decimals the cap is
+        // 1,000 micro-USD per 0.001 base units, a dollar per unit each
+        // interval: 1% of a 100 USD mark, 5% over the period.
+        let held = funded.max_position();
+        let seconds = funded.duration_slots as f64 * SLOT_SECONDS;
+        let at = |decimals: i8| funded.funding_bound_usd(100.0, decimals);
+        let expected = |cap_pct: f64| held * 100.0 * cap_pct / 100.0 * seconds / 20.0;
+        assert!((at(3) - expected(5.0)).abs() < 1e-6, "SPCX {}", at(3));
+        assert!((at(2) - expected(0.5)).abs() < 1e-6, "SOL {}", at(2));
+        assert!((at(4) - expected(50.0)).abs() < 1e-6, "BTC {}", at(4));
+    }
+
     #[test]
     fn funding_is_opt_in_and_checked() {
-        assert_eq!(plain().funding_bound_usd(100.0), 0.0);
+        assert_eq!(plain().funding_bound_usd(100.0, 3), 0.0);
         let funding = Funding {
             interval_seconds: 4,
             period_seconds: 20,
@@ -2413,7 +2492,7 @@ mod tests {
         };
         assert!(funded.validate().is_ok());
         assert_eq!(funded.valuation(), "book");
-        assert!(funded.funding_bound_usd(100.0) > 0.0);
+        assert!(funded.funding_bound_usd(100.0, 3) > 0.0);
         let json = serde_json::to_value(&funded).unwrap();
         assert_eq!(json["funding"]["interval_seconds"], 4);
         assert!(json["funding"].get("mark").is_none());

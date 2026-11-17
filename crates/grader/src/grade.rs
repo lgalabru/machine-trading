@@ -1002,9 +1002,9 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
 /// start mark, or, on several markets, each market's at its own.
 fn bound_of(scenario: &Scenario, session: &SessionReport) -> f64 {
     if scenario.markets.is_empty() {
-        scenario.bound_usd(session.start_mark_usd)
+        scenario.bound_usd(session.start_mark_usd, session.base_lots_decimals)
     } else {
-        scenario.markets_bound_usd(&session.start_marks_usd())
+        scenario.markets_bound_usd(&session.market_starts())
     }
 }
 
@@ -1589,6 +1589,7 @@ mod tests {
         SessionReport {
             scenario: "s".into(),
             start_mark_usd: 100.0,
+            base_lots_decimals: 3,
             end_mark_usd: 100.0,
             start_value_usd: 10_100.0,
             end_value_usd: 10_100.0 + pnl_usd,
@@ -2038,6 +2039,7 @@ mod tests {
             .map(|symbol| session::MarketReport {
                 symbol: symbol.into(),
                 start_mark_usd: 100.0,
+                base_lots_decimals: 3,
                 end_mark_usd: 100.0,
                 start_position: 0.0,
                 end_position: 0.0,

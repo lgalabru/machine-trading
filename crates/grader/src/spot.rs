@@ -1112,6 +1112,7 @@ impl Account for SpotAccount {
         Ok(SessionReport {
             scenario: scenario.name.clone(),
             start_mark_usd: start_price_usd,
+            base_lots_decimals: 3,
             end_mark_usd: end.wallet.price_usd,
             start_value_usd,
             end_value_usd,

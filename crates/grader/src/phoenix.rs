@@ -186,7 +186,10 @@ pub const SLOTS_BETWEEN_STEPS: u64 = 2;
 
 /// Overrides that walk `symbol` from `from_ticks` to `to_ticks` in steps
 /// Phoenix accepts, starting at `start_slot`, then uncross the book the move
-/// crossed. Returns the overrides and the slot of the final uncross.
+/// crossed. The uncross lands in the slot of the last step, after it: a bot's
+/// turn is as many slots as a step, so an uncross a step later would show it
+/// the crossed book and let it cancel before the fill. Returns the overrides
+/// and the slot of the final uncross.
 pub fn market_move(
     perp_asset_map: Pubkey,
     symbol: &str,
@@ -210,6 +213,7 @@ pub fn market_move(
         });
         slot += SLOTS_BETWEEN_STEPS;
     }
+    slot -= SLOTS_BETWEEN_STEPS;
     overrides.push(Override {
         template_id: "phoenix-market-uncross",
         account: perp_asset_map,
@@ -424,4 +428,32 @@ fn innermost_offset(data: &[u8]) -> std::result::Result<u64, String> {
         })
         .min()
         .ok_or_else(|| "no enabled maker quotes".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A move that crosses a resting quote must fill it in the slot the move
+    /// ends in: a later uncross leaves the crossed book in view for a bot's
+    /// turn, and a bot that requotes every turn cancels the quote before the
+    /// fill.
+    #[test]
+    fn the_uncross_lands_in_the_last_steps_slot() {
+        let map = Pubkey::new_unique();
+        for (to, steps) in [(9_700u64, 1u64), (9_000, 3), (12_000, 5), (10_100, 1)] {
+            let (moves, at) = market_move(map, "SPCX", 10_000, to, 40);
+            let stepped: Vec<_> = moves
+                .iter()
+                .filter(|o| o.template_id == "phoenix-market-move")
+                .collect();
+            assert_eq!(stepped.len() as u64, steps, "{to}");
+            let last_step = stepped.last().unwrap().slot;
+            let uncross = moves.last().unwrap();
+            assert_eq!(uncross.template_id, "phoenix-market-uncross");
+            assert_eq!(uncross.slot, last_step, "{to}: uncross slot");
+            assert_eq!(at, last_step, "{to}: returned slot");
+            assert_eq!(last_step, 40 + (steps - 1) * SLOTS_BETWEEN_STEPS);
+        }
+    }
 }

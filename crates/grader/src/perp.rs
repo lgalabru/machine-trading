@@ -2102,6 +2102,7 @@ impl Account for PerpAccount {
                     MarketReport {
                         symbol: market.scenario.symbol.clone(),
                         start_mark_usd: market.start_mark_usd,
+                        base_lots_decimals: market.market.base_lots_decimals,
                         end_mark_usd: end_marks[i],
                         start_position: market.start_position,
                         end_position: end_positions[i],
@@ -2120,6 +2121,7 @@ impl Account for PerpAccount {
         Ok(SessionReport {
             scenario: scenario.name.clone(),
             start_mark_usd: own.start_mark_usd,
+            base_lots_decimals: own.market.base_lots_decimals,
             end_mark_usd: end_marks[self.primary],
             start_value_usd: self.start_value_usd,
             end_value_usd,

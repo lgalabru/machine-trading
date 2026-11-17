@@ -61,7 +61,7 @@ use crate::{
     error::io_error,
     guard::{CallLog, Guard},
     phoenix::SLOTS_BETWEEN_STEPS,
-    scenario::Scenario,
+    scenario::{MarketStart, Scenario},
     snapshot,
 };
 
@@ -147,6 +147,11 @@ pub struct Rules {
 pub struct SessionReport {
     pub scenario: String,
     pub start_mark_usd: f64,
+    /// The market's base lot is `10^-base_lots_decimals` base units: what the
+    /// scenario's funding cap is read against. Reports from before it was
+    /// written are read as 3 decimals, as every market then was.
+    #[serde(default = "default_base_lots_decimals")]
+    pub base_lots_decimals: i8,
     pub end_mark_usd: f64,
     /// Collateral plus unrealized PnL plus wallet USDC, at the start and end.
     pub start_value_usd: f64,
@@ -292,6 +297,9 @@ pub struct MarketReport {
     /// Phoenix's mark at the start and the end, in USD: the start mark is
     /// what the market's path, its bound and its valuation count from.
     pub start_mark_usd: f64,
+    /// The market's lot size (see [`SessionReport::base_lots_decimals`]).
+    #[serde(default = "default_base_lots_decimals")]
+    pub base_lots_decimals: i8,
     pub end_mark_usd: f64,
     /// The position at the start and the end, in base units.
     pub start_position: f64,
@@ -307,13 +315,25 @@ pub struct MarketReport {
     pub competitor: Option<CompeteReport>,
 }
 
+fn default_base_lots_decimals() -> i8 {
+    3
+}
+
 impl SessionReport {
-    /// Each market's start mark, by symbol, for a session on several
-    /// markets; empty for one.
-    pub fn start_marks_usd(&self) -> BTreeMap<String, f64> {
+    /// Each market's start (mark and lot size), by symbol, for a session on
+    /// several markets; empty for one.
+    pub fn market_starts(&self) -> BTreeMap<String, MarketStart> {
         self.markets
             .iter()
-            .map(|m| (m.symbol.clone(), m.start_mark_usd))
+            .map(|m| {
+                (
+                    m.symbol.clone(),
+                    MarketStart {
+                        mark_usd: m.start_mark_usd,
+                        base_lots_decimals: m.base_lots_decimals,
+                    },
+                )
+            })
             .collect()
     }
 }
