@@ -658,6 +658,9 @@ pub fn practice_holds_no_latent(
                 continue;
             }
         };
+        // Checked on the parsed scenario in its v1 shape, so a v2 member that
+        // `actors` holds in the file (`taker_roles`) is read where v1 has it.
+        let text = serde_json::to_string(&scenario).unwrap_or(text);
         let keys = mtx_grader::generators::latent_keys_in(&text);
         if !keys.is_empty() {
             errors.push(format!(
@@ -2668,6 +2671,17 @@ mod tests {
         assert_eq!(failed.status, Status::Fail, "{}", failed.detail);
         assert!(failed.detail.contains("practice-2.json"), "{}", failed.detail);
         assert!(failed.detail.contains("roles"), "{}", failed.detail);
+        // The same map as a schema-2 file stores it, under `actors`.
+        std::fs::remove_file(practice.join("practice-2.json")).unwrap();
+        scenario.save_v2(&practice.join("practice-3.json")).unwrap();
+        let mut v2: Value =
+            serde_json::from_str(&std::fs::read_to_string(practice.join("practice-3.json")).unwrap())
+                .unwrap();
+        v2["actors"]["taker_roles"] = serde_json::json!({"informed": [7]});
+        std::fs::write(practice.join("practice-3.json"), v2.to_string()).unwrap();
+        let failed = check();
+        assert_eq!(failed.status, Status::Fail, "{}", failed.detail);
+        assert!(failed.detail.contains("practice-3.json"), "{}", failed.detail);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
