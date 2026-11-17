@@ -1,4 +1,4 @@
-//! The flash-crash reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
+//! The reference as a process bot: the strategy in `lib.rs`, on `mtx-kit`'s
 //! run loop. The anchor hidden sets are scored against runs this way.
 
 #[cfg(not(target_arch = "wasm32"))]

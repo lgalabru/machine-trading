@@ -18,6 +18,7 @@ use crate::{
     error::Result,
     making::MakingFamily,
     scenario::{Scenario, Shape, ShockFamily},
+    spoof_iceberg::{Shape as SpoofIcebergShape, SpoofIcebergFamily},
     weekend::{WeekendFamily, WeekendShape},
 };
 
@@ -84,6 +85,17 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "spoof-or-iceberg",
+        practice: |prefix, count, seed| SpoofIcebergFamily::qqq().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| {
+            shaped(
+                SpoofIcebergFamily::qqq().draw_set("hidden", count, seed),
+                tell,
+                spoof_iceberg_latent,
             )
         },
     },
@@ -206,6 +218,12 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
 ];
+
+/// Who is who: the spoofer's wallet and the iceberg's. Not which way the
+/// jump goes, when or how far, nor when or where either wall goes up.
+fn spoof_iceberg_latent(_: &SpoofIcebergShape) -> Value {
+    json!({ "roster": ["spoofer", "iceberg"] })
+}
 
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
 /// one draw that makes it, so all of it is the session's future.

@@ -1,0 +1,16 @@
+# The ladder's naive rungs and exploit bots for spoof-or-iceberg-exit-qqq, one
+# process picked by MTX_NAIVE (the ladder sets it per rung).
+[package]
+name = "mtx-bot-spoof-or-iceberg-exit-naive"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-spoof-or-iceberg-exit-naive"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-spoof-or-iceberg-exit = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }

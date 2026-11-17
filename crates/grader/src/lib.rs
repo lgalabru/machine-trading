@@ -30,6 +30,7 @@ pub mod scoring_v2;
 pub mod session;
 pub mod simulated;
 pub mod snapshot;
+pub mod spoof_iceberg;
 pub mod spot;
 pub mod txlayer;
 pub mod venue;

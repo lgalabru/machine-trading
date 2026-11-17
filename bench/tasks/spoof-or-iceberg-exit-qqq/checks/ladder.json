@@ -9,45 +9,74 @@
     "bots": [],
     "max_profitable": 0.75
   },
-  "family": "flash-crash",
+  "family": "spoof-or-iceberg",
   "gates": {
     "informed": [
       "informed"
     ],
     "non_reading": [
       "nop",
-      "blind-long",
-      "blind-short"
+      "dump",
+      "twap",
+      "late",
+      "trust-depth",
+      "fade-walls"
     ]
   },
   "min_rule_odds": 0.85,
   "probes": {},
   "rules": [
-    "max(blind-long, blind-short) < reference",
-    "reference < informed < hindsight"
+    "max(dump, twap, late) < reference",
+    "max(trust-depth, fade-walls) < reference",
+    "reference < informed"
   ],
   "rungs": [
     {
-      "dir": "bots/starter",
-      "name": "nop"
+      "name": "nop",
+      "dir": "bots/starter"
     },
     {
-      "dir": "bench/checks/ladder/blind-long",
-      "may_breach": true,
-      "name": "blind-long"
+      "name": "dump",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "dump"
+      }
     },
     {
-      "dir": "bench/checks/ladder/blind-short",
-      "may_breach": true,
-      "name": "blind-short"
+      "name": "twap",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "twap"
+      }
     },
     {
-      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/reference",
-      "name": "reference"
+      "name": "late",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "late"
+      }
     },
     {
-      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/informed",
+      "name": "trust-depth",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "trust-depth"
+      }
+    },
+    {
+      "name": "fade-walls",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "fade-walls"
+      }
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/reference"
+    },
+    {
       "name": "informed",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/informed",
       "tell_latent": true
     }
   ]
