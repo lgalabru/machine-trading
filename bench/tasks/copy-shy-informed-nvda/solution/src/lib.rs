@@ -122,10 +122,7 @@ impl Params {
             flow_slots: 240,
         };
         match mode {
-            Mode::Informed => Params {
-                share: 0.6,
-                ..base
-            },
+            Mode::Informed => Params { share: 0.6, ..base },
             Mode::FullCopy => Params {
                 share: f64::INFINITY,
                 ..base

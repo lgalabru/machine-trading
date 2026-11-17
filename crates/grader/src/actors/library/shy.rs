@@ -235,7 +235,8 @@ impl ShyWatch {
         };
         let mut followed = BTreeMap::<Who, f64>::new();
         for traded in &self.others {
-            let lead = f64::from(u8::from(near(traded, true))) - f64::from(u8::from(near(traded, false)));
+            let lead =
+                f64::from(u8::from(near(traded, true))) - f64::from(u8::from(near(traded, false)));
             *followed.entry(traded.who).or_default() += lead * traded.size;
         }
         followed
