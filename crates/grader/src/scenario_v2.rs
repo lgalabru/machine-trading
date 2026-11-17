@@ -224,6 +224,10 @@ pub struct Competitor {
     pub competitor_bps: f64,
     /// How the grader's own maker competes.
     pub competition: Competition,
+    /// Opt-in: the bot's quoting obligations as a market maker (see
+    /// [`crate::obligations`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obligations: Option<crate::obligations::Obligations>,
     /// Where the snapshot's makers are widened to, when it isn't
     /// `competitor_bps` (see [`Making::makers_bps`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -510,6 +514,7 @@ impl Actors {
                 competitor_bps: competitor.competitor_bps,
                 competition: competitor.competition,
                 takers: self.takers.clone(),
+                obligations: competitor.obligations,
                 makers_bps: competitor.makers_bps,
             }
             .validate(duration_slots)
@@ -938,10 +943,21 @@ impl ScenarioV2 {
         if self.venues.perp.is_some() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
         }
-        // No session tells the bot's taker fills from its maker fills yet.
-        if self.mandate.universe.iter().any(|a| a.taking.is_some()) {
+        // Only a market-making session tells the bot's taker fills from its
+        // maker fills (see [`crate::taking`]); a keeper's liquidations move
+        // the position outside them.
+        if self.mandate.universe.iter().any(|a| a.taking.is_some())
+            && (self.actors.competitor.is_none()
+                || self
+                    .venues
+                    .perp
+                    .as_ref()
+                    .is_none_or(|perp| perp.liquidator.is_some()))
+        {
             return Err(
-                "mandate: no session records taker fills yet, so none can enforce taking".into(),
+                "mandate: only a market-making perp session without a liquidator records taker \
+                 fills, so only one can enforce taking"
+                    .into(),
             );
         }
         // Every session starts flat, so an exposure bounded by a fraction of
@@ -1218,6 +1234,7 @@ impl ScenarioV2 {
                     competitor_bps: c.competitor_bps,
                     competition: c.competition,
                     takers,
+                    obligations: c.obligations,
                     makers_bps: c.makers_bps,
                 }),
                 None,
@@ -1348,6 +1365,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 Some(Competitor {
                     competitor_bps: making.competitor_bps,
                     competition: making.competition,
+                    obligations: making.obligations,
                     makers_bps: making.makers_bps,
                 }),
                 None,
@@ -1758,6 +1776,16 @@ mod tests {
         s.mandate.universe[1].hedge = Some(Hedge::new(against, 1.0));
         assert_eq!(s.mandate.validate(), Ok(()));
         assert!(s.validate().unwrap_err().contains("a hedge needs"));
+        // A market-making session records taker fills: it may.
+        let mut s = making();
+        s.mandate.version = "v0.1".into();
+        s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        assert_eq!(s.validate(), Ok(()));
+        s.venues.perp.get_or_insert_default().liquidator = Some(crate::keeper::Liquidator {
+            reaction_slots: [2, 4],
+            check_every_steps: 1,
+        });
+        assert!(s.validate().unwrap_err().contains("taking"));
 
         let mut s = shock();
         s.scoring.bound_usd = Some(f64::NAN);
