@@ -7,7 +7,7 @@ each version learned. It is card 2 of the batch-4 cards
 (`JUMP_REGIME_MEASUREMENT.md`). The departures from the card are listed
 last.
 
-Status: Gate 0 FAILED on version 2, the one rework (`hidden/gate0/README.md`); stopped.
+Status: Gate 0 failed on version 2 once main's #114 made informed wallets err; the bots were adapted (flow over the longest horizon, no flips) and Gate 0 rerun once (`hidden/gate0/README.md`).
 
 ## Thesis
 
@@ -100,12 +100,12 @@ rhythm, and the morning picks which of the two is busy.
 
 | Rung | What it does | Reads |
 | --- | --- | --- |
-| informed | told the fund's wallets; leans with any net take of theirs in the last 10 slots, held 40 slots after; flat between | the fund's takes |
-| reference | marks out each burst (net taker flow past 3 TSLA in 20 slots, each new side) 60 slots on; once two are marked, a mean over 10 bp means toxic: lean with the bursts; else flat | the bursts' markouts |
+| informed | told the fund's wallets; leans with their net flow over the last 150 slots past 1 TSLA, held 40 slots after the last signal its way, never flipped; flat between | the fund's takes |
+| reference | marks out each burst (net taker flow past 5 TSLA over 150 slots, each new side) 60 slots on; once two are marked, a mean over 10 bp means toxic: lean with the bursts, never flipped; else flat | the bursts' markouts |
 | flat | never trades | nothing |
 | make | makes all session (one TSLA a side at the touch, post-only, inventory within 2) | nothing |
-| follow | leans with the takers' net flow past 1.5 TSLA all session | the flow, not whether it is informed |
-| switch | leans with bursts (3 TSLA), makes between: a fixed threshold | the flow, not whether it is informed |
+| follow | leans with the takers' net flow past 2.5 TSLA over 150 slots all session | the flow, not whether it is informed |
+| switch | leans with bursts (5 TSLA over 150 slots), makes between: a fixed threshold | the flow, not whether it is informed |
 | burst | leans with bursts every morning, flat between: the reference without the read | the flow, not whether it is informed |
 
 ## Departures from the card
