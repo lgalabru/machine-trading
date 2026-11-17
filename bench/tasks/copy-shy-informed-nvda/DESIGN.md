@@ -21,6 +21,15 @@ wallet errs on its own. The fund has a single wallet, so the rule "the informed 
 copiers (reference, informed and full-size) read the fund's net flow over 240 slots, about one horizon. They enter only the way that flow
 points and never flip after entry. The instruction may state the 85%.
 
+## Stylisations
+
+- **The fund's and the decoys' pace (32x the market's taker rate while they trade) is a stylisation.** Phoenix NVDA's calibrated flow
+  is 1.24 trades a minute, so a fund trading at the calibrated pace would give no session enough evidence. Every actor's size is 40x
+  the calibrated median (0.015 NVDA). Gate 0's smoke checks that the fund's share of takes stays plausible (under about 30%).
+- **The market itself is not stylised.** The opening hour's measured jump rate is 2.75 an hour, with a median of 0.305% and a p90 of
+  0.533%. Its robust 1 m sd is 1.99 times the regular session's. Sessions run 20 to 30 minutes (4,800 to 7,200 of the market model's
+  0.25 s slots).
+
 ## Expert research
 
 <!-- TODO: why this is a real expert task, the expert's method, where non-experts go wrong, with sources. -->
