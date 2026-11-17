@@ -120,6 +120,12 @@ pub struct Library {
     /// Wallets several of the actors above trade from (see [`Pool`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pool: Option<Pool>,
+    /// The kinds of actor (`informed`, `decoy`, ...) whose wallets every bot
+    /// in the session is told, as the market already knows them: a fund's
+    /// public address that copy-traders track. The session hands them over
+    /// as `MTX_PUBLIC_WALLETS` (see [`crate::latent::public_wallets`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub public: Vec<String>,
     /// Keep every action in the report's tape (checks and studies: it
     /// grows with the session).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -333,6 +339,13 @@ impl Library {
             refill
                 .validate()
                 .map_err(|e| format!("actors.refill: {e}"))?;
+        }
+        for (i, kind) in self.public.iter().enumerate() {
+            if kind.is_empty() || self.public[..i].contains(kind) {
+                return Err(format!(
+                    "actors.public: `{kind}` is empty or listed twice"
+                ));
+            }
         }
         Ok(())
     }

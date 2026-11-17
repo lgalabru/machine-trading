@@ -588,6 +588,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let end_slot = base_slot + scenario.duration_slots;
     let mut rfqs = None;
     let mut roster = Default::default();
+    let mut public = None;
     if let Some((library, seats)) = library {
         let path = own.moments();
         // Front-runners read the bot's trading through a seat on its
@@ -620,6 +621,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         }
         rfqs = built.rfq;
         roster = built.roster;
+        // The wallets every bot is told, as the market knows them.
+        public = crate::latent::public_wallets(&library.public, &roster)
+            .map_err(Error::Latent)?;
     }
     // The bot gets a copy to plan by; the audit uses this one, which the bot
     // can't reach.
@@ -649,7 +653,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             observed.begin(&market.instrument, market.start_position);
         }
     }
-    let vars = session_vars(scenario)?;
+    let mut vars = session_vars(scenario)?;
+    if let Some(public) = public {
+        vars.push((crate::latent::PUBLIC_WALLETS.to_string(), public));
+    }
     let bot_trader = meter.trader();
     let making_session = markets[primary].scenario.making.is_some();
     let mut account = PerpAccount {

@@ -132,6 +132,29 @@ pub fn resolve(regime: &str, session: &Roster) -> Result<String, String> {
     Ok(Value::Object(latent).to_string())
 }
 
+/// The session variable the wallets every bot is told travel in.
+pub const PUBLIC_WALLETS: &str = "MTX_PUBLIC_WALLETS";
+
+/// The wallets of the `kinds` of actor every bot in `session` is told
+/// (`actors.public`), as `{"<kind>": ["<pubkey>", ..]}`: `None` for none. A
+/// kind the session doesn't have is an error, as it is for a roster.
+pub fn public_wallets(kinds: &[String], session: &Roster) -> Result<Option<String>, String> {
+    if kinds.is_empty() {
+        return Ok(None);
+    }
+    let mut told = Map::new();
+    for kind in kinds {
+        let Some(names) = session.get(kind) else {
+            return Err(format!("the session has no `{kind}` to make public"));
+        };
+        told.insert(
+            kind.clone(),
+            names.iter().cloned().map(Value::String).collect(),
+        );
+    }
+    Ok(Some(Value::Object(told).to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,5 +256,18 @@ mod tests {
         ] {
             assert!(resolve(bad, &session()).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn public_kinds_come_back_as_the_sessions_wallets() {
+        assert_eq!(public_wallets(&[], &session()).unwrap(), None);
+        let told = public_wallets(&["informed".to_string()], &session())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&told).unwrap(),
+            serde_json::json!({ "informed": ["A", "B"] })
+        );
+        assert!(public_wallets(&["spoofer".to_string()], &session()).is_err());
     }
 }

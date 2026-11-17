@@ -88,6 +88,15 @@ only a follower keeps matching. The actor's counts say whether the bait was
 set (`bait_set`), by whom (`bait_set_by_bot`, `bait_set_by_noise`, ...) and
 at which slot (`bait_set_at_slot`).
 
+## Public wallets
+
+`public` lists kinds of actor whose wallets every bot in the session is
+told, as the market already knows them (a fund's public address that
+copy-traders track): `"public": ["informed"]` hands each bot
+`MTX_PUBLIC_WALLETS`, `{"informed": ["<pubkey>"]}`, the actors' authorities
+as the roster gives them. A kind the session doesn't have is an error. It is
+not the informed bot's regime: every bot, the graded one included, gets it.
+
 ## Onboarding order
 
 The library's wallets are listed role by role, but a session onboards them in

@@ -297,12 +297,16 @@ pub fn phoenix_market_address(exchange: &str, symbol: &str) -> Option<String> {
 /// starting positions, the order it asks the bot to work and the broker's
 /// haircut on what is left of it, and the markets a broker closes out,
 /// which [`Session::start_positions`], [`Session::order`],
-/// [`Session::broker_haircut`] and [`Session::close_outs`] read as types.
+/// [`Session::broker_haircut`] and [`Session::close_outs`] read as types;
+/// and the wallets of actors the market already knows, which every bot in
+/// the session is told (`MTX_PUBLIC_WALLETS`, JSON: each kind of actor and
+/// its wallets' authorities, base58, as `{"informed": ["<pubkey>"]}`).
 pub const SESSION_VARS: &[&str] = &[
     "MTX_REOPEN_SLOT",
     "MTX_REGIME",
     "MTX_RUNG",
     "MTX_RAW_PROGRAMS",
+    "MTX_PUBLIC_WALLETS",
     crate::PerpMarkets::VAR,
     crate::StartPositions::VAR,
     crate::SessionOrder::VAR,
