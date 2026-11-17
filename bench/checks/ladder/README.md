@@ -13,12 +13,22 @@ task's rungs, ladder bots and exploit bots live in its folder
 - **The order rule**, on every set, and how often it would hold on a set
   like it: a bootstrap over each set's sessions, at least `min_rule_odds`.
 - **The exploit bots' limits** (`bench/tasks/<task>/checks/exploits`), over every set: they must
-  lose some sessions, stay within a multiple of the reference, and never
+  lose some sessions, stay under the oracle they are bounded by (`below`), and never
   reach the bound.
 - **Clean runs**: no rung is refused or disqualified.
 
 Skill is a rung's total PnL over the reference's on the same set: the
 reference is 1, doing nothing 0, and `hindsight` is the bound.
+
+- **The probe gate** (a task's `probes` section, see `../probes`): with it,
+  every rung is graded with `--scoring v2` against the reference's own run on
+  the same sessions, and the ladder checks where the probe bots land on the v2
+  score: gamblers and naive holds at most 0.02 over doing nothing, a breacher
+  composed into runs of 1, 2 and 3 breach sessions no better than its clipped twin
+  (the breach-rate penalty and the per-session floor), a crashing bot under the bot it wraps,
+  levered references held to their multiple, honest bots from a measured Sharpe of
+  0.2 over doing nothing. `summary.json`
+  carries each rule's verdict (`pass`, `fail`, `inconclusive`, `no_power`, `not_exercised`).
 
 ## Flash-crash
 
