@@ -138,7 +138,13 @@ pub const GENERATORS: &[Generator] = &[
     },
     Generator {
         name: "spoof-or-iceberg",
-        practice: |prefix, count, seed| SpoofIcebergFamily::qqq().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                SpoofIcebergFamily::qqq().draw_set(prefix, count, seed),
+                false,
+                spoof_iceberg_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 SpoofIcebergFamily::qqq().draw_set("hidden", count, seed),
