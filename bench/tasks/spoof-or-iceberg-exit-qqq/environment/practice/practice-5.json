@@ -462,8 +462,8 @@
       "slot": 1840
     }
   ],
-  "reference_max_drawdown_usd": 10.5,
-  "reference_pnl_usd": 7.52,
+  "reference_max_drawdown_usd": 10.49,
+  "reference_pnl_usd": 7.53,
   "start_positions": {
     "QQQ": 13.0
   },

@@ -56,8 +56,8 @@
   },
   "description": "QQQ practice session",
   "duration_slots": 1908,
-  "informed_max_drawdown_usd": 10.04,
-  "informed_pnl_usd": 45.16,
+  "informed_max_drawdown_usd": 9.41,
+  "informed_pnl_usd": 45.79,
   "mandate": {
     "limits": {
       "max_drawdown_usd": 472.0
@@ -478,8 +478,8 @@
       "slot": 1900
     }
   ],
-  "reference_max_drawdown_usd": 8.17,
-  "reference_pnl_usd": 47.32,
+  "reference_max_drawdown_usd": 7.98,
+  "reference_pnl_usd": 47.5,
   "start_positions": {
     "QQQ": 14.0
   },
