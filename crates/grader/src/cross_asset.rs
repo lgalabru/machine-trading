@@ -3,9 +3,9 @@
 //!
 //! - **NVDA** is [`FlowFamily::nvda`]'s session, its sharp moves its larger
 //!   ones (1.5 to 3 median jumps), with its informed, decoy, chaser and
-//!   noise wallets (the actor
-//!   library trades the primary market, NVDA). The mandate lets the account
-//!   hold next to none of it: the desk reads NVDA and trades QQQ.
+//!   noise wallets (the actor library trades the primary market, NVDA). The
+//!   mandate lets the account hold next to none of it: the desk reads NVDA
+//!   and trades QQQ.
 //! - **QQQ**'s own path is drawn jointly with NVDA's
 //!   ([`draw_joint`](crate::market::model::draw_joint)) at the two
 //!   calibrations' fitted correlation, and carries a share `beta` of each of
