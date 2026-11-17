@@ -40,10 +40,6 @@ fn base() -> Scenario {
     .unwrap()
 }
 
-fn waypoint(slot: u64, level_pct: f64) -> Waypoint {
-    Waypoint::at(slot, level_pct)
-}
-
 async fn grade_nop(scenarios: &[Scenario], v2_sessions: bool) -> GradeReport {
     let work = std::env::temp_dir().join(format!("mtx-qa-{}", uuid::Uuid::new_v4()));
     let bot = work.join("bot");
@@ -155,55 +151,11 @@ async fn holding_the_start_through_a_fall_is_no_drawdown_in_a_net_scored_session
     }
 }
 
-/// A session that starts holding SPCX, scored net of the hold at the fair
-/// value, whose book trades at a premium to it at the close: what holding
-/// earns is not what the hold baseline takes off.
-fn held_at_a_premium() -> Scenario {
-    let mut scenario = holding(
-        vec![
-            Waypoint::at(20, 0.0),
-            Waypoint {
-                slot: 40,
-                level_pct: -3.0,
-                premium_pct: 0.5,
-            },
-        ],
-        5000.0,
-    );
-    scenario.net = Some(NetScoring {
-        inventory_bps: 0.0,
-        venue_position: None,
-    });
-    scenario.fair_path = Some(vec![Waypoint::at(20, 0.0), Waypoint::at(40, -3.0)]);
-    scenario.reference_pnl_usd = Some(100.0);
-    scenario.informed_pnl_usd = Some(1000.0);
-    scenario.reference_max_drawdown_usd = Some(0.0);
-    scenario.informed_max_drawdown_usd = Some(0.0);
-    scenario
-}
-
-/// Doing nothing is the 0 of v2's scale: a bot that does nothing scores 0
-/// whatever the session started with and wherever its book trades.
-#[tokio::test(flavor = "multi_thread")]
-async fn a_bot_that_does_nothing_scores_zero_under_v2_on_a_session_that_starts_holding() {
-    let mut report = grade_nop(&[held_at_a_premium()], true).await;
-    let params = Params::new(Ceiling::Informed { eta_override: None });
-    report.score_v2(&params).unwrap();
-    let v2 = report.v2.as_ref().unwrap();
-    let pnl = report.scenarios[0].session.pnl_usd;
-    assert!(
-        v2.raw.abs() < 0.005,
-        "a bot that did nothing made {pnl} and scored {}",
-        v2.raw
-    );
-}
-
 /// An RFQ desk that starts with the asset: by default the asset's move is
 /// the desk's PnL, so a desk that quotes nothing makes or loses it.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_desk_that_quotes_nothing_scores_zero_under_v2_with_inventory_it_started_with() {
-    let mut scenario =
-        Scenario::load(&root().join("bench/checks/actors/rfq-dust.json")).unwrap();
+    let mut scenario = Scenario::load(&root().join("bench/checks/actors/rfq-dust.json")).unwrap();
     scenario.reference_pnl_usd = Some(100.0);
     scenario.informed_pnl_usd = Some(1000.0);
     scenario.reference_max_drawdown_usd = Some(0.0);

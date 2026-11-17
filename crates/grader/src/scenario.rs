@@ -467,6 +467,19 @@ pub const SLOT_SECONDS: f64 = 0.25;
 pub const VENUE: &str = "phoenix";
 
 impl Scenario {
+    /// Whether a bot that does nothing makes or loses money that no rule
+    /// takes off: an RFQ desk starts with the asset, and its move is the
+    /// desk's PnL unless the session is scored over the idle desk. (A perp
+    /// start position is scored against holding it by `scoring.net` or an
+    /// order.) The 0 of scoring v2's scale is then what doing nothing makes,
+    /// measured (see [`crate::grade::GradeOptions::v2_sessions`]).
+    pub fn nop_may_pay(&self) -> bool {
+        self.actors
+            .as_ref()
+            .and_then(|library| library.rfq_clients.as_ref())
+            .is_some_and(|rfq| rfq.desk_base != 0.0 && !rfq.over_idle_desk)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path).map_err(io_error(path))?;
         let scenario = crate::scenario_v2::parse(&contents).map_err(|e| match e {

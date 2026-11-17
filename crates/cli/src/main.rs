@@ -189,11 +189,13 @@ enum Command {
         /// whatever the rest do); the report covers the sessions up to it.
         #[arg(long)]
         stop_on_disqualify: bool,
-        /// Run the sessions under scoring v2's rules: drawdowns are sampled
-        /// every slot, and the bot's seed in each session is salted with the
-        /// grade's secret, so it can't tell which session it is in. (A
-        /// breach's stop-out is the scenario's own `stop_out`.) For a task
-        /// scored by v2; off, sessions run as they always have.
+        /// Run the sessions under scoring v2's rules: positions are sampled
+        /// every slot, the bot's seed in each session is salted with the
+        /// grade's secret (as in every drawn grade), so it can't tell which
+        /// session it is in, and a session that starts holding something is
+        /// also run by a bot that does nothing, whose PnL is v2's 0 there.
+        /// (A breach's stop-out is the scenario's own `stop_out`.) For a
+        /// task scored by v2; off, sessions run as they always have.
         #[arg(long)]
         v2_sessions: bool,
         /// Grade the bot only if it is a strategy component (a bot.wasm): the
@@ -265,8 +267,9 @@ enum Command {
         /// scenario's `informed_pnl_usd`, scoring v2's 1, instead.
         #[arg(long)]
         informed: bool,
-        /// Sample drawdowns every slot, as `mtx grade --v2-sessions` does,
-        /// so the drawdowns saved anchor a v2 grade at its granularity.
+        /// Run the sessions under v2's rules, as `mtx grade --v2-sessions`
+        /// does, so the anchors saved are measured as a v2 grade measures
+        /// them.
         #[arg(long)]
         v2_sessions: bool,
         /// Draw the scenarios from this generator instead of reading files,
@@ -1670,7 +1673,7 @@ async fn run() -> Result<()> {
                     let dir = practice_dir.as_deref().context("--practice needs --out")?;
                     if informed && !v2_sessions {
                         anyhow::bail!(
-                            "--practice --informed needs --v2-sessions: a v2 grade samples the drawdown every slot, and the practice anchors must be measured the same way"
+                            "--practice --informed needs --v2-sessions: the practice anchors must be measured under the rules a v2 grade runs by"
                         );
                     }
                     let drawn = (generator.practice_drawn)(&practice_prefix, practice_count, seed)?;

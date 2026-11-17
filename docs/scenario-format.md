@@ -119,7 +119,7 @@ own cap and start mark, summed. A session's report lists each market
 (`markets`: start and end marks, positions, valuation, flow), and each step
 records each market (`markets` in the timeline's steps).
 
-Net scoring (`scoring.net`) works per market: each market's start position is held to that market's fair close (else its level), and the holds are summed, so a bot that holds every market scores 0. `scoring.bound_on` works on several markets too.
+Net scoring (`scoring.net`) works per market: each market's start position is held to that market's fair close (else its level), and the holds are summed, so a bot that holds every market scores 0. The same hold, step by step, comes off the drawdown the bot is shown and the risk desk reads. `scoring.bound_on` works on several markets too. Scoring v2 scores a session on several markets against the informed bot, not the cost-aware hindsight ceiling.
 
 What a session on several markets doesn't do yet:
 
