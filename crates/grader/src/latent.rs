@@ -29,19 +29,7 @@
 use serde::Serialize;
 use serde_json::{Map, Value};
 
-use crate::actors::library::Roster;
-
-/// Why a field of a session's latent state is knowable in principle, and so
-/// may be told to the informed bot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Knowable {
-    /// Who the actors are: which wallets are informed, decoys or hunters,
-    /// which RFQ clients are informed.
-    Identity,
-    /// The process the session's randomness is drawn from: lags, shares,
-    /// half-lives, latencies, hold times.
-    Process,
-}
+use crate::{actors::library::Roster, generators::Knowable};
 
 /// The key a latent names the kinds to tell the wallets of under, and the
 /// key their wallets come back under.
@@ -180,6 +168,12 @@ mod tests {
         let json: Value = serde_json::from_str(&latent.to_json()).unwrap();
         assert_eq!(json["horizon_slots"], 40);
         assert_eq!(json["roster"], serde_json::json!(["informed", "decoy"]));
+    }
+
+    /// The field the latent itself names is registered, for every family.
+    #[test]
+    fn the_roster_is_a_registered_latent_field() {
+        assert!(crate::generators::LATENT_FIELDS.contains(&("*", ROSTER, Knowable::Identity)));
     }
 
     #[test]
