@@ -486,6 +486,75 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     Ok(files)
 }
 
+/// Whether a task's agent starts from the base's `-agent` image: its `mtx`
+/// can't draw scenarios from the family (see `bench/image/Dockerfile`).
+pub fn guarded(root: &Path, task: &str) -> bool {
+    std::fs::read_to_string(
+        root.join("bench/tasks")
+            .join(task)
+            .join("environment/Dockerfile"),
+    )
+    .is_ok_and(|text| {
+        text.lines().any(|line| {
+            line.strip_prefix("FROM ").is_some_and(|image| {
+                image
+                    .split(['@', ' '])
+                    .next()
+                    .is_some_and(|name| name.ends_with("-agent"))
+            })
+        })
+    })
+}
+
+/// What is wrong with the images a task.toml names: Harbor runs
+/// `[environment] docker_image` (not the Dockerfile) for the agent and
+/// `[verifier.environment] docker_image` for the verifier, so each must be the
+/// task's own (`<registry>/<image>:<tag>-<task>`, `-<task>-verifier`), pinned
+/// or not. A task that names another's, such as its base's dev image, would
+/// run its agent in an image that holds the whole grader.
+pub fn image_problems(toml: &str, task: &str) -> Vec<String> {
+    let Ok(value) = toml.parse::<toml::Table>() else {
+        return vec!["task.toml doesn't parse".into()];
+    };
+    let image = |path: &[&str]| {
+        let mut at = Some(&value);
+        let mut table = None;
+        for key in path {
+            table = at.and_then(|t| t.get(*key)).and_then(|v| v.as_table());
+            at = table;
+        }
+        table
+            .and_then(|t| t.get("docker_image"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let mut problems = Vec::new();
+    for (section, own) in [
+        (
+            "[environment]",
+            (image(&["environment"]), format!("-{task}")),
+        ),
+        (
+            "[verifier.environment]",
+            (
+                image(&["verifier", "environment"]),
+                format!("-{task}-verifier"),
+            ),
+        ),
+    ] {
+        let (image, suffix) = own;
+        let name = image.split('@').next().unwrap_or("");
+        let tag = name.rsplit_once(':').map(|(_, tag)| tag).unwrap_or("");
+        if !tag.ends_with(&suffix) || !name.contains("/machine-trading:") {
+            problems.push(format!(
+                "{section} docker_image is {image:?}, not this task's own image (…{suffix}): Harbor would run that image, not the Dockerfile's"
+            ));
+        }
+    }
+    problems
+}
+
 /// The variable `mtx-practice` reads its scoring flags from.
 pub const PRACTICE_SCORING: &str = "MTX_PRACTICE_SCORING";
 
@@ -682,6 +751,22 @@ pub fn stale(root: &Path) -> Result<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_task_runs_its_own_images_not_another_tasks() {
+        let own = |task: &str, pin: &str| {
+            format!(
+                "[verifier.environment]\ndocker_image = \"ghcr.io/solana-foundation/machine-trading:0.12.0-{task}-verifier{pin}\"\n\n[environment]\ndocker_image = \"ghcr.io/solana-foundation/machine-trading:0.12.0-{task}{pin}\"\n"
+            )
+        };
+        assert!(image_problems(&own("new-spcx", ""), "new-spcx").is_empty());
+        assert!(image_problems(&own("new-spcx", "@sha256:ab12"), "new-spcx").is_empty());
+        // A scaffold that kept its base's images runs the base's unguarded image.
+        let problems = image_problems(&own("flash-crash-spcx", ""), "new-spcx");
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        // Neither section is left out.
+        assert_eq!(image_problems("[environment]\n", "new-spcx").len(), 2);
+    }
 
     fn task(dir: &str) -> Task {
         Task {

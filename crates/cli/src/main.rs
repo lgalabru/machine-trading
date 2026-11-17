@@ -6,8 +6,9 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+#[cfg(feature = "generate")]
+use mtx_grader::generators;
 use mtx_grader::{
-    generators,
     grade::{self, GradeOptions},
     keys::SessionKeys,
     phoenix, recipe, replay,
@@ -24,14 +25,19 @@ use tracing_subscriber::EnvFilter;
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod acp;
+#[cfg(feature = "generate")]
 mod anchors;
 mod author;
+#[cfg(feature = "generate")]
 mod authoring;
 mod bot;
 mod charts;
 mod compact;
+#[cfg(feature = "generate")]
 mod gates;
+#[cfg(feature = "generate")]
 mod market_cal;
+#[cfg(feature = "generate")]
 mod mcp;
 mod notice;
 mod play;
@@ -39,11 +45,13 @@ mod publish;
 mod rescore;
 mod review;
 mod run;
+#[cfg(feature = "generate")]
 mod scoring_text;
 mod slim;
 mod store;
 mod studio;
 mod tables;
+#[cfg(feature = "generate")]
 mod tasks;
 mod tools;
 mod ui;
@@ -67,6 +75,7 @@ struct Cli {
 
 /// The scenario generators' names, for `--family` and `--draw`: each task
 /// names its own in `task.toml` (`[metadata.mtx] generator`).
+#[cfg(feature = "generate")]
 fn generator_names() -> clap::builder::PossibleValuesParser {
     clap::builder::PossibleValuesParser::new(generators::names())
 }
@@ -82,11 +91,13 @@ enum Command {
     #[command(subcommand)]
     Scenario(ScenarioCommand),
     /// Make a new task, guided: scaffold it, then see what's left to do.
+    #[cfg(feature = "generate")]
     #[command(subcommand)]
     Task(TaskCommand),
     /// Run a task through the quality bar and write one report (JSON and
     /// markdown): solvable and fair, graded correctly, realistic. `--fast`
     /// runs the cheap checks; without it, the image checks too.
+    #[cfg(feature = "generate")]
     Gates {
         task: String,
         /// Task files and a one-set ladder on a few sessions; no image checks.
@@ -107,6 +118,7 @@ enum Command {
     },
     /// Serve the task-authoring tools over MCP (stdio), for Claude Code:
     /// task_new (an interview with forms), task_status, task_guide, task_list.
+    #[cfg(feature = "generate")]
     Mcp,
     /// Bench results: what `just bench` and Harbor runs leave behind.
     #[command(subcommand)]
@@ -149,9 +161,11 @@ enum Command {
         /// Draw the scenarios from this generator instead of reading files: a
         /// hidden set, seeded by the secret in `MTX_EVAL_SEED` and never
         /// written anywhere. Reports carry only the secret's SHA-256.
+        #[cfg(feature = "generate")]
         #[arg(long, value_parser = generator_names(), conflicts_with = "scenarios")]
         draw: Option<String>,
         /// How many scenarios to draw, stratified as the family's odds.
+        #[cfg(feature = "generate")]
         #[arg(long, default_value_t = 12, requires = "draw")]
         count: usize,
         /// Run this reference bot on the same scenarios first, and score
@@ -180,11 +194,13 @@ enum Command {
         /// Hand the bot each drawn session's regime as MTX_REGIME: the
         /// shock's shape (flash-crash), or the informed taker orders
         /// (market-making). For the ladder's oracles, never a graded bot.
+        #[cfg(feature = "generate")]
         #[arg(long, requires = "draw", hide = true)]
         tell_regime: bool,
         /// Hand the bot each drawn session's latent state as MTX_REGIME, as
         /// --informed hands it to the informed bot: for the ladder's
         /// informed rung, never a graded bot.
+        #[cfg(feature = "generate")]
         #[arg(long, requires = "draw", conflicts_with = "tell_regime", hide = true)]
         tell_latent: bool,
         /// Stop at the bot's first disqualifying session (the grade is 0
@@ -280,15 +296,18 @@ enum Command {
         /// seeded by the secret in `MTX_EVAL_SEED` as `mtx grade --draw`
         /// draws them (the informed bot is handed each one's latent state),
         /// and save the PnL in `--anchors`, not in the scenarios.
+        #[cfg(feature = "generate")]
         #[arg(long, value_parser = generator_names(), conflicts_with = "scenarios", requires = "anchors")]
         draw: Option<String>,
         /// How many scenarios to draw.
+        #[cfg(feature = "generate")]
         #[arg(long, default_value_t = 12, requires = "draw")]
         count: usize,
         /// The anchors file a drawn set's PnL goes to (`mtx grade
         /// --anchors`), by scenario name. What it already holds for other
         /// anchors is kept, so the reference and the informed bot can be
         /// calibrated into one file in turn.
+        #[cfg(feature = "generate")]
         #[arg(long, requires = "draw")]
         anchors: Option<PathBuf>,
         /// Draw a task's practice set from this generator, as `mtx scenario
@@ -300,6 +319,7 @@ enum Command {
         /// neutral one (the generator's states the draw in prose).
         /// `--informed` needs `--v2-sessions`. What `--out` already holds
         /// for the other anchor is kept.
+        #[cfg(feature = "generate")]
         #[arg(
             long,
             value_parser = generator_names(),
@@ -309,20 +329,25 @@ enum Command {
         practice: Option<String>,
         /// Where the practice files are written, as `mtx scenario generate
         /// --out` writes them.
+        #[cfg(feature = "generate")]
         #[arg(long, requires = "practice")]
         out: Option<PathBuf>,
         /// Names are `<prefix>-<n>`.
+        #[cfg(feature = "generate")]
         #[arg(long, default_value = "practice", requires = "practice")]
         practice_prefix: String,
+        #[cfg(feature = "generate")]
         #[arg(long, default_value_t = 6, requires = "practice")]
         practice_count: usize,
         /// The seed the practice set was generated with (`mtx scenario
         /// generate --seed`): the same scenarios, so the files match.
+        #[cfg(feature = "generate")]
         #[arg(long, requires = "practice")]
         practice_seed: Option<u64>,
     },
     /// Market calibration: per-asset files fitted to real data, the market
     /// model they drive, and realism checks against them.
+    #[cfg(feature = "generate")]
     #[command(subcommand, name = "market-cal")]
     MarketCal(market_cal::MarketCalCommand),
 }
@@ -467,6 +492,7 @@ impl Sessions {
 }
 
 #[derive(Subcommand)]
+#[cfg(feature = "generate")]
 enum TaskCommand {
     /// Scaffold bench/tasks/<name> and its reference bot from the closest
     /// existing task. Every field the interview asks is a flag; leave any out
@@ -517,6 +543,7 @@ enum TaskCommand {
 }
 
 #[derive(clap::Args)]
+#[cfg(feature = "generate")]
 struct TaskArgs {
     /// The task's id, the skill then the instrument: funding-squeeze-spcx.
     #[arg(long)]
@@ -708,6 +735,8 @@ enum ScenarioCommand {
     /// scenario.
     /// Sets are stratified: each kind of session (a shock's direction and
     /// aftermath, a market's regime) appears in proportion to its odds.
+    /// Not in the agent's build (`--no-default-features`).
+    #[cfg(feature = "generate")]
     Generate {
         #[arg(long)]
         out: PathBuf,
@@ -915,10 +944,12 @@ async fn run() -> Result<()> {
     let quiet_stdout = interactive && std::io::stdout().is_terminal();
 
     let output = match cli.command {
+        #[cfg(feature = "generate")]
         Command::Mcp => {
             mcp::serve(authoring::repo_root()).await?;
             return Ok(());
         }
+        #[cfg(feature = "generate")]
         Command::Gates {
             task,
             fast,
@@ -946,6 +977,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&report)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::New { spec: a }) => {
             let spec = authoring::TaskSpec {
                 name: a.name.unwrap_or_default(),
@@ -967,6 +999,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&out)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Status { task }) => {
             let steps = authoring::status(&authoring::repo_root(), &task)?;
             for s in &steps {
@@ -982,11 +1015,13 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&steps)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Guide { step }) => {
             authoring::guide(&step).map(str::to_string).ok_or_else(|| {
                 anyhow::anyhow!("no step `{step}`; steps: {}", authoring::STEPS.join(", "))
             })?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Sync { anchors }) => {
             let root = authoring::repo_root();
             if anchors {
@@ -1002,6 +1037,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&changed)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::AnchorDigest { tasks, check }) => {
             let root = authoring::repo_root();
             let names: Vec<String> = if tasks.is_empty() {
@@ -1032,6 +1068,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&out)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Check) => {
             let stale = tasks::stale(&authoring::repo_root())?;
             if !stale.is_empty() {
@@ -1053,6 +1090,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&stale)?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Fingerprint { task }) => {
             let root = authoring::repo_root();
             let fingerprint =
@@ -1061,6 +1099,7 @@ async fn run() -> Result<()> {
                 &serde_json::json!({ "task": task, "fingerprint": fingerprint }),
             )?
         }
+        #[cfg(feature = "generate")]
         Command::Task(TaskCommand::List) => {
             serde_json::to_string_pretty(&authoring::list(&authoring::repo_root()))?
         }
@@ -1417,6 +1456,7 @@ async fn run() -> Result<()> {
             }
             String::new()
         }
+        #[cfg(feature = "generate")]
         Command::Scenario(ScenarioCommand::Generate {
             out,
             prefix,
@@ -1503,13 +1543,17 @@ async fn run() -> Result<()> {
         }
         Command::Grade {
             sessions,
+            #[cfg(feature = "generate")]
             draw,
+            #[cfg(feature = "generate")]
             count,
             reference,
             informed,
             anchors,
             anchor_jobs,
+            #[cfg(feature = "generate")]
             tell_regime,
+            #[cfg(feature = "generate")]
             tell_latent,
             stop_on_disqualify,
             v2_sessions,
@@ -1535,13 +1579,18 @@ async fn run() -> Result<()> {
                     None => mtx_grader::grade::v1_spec_hash(),
                 }),
             };
+            #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut regimes: Option<Vec<String>> = None;
+            #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut latent: Option<Vec<String>> = None;
             // What each drawn scenario was drawn as, for its detail file.
+            #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut annotations: Option<Vec<serde_json::Value>> = None;
             // A drawn set's session keys come from the batch's secret, so
             // every grade of it signs the same; otherwise from a fresh one.
+            #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut keys = SessionKeys::random();
+            #[cfg(feature = "generate")]
             let (scenarios, eval_seed_sha256) = match draw {
                 Some(family) => {
                     let (seed, hash, batch_keys) = eval_seed()?;
@@ -1559,6 +1608,16 @@ async fn run() -> Result<()> {
                     anyhow::bail!("give scenario files, or --draw a family")
                 }
                 None => (sessions.load()?.into_iter().map(|(_, s)| s).collect(), None),
+            };
+            // The agent's build draws nothing: only the scenario files it is given.
+            #[cfg(not(feature = "generate"))]
+            let (scenarios, eval_seed_sha256) = {
+                if sessions.scenarios.is_empty() {
+                    anyhow::bail!("give scenario files")
+                }
+                let scenarios: Vec<Scenario> =
+                    sessions.load()?.into_iter().map(|(_, s)| s).collect();
+                (scenarios, None::<String>)
             };
             let mut scenarios = scenarios;
             if let Some(path) = &anchors {
@@ -1589,11 +1648,14 @@ async fn run() -> Result<()> {
                 anchor_jobs,
                 // The bot is handed nothing, but on the ladder: its oracles
                 // the regime, its informed rung the latent state.
+                #[cfg(feature = "generate")]
                 regimes: if tell_latent {
                     latent.as_deref()
                 } else {
                     regimes.as_deref()
                 },
+                #[cfg(not(feature = "generate"))]
+                regimes: regimes.as_deref(),
                 stop_on_disqualify,
                 detail_dir: details.as_deref(),
                 annotations: annotations.as_deref(),
@@ -1781,18 +1843,29 @@ async fn run() -> Result<()> {
             sessions,
             informed,
             v2_sessions,
+            #[cfg(feature = "generate")]
             draw,
+            #[cfg(feature = "generate")]
             count,
+            #[cfg(feature = "generate")]
             anchors,
+            #[cfg(feature = "generate")]
             practice,
+            #[cfg(feature = "generate")]
             out,
+            #[cfg(feature = "generate")]
             practice_prefix,
+            #[cfg(feature = "generate")]
             practice_count,
+            #[cfg(feature = "generate")]
             practice_seed,
         } => {
             let mut keys = SessionKeys::random();
-            let mut latent = None;
+            #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
+            let mut latent: Option<Vec<String>> = None;
+            #[cfg(feature = "generate")]
             let practice_dir = out;
+            #[cfg(feature = "generate")]
             let mut scenarios: Vec<(Option<PathBuf>, Scenario)> = match (&draw, &practice) {
                 (None, Some(family)) => {
                     let generator = generators::generator(family)
@@ -1837,6 +1910,13 @@ async fn run() -> Result<()> {
                     .map(|(path, s)| (Some(path), s))
                     .collect(),
             };
+            // The agent's build draws nothing: only the scenario files it is given.
+            #[cfg(not(feature = "generate"))]
+            let mut scenarios: Vec<(Option<PathBuf>, Scenario)> = sessions
+                .load()?
+                .into_iter()
+                .map(|(path, s)| (Some(path), s))
+                .collect();
             if v2_sessions {
                 keys = keys.salt_strategy_seeds();
             }
@@ -1855,9 +1935,11 @@ async fn run() -> Result<()> {
                 &mut scenarios,
             )
             .await?;
+            #[cfg(feature = "generate")]
             if let Some(path) = &anchors {
                 save_anchors(path, scenarios.iter().map(|(_, s)| s))?;
             }
+            #[cfg(feature = "generate")]
             if let Some(dir) = &practice_dir {
                 std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
                 for (_, scenario) in &scenarios {
@@ -1866,6 +1948,7 @@ async fn run() -> Result<()> {
             }
             serde_json::to_string_pretty(&reports)?
         }
+        #[cfg(feature = "generate")]
         Command::MarketCal(command) => market_cal::run(command)?,
     };
     if !quiet_stdout {
@@ -1874,6 +1957,7 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "generate")]
 /// Save a practice file as v1 without the per-account role maps a family
 /// draws for the host-side informed run: the file goes into the agent's image.
 fn save_practice(scenario: &Scenario, path: &Path) -> Result<()> {
@@ -1883,6 +1967,7 @@ fn save_practice(scenario: &Scenario, path: &Path) -> Result<()> {
     std::fs::write(path, text).with_context(|| path.display().to_string())
 }
 
+#[cfg(feature = "generate")]
 /// A practice file that is already in `--out` keeps its anchors the
 /// calibration doesn't run, if it is the scenario the family draws at the
 /// seed (whatever its description, which a calibration rewrites): a file
@@ -1964,6 +2049,7 @@ fn set_anchors(scenarios: &mut [Scenario], path: &Path) -> Result<()> {
 
 /// Write the anchors `scenarios` carry into the anchors file at `path`
 /// (see [`set_anchors`]), keeping what it holds for any anchor they don't.
+#[cfg(feature = "generate")]
 fn save_anchors<'a>(path: &Path, scenarios: impl Iterator<Item = &'a Scenario>) -> Result<()> {
     let mut file: BTreeMap<String, serde_json::Map<String, serde_json::Value>> =
         match std::fs::read(path) {
@@ -1997,6 +2083,7 @@ fn save_anchors<'a>(path: &Path, scenarios: impl Iterator<Item = &'a Scenario>) 
 
 /// The hidden set's seed, from the secret in `MTX_EVAL_SEED`, and the
 /// secret's SHA-256 (hex), which is all a report may say about it.
+#[cfg(feature = "generate")]
 fn eval_seed() -> anyhow::Result<(u64, String, SessionKeys)> {
     use sha2::{Digest, Sha256};
     let secret = std::env::var("MTX_EVAL_SEED").unwrap_or_default();
@@ -2040,11 +2127,15 @@ fn report_to_write<'a>(
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "generate")]
     use clap::Parser;
+    #[cfg(feature = "generate")]
     use mtx_grader::scenario::ShockFamily;
 
+    #[cfg(feature = "generate")]
     use super::{Cli, keep_other_anchors, save_anchors, set_anchors};
 
+    #[cfg(feature = "generate")]
     #[test]
     fn an_anchors_file_calibrates_a_drawn_set_and_names_every_scenario() {
         let dir = std::env::temp_dir().join(format!("mtx-anchors-{}", std::process::id()));
@@ -2082,6 +2173,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(feature = "generate")]
     #[test]
     fn the_informed_bot_runs_beside_the_reference_and_a_drawn_calibration_needs_an_anchors_file() {
         let grade = |extra: &[&str]| {
@@ -2132,6 +2224,7 @@ mod tests {
         assert!(calibrate(&[&practice[..], &["x.json"]].concat()).is_err());
     }
 
+    #[cfg(feature = "generate")]
     #[test]
     fn a_practice_file_keeps_the_anchor_that_was_not_run_and_refuses_another_draw() {
         let mut drawn = ShockFamily::spcx().sample_set("practice", 1, 7).remove(0);
@@ -2153,6 +2246,7 @@ mod tests {
         assert_eq!(again.reference_pnl_usd, Some(3.0));
     }
 
+    #[cfg(feature = "generate")]
     #[test]
     fn a_saved_practice_file_has_no_role_map() {
         let scenario = ShockFamily::spcx().sample_set("practice", 1, 7).remove(0);
@@ -2193,6 +2287,7 @@ mod tests {
         assert_eq!(super::report_to_write(Some(&one), false, json), Some(json));
     }
 
+    #[cfg(feature = "generate")]
     #[test]
     fn check_joint_takes_the_calibration_flag_repeated_or_with_several_files() {
         let base = ["mtx", "market-cal", "check-joint", "c.toml"];

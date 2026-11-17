@@ -94,6 +94,13 @@ def main():
     parser.add_argument("batch")
     parser.add_argument("--json")
     args = parser.parse_args()
+    try:
+        with open(os.path.join(args.batch, "batch.json")) as f:
+            unguarded = json.load(f).get("guarded") is False
+    except (OSError, ValueError):
+        unguarded = False
+    if unguarded:
+        print("\nNOT GUARDED: native harnesses ran on guarded tasks (guarded: false); a screen, not for publication")
 
     runs = defaultdict(lambda: defaultdict(list))
     void = []
@@ -154,7 +161,7 @@ def main():
         print("\nvoid (no reward; re-run, don't score): " + ", ".join(void))
     if args.json:
         with open(args.json, "w") as f:
-            json.dump({"tasks": summary, "void": void}, f, indent=2)
+            json.dump({"tasks": summary, "void": void, **({"guarded": False} if unguarded else {})}, f, indent=2)
 
 
 if __name__ == "__main__":
