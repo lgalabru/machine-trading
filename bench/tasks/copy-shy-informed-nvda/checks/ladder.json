@@ -1,0 +1,54 @@
+{
+  "anchors": {
+    "informed": "informed",
+    "reference": "reference"
+  },
+  "count": 72,
+  "exploits": {
+    "below": "informed",
+    "bots": [],
+    "max_profitable": 0.75
+  },
+  "family": "flash-crash",
+  "gates": {
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop",
+      "blind-long",
+      "blind-short"
+    ]
+  },
+  "min_rule_odds": 0.85,
+  "probes": {},
+  "rules": [
+    "max(blind-long, blind-short) < reference",
+    "reference < informed < hindsight"
+  ],
+  "rungs": [
+    {
+      "dir": "bots/starter",
+      "name": "nop"
+    },
+    {
+      "dir": "bench/checks/ladder/blind-long",
+      "may_breach": true,
+      "name": "blind-long"
+    },
+    {
+      "dir": "bench/checks/ladder/blind-short",
+      "may_breach": true,
+      "name": "blind-short"
+    },
+    {
+      "dir": "bench/tasks/copy-shy-informed-nvda/reference",
+      "name": "reference"
+    },
+    {
+      "dir": "bench/tasks/copy-shy-informed-nvda/checks/bots/informed",
+      "name": "informed",
+      "tell_latent": true
+    }
+  ]
+}

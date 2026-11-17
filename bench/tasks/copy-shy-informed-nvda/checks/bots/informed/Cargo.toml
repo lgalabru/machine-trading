@@ -1,0 +1,19 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mtx-bot-copy-shy-informed-informed"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# The informed bot as a process (`bin/bot`): only the ladder and the
+# verifier hand a bot its session's latent state, so it is never a
+# component.
+[[bin]]
+name = "mtx-copy-shy-informed-informed"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-copy-shy-informed = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }
