@@ -103,15 +103,52 @@ fn allowlisted(task_toml: &str) -> Option<bool> {
 /// Harbor's package cache by digest, the config's local path, the checkout).
 /// None when there is none, or it doesn't parse.
 fn ran_guarded(dir: &Path, result: &Value) -> Option<bool> {
+    allowlisted(&trial_task(dir, result)?.2?)
+}
+
+/// The task a trial ran: its full name (`config.task.name`, else the result's
+/// `task_name`, as a local `-p` run records it), its short name and the
+/// `task.toml` found for it. The one lookup the guard judges by and the
+/// release records, so that export judges as publish did.
+fn trial_task(dir: &Path, result: &Value) -> Option<(String, String, Option<String>)> {
     let task = &result["config"]["task"];
     let name = task["name"].as_str().or(result["task_name"].as_str())?;
+    let short = name.rsplit('/').next().unwrap_or(name).to_string();
     let text = review::task_toml(
         dir,
         name,
         task["ref"].as_str().unwrap_or_default(),
         task["path"].as_str(),
-    )?;
-    allowlisted(&text)
+    );
+    Some((name.to_string(), short, text))
+}
+
+/// Refuse a batch in which trials of one task resolve to different
+/// `task.toml` text (or one finds it and another doesn't): a release records
+/// one `task.toml` per task, and every trial of it is judged by that one.
+fn refuse_mixed_tasks(dir: &Path, trials: &[PathBuf]) -> Result<()> {
+    let mut seen: std::collections::BTreeMap<String, (String, Option<String>)> =
+        std::collections::BTreeMap::new();
+    for trial in trials {
+        let Some(result) = review::read_json(&trial.join("result.json")) else {
+            continue;
+        };
+        let Some((_, short, text)) = trial_task(dir, &result) else {
+            continue;
+        };
+        let at = trial.display().to_string();
+        match seen.get(&short) {
+            Some((first, was)) if *was != text => bail!(
+                "trials of {short} ran on different task.toml files ({first} and {at}): \
+                 a release records one per task; publish them as separate batches"
+            ),
+            Some(_) => {}
+            None => {
+                seen.insert(short, (at, text));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The host of an `http(s)` URL as Harbor's `urlsplit` reads it, or None when
@@ -356,6 +393,7 @@ pub fn publish(
     // A batch run with MTX_UNGUARDED, or a native harness's trial on a
     // guarded task, whichever way it got here.
     refuse_unguarded(&batch, &trials, true)?;
+    refuse_mixed_tasks(&batch, &trials)?;
     let pending: Vec<String> = trials
         .iter()
         .filter(|t| !t.join("result.json").is_file())
@@ -624,23 +662,18 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
         }
         // The task, as it ran: its task.toml.
         let result = review::read_json(&trial.join("result.json")).unwrap_or(Value::Null);
-        let task = &result["config"]["task"];
-        if let Some(name) = task["name"].as_str() {
-            let short = name.rsplit('/').next().unwrap_or(name).to_string();
-            if !tasks.contains_key(&short) {
-                let toml = review::task_toml(
-                    batch,
-                    name,
-                    task["ref"].as_str().unwrap_or_default(),
-                    task["path"].as_str(),
-                );
-                if let Some(toml) = &toml {
-                    let dir = out.join("tasks").join(&short);
-                    std::fs::create_dir_all(&dir)?;
-                    std::fs::write(dir.join("task.toml"), toml)?;
-                }
-                tasks.insert(short, json!({ "name": name, "ref": task["ref"] }));
+        if let Some((name, short, toml)) = trial_task(batch, &result)
+            && !tasks.contains_key(&short)
+        {
+            if let Some(toml) = &toml {
+                let dir = out.join("tasks").join(&short);
+                std::fs::create_dir_all(&dir)?;
+                std::fs::write(dir.join("task.toml"), toml)?;
             }
+            tasks.insert(
+                short,
+                json!({ "name": name, "ref": result["config"]["task"]["ref"] }),
+            );
         }
     }
     let shared = share_references(out)?;
@@ -1531,6 +1564,70 @@ mod tests {
         std::fs::write(tmp.join("batch2/.unguarded"), "").unwrap();
         let error = refuse_unguarded(&job, &[], true).unwrap_err();
         assert!(error.to_string().contains("not guarded"), "{error}");
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn a_release_records_the_task_toml_the_guard_judged_by() {
+        let tmp = std::env::temp_dir().join(format!("mtx-recorded-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let task = |name: &str, toml: &str| {
+            let dir = tmp.join("src").join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("task.toml"), toml).unwrap();
+            dir
+        };
+        let agent = json!({"name": "codex", "model_api_key_name": "OPENAI_API_KEY",
+            "base_url": null, "extra_allowed_hosts": []});
+        // A trial as a local `-p` run records it: no config.task.name, only
+        // task_name and the path.
+        let local = |parent: &str, dir: &str, path: &Path| {
+            let t = tmp.join(parent).join(dir);
+            std::fs::create_dir_all(&t).unwrap();
+            std::fs::write(
+                t.join("result.json"),
+                json!({"trial_name": dir, "task_name": "local-spcx",
+                    "agent_info": {"name": "codex"},
+                    "config": {"agent": agent, "task": {"name": null, "path": path}}})
+                .to_string(),
+            )
+            .unwrap();
+            t
+        };
+        let open = task("open", "[agent]\nuser = \"agent\"\n");
+        let batch = tmp.join("batch");
+        let a = local("batch/job", "a", &open);
+        assert!(refuse_unguarded(&batch, std::slice::from_ref(&a), true).is_ok());
+        refuse_mixed_tasks(&batch, std::slice::from_ref(&a)).unwrap();
+        let out = tmp.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        copy_release(&batch, std::slice::from_ref(&a), &out, "9.9.9").unwrap();
+        // The release records the file publish judged by, so export reads the
+        // same one even once the local task is guarded.
+        let recorded = out.join("tasks/local-spcx/task.toml");
+        assert_eq!(
+            std::fs::read_to_string(&recorded).unwrap(),
+            "[agent]\nuser = \"agent\"\n"
+        );
+        std::fs::write(
+            open.join("task.toml"),
+            "[agent]\nnetwork_mode = \"allowlist\"\n",
+        )
+        .unwrap();
+        let exported = crate::review::discover(&out);
+        assert_eq!(exported.len(), 1);
+        assert!(refuse_unguarded(&out, &exported, false).is_ok());
+        // Two versions of one task in one batch are refused, not judged by the
+        // first one's file.
+        std::fs::write(open.join("task.toml"), "[agent]\nuser = \"agent\"\n").unwrap();
+        let guarded = task("guarded", "[agent]\nnetwork_mode = \"allowlist\"\n");
+        let b = local("batch/job", "b", &guarded);
+        let error = refuse_mixed_tasks(&batch, &[a.clone(), b.clone()]).unwrap_err();
+        assert!(error.to_string().contains("different task.toml"), "{error}");
+        // Same text from two places is one version.
+        let same = task("same", "[agent]\nnetwork_mode = \"allowlist\"\n");
+        let c = local("batch/job", "c", &same);
+        refuse_mixed_tasks(&batch, &[b, c]).unwrap();
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 
