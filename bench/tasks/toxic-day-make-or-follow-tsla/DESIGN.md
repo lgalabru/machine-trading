@@ -96,12 +96,25 @@ reference, and makes bursts ambiguous: an execution algo (a new generic
 library actor, `algos`) works parent orders in bursts with the fund's
 rhythm, and the morning picks which of the two is busy.
 
+## The fund's hit rate (checklist item 16d)
+
+The fund runs at the library's `hit_rate` 0.85 (main's #114): each of
+its wallets, for one `horizon_slots` at a time, reads the move the wrong way
+with chance 0.15 and trades against it, on a view of its own. Michael kept
+0.85 (2026-11-17) because an informed trader is right on average and not
+always. A fund that is never wrong would make its single takes a perfect
+signal, and the card would test copying, not reading. So every bot that
+follows flow reads it over at least one horizon (150 slots, the longest a
+fund trades on), needs wallets to agree (at least two that way and more
+than the other way), and never flips a lean after entry. The instruction
+may state that the fund is right about 85% of the time.
+
 ## Rungs
 
 | Rung | What it does | Reads |
 | --- | --- | --- |
-| informed | told the fund's wallets; leans with their net flow over the last 150 slots past 1 TSLA, held 40 slots after the last signal its way, never flipped; flat between | the fund's takes |
-| reference | marks out each burst (net taker flow past 5 TSLA over 150 slots, each new side) 60 slots on; once two are marked, a mean over 10 bp means toxic: lean with the bursts, never flipped; else flat | the bursts' markouts |
+| informed | told the fund's wallets; leans with their net flow over the last 150 slots past 1 TSLA, with at least two wallets that way and more than the other way, held 40 slots after the last signal its way, never flipped; flat between | the fund's takes |
+| reference | marks out each burst (net taker flow past 5 TSLA over 150 slots, at least two accounts that way and more than the other way, each new side) 60 slots on; once two are marked, a mean over 10 bp means toxic: lean with the bursts, never flipped; else flat | the bursts' markouts |
 | flat | never trades | nothing |
 | make | makes all session (one TSLA a side at the touch, post-only, inventory within 2) | nothing |
 | follow | leans with the takers' net flow past 2.5 TSLA over 150 slots all session | the flow, not whether it is informed |

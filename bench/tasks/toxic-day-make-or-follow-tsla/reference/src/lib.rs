@@ -9,7 +9,8 @@
 //!   on the other side of the takes; every other account's change is a
 //!   take.
 //! - **Bursts.** The takers' net buying over the last 150 slots (the
-//!   longest horizon a fund trades on) past 5 TSLA either way is a burst.
+//!   longest horizon a fund trades on) past 5 TSLA either way, from at
+//!   least two accounts that way and more than the other way, is a burst.
 //! - **The read.** Each burst (each new side) is marked out against the
 //!   oracle 60 slots later, in basis points, the burst's way: what
 //!   following it would have paid before costs. Once two are marked, a
@@ -290,6 +291,28 @@ pub fn flow_side(net: f64, units: f64) -> Option<f64> {
     (net.abs() >= units).then(|| net.signum())
 }
 
+/// The accounts that must have traded a flow's way, and outnumber those
+/// that traded against it, for the flow to count.
+pub const AGREE_MIN: usize = 2;
+
+/// The side `changes` (by `weights`) call for: their net past `units`, with
+/// at least [`AGREE_MIN`] accounts that way and more than the other way, so
+/// one account's take, or one that reads the market wrong, doesn't decide
+/// it.
+pub fn agreed_side(changes: &[f64], weights: &[f64], units: f64) -> Option<f64> {
+    let dir = flow_side(net(changes, weights), units)?;
+    let (mut with, mut against) = (0, 0);
+    for (c, w) in changes.iter().zip(weights) {
+        let m = c * w * dir;
+        if m > 1e-9 {
+            with += 1;
+        } else if m < -1e-9 {
+            against += 1;
+        }
+    }
+    (with >= AGREE_MIN && with > against).then_some(dir)
+}
+
 /// The market's takes, marked out against the oracle.
 #[derive(Debug, Clone, Default)]
 pub struct Markouts {
@@ -314,7 +337,7 @@ pub struct Paper {
 }
 
 impl Paper {
-    pub fn update(&mut self, at: u64, oracle: f64, net: f64) {
+    pub fn update(&mut self, at: u64, oracle: f64, side: Option<f64>) {
         while self
             .pending
             .front()
@@ -324,7 +347,7 @@ impl Paper {
             self.count += 1;
             self.sum += side * (oracle / was - 1.0) * 10_000.0;
         }
-        let side = flow_side(net, BURST_UNITS).unwrap_or(0.0);
+        let side = side.unwrap_or(0.0);
         if side != 0.0 && side != self.side {
             self.pending.push_back((at, oracle, side));
         }
@@ -438,9 +461,10 @@ impl Tape {
         Ok(())
     }
 
-    /// The takers' net buying over the last [`FLOW_SLOTS`].
-    pub fn net(&self) -> f64 {
-        net(&self.watch.changes(FLOW_SLOTS), &self.weights)
+    /// The side the takers' flow over the last [`FLOW_SLOTS`] calls for,
+    /// past `units` and agreed across accounts ([`agreed_side`]).
+    pub fn side(&self, units: f64) -> Option<f64> {
+        agreed_side(&self.watch.changes(FLOW_SLOTS), &self.weights, units)
     }
 }
 
@@ -511,7 +535,8 @@ impl Strategy for Desk {
             return Ok(());
         }
         self.tape.read(at, market.oracle)?;
-        self.paper.update(at, market.oracle, self.tape.net());
+        self.paper
+            .update(at, market.oracle, self.tape.side(BURST_UNITS));
         let toxic = self.paper.toxic();
         if toxic != self.said {
             log(&format!(
@@ -527,7 +552,7 @@ impl Strategy for Desk {
             Policy::Make | Policy::Flat => None,
         };
         if let Some(units) = follow
-            && let Some(dir) = flow_side(self.tape.net(), units)
+            && let Some(dir) = self.tape.side(units)
         {
             self.lean.signal(dir, at);
         }

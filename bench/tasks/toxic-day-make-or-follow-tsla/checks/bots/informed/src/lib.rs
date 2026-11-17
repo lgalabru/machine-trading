@@ -12,12 +12,13 @@
 //! Phoenix names traders by their account, a PDA of the wallet, so it maps
 //! each wallet to its account and reads their TSLA positions every step.
 //! The fund's net buying or selling over the last 150 slots (the longest
-//! horizon it trades on) past 1 TSLA sets the side, with the cap, held 40
+//! horizon it trades on) past 1 TSLA, from at least two of its wallets and
+//! more of them that way than the other, sets the side, with the cap, held 40
 //! slots after the last signal its way, and never flipped while held:
 //! single takes of a wallet that reads the market wrong don't move it.
 //! Between the fund's trades it stays flat.
 
-use mtx_bot_toxic_day_make_or_follow::{Lean, Watch, closing, go_to, make};
+use mtx_bot_toxic_day_make_or_follow::{Lean, Watch, agreed_side, closing, go_to, make};
 use mtx_kit::{log, prelude::*, venue::PhoenixVenue};
 
 /// Slots the fund's flow is summed over, and the least net that counts.
@@ -72,9 +73,9 @@ impl Strategy for Informed {
         let at = market.slot.saturating_sub(self.start_slot);
         orders.cancel_all();
         self.watch.read(at)?;
-        let net: f64 = self.watch.changes(FUND_SLOTS).iter().sum();
-        if net.abs() >= FUND_UNITS {
-            self.lean.signal(net.signum(), at);
+        let changes = self.watch.changes(FUND_SLOTS);
+        if let Some(dir) = agreed_side(&changes, &vec![1.0; changes.len()], FUND_UNITS) {
+            self.lean.signal(dir, at);
         }
         self.lean.manage(at);
         if closing(market) {
