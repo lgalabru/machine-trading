@@ -68,9 +68,11 @@ pub fn of(root: &Path) -> Option<(String, bool)> {
 pub fn engine_label(root: &Path) -> Option<String> {
     let commit = git(root, &["rev-parse", "--short=12", "HEAD"], None)?;
     let commit = String::from_utf8_lossy(&commit).trim().to_string();
-    let (_, dirty) = of(root)?;
+    let (stamp, dirty) = of(root)?;
     Some(if dirty {
-        format!("{commit}+dirty")
+        // The edits' hash ends the stamp: two dirty trees differ.
+        let edits = stamp.get(stamp.len().saturating_sub(7)..).unwrap_or("");
+        format!("{commit}+dirty.{edits}")
     } else {
         commit
     })
@@ -132,7 +134,7 @@ mod tests {
         assert_ne!(committed, clean);
         std::fs::write(root.join("crates/a/new.rs"), "x\n").unwrap();
         assert!(of(&root).unwrap().1);
-        assert!(engine_label(&root).unwrap().ends_with("+dirty"));
+        assert!(engine_label(&root).unwrap().contains("+dirty."));
         std::fs::remove_dir_all(&root).unwrap();
     }
 }
