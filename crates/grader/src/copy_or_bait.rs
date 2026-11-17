@@ -117,9 +117,12 @@ pub struct CopyOrBaitFamily {
     pub horizon_slots: (u64, u64),
     pub edge_bps: (f64, f64),
     pub hit_rate: f64,
-    /// The leader's and each decoy's pace, the chasers' together, and each
-    /// noise wallet's, as multiples of the market's.
+    /// The leader's pace while it trades, each decoy's, the chasers'
+    /// together, and each noise wallet's, as multiples of the market's. A
+    /// decoy trades all session once it has faded, so its pace is about the
+    /// leader's over the session, not while it trades.
     pub informed_mult: f64,
+    pub decoy_mult: f64,
     pub chaser_mult: f64,
     pub noise_mult: f64,
     /// Where decoys fade, as shares of the session.
@@ -159,7 +162,8 @@ impl CopyOrBaitFamily {
             horizon_slots: (60, 150),
             edge_bps: (20.0, 30.0),
             hit_rate: 0.85,
-            informed_mult: 4.0,
+            informed_mult: 48.0,
+            decoy_mult: 4.0,
             chaser_mult: 4.0,
             noise_mult: 2.0,
             fade_share: (0.2, 0.5),
@@ -267,7 +271,7 @@ impl CopyOrBaitFamily {
                 "from": (lo * duration as f64) as u64,
                 "until": (hi * duration as f64) as u64,
             },
-            "intensity_mult": self.informed_mult,
+            "intensity_mult": self.decoy_mult,
             "size_mult": size,
             "limit_bps": limit,
         });
