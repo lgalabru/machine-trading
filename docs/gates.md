@@ -131,6 +131,12 @@ bot's sessions are the same with or without it. The ladder's informed rung
 is told the same (`"tell_latent": true`). It costs one more bot run per
 session.
 
+The oracle installs `solution/src` into the agent's starter, which enables no
+cargo features, so the solution must export its strategy component there
+(`solution-exports`): `solution/src` holds an `mtx_kit::export!` call that no
+positive `feature` gate hides. `not(feature = …)` and target gates are fine.
+The check is static; it reads the source, not a build.
+
 Gates grade each task on its own snapshot: `[metadata] snapshot` in its
 `task.toml`, else the `MTX_SNAPSHOT` its verifier image sets, else the
 Justfile's.
