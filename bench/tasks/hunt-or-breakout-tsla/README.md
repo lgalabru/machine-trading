@@ -8,7 +8,7 @@ A bot trades the Phoenix TSLA perp through runs at round price levels, fading st
 | Sessions | 72 hidden per grade, each with 1 to 3 stop hunts and 1 to 3 real breaks; 6 practice |
 | Mandate | TSLA only, ±12 TSLA; $500 loss limit; a position left at the close is closed at the oracle less 5 bp |
 | Score | scoring v2 only: 0 doing nothing, 0.5 the reference, 1 the informed bot |
-| Reference | reads every trader account's TSLA position; fades a run one new account pushed and then went quiet on, follows one a crowd built ahead of, and asks the oracle when they disagree |
+| Reference | reads every trader account's TSLA position; learns over the session which pushing wallet is the stop hunter and which the informed breaker (did the oracle follow its run?); rides and fades a known hunter's runs, follows a known breaker's, leaves unknown pushers alone |
 | Anchors | the informed bot is told who the hunter's and the informed traders' wallets are, the hunter's hold and trigger, the grid and the informed horizon: never where, when or which way a run goes, or what kind it is |
 
 How every task is scored, and how risk is enforced, is in the

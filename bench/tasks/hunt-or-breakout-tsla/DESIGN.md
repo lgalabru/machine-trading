@@ -93,11 +93,14 @@ follows a break before the book moves.
 
 ## The anchors
 
-- **The reference (0.5)** lists Phoenix's trader accounts, keeps those that
-  are new this session and take liquidity, and classifies each run by its
-  leader (a single pusher, or a known hunter), the crowd that built a
-  position before it, and the oracle when those disagree. It isn't told
-  who anyone is.
+- **The reference (0.5)** lists Phoenix's trader accounts and reads their
+  TSLA positions every step. It takes a 2.2-TSLA-or-more clip from an
+  account that came into the session flat as a push, and once that push's
+  run has played out (90 slots) names the account a hunter (the oracle
+  never followed) or a breaker (it did). It rides and fades a known
+  hunter's later pushes and follows a known breaker's; it leaves an unknown
+  pusher alone, so it misses each session's first hunt and first break. It
+  isn't told who anyone is.
 - **The informed bot (1)** is told the informed wallets (the breakers'
   among them) and the hunter's, the hunter's hold and trigger, the grid and
   the informed horizon (identity and process facts; `LATENT_FIELDS`), never

@@ -25,7 +25,7 @@ emoji = "🆕"
 market = "Phoenix TSLA perp"
 summary = "reads who leads a run through a round level (one hunter wallet pushing, or informed wallets building) and whether the oracle follows, then fades the hunt or follows the break before it resolves"
 skill = "reads who leads a run through a round level (one hunter wallet pushing, or informed wallets building) and whether the oracle follows, then fades the hunt or follows the break before it resolves"
-leak_needles = ["reads only the takers that came into this session", "told who hunts stops and who is"]
+leak_needles = ["learn who pushes the book through round levels, then ride", "told who hunts stops and who is"]
 headline = "v2"
 
 [verifier]

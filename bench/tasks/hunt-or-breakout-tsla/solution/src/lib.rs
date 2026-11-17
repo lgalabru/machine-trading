@@ -1,40 +1,24 @@
-//! Reference: when the book runs through a round level, read who ran it,
-//! then fade a stop hunt back to the level or follow a real break.
+//! Reference: learn who pushes the book through round levels, then ride
+//! and fade a stop hunter's runs and follow an informed breaker's.
 //!
 //! Every Phoenix trader account is on chain, so the bot lists them once
-//! (`getProgramAccounts`) and reads each one's TSLA position every step. It
-//! reads only the takers that came into this session: an account that held
-//! TSLA before the session started is the snapshot's, and one whose
-//! position moves against the book step after step is providing liquidity,
-//! not leading anything. A run through a level is then classified from
-//! three things:
+//! (`getProgramAccounts`) and reads each one's TSLA position every step. A
+//! stop hunter's push and an informed breaker's sweep look the same: one
+//! large clip (2.4 to 4.8 TSLA) through a level from an account that came
+//! into the session flat. What tells them apart is who sent it, and that the
+//! bot learns: once a push's run has played out, the oracle has either
+//! followed it (a breaker) or not (a hunter), and the account keeps that
+//! name for the session.
 //!
-//! - **The leader.** One account that took a large clip in a single step
-//!   just before the run is a pusher: a stop hunter, or an informed
-//!   breaker sweeping through the level, alike in size and both flat
-//!   before; each trades back out of its run a little later. Once a run has
-//!   played out, its pusher is a known hunter if the oracle never followed
-//!   it, a known breaker if it did: a run either leads later is faded or followed at
-//!   once, whoever else joins. An informed trader who happened to take a
-//!   large clip keeps trading the run's way, so the bot watches an unknown
-//!   pusher for a few slots.
-//! - **The crowd.** Two or more accounts that built a position the run's
-//!   way over the half-minute before it (before anyone chasing the run
-//!   could) are informed flow.
-//! - **The oracle.** A hunter can push the book but not the oracle. When
-//!   nobody pushed and no crowd led, or a pusher and a crowd both did, the
-//!   bot waits up to 30 slots: an oracle that follows means a break; one
-//!   that stays put while a pusher's book is still through the level means
-//!   a hunt. A run nobody led that the oracle doesn't follow (the walk
-//!   drifting through a level) isn't traded.
+//! - **A known hunter's push.** It rides the push into the book's run with
+//!   the cap, turns once the book is through the level and fades the run
+//!   with the cap, and covers when the book comes back to the level.
+//! - **A known breaker's sweep.** It follows with the cap at once and holds
+//!   until the oracle has moved and stalled.
+//! - **A push from an account it doesn't know yet** it leaves alone: it
+//!   could be either.
 //!
-//! A hunt is faded with the cap and covered once the book comes back to the
-//! level (or the hold has clearly passed); a break is followed with the cap
-//! and held until the oracle has moved and stopped, with a stop if the book
-//! falls back through the level.
-//!
-//! It isn't told who anyone is: it learns the hunter from what it does, and
-//! the informed accounts only as a crowd.
+//! It isn't told who anyone is.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -324,195 +308,100 @@ impl Trade {
 /// smallest push the instruction states (2.4 TSLA), above all but the
 /// informed traders' largest clips.
 const PUSH_UNITS: f64 = 2.2;
-/// A crowd: accounts that each built at least this the run's way over
-/// `CROWD_SLOTS`, in base units.
-const CROWD_UNITS: f64 = 0.4;
-const CROWD_SLOTS: u64 = 80;
-/// The crowd is read up to this many slots before the run, before chasers
-/// can have reacted to it.
-const CROWD_BEFORE_SLOTS: u64 = 4;
-/// How long it waits on the oracle, and how far it must move.
-const ORACLE_SLOTS: u64 = 30;
-const ORACLE_BPS: f64 = 6.0;
-/// Slots it watches a pusher after the run: a hunter goes quiet until it
-/// trades back; an informed trader who took a large clip keeps trading.
-const QUIET_SLOTS: u64 = 14;
-/// How far the oracle must have followed a run, in basis points, once it
-/// has had `SETTLE_SLOTS` to play out, for its pusher to be a breaker.
+/// How far the oracle must have followed a push, in basis points, once its
+/// run has had `SETTLE_SLOTS` to play out, for its account to be a breaker.
 const FOLLOWED_BPS: f64 = 20.0;
 const SETTLE_SLOTS: u64 = 90;
+/// How far the book must run past where it was at a push to be through.
+const THROUGH: f64 = 0.0008;
+/// Slots a push waits for the book to run.
+const PUSH_WAIT_SLOTS: u64 = 12;
 
-/// A run it has seen and not yet classified.
+/// What an account turned out to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Role {
+    Hunter,
+    Breaker,
+}
+
+/// A push seen: who, which way, when, and the mid and oracle then.
 #[derive(Debug, Clone, Copy)]
-struct Pending {
+struct Push {
+    account: usize,
     dir: f64,
-    level: f64,
     at: u64,
+    mid: f64,
     oracle: f64,
-    /// Who led it, read as it ran, and the pusher's position then.
-    pusher: Option<usize>,
-    crowd: usize,
-    pushed_to: f64,
 }
 
 /// The strategy.
 #[derive(Default)]
 pub struct Reference {
     cap: f64,
-    crosses: Crosses,
+    step: f64,
     watch: Watch,
-    /// Pushes seen, by account: the slot and the way.
-    pushes: BTreeMap<usize, (u64, f64)>,
-    /// Accounts seen pushing a run and then trading back out.
-    hunters: Vec<usize>,
-    /// Pushes that led a run, by account: the slot, awaiting a trade back.
-    led: BTreeMap<usize, (u64, f64, f64)>,
-    /// Accounts seen pushing a run the oracle then followed: breakers.
-    breakers: Vec<usize>,
-    /// Steps each account's position moved with the book, and against it.
-    with_book: Vec<u32>,
-    against_book: Vec<u32>,
-    last_mid: Option<f64>,
-    pending: Option<Pending>,
+    /// Accounts that held TSLA before the session: not its traders.
+    old: Vec<bool>,
+    /// What each account turned out to be.
+    roles: BTreeMap<usize, Role>,
+    /// Pushes whose runs haven't played out yet.
+    pending: Vec<Push>,
+    /// A known hunter's push being ridden.
+    riding: Option<Push>,
     trade: Option<Trade>,
-    /// The last level traded, and when: a run back through it soon after
-    /// is the same run.
-    last_level: Option<(f64, u64)>,
 }
 
 impl Reference {
-    /// The account that pushed the run's way in the last few slots, if one
-    /// did.
-    fn pusher(&self, dir: f64, slot: u64) -> Option<usize> {
-        self.pushes
+    /// Each push's run that has played out names its account.
+    fn learn(&mut self, slot: u64, oracle: f64) {
+        let (done, open): (Vec<Push>, Vec<Push>) = self
+            .pending
             .iter()
-            .filter(|(i, (at, way))| *way == dir && at + 12 >= slot && self.taker(**i))
-            .map(|(i, _)| *i)
-            .next()
+            .partition(|p| slot >= p.at + SETTLE_SLOTS);
+        self.pending = open;
+        for p in done {
+            let followed = p.dir * (oracle / p.oracle - 1.0) * 10_000.0 >= FOLLOWED_BPS;
+            let role = if followed { Role::Breaker } else { Role::Hunter };
+            if self.roles.insert(p.account, role) != Some(role) {
+                log(&format!(
+                    "slot {slot}: account {} is a {role:?}",
+                    self.watch.accounts[p.account]
+                ));
+            }
+        }
     }
 
-    /// Whether an account is one of the session's takers: new this session
-    /// (no TSLA before it), and not one whose position keeps moving against
-    /// the book, as a maker's does.
-    fn taker(&self, i: usize) -> bool {
-        let new = self.watch.first.get(i).is_some_and(|p| p.abs() < 1e-9);
-        let (with, against) = (self.with_book[i], self.against_book[i]);
-        new && !(against >= 4 && against > 3 * with)
-    }
-
-    /// Who led a run through a level the mid just crossed `dir`.
-    fn leaders(&self, dir: f64, slot: u64) -> (Option<usize>, usize) {
-        let pusher = self.pusher(dir, slot);
-        let crowd = self
-            .watch
-            .changes_between(CROWD_SLOTS, CROWD_BEFORE_SLOTS)
-            .iter()
+    /// This step's pushes: a large clip from one of the session's own
+    /// accounts that was flat before it.
+    fn pushes(&self, slot: u64, mid: f64, oracle: f64) -> Vec<Push> {
+        let now = self.watch.now();
+        self.watch
+            .last_changes()
+            .into_iter()
             .enumerate()
-            .filter(|(i, c)| Some(*i) != pusher && self.taker(*i) && dir * **c >= CROWD_UNITS)
-            .count();
-        (pusher, crowd)
-    }
-
-    fn classify(&mut self, run: Pending, slot: u64, oracle: f64, mid: f64) -> Option<Bet> {
-        let moved = run.dir * (oracle / run.oracle - 1.0) * 10_000.0;
-        let Some(p) = run.pusher else {
-            // No one pushed: a break if a crowd led it or the oracle follows.
-            return (run.crowd >= 2 || moved >= ORACLE_BPS).then_some(Bet::Follow);
-        };
-        if self.hunters.contains(&p) {
-            return Some(Bet::Fade);
-        }
-        if self.breakers.contains(&p) {
-            return Some(Bet::Follow);
-        }
-        // Did the pusher keep trading the run's way?
-        let kept = self
-            .watch
-            .now()
-            .get(p)
-            .is_some_and(|now| run.dir * (now - run.pushed_to) >= 0.1);
-        if kept {
-            return Some(Bet::Follow);
-        }
-        // A pusher it doesn't know yet: a hunter's run or a breaker's. The
-        // oracle creeping the run's way is a break; one that hasn't moved
-        // once the pusher has gone quiet is a hunt (after a crowd led too,
-        // it waits longer for the oracle).
-        if moved >= ORACLE_BPS {
-            return Some(Bet::Follow);
-        }
-        let wait = if run.crowd < 2 { QUIET_SLOTS } else { ORACLE_SLOTS };
-        if slot >= run.at + wait {
-            return (run.dir * (mid - run.level) > 0.0).then_some(Bet::Fade);
-        }
-        None
-    }
-
-    fn learn(&mut self, slot: u64, mid: Option<f64>, oracle: f64) {
-        // A run's pusher, once its run has had time to play out: a hunter
-        // if the oracle never followed, a breaker if it did.
-        let settled: Vec<(usize, f64, f64)> = self
-            .led
-            .iter()
-            .filter(|(_, (at, _, _))| slot >= at + SETTLE_SLOTS)
-            .map(|(i, (_, dir, then))| (*i, *dir, *then))
-            .collect();
-        for (i, dir, then) in settled {
-            self.led.remove(&i);
-            let followed = dir * (oracle / then - 1.0) * 10_000.0 >= FOLLOWED_BPS;
-            let (list, other, what) = if followed {
-                (&mut self.breakers, &mut self.hunters, "a breaker")
-            } else {
-                (&mut self.hunters, &mut self.breakers, "a hunter")
-            };
-            other.retain(|j| *j != i);
-            if !list.contains(&i) {
-                list.push(i);
-                log(&format!("slot {slot}: account {} is {what}", self.watch.accounts[i]));
-            }
-        }
-        let changes = self.watch.last_changes();
-        if self.with_book.len() != changes.len() {
-            self.with_book = vec![0; changes.len()];
-            self.against_book = vec![0; changes.len()];
-        }
-        let moved = match (self.last_mid, mid) {
-            (Some(a), Some(b)) => b - a,
-            _ => 0.0,
-        };
-        if mid.is_some() {
-            self.last_mid = mid;
-        }
-        for (i, c) in changes.into_iter().enumerate() {
-            if c.abs() >= 0.05 && moved != 0.0 {
-                if c.signum() == moved.signum() {
-                    self.with_book[i] += 1;
-                } else {
-                    self.against_book[i] += 1;
-                }
-            }
-            if c.abs() < PUSH_UNITS {
-                continue;
-            }
-            let way = c.signum();
-            self.pushes.insert(i, (slot, way));
-        }
+            .filter(|(i, c)| {
+                c.abs() >= PUSH_UNITS && !self.old[*i] && (now[*i] - c).abs() < 0.01
+            })
+            .map(|(account, c)| Push {
+                account,
+                dir: c.signum(),
+                at: slot,
+                mid,
+                oracle,
+            })
+            .collect()
     }
 }
 
 impl Strategy for Reference {
     fn start(&mut self, session: &Session) -> BotResult {
         self.cap = session.cap;
-        let step = session
-            .var("MTX_LEVEL_STEP_USD")
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(LEVEL_STEP_USD);
-        self.crosses = Crosses::new(step);
+        self.step = LEVEL_STEP_USD;
         let venue = PhoenixVenue::from_json(&session.venue)?;
         let own = venue.trader_account(&key(&session.authority)?).to_string();
         let accounts = Watch::every_trader(&own)?;
         log(&format!("watching {} trader accounts", accounts.len()));
-        self.watch = Watch::new(&venue, &session.symbol, accounts, CROWD_SLOTS + 20)?;
+        self.watch = Watch::new(&venue, &session.symbol, accounts, 20)?;
         Ok(())
     }
 
@@ -520,57 +409,55 @@ impl Strategy for Reference {
         let slot = market.slot;
         orders.cancel_all();
         self.watch.read(slot)?;
-        let now = mid(market);
-        self.learn(slot, now, market.oracle);
-        let Some(mid) = now else {
+        if self.old.is_empty() {
+            self.old = self.watch.first.iter().map(|p| p.abs() > 1e-9).collect();
+        }
+        let oracle = market.oracle;
+        self.learn(slot, oracle);
+        let Some(mid) = mid(market) else {
             return Ok(());
         };
-        let oracle = market.oracle;
-        let cross = self.crosses.update(mid);
 
-        if let Some(trade) = &mut self.trade {
-            if trade.done(slot, mid, oracle) || market.last {
-                self.trade = None;
+        for push in self.pushes(slot, mid, oracle) {
+            self.pending.push(push);
+            if self.trade.is_some() || self.riding.is_some() {
+                continue;
             }
-        } else if let Some((level, dir)) = cross {
-            let again = self
-                .last_level
-                .is_some_and(|(l, at)| (l - level).abs() < 1e-6 && at + 300 > slot);
-            if !again && self.pending.is_none() {
-                let (pusher, crowd) = self.leaders(dir, slot);
-                let pushed_to = pusher
-                    .and_then(|p| self.watch.now().get(p).copied())
-                    .unwrap_or(0.0);
-                if let Some(p) = pusher {
-                    self.led.insert(p, (slot, dir, oracle));
+            match self.roles.get(&push.account) {
+                Some(Role::Hunter) => {
+                    log(&format!("slot {slot}: ride a known hunter's push {:+}", push.dir));
+                    self.riding = Some(push);
                 }
-                self.pending = Some(Pending {
-                    dir,
-                    level,
-                    at: slot,
-                    oracle,
-                    pusher,
-                    crowd,
-                    pushed_to,
-                });
-            }
-        }
-        if let Some(run) = self.pending {
-            match self.classify(run, slot, oracle, mid) {
-                Some(bet) => {
-                    log(&format!("slot {slot}: {bet:?} the run {:+} through {}", run.dir, run.level));
-                    self.trade = Some(Trade::new(bet, run.dir, run.level, slot, run.oracle));
-                    self.last_level = Some((run.level, slot));
-                    self.pending = None;
-                }
-                None if slot >= run.at + ORACLE_SLOTS => {
-                    self.pending = None
+                Some(Role::Breaker) => {
+                    log(&format!("slot {slot}: follow a known breaker's sweep {:+}", push.dir));
+                    let stop = mid * (1.0 - push.dir * 0.006);
+                    self.trade = Some(Trade::new(Bet::Follow, push.dir, stop, slot, oracle));
                 }
                 None => {}
             }
         }
-        let target = match (&self.trade, market.last) {
-            (Some(trade), false) => trade.target(self.cap),
+        if let Some(push) = self.riding {
+            if push.dir * (mid / push.mid - 1.0) >= THROUGH {
+                let level = if push.dir > 0.0 {
+                    (push.mid / self.step).ceil() * self.step
+                } else {
+                    (push.mid / self.step).floor() * self.step
+                };
+                self.trade = Some(Trade::new(Bet::Fade, push.dir, level, slot, oracle));
+                self.riding = None;
+            } else if slot > push.at + PUSH_WAIT_SLOTS {
+                self.riding = None;
+            }
+        }
+        if let Some(trade) = &mut self.trade {
+            if trade.done(slot, mid, oracle) {
+                self.trade = None;
+            }
+        }
+        let target = match (&self.trade, self.riding, market.last) {
+            (_, _, true) => 0.0,
+            (Some(trade), _, _) => trade.target(self.cap),
+            (None, Some(push), _) => push.dir * self.cap,
             _ => 0.0,
         };
         go_to(target, market, orders);
