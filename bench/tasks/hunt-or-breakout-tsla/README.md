@@ -4,12 +4,12 @@ A bot trades the Phoenix TSLA perp through runs at round price levels, fading st
 
 | | |
 | --- | --- |
-| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29 |
-| Sessions | 72 hidden per grade; <!-- TODO: how they split by regime --> practice |
-| Mandate | 12 SPCX position cap; $500 loss limit |
-| Bound | <!-- TODO: what the reward divides by --> |
-| Reference | <!-- TODO: its reward, and what it does in one line --> |
-| Anchors | Scoring v2: 0.5 the reference; 1 the informed bot, <!-- TODO: what it knows, in one line --> |
+| Market | Phoenix TSLA perp, mainnet snapshot of 2026-11-13 (`phoenix-perps-2026-11-13`) |
+| Sessions | 72 hidden per grade, each with 1 to 3 stop hunts and 1 to 3 real breaks; 6 practice |
+| Mandate | TSLA only, ±12 TSLA; $500 loss limit; a position left at the close is closed at the oracle less 5 bp |
+| Score | scoring v2 only: 0 doing nothing, 0.5 the reference, 1 the informed bot |
+| Reference | reads every trader account's TSLA position; fades a run one new account pushed and then went quiet on, follows one a crowd built ahead of, and asks the oracle when they disagree |
+| Anchors | the informed bot is told who the hunter's and the informed traders' wallets are, the hunter's hold and trigger, the grid and the informed horizon: never where, when or which way a run goes, or what kind it is |
 
 How every task is scored, and how risk is enforced, is in the
 [dataset README](../README.md#how-a-bot-is-judged).
@@ -23,19 +23,33 @@ A good bot profits here because it reads who leads a run through a round level (
 
 ## The market
 
-<!-- TODO: the scenario family: what moves, how often, what the agent can observe. Regimes: every session: 1-3 stop hunts and 1-3 real breaks through a 2-dollar grid, mirrored -->
+Sessions of 1,400 to 2,200 slots on TSLA's fitted price model. Every $2 is a round level. Each session has 1 to 3 stop hunts and 1 to 3 real breaks, in random order: before each, the price drifts to just short of the nearest level; then the book's makers jump 0.15% to 0.45% through it while the oracle stays put. In a hunt the book comes back after the hunter's hold (10 to 60 slots); a single trader (two wallets) pushed 2.4 to 4.8 TSLA through the level a couple of slots before and trades the same size back out. In a break the oracle creeps toward the level for 10 to 60 slots, then jumps on through the book, 0.15% to 0.65% of the level beyond the excursion; two or three informed wallets, who see the oracle 20 to 60 slots ahead, trade it before it goes. Noise traders and chasers trade in every session. Every trader's position is on chain, in its Phoenix trader account.
 
 ## Scoring
 
-<!-- TODO: only what's specific to this task: the bound, valuation, extra void or disqualifying conditions. -->
+The account is valued at the scenario's oracle (Phoenix's index, which no order can push), within the session and at its last slot; a position left open is closed there by the desk's broker less 5 bp. Scoring v2 is the only score (`reward`).
 
 ## Baselines
 
-<!-- TODO: the check table (oracle, nop, cheater, sneaky), the ladder, the reference's numbers on fresh sets. -->
+Gate 0's ladder on the engine (`hidden/gate0/`): every rung on the same 72 hidden sessions from one fresh secret, total PnL and the share of the informed bot's PnL as scoring v2 weighs it (losses 1.5 times):
+
+| Rung | PnL | Sessions won | v2-weighted share of informed |
+| --- | --- | --- | --- |
+| nop | $0 | 0 | 0 |
+| follow every run | −$2,336 | 7 | −0.99 |
+| fade every run | −$1,498 | 16 | −0.67 |
+| wait for the oracle | −$489 | 30 | −0.28 |
+| reference | $1,114 | 54 | 0.27 |
+| informed bot | $3,595 | 72 | 1 |
+
+The order (every non-reading rung and nop < reference < informed) holds on 1.000 of 2,000 bootstrapped sets; the informed bot makes more than twice the best non-reading rung on every one (every non-reading rung loses). The reference's per-session Sharpe is 0.63. The Harbor checks (oracle at 0.5, nop at 0, cheaters) need the task image.
 
 ## Realism limits
 
-<!-- TODO: what the simulation doesn't model. -->
+- A run is the makers repricing as a premium on the path; real makers reprice on their own fills and inventory.
+- Stops are implied, not modelled as resting orders that fire.
+- The hunter and the informed traders are scripted: they don't react to the bot.
+- The snapshot's makers re-centre on every path move; the book between moves holds no memory of earlier takes.
 
 ## More
 

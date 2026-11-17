@@ -74,10 +74,11 @@ oracle.
 
 ## Detectability
 
-From the Gate 0 ladder (README), the reference, reading only the session's
-new takers, calls about three in four runs right, at the moment the book
-runs; the informed bot knows the wallets and is right on nearly every run,
-and on breaks often enters before the book moves.
+On 16 of the Gate 0 sessions, the reference's calls against the informed
+bot's: hunts 26 faded right, 1 followed, 4 missed; breaks 24 followed right,
+3 faded, 5 missed; 6 trades on runs the informed bot left alone. It decides
+about 10 slots after the informed bot on average; the informed bot often
+follows a break before the book moves.
 
 ## Fairness
 
@@ -119,8 +120,12 @@ lifts a bot past the reference; few will build the account scan.
 - **v1 (this build).** Gate 0 on the engine (72 sessions): the informed bot
   made $3,595, every non-reading rung lost. The first reference lost money;
   the second (crowd read before chasers, runs nobody led skipped) made $648,
-  0.12 of the informed bot; the third (only the session's new takers, the
-  hunter learned from runs it led) is the one shipped.
+  0.12 of the informed bot. The full build's reference reads only the
+  session's new takers, takes a push as 2.2 TSLA or more, watches the pusher
+  for 14 slots (a hunter goes quiet, an informed trader keeps trading),
+  learns the hunter from a run it led and traded back out of, and lets the
+  oracle decide runs nobody pushed: $1,114 on the same 72 sessions, 0.27 of
+  the informed bot weighted as v2 weighs it, per-session Sharpe 0.63.
 
 ## Departures from the card
 
