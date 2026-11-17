@@ -278,8 +278,8 @@ calibrate bot +files: bots
 grade bot +files:
     cargo run --release -- grade --snapshot snapshots/{{snapshot}} --bot {{bot}} --logs target/logs/grade {{files}}
 
-# The task images, for this machine only: dev (agents) and runtime
-# (verifiers). Tagged as the registry names, so task Dockerfiles that aren't
+# The task images, for this machine only: dev and agent (the agents'; agent is
+# dev with a guarded `mtx`) and runtime (verifiers). Tagged as the registry names, so task Dockerfiles that aren't
 # pinned yet build against them.
 # `surfpool=DIR` builds against a local Surfpool checkout's committed HEAD
 # (its git archive, so no build artifacts) instead of the git sources.
@@ -297,6 +297,8 @@ image surfpool="":
         -t {{registry}}/{{image}}:{{tag}}-runtime --load .
     docker buildx build -f bench/image/Dockerfile --target dev ${context[@]+"${context[@]}"} \
         -t {{registry}}/{{image}}:{{tag}} --load .
+    docker buildx build -f bench/image/Dockerfile --target agent ${context[@]+"${context[@]}"} \
+        -t {{registry}}/{{image}}:{{tag}}-agent --load .
     just task-images
 
 # Each task's own images, one at a time, from its environment/ and tests/:
@@ -347,8 +349,12 @@ push-image jobs="3":
     docker buildx build -f bench/image/Dockerfile --target dev \
         --build-arg CARGO_BUILD_JOBS={{jobs}} --platform linux/amd64,linux/arm64 \
         -t {{registry}}/{{image}}:{{tag}} --push .
+    docker buildx build -f bench/image/Dockerfile --target agent \
+        --build-arg CARGO_BUILD_JOBS={{jobs}} --platform linux/amd64,linux/arm64 \
+        -t {{registry}}/{{image}}:{{tag}}-agent --push .
 
-# Point every task at the pushed images, by digest: environments at dev,
+# Point every task at the pushed images, by digest: environments at dev (at
+# agent, for a guarded task: one whose environment starts from `-agent`),
 # verifiers at runtime.
 pin-image:
     #!/usr/bin/env bash
@@ -367,7 +373,12 @@ pin-image:
       echo "$ref@$digest"
       sedi -E "s|^FROM {{registry}}/{{image}}[-a-z]*:.*|FROM $ref@$digest|" "$@"
     }
-    pin {{registry}}/{{image}}:{{tag}} {{tasks}}/*/environment/Dockerfile
+    dev_files=() agent_files=()
+    for f in {{tasks}}/*/environment/Dockerfile; do
+      if grep -q -E '^FROM {{registry}}/{{image}}:[^@ ]*-agent(@| |$)' "$f"; then agent_files+=("$f"); else dev_files+=("$f"); fi
+    done
+    [ "${#dev_files[@]}" = 0 ] || pin {{registry}}/{{image}}:{{tag}} "${dev_files[@]}"
+    [ "${#agent_files[@]}" = 0 ] || pin {{registry}}/{{image}}:{{tag}}-agent "${agent_files[@]}"
     pin {{registry}}/{{image}}:{{tag}}-runtime {{tasks}}/*/tests/Dockerfile
     # The tasks' own images, built on the pins just made, then pinned in
     # each task.toml.
@@ -467,6 +478,18 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     [ -f .env ] && . ./.env
     [ -f ~/.machine-trading.env ] && . ~/.machine-trading.env
     set +a
+    # A guarded task's agent can reach only its model's address and the crates
+    # registry; a native harness would need its provider's API open, with its
+    # real key in the agent's environment and the provider's server-side fetch
+    # and search tools behind it. Guarded tasks run through Hermes only
+    # (MTX_UNGUARDED=1 lets a screen that is never published run natives anyway).
+    python3 -I bench/harness/models.py native-guard {{tasks}} {{models}}
+    unguarded=""
+    if [ -n "${MTX_UNGUARDED:-}" ] && python3 -I -c 'import sys; sys.exit(0 if "native:" in sys.argv[1] else 1)' "{{models}}"; then
+      unguarded=1
+      echo "WARNING: MTX_UNGUARDED is set: native harnesses run with their provider's API open and a real key" >&2
+      echo "WARNING: in the agent's environment. Guarded tasks are NOT guarded in this batch; it can't be published." >&2
+    fi
     for model in {{models}}; do
       case "$model" in
         native:openai/*) [ -n "${OPENAI_API_KEY:-}" ] || { echo "OPENAI_API_KEY is not set, for $model"; exit 1; } ;;
@@ -514,10 +537,19 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
                "harness": {m: harness(m) for m in models}, "web": False, "metric": "skill: total PnL over the hidden set / the reference bot'"'"'s, mean over attempts, 90% bootstrap interval",
                "commit": commit}, open(out, "w"), indent=2)' \
       "$batch/batch.json" "{{models}}" "{{k}}" "{{n}}" "{{version}}" "{{limit}}" "{{claude_code}}" "{{codex}}" "{{hermes}}" "{{effort}}" "$(git rev-parse HEAD 2>/dev/null || echo unknown)"
+    # A screen with native harnesses on guarded tasks is stamped before its
+    # first trial: an interrupted batch is still unguarded.
+    if [ -n "$unguarded" ]; then
+      python3 -I bench/harness/models.py stamp-unguarded "$batch"
+    fi
     # What the providers say when the account, not the model, is out: a
     # quota, a credit balance or a usage cap. Rate limits are retried by the
     # harnesses and don't stop a batch.
     refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached|credits exhausted|no credits remaining'
+    # A guarded task limits its agent's network to an allowlist: the bench adds
+    # the key proxy's address to it (native harnesses don't run guarded tasks:
+    # see native-guard above). A task on the public network ignores the flag.
+    proxy_host() { local h="${proxy_url#*://}"; echo "${h%%:*}"; }
     run_model() {
       local model="$1"
       echo "== $model on $dataset: {{k}} trials, {{n}} at a time, {{limit}}x the agent's time"
@@ -528,12 +560,14 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           model="${model#native:}"
           harbor run -y -d "$dataset" -a codex -m "$model" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
+            --allow-agent-host api.openai.com --allow-agent-host chatgpt.com \
             --ak version={{codex}} --ak web_search=disabled --ak disable_web_search=true
           ;;
         native:*)
           model="${model#native:}"
           harbor run -y -d "$dataset" -a claude-code -m "anthropic/${model#anthropic/}" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
+            --allow-agent-host api.anthropic.com \
             --ak version={{claude_code}} \
             --ak disallowed_tools=WebSearch,WebFetch,RemoteTrigger,PushNotification,CronCreate,CronDelete,SendMessage,ListAgents \
             --ae ENABLE_TOOL_SEARCH=false --ae CLAUDE_CODE_DISABLE_AUTO_MEMORY=1
@@ -549,6 +583,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
           env "${unset_keys[@]}" PYTHONPATH="$PWD/bench/harness${PYTHONPATH:+:$PYTHONPATH}" \
           harbor run -y -d "$dataset" -a mtx_hermes:Hermes "${route[@]}" -k {{k}} -n {{n}} -o "$batch" \
             --agent-timeout-multiplier {{limit}} "${effort[@]}" \
+            --allow-agent-host "$(proxy_host)" \
             --ak version={{hermes}}
           ;;
       esac
@@ -577,6 +612,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     scan_batch() {
       [ -z "$scanned" ] || return 0
       scanned=1
+      [ -z "$unguarded" ] || python3 -I bench/harness/models.py fetch-scan "$batch" || true
       kill "$watcher" ${proxy:+"$proxy"} 2> /dev/null || true
       if python3 -I bench/harness/models.py scan "$batch" > "$batch/.scan" 2>&1; then
         mv "$batch/.scan" "$batch/.scan-passed"
@@ -636,7 +672,11 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     fi
     python3 -I bench/report.py "$batch"
     echo "browse it: just review $batch"
-    echo "publish it: just publish $batch {{version}}"
+    if [ -n "$unguarded" ]; then
+      echo "WARNING: this batch was not guarded (guarded: false in batch.json): it can't be published"
+    else
+      echo "publish it: just publish $batch {{version}}"
+    fi
 
 # Check each model's name and key with a 1-token request: names from
 # bench/harness/models.toml, or `provider/model`. Reads the keys as `bench` does.
@@ -726,7 +766,7 @@ harbor-checks task="flash-crash-spcx" surfpool="" jobs="jobs": (image surfpool) 
     set -euo pipefail
     # The checks run on the images `image` just built: a task still pinned to
     # a released digest would test the old grader instead.
-    grep -q '^FROM {{registry}}/{{image}}:{{tag}}$' {{tasks}}/{{task}}/environment/Dockerfile \
+    grep -q -E '^FROM {{registry}}/{{image}}:{{tag}}(-agent)?$' {{tasks}}/{{task}}/environment/Dockerfile \
       && grep -q '^FROM {{registry}}/{{image}}:{{tag}}-runtime$' {{tasks}}/{{task}}/tests/Dockerfile \
       || { echo "{{task}} isn't on {{image}}:{{tag}}; unpin its Dockerfiles first"; exit 1; }
     # The verifier draws its hidden set from the batch's secret.
@@ -737,43 +777,128 @@ harbor-checks task="flash-crash-spcx" surfpool="" jobs="jobs": (image surfpool) 
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:CheaterAgent -o {{jobs}}/cheater
     PYTHONPATH=bench harbor run -y -p {{tasks}}/{{task}} -a checks.cheater_agent:SneakyAgent -o {{jobs}}/sneaky
 
-# Fail if the agent's image holds anything that answers its task: the
-# anchors (reference bots), their source or the tasks' solutions, the
-# checks' bots, or a scored scenario. Runs on the dev image `image` built.
-leak-audit:
+# The commands a guarded agent's `mtx` offers, and no others: the grader's
+# files-in side (practice, snapshots, bots), none of what draws from a task's
+# family or authors a task. A new command is a leak until it is listed here.
+agent_commands := "bench bot calibrate grade help rescore scenario snapshot studio"
+agent_scenario_commands := "check help new play"
+
+# Fail if an agent's image holds anything that answers its task: the anchors
+# (reference bots), their source or the tasks' solutions, the checks' bots, or
+# a scored scenario. A guarded image (a task whose environment starts from the
+# base's `-agent` image) also fails if its `mtx` can draw scenarios, offers a
+# command outside the allowlist above, or holds a scenario family's code.
+# With a task, audits the image its task.toml's `docker_image` names, which
+# must be `<tag>-<task>` (the one Harbor runs); with none, the base
+# dev image, the base agent image, and the image of every guarded task. Runs
+# on the images `image` built.
+leak-audit task="":
     #!/usr/bin/env bash
     set -euo pipefail
-        IFS='|' read -ra needles <<< "{{leak_needles}}|mtx-ladder-rungs"
-    image="{{registry}}/{{image}}:{{tag}}"
-    # Without the image every probe below fails, which reads as no leak.
-    docker image inspect "$image" > /dev/null 2>&1 \
-      || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
-    found=0
-    paths=(/opt/mtx/anchors /tests /solution)
-    for path in "${paths[@]}"; do
-      if docker run --rm --entrypoint test "$image" -e "$path"; then
-        echo "LEAK: $image holds $path"; found=1
+    IFS='|' read -ra needles <<< "{{leak_needles}}|mtx-ladder-rungs"
+    base="{{registry}}/{{image}}:{{tag}}"
+    guarded() { grep -q -E '^FROM [^ ]*:[^@ ]*-agent(@| |$)' "{{tasks}}/$1/environment/Dockerfile"; }
+    # The image Harbor runs for a task is the one task.toml's `docker_image`
+    # names, not the Dockerfile's: it must be the task's own (`<tag>-<task>`).
+    # Prints the reference to audit: as written when this machine holds it,
+    # else its tag (a pinned reference not pulled here).
+    task_image() {
+      local want="$base-$1" ref
+      ref="$(python3 -I -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb")).get("environment", {}).get("docker_image", ""))' "{{tasks}}/$1/task.toml")"
+      if [ "${ref%@*}" != "$want" ]; then
+        echo "LEAK: task.toml's docker_image for $1 is \"${ref:-<none>}\", not $want: Harbor runs that image, not the Dockerfile's" >&2
+        return 1
       fi
-    done
-    # The SDK holds the starter and nothing of any task's.
-    for bot in $(docker run --rm --entrypoint ls "$image" /opt/mtx/sdk/bots); do
-      if [ "$bot" != starter ]; then echo "LEAK: $image holds /opt/mtx/sdk/bots/$bot"; found=1; fi
-    done
-    for needle in "${needles[@]}"; do
-      hits="$(docker run --rm --entrypoint grep "$image" -rlsF --exclude-dir=proc --exclude-dir=sys \
-        --exclude-dir=target --exclude-dir=.cargo --exclude-dir=registry -e "$needle" / || true)"
-      if [ -n "$hits" ]; then
-        echo "LEAK: \"$needle\" in:"; echo "$hits" | sed 's/^/  /'; found=1
+      if docker image inspect "$ref" > /dev/null 2>&1; then echo "$ref"; else echo "$want"; fi
+    }
+    # The command names `mtx <args> --help` lists, one a line.
+    listed() {
+      docker run --rm --entrypoint mtx "$image" "$@" --help 2>&1 \
+        | awk '/^Commands:/ { f = 1; next } f && /^[^ ]/ { f = 0 } f && /^  [a-z]/ { print $1 }' | sort -u
+    }
+    audit() {
+      image="$1"; local guard="$2" found=0
+      # Without the image every probe below fails, which reads as no leak.
+      docker image inspect "$image" > /dev/null 2>&1 \
+        || { echo "no image $image: run \`just image\` first" >&2; exit 2; }
+      local path
+      for path in /opt/mtx/anchors /tests /solution; do
+        if docker run --rm --entrypoint test "$image" -e "$path"; then
+          echo "LEAK: $image holds $path"; found=1
+        fi
+      done
+      # The SDK holds the starter and nothing of any task's.
+      local bot
+      for bot in $(docker run --rm --entrypoint ls "$image" /opt/mtx/sdk/bots); do
+        if [ "$bot" != starter ]; then echo "LEAK: $image holds /opt/mtx/sdk/bots/$bot"; found=1; fi
+      done
+      if [ "$guard" = guarded ]; then
+        # The agent's mtx offers the allowlisted commands only: no scenario
+        # generation, no task authoring, gates, MCP or market calibration.
+        local extra
+        extra="$(comm -13 <(printf '%s\n' {{agent_commands}} | sort -u) <(listed))"
+        if [ -n "$extra" ]; then echo "LEAK: $image's mtx offers $(echo $extra)"; found=1; fi
+        extra="$(comm -13 <(printf '%s\n' {{agent_scenario_commands}} | sort -u) <(listed scenario))"
+        if [ -n "$extra" ]; then echo "LEAK: $image's mtx scenario offers $(echo $extra)"; found=1; fi
+        if docker run --rm --entrypoint mtx "$image" grade --help 2>&1 | grep -q -e '--draw'; then
+          echo "LEAK: $image's mtx offers grade --draw"; found=1
+        fi
+        # Generator source and family parameters: none ships with the agent.
+        local gen_hits
+        gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target \) -prune -o \
+          \( -name generators.rs -o -name making.rs -o -name carry.rs -o -name weekend.rs -o -name 'calibration' -o -name 'mtx-grader*' -o -path '*/crates/grader*' \) -print 2>/dev/null || true)"
+        if [ -n "$gen_hits" ]; then
+          echo "LEAK: generator source in $image:"; echo "$gen_hits" | sed 's/^/  /'; found=1
+        fi
+        # The families' code, by its mangled type names, is not in the binary.
+        if docker run --rm --entrypoint grep "$image" -qaE '[0-9](Shock|Making|Carry|Weekend)Family' /usr/local/bin/mtx; then
+          echo "LEAK: $image's mtx holds a scenario family's code"; found=1
+        fi
       fi
-    done
-    [ "$found" = 0 ] && echo "no leaks in $image"
-    exit "$found"
+      local needle hits
+      for needle in "${needles[@]}"; do
+        hits="$(docker run --rm --entrypoint grep "$image" -rlsF --exclude-dir=proc --exclude-dir=sys \
+          --exclude-dir=target --exclude-dir=.cargo --exclude-dir=registry -e "$needle" / || true)"
+        if [ -n "$hits" ]; then
+          echo "LEAK: \"$needle\" in:"; echo "$hits" | sed 's/^/  /'; found=1
+        fi
+      done
+      [ "$found" = 0 ] && echo "no leaks in $image ($guard)"
+      return "$found"
+    }
+    status=0
+    if [ -n "{{task}}" ]; then
+      if guarded "{{task}}"; then mode=guarded; else mode=unguarded; fi
+      if image="$(task_image "{{task}}")"; then audit "$image" "$mode" || status=1; else status=1; fi
+    else
+      audit "$base" unguarded || status=1
+      audit "$base-agent" guarded || status=1
+      for dir in {{tasks}}/*/; do
+        task="$(basename "$dir")"
+        if guarded "$task"; then
+          if image="$(task_image "$task")"; then audit "$image" guarded || status=1; else status=1; fi
+        fi
+      done
+    fi
+    exit "$status"
 
 # Fail if a bot can read the grader's own keypairs (takers', competitor's):
 # one market-making session in the runtime image `image` built, with a probe
 # bot that looks for them.
 keypair-probe:
     bench/checks/keypairs/probe.sh {{registry}}/{{image}}:{{tag}}-runtime
+
+# The network check for a guarded task (bench/checks/network): its agent's
+# container can't reach github.com, ghcr.io or the rest of the internet, and
+# still reaches the crates registry, its model's address and its chain.
+network-probe task:
+    bench/checks/network/probe.sh {{tasks}}/{{task}}
+
+# The agent's `mtx` (`--no-default-features`: no generators, no host-side
+# commands) lints and passes its tests. CI runs the same lines.
+agent-build-check:
+    cargo clippy -p mtx-cli --no-default-features --all-targets -- -D warnings
+    cargo test -p mtx-cli --no-default-features
 
 # The clock check for a task that opts in to `time-left` (bench/checks/clock):
 # its agent reads half the limit at 0.5x and the clock runs down in step.

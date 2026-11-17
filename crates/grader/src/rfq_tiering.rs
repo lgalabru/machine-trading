@@ -68,6 +68,9 @@ pub struct RfqTieringFamily {
     pub informed_share: (f64, f64),
     pub lead_slots: (u64, u64),
     pub correlation: (f64, f64),
+    /// How often an informed client's request follows what it sees (the
+    /// RFQ clients' default): the rest of the time its read is mistaken.
+    pub hit_rate: f64,
     pub asks_per_client: (f64, f64),
     pub tolerance_bps: (f64, f64),
     /// A request's size: lognormal, its median in trade sizes and its
@@ -92,6 +95,7 @@ impl RfqTieringFamily {
             informed_share: (0.15, 0.45),
             lead_slots: (45, 120),
             correlation: (0.6, 0.95),
+            hit_rate: 0.85,
             asks_per_client: (3.0, 10.0),
             tolerance_bps: (0.8, 1.6),
             size_mult: 3.0,
@@ -156,6 +160,7 @@ impl RfqTieringFamily {
             informed_share,
             lead_slots,
             correlation,
+            hit_rate: self.hit_rate,
             per_100_slots,
             size_mult: self.size_mult,
             deadline_slots: self.deadline_slots,

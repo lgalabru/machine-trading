@@ -133,7 +133,20 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      pinned in the Justfile, `bench/harness/mtx_hermes.py`), so no model is
      helped or hurt by its harness. Its trials are labelled
      `gpt-6.1-sol · hermes`, apart from 0.11.0 and earlier, which ran in
-     each provider's own harness; `native:<model>` still runs one that way.
+     each provider's own harness; `native:<model>` still runs one that way,
+     on unguarded tasks only: a native harness can't be guarded (its
+     provider's API, which its network must allow, can fetch the web for
+     it), so `just bench` refuses it on a guarded task. `MTX_UNGUARDED=1`
+     allows it for a screen: the batch is stamped `guarded: false` before
+     its first trial, its trajectories are scanned for fetch attempts, and
+     `publish` refuses it. On a task that ran guarded (its `task.toml`'s
+     `[agent] network_mode = "allowlist"`, as it ran), `publish` accepts
+     only the bench's Hermes (`mtx_hermes:Hermes` through the key proxy's
+     private address) and refuses every other agent, whatever its
+     directory: a direct `harbor run` of any installed agent (Codex,
+     Claude Code, a plain `hermes`) on a guarded task is unguarded too,
+     because Harbor opens the agent's provider host itself. `export`
+     refuses the same for what was never published.
      Its token counts come from Hermes's session; a cost only when Hermes
      knows the model's price. `effort` (left empty, each harness keeps its
      default) sets one reasoning effort for every harness; cross-family
@@ -233,7 +246,8 @@ for the cheap checks, `mtx gates <task>` for the full set (see
 ```sh
 just ladder <task>                     # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
-just leak-audit                        # the agent's image holds no answer
+just leak-audit <task>                 # the agent's image holds no answer (a guarded task's mtx can't draw)
+just network-probe <task>              # a guarded task's agent can't reach ghcr.io or github.com
 just keypair-probe                     # a bot can't read the grader's keypairs
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```

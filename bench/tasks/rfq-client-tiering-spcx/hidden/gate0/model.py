@@ -45,6 +45,7 @@ BASE = dict(
     share=(0.15, 0.45),
     lead=(45, 120),
     corr=(0.6, 0.95),
+    hit_rate=0.85,  # how often an informed request follows what the client sees (#114's default)
     asks=(3, 10),
     trade_size=0.25,
     size_mult=3.0,  # median request, in trade sizes
@@ -111,22 +112,26 @@ def draw(rng, p):
         for _ in range(rng.poisson(rate * 2)):
             c = int(rng.integers(N))
             ahead = L[at + lead]
+            mistaken = bool(informed[c]) and rng.random() >= p["hit_rate"]
             if informed[c] and ahead != L[at]:
                 side = 1 if ahead > L[at] else -1  # +1: the client buys
+                if mistaken:
+                    side = -side
             else:
                 side = 1 if rng.random() < 0.5 else -1
             n = p["size_mult"] * np.exp(p["size_sigma"] * rng.standard_normal())
-            reqs.append((at, c, side, n))
+            reqs.append((at, c, side, n, mistaken))
     # Phoenix's index is the level in whole ticks (a cent): what the bot sees and the desk is valued at.
     I = np.round(L * (1 + p["index_noise_bp"] / 1e4 * rng.standard_normal(len(L))), 2)
     return dict(D=D, L=L, I=I, N=N, informed=informed, corr=corr, tol=tol, lead=lead, reqs=reqs, s=k / N)
 
 
-def value(sess, c, at):
+def value(sess, c, at, mistaken=False):
     L = sess["L"]
     if not sess["informed"][c]:
         return L[at]
-    return L[at] + sess["corr"] * (L[at + sess["lead"]] - L[at])
+    seen = sess["corr"] * (L[at + sess["lead"]] - L[at])
+    return L[at] + (-seen if mistaken else seen)
 
 
 def run(sess, p, policy):
@@ -137,7 +142,7 @@ def run(sess, p, policy):
     inv = 0.0
     pnl = 0.0
     view = dict(fills=[], reqs=[], inv=0.0, L=I, tol=sess["tol"], sess=sess, p=p)
-    for at, c, side, n in sess["reqs"]:
+    for at, c, side, n, mistaken in sess["reqs"]:
         view["now"] = at
         view["inv"] = inv
         quote = policy(view, (at, c, side, n))
@@ -154,7 +159,7 @@ def run(sess, p, policy):
         if abs(new_inv) > p["cap"]:
             continue
         reach = sess["tol"] / 1e4 * np.sqrt(size_n)
-        val = value(sess, c, at)
+        val = value(sess, c, at, mistaken)
         price = I[at] * (1 + side * q / 1e4)
         ok = price <= val * (1 + reach) if side > 0 else price >= val * (1 - reach)
         if not ok:

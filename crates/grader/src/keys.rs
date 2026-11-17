@@ -58,7 +58,8 @@ impl SessionKeys {
     }
 
     /// Salt the seed each of the bot's sessions hands its strategy with
-    /// the grade's secret (scoring v2's session rules). Unsalted, a session's
+    /// the grade's secret (every drawn grade, and scoring v2's session
+    /// rules). Unsalted, a session's
     /// seed is a hash of its scenario's name, the same in every grade, so a
     /// bot could tell which session it is in; salted, nothing without the
     /// secret maps one to the other. The reference's seeds stay as they are,

@@ -135,8 +135,10 @@ pub struct SessionOptions<'a> {
 /// is the scenario's own risk desk, `stop_out`: see [`crate::risk`].)
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Rules {
-    /// The account is valued at every slot for its drawdown, not only at
-    /// every step.
+    /// The account is measured at every slot for the positions and
+    /// notional it held, not only at every step. Its value, and with it the
+    /// drawdown, is read at the steps only: where the bot is shown it and
+    /// the risk desk reads it.
     pub every_slot: bool,
 }
 
@@ -177,7 +179,8 @@ pub struct SessionReport {
     /// The most positions or orders the bot held at once in other markets.
     pub positions_outside_universe: u32,
     /// The deepest the account's value fell below its running peak while the
-    /// bot ran, in USD.
+    /// bot ran, in USD. In a net-scored session it is net of the hold: the
+    /// value less what holding the start would have gained.
     pub max_drawdown_usd: f64,
     /// The account priced at each step, for the mandate's notional rules
     /// (gross notional, exposures, hedges), and as the term started where
@@ -371,6 +374,13 @@ pub struct StepRecord {
     /// The account's value as the session values it, and its PnL so far.
     pub value_usd: f64,
     pub pnl_usd: f64,
+    /// What holding the start positions would have gained by this step, when
+    /// the session is net-scored (see [`crate::orders::NetScoring`]): the
+    /// drawdown the bot is shown, the risk desk reads and the audit measures
+    /// is on the value less it, so holding the start draws down nothing.
+    /// 0 otherwise.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub hold_usd: f64,
     /// The bot's turn after this step: how long it took and whether it
     /// answered in time. Absent when there was no turn.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -487,6 +497,7 @@ impl SessionReport {
                         instrument: fill.instrument.clone(),
                         side: fill.side,
                         price: fill.price,
+                        worst_price: fill.worst_price.unwrap_or(fill.price),
                     }),
             )
             .collect();
@@ -666,8 +677,8 @@ pub(crate) trait Account: Send + Sync {
     /// One instruction of a bot's transaction, as the report shows it.
     fn decode(&self, ix: &serde_json::Value, keys: &[serde_json::Value]) -> IxRecord;
 
-    /// Between a step's slots, at `slot`: value the account for its
-    /// drawdown (see [`Rules::every_slot`]). Nothing by default.
+    /// Between a step's slots, at `slot`: measure the account for the
+    /// positions it held (see [`Rules::every_slot`]). Nothing by default.
     async fn sample(&mut self, _slot: u64) -> Result<()> {
         Ok(())
     }
@@ -1028,18 +1039,21 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             measured.value_usd += paid;
             measured.pnl_usd += paid;
         }
-        peak_usd = peak_usd.max(measured.value_usd);
+        // Net of what holding the start would have gained, in a net-scored
+        // session: a bot that holds draws down nothing, as it scores nothing.
+        let risked_usd = measured.value_usd - measured.hold_usd;
+        peak_usd = peak_usd.max(risked_usd);
         if closing.is_none()
             && scenario
                 .stop_out
                 .as_ref()
                 .is_some_and(|stop| stop.covers(crate::scenario::StopRule::Drawdown))
-            && peak_usd - measured.value_usd > env.max_drawdown_usd
+            && peak_usd - risked_usd > env.max_drawdown_usd
         {
             info!(
                 scenario = scenario.name,
                 k,
-                drawdown_usd = peak_usd - measured.value_usd,
+                drawdown_usd = peak_usd - risked_usd,
                 "drawdown past the limit: the risk desk closes the account"
             );
             // The bot is stopped before the desk sends anything, so it
@@ -1071,7 +1085,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 step: k,
                 at,
                 value_before_usd: measured.value_usd,
-                peak_usd,
+                peak_usd: peak_usd + measured.hold_usd,
                 value_after_usd: measured.value_usd,
                 position_before: measured.position,
                 positions_before: measured
@@ -1136,7 +1150,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             if let Some(now) = steps_seen.last() {
                 let peak = steps_seen
                     .iter()
-                    .map(|r| r.value_usd)
+                    .map(|r| r.value_usd - r.hold_usd)
                     .fold(account.start_value_usd(), f64::max);
                 let before = steps_seen
                     .len()
@@ -1145,7 +1159,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 bot.measured(crate::wasm::Account {
                     value_usd: now.value_usd,
                     pnl_usd: now.pnl_usd,
-                    drawdown_usd: peak - now.value_usd,
+                    drawdown_usd: peak - (now.value_usd - now.hold_usd),
                     position: now.position,
                     position_change: now.position - before,
                     level_usd: now.level_usd,

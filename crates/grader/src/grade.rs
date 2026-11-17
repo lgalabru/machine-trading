@@ -51,6 +51,12 @@ pub struct ScenarioResult {
     /// (see [`Scenario::informed_pnl_usd`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub informed_pnl_usd: Option<f64>,
+    /// What a bot that does nothing made in this session, measured, when
+    /// doing nothing may pay (see [`Scenario::nop_may_pay`]) and the grade
+    /// ran under v2's rules: scoring v2's 0. Without it, doing nothing is
+    /// taken to make 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nop_pnl_usd: Option<f64>,
     /// What the session's trades made against the price at the time, for
     /// scoring v2's gap (see [`trade_markout`]). Not reported.
     #[serde(skip)]
@@ -117,12 +123,25 @@ pub struct GradeReport {
     /// score, and `skill` and `reference_ratio` are left out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headline: Option<String>,
+    /// Set when the grade stopped at the bot's first breach
+    /// ([`GradeOptions::stop_on_disqualify`]): `scenarios` is then only the
+    /// sessions up to it, which scoring v2 refuses to score.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<Truncated>,
     pub scenarios: Vec<ScenarioResult>,
     /// The reference's sessions, when the grade ran it: kept out of the
     /// report (its PnL is in [`ScenarioResult::reference_pnl_usd`]), for the
     /// replay check.
     #[serde(skip)]
     pub anchors: Vec<SessionReport>,
+}
+
+/// A grade that stopped at the bot's first breach: how many of its sessions
+/// it graded, of how many it was given.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Truncated {
+    pub graded: usize,
+    pub of: usize,
 }
 
 /// How the bot made its PnL, across sessions. Reported, not scored: with a
@@ -197,6 +216,14 @@ impl GradeReport {
     /// without a reference PnL, a spot session whose starting wallet makes
     /// doing nothing something other than 0, or a ceiling that doesn't fit.
     pub fn score_v2(&mut self, params: &scoring_v2::Params) -> Result<()> {
+        // The set is the sessions up to the first breach: a score over them
+        // would depend on where the breach fell, not on the bot.
+        if let Some(Truncated { graded, of }) = self.truncated {
+            return Err(Error::ScoringV2(format!(
+                "the grade stopped at its first breach, after {graded} of {of} sessions, and \
+                 v2 scores every session: grade without `--stop-on-disqualify`"
+            )));
+        }
         let fatal = self
             .not_graded
             .clone()
@@ -215,30 +242,21 @@ impl GradeReport {
             .iter()
             .map(|result| {
                 let session = &result.session;
-                // Its ceiling and its trade markout read one market's marks
-                // and cap.
-                if !session.markets.is_empty() {
-                    return Err(format!(
-                        "{}: scoring v2 scores sessions on one market; this one trades {}",
-                        session.scenario,
-                        session
-                            .markets
-                            .iter()
-                            .map(|m| m.symbol.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ));
-                }
                 // The cost-aware hindsight ceiling, on the reference's marks
                 // only: the bot's own marks move with its trades, so a bot
                 // could lower its own ceiling. Without a reference session
-                // there is none, and v2 refuses a grade that needs it.
+                // there is none, and v2 refuses a grade that needs it. It
+                // reads one market's marks and cap: on several, the ceiling
+                // is the informed bot's, or a given one.
                 let reference = self
                     .anchors
                     .iter()
                     .find(|a| a.scenario == session.scenario && !a.timeline.steps.is_empty());
-                let hindsight = reference.zip(session.mandate.universe.first()).map(
-                    |(reference, allowance)| {
+                let one_market = session.markets.is_empty();
+                let hindsight = reference
+                    .zip(session.mandate.universe.first())
+                    .filter(|_| one_market)
+                    .map(|(reference, allowance)| {
                         let marks: Vec<f64> = reference
                             .timeline
                             .steps
@@ -251,11 +269,32 @@ impl GradeReport {
                             allowance.max_position,
                             params.hindsight_cost,
                         )
-                    },
-                );
+                    });
+                if !one_market
+                    && result.informed_pnl_usd.is_none()
+                    && matches!(
+                        params.ceiling,
+                        scoring_v2::Ceiling::Informed { eta_override: None }
+                    )
+                {
+                    return Err(format!(
+                        "{}: the cost-aware hindsight ceiling reads one market's marks; this \
+                         session trades {}, and needs the informed bot's PnL",
+                        session.scenario,
+                        session
+                            .markets
+                            .iter()
+                            .map(|m| m.symbol.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
                 let reference_pnl_usd = result.reference_pnl_usd.ok_or_else(|| {
                     format!("{}: no reference PnL to anchor to", session.scenario)
                 })?;
+                // Where a bot that does nothing was run, its PnL is v2's 0,
+                // whatever the session started with.
+                let nop_measured = result.nop_pnl_usd.is_some();
                 if session.spot.is_some() && session.net.is_none() {
                     return Err(format!(
                         "{}: a spot session's starting wallet can move with the price, and \
@@ -267,7 +306,9 @@ impl GradeReport {
                 // order or net scoring scores the session against doing
                 // nothing (holding the start); and it earns or pays the
                 // scenario's funding, which neither's drift takes out.
-                if session.start_position != 0.0 && session.order.is_none() && session.net.is_none()
+                let starts_held = session.start_position != 0.0
+                    || session.markets.iter().any(|m| m.start_position != 0.0);
+                if starts_held && !nop_measured && session.order.is_none() && session.net.is_none()
                 {
                     return Err(format!(
                         "{}: a perp session's starting position can move with the price, \
@@ -275,7 +316,7 @@ impl GradeReport {
                         session.scenario
                     ));
                 }
-                if session.start_funded {
+                if session.start_funded && !nop_measured {
                     return Err(format!(
                         "{}: a perp session's starting position accrues the scenario's \
                          funding, and v2 doesn't run a nop anchor yet",
@@ -300,7 +341,7 @@ impl GradeReport {
                     informed_pnl_usd: result.informed_pnl_usd,
                     hindsight_ceiling_usd: hindsight,
                     reference_session_sha256: reference.map(reference_sha256),
-                    nop_pnl_usd: 0.0,
+                    nop_pnl_usd: result.nop_pnl_usd.unwrap_or(0.0),
                     bound_usd: result.bound_pnl_usd,
                     // Without a drawdown limit, the most a session could
                     // lose is taken as its hindsight bound.
@@ -563,9 +604,10 @@ pub struct GradeOptions<'a> {
     /// keys every run of the grade.
     pub keys: &'a SessionKeys,
     /// Run the sessions under scoring v2's rules (see [`session::Rules`]):
-    /// the bot's and the reference's drawdowns are sampled every slot. Off, the grade runs
-    /// as it always has. (The bot's seeds are salted through `keys`: see
-    /// [`SessionKeys::salt_strategy_seeds`].)
+    /// positions are sampled every slot, and a session where doing nothing
+    /// may pay is also run by a bot that does nothing, whose PnL is v2's 0
+    /// there. Off, the grade runs as it always has. (The bot's seeds are
+    /// salted through `keys`: see [`SessionKeys::salt_strategy_seeds`].)
     pub v2_sessions: bool,
 }
 
@@ -756,6 +798,13 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         informed_logs = Some(read_files(&logs.0)?);
         drop(logs);
     }
+    // What doing nothing makes, where it isn't 0: measured by a bot that
+    // does nothing, so no rule has to say what holding the start is worth.
+    let nops = if opts.v2_sessions {
+        run_nop(&opts, &scenarios).await?
+    } else {
+        vec![None; scenarios.len()]
+    };
     let sessions = run_sessions(
         opts.snapshot_dir,
         opts.bot_dir,
@@ -798,7 +847,15 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         }
         write_details(dir, "bot", &sessions, &scenarios, opts.annotations)?;
     }
+    let graded = sessions.len();
     let mut report = score(sessions.into_iter().zip(&scenarios).collect());
+    report.truncated = (graded < scenarios.len()).then_some(Truncated {
+        graded,
+        of: scenarios.len(),
+    });
+    for (result, nop) in report.scenarios.iter_mut().zip(nops) {
+        result.nop_pnl_usd = nop;
+    }
     // The reference's drawdowns as this grade measured them, for scoring
     // v2: kept off the scenarios, which the detail files hold.
     for (result, anchor) in report.scenarios.iter_mut().zip(&anchored) {
@@ -815,6 +872,76 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         "graded"
     );
     Ok(report)
+}
+
+/// A process bot that answers every turn and does nothing.
+const NOP_BOT: &str = r#"#!/bin/bash
+while IFS= read -r line <&3; do
+  case "$line" in
+    *'"t":"hello"'*) printf '{"t":"ready"}\n' >&3 ;;
+    *'"t":"step"'*) k=${line#*\"k\":}; k=${k%%[,\}]*}; printf '{"t":"done","k":%s}\n' "$k" >&3 ;;
+    *'"t":"end"'*) exit 0 ;;
+  esac
+done
+"#;
+
+/// Run a bot that does nothing on each of `scenarios` where doing nothing
+/// may pay (see [`Scenario::nop_may_pay`]), and return its PnL in each,
+/// `None` where doing nothing is 0 without running it.
+async fn run_nop(opts: &GradeOptions<'_>, scenarios: &[Scenario]) -> Result<Vec<Option<f64>>> {
+    let needing: Vec<usize> = scenarios
+        .iter()
+        .enumerate()
+        .filter(|(_, scenario)| scenario.nop_may_pay())
+        .map(|(i, _)| i)
+        .collect();
+    let mut nops = vec![None; scenarios.len()];
+    if needing.is_empty() {
+        return Ok(nops);
+    }
+    let dir = std::env::temp_dir().join(format!("mtx-nop-bot-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).map_err(io_error(&dir))?;
+    let script = dir.join("run.sh");
+    std::fs::write(&script, NOP_BOT).map_err(io_error(&script))?;
+    // A process bot runs as its own user, which has to read it.
+    for path in [&dir, &script] {
+        std::fs::set_permissions(path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .map_err(io_error(path))?;
+    }
+    let subset: Vec<Scenario> = needing.iter().map(|&i| scenarios[i].clone()).collect();
+    let users = session::BOT_USERS
+        .len()
+        .saturating_sub(opts.first_bot_user)
+        .max(1);
+    let jobs = opts.anchor_jobs.clamp(1, users);
+    let sessions = run_sessions(
+        opts.snapshot_dir,
+        &dir,
+        &subset,
+        &dir.join("logs"),
+        opts.first_bot_user..opts.first_bot_user + jobs,
+        None,
+        false,
+        true,
+        None,
+        opts.keys.role("nop"),
+        session::Rules {
+            every_slot: opts.v2_sessions,
+        },
+    )
+    .await;
+    let _ = std::fs::remove_dir_all(&dir);
+    let sessions = sessions?;
+    check_timing(&sessions)?;
+    for (&i, session) in needing.iter().zip(&sessions) {
+        nops[i] = Some((session.pnl_usd * 100.0).round() / 100.0);
+    }
+    info!(
+        sessions = sessions.len(),
+        nop_pnl_usd = sessions.iter().map(|s| s.pnl_usd).sum::<f64>(),
+        "a bot that does nothing graded"
+    );
+    Ok(nops)
 }
 
 /// The report of a bot that wasn't graded at all: 0.
@@ -877,6 +1004,18 @@ pub struct Verdict {
     pub tampered: Option<String>,
     pub not_graded: Option<String>,
     pub eval_seed_sha256: Option<String>,
+    pub truncated: Option<Truncated>,
+    /// The report's sessions, for what only they hold (see
+    /// [`ScenarioResult::nop_pnl_usd`]).
+    #[serde(default)]
+    pub scenarios: Vec<StoredNop>,
+}
+
+/// What a report's session says of the nop bot's run.
+#[derive(Debug, Default, Deserialize)]
+pub struct StoredNop {
+    #[serde(default)]
+    pub nop_pnl_usd: Option<f64>,
 }
 
 /// Score a finished grade again from what it wrote, without running a
@@ -894,6 +1033,10 @@ pub fn rescore(sessions: Vec<(SessionReport, Scenario)>, verdict: Verdict) -> Gr
         }
     };
     report.eval_seed_sha256 = verdict.eval_seed_sha256;
+    report.truncated = verdict.truncated;
+    for (result, stored) in report.scenarios.iter_mut().zip(&verdict.scenarios) {
+        result.nop_pnl_usd = stored.nop_pnl_usd;
+    }
     if let Some(reason) = verdict.tampered {
         report.tamper(reason);
     }
@@ -958,6 +1101,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
             bound_pnl_usd: bound_of(scenario, &session),
             reference_pnl_usd: scenario.reference_pnl_usd,
             informed_pnl_usd: scenario.informed_pnl_usd,
+            nop_pnl_usd: None,
             trade_markout_usd: trade_markout(&session, scenario),
             reference_max_drawdown_usd: scenario.reference_max_drawdown_usd,
             informed_max_drawdown_usd: scenario.informed_max_drawdown_usd,
@@ -993,6 +1137,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         markout: total_markout(&scenarios),
         v2: None,
         headline: None,
+        truncated: None,
         scenarios,
         anchors: Vec::new(),
     }
@@ -1183,6 +1328,17 @@ fn check_anchors(role: &str, anchors: &[SessionReport]) -> Result<()> {
 /// Whether the bot traded in the session: its position in the scenario's
 /// market was ever other than where it started.
 fn traded(session: &SessionReport) -> bool {
+    // On several markets, any of them moving is trading.
+    if !session.markets.is_empty() {
+        return session.positions.iter().any(|range| {
+            let start = session
+                .markets
+                .iter()
+                .find(|m| range.instrument.symbol == m.symbol)
+                .map_or(0.0, |m| m.start_position);
+            range.lowest != start || range.highest != start
+        });
+    }
     if session.start_position == 0.0 {
         return session.peak_position > 0.0;
     }
@@ -1649,6 +1805,7 @@ mod tests {
             side,
             price,
             base: 1.0,
+            worst_price: None,
             forced: false,
         };
         // A buy and a sell inside one step net to nothing; the sell is still
@@ -1780,6 +1937,7 @@ mod tests {
             position,
             value_usd: value,
             pnl_usd: value - 10_100.0,
+            hold_usd: 0.0,
             turn_ms: None,
             answered: None,
             markets: Vec::new(),
@@ -2030,9 +2188,30 @@ mod tests {
     }
 
     #[test]
-    fn v2_refuses_a_session_on_several_markets() {
+    fn v2_scores_a_session_on_several_markets_but_for_the_one_market_hindsight_ceiling() {
         let s = scenario(Some(100.0));
-        let mut multi = session(30.0);
+        let multi = on_two_markets(30.0);
+        let mut report = score(vec![(multi.clone(), &s)]);
+        report.score_v2(&v2()).unwrap();
+        assert!(report.v2.is_some());
+        // The cost-aware hindsight ceiling reads one market's marks.
+        let params = scoring_v2::Params::new(scoring_v2::Ceiling::Informed { eta_override: None });
+        let mut hindsight = score(vec![(multi, &s)]);
+        let refused = hindsight.score_v2(&params).unwrap_err().to_string();
+        assert!(
+            refused.contains("reads one market's marks; this session trades NVDA, SPCX"),
+            "{refused}"
+        );
+        assert!(hindsight.v2.is_none());
+        // One market is scored as before.
+        let mut one = score(vec![(session(30.0), &s)]);
+        one.score_v2(&v2()).unwrap();
+        assert!(one.v2.is_some());
+    }
+
+    /// A perp session on NVDA and SPCX, flat at the start.
+    fn on_two_markets(pnl_usd: f64) -> SessionReport {
+        let mut multi = session(pnl_usd);
         multi.markets = ["NVDA", "SPCX"]
             .into_iter()
             .map(|symbol| session::MarketReport {
@@ -2046,18 +2225,119 @@ mod tests {
                 competitor: None,
             })
             .collect();
-        let mut report = score(vec![(multi, &s)]);
-        let refused = report.score_v2(&v2()).unwrap_err().to_string();
-        assert!(
-            refused
-                .contains("scoring v2 scores sessions on one market; this one trades NVDA, SPCX"),
-            "{refused}"
-        );
-        assert!(report.v2.is_none());
-        // One market is scored as before.
-        let mut one = score(vec![(session(30.0), &s)]);
-        one.score_v2(&v2()).unwrap();
-        assert!(one.v2.is_some());
+        multi
+    }
+
+    /// Several markets have no one-market ceiling to read, but an informed
+    /// bot's PnL is the account's, whatever it traded.
+    #[test]
+    fn v2_scores_a_session_on_several_markets_against_the_informed_bot() {
+        let mut s = scenario(Some(100.0));
+        s.informed_pnl_usd = Some(400.0);
+        let mut report = score(vec![
+            (on_two_markets(300.0), &s),
+            (on_two_markets(50.0), &s),
+        ]);
+        report.score_v2(&v2()).unwrap();
+        let v2 = report.v2.as_ref().unwrap();
+        assert_eq!(v2.ceiling, "informed");
+        assert_eq!(v2.raw, 0.5 + 0.5 * 150.0 / 600.0);
+        // The cost-aware hindsight ceiling reads one market's marks and cap:
+        // without the informed bot there is none.
+        let plain = scenario(Some(100.0));
+        let mut fallback = score(vec![(on_two_markets(30.0), &plain)]);
+        fallback.anchors = vec![on_two_markets(30.0)];
+        let params = scoring_v2::Params::new(scoring_v2::Ceiling::Informed { eta_override: None });
+        let refused = fallback.score_v2(&params).unwrap_err().to_string();
+        assert!(refused.contains("one market"), "{refused}");
+    }
+
+    /// Doing nothing is 0 only where holding the start scores 0: a start
+    /// position on any market, not only the first, needs net scoring or an
+    /// order.
+    #[test]
+    fn v2_takes_a_start_position_on_any_market_only_when_scoring_nets_the_hold() {
+        let mut s = scenario(Some(100.0));
+        s.informed_pnl_usd = Some(400.0);
+        let mut held = on_two_markets(-40.0);
+        held.markets[0].start_position = 20.0;
+        held.markets[0].end_position = 20.0;
+        let refused = score(vec![(held.clone(), &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+        held.net = Some(crate::orders::NetReport {
+            value_change_usd: -40.0,
+            drift_usd: -40.0,
+            inventory_charge_usd: 0.0,
+            venue_charge_usd: 0.0,
+            venue_net: Vec::new(),
+        });
+        held.pnl_usd = 0.0;
+        score(vec![(held, &s)]).score_v2(&v2()).unwrap();
+    }
+
+    /// What a bot that does nothing made is in the report, and a rescore
+    /// reads it back, so a grade scored again keeps its 0.
+    #[test]
+    fn a_grade_scored_again_keeps_what_the_nop_bot_made() {
+        let mut s = scenario(Some(100.0));
+        s.informed_pnl_usd = Some(400.0);
+        let mut report = score(vec![(session(30.0), &s)]);
+        report.scenarios[0].nop_pnl_usd = Some(10.0);
+        report.score_v2(&v2()).unwrap();
+        let raw = report.v2.as_ref().unwrap().raw;
+        assert_eq!(report.v2.as_ref().unwrap().nop_usd, 10.0);
+        let verdict: Verdict =
+            serde_json::from_value(serde_json::to_value(&report).unwrap()).unwrap();
+        let mut again = rescore(vec![(session(30.0), s)], verdict);
+        assert_eq!(again.scenarios[0].nop_pnl_usd, Some(10.0));
+        again.score_v2(&v2()).unwrap();
+        assert_eq!(again.v2.as_ref().unwrap().raw, raw);
+    }
+
+    /// With the nop bot's PnL measured, a start position the hold baseline
+    /// doesn't cover is no longer a reason to refuse: its drift is in the 0.
+    #[test]
+    fn a_measured_nop_scores_a_start_position_no_baseline_covers() {
+        let mut s = scenario(Some(100.0));
+        s.informed_pnl_usd = Some(400.0);
+        let mut held = session(-30.0);
+        held.start_position = 20.0;
+        held.peak_position = 20.0;
+        held.positions = vec![PositionRange {
+            instrument: held.instrument.clone(),
+            lowest: 20.0,
+            highest: 20.0,
+        }];
+        let refused = score(vec![(held.clone(), &s)])
+            .score_v2(&v2())
+            .unwrap_err()
+            .to_string();
+        assert!(refused.contains("starting position"), "{refused}");
+        let mut measured = score(vec![(held, &s)]);
+        measured.scenarios[0].nop_pnl_usd = Some(-30.0);
+        measured.score_v2(&v2()).unwrap();
+        // Doing nothing made -30, and so did the bot: it scores the 0.
+        assert_eq!(measured.v2.as_ref().unwrap().raw, 0.0);
+    }
+
+    /// A bot that trades only the second market has traded.
+    #[test]
+    fn a_session_on_several_markets_traded_where_any_market_moved() {
+        let mut multi = on_two_markets(10.0);
+        multi.positions = ["NVDA", "SPCX"]
+            .into_iter()
+            .map(|symbol| PositionRange {
+                instrument: format!("phoenix:perp:{symbol}").parse().unwrap(),
+                lowest: 0.0,
+                highest: 0.0,
+            })
+            .collect();
+        assert!(!traded(&multi));
+        multi.positions[1].highest = 3.0;
+        assert!(traded(&multi));
     }
 
     #[test]
@@ -2206,6 +2486,25 @@ mod tests {
                 .unwrap()
                 .contains("surfnet_setTokenAccount")
         );
+    }
+
+    /// A grade that stopped at its first breach (`--stop-on-disqualify`)
+    /// holds only the sessions up to it: v2 would score a truncated set, so
+    /// it refuses one, whatever the report's own scores say.
+    #[test]
+    fn v2_refuses_a_set_that_stopped_at_its_first_breach() {
+        let s = scenario(Some(100.0));
+        let verdict: Verdict =
+            serde_json::from_value(serde_json::json!({ "truncated": { "graded": 1, "of": 4 } }))
+                .unwrap();
+        let mut report = rescore(vec![(session(30.0), s.clone())], verdict);
+        let refused = report.score_v2(&v2()).unwrap_err().to_string();
+        assert!(refused.contains("stopped at its first breach"), "{refused}");
+        assert!(report.v2.is_none());
+        // The same sessions, graded whole, are scored.
+        let mut whole = rescore(vec![(session(30.0), s)], Verdict::default());
+        whole.score_v2(&v2()).unwrap();
+        assert!(whole.v2.is_some());
     }
 
     /// A session the risk desk stopped out (infra/22's `stop_out`): it lost
@@ -2552,6 +2851,7 @@ mod tests {
             side,
             price: 100.0,
             base: 70.0,
+            worst_price: None,
             forced,
         };
         liquidated.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
@@ -2603,6 +2903,7 @@ mod tests {
             side,
             price: 100.0,
             base: 70.0,
+            worst_price: None,
             forced,
         };
         stopped.perp_fills = vec![fill(Side::Buy, false), fill(Side::Sell, true)];
@@ -2666,6 +2967,7 @@ mod tests {
             side,
             price: 100.0,
             base: 10.0,
+            worst_price: None,
             forced,
         };
         stopped.perp_fills = vec![
