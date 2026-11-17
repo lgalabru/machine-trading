@@ -857,13 +857,21 @@ mod tests {
         })
     }
 
-    fn spline_filled(maker: Pubkey, maker_side: MathSide, ticks: u64, lots: u64) -> MarketEvent {
+    /// A spline of `maker` filled, all at one tick of `market`: `maker_side`
+    /// is the maker's.
+    fn spline_filled(
+        market: &PhoenixMarket,
+        maker: Pubkey,
+        maker_side: MathSide,
+        ticks: u64,
+        lots: u64,
+    ) -> MarketEvent {
         MarketEvent::SplineFilled(SplineFilledEvent {
             spline_sequence_number: 1,
             side: maker_side,
             price: Ticks::new(ticks),
             base_lots_filled: BaseLots::new(lots),
-            quote_lots_filled: QuoteLots::ZERO,
+            quote_lots_filled: QuoteLots::new(ticks * market.tick_size_quote_lots * lots),
             maker: maker.to_bytes(),
             maker_fee_rate: SignedFeeRateMicro::ZERO,
             maker_base_lot_position: SignedBaseLots::ZERO,
@@ -938,7 +946,7 @@ mod tests {
             &[
                 header(&spcx, 10, main),
                 order_filled(other, MathSide::Ask, 15_000, 300),
-                spline_filled(other, MathSide::Ask, 15_010, 200),
+                spline_filled(&spcx, other, MathSide::Ask, 15_010, 200),
                 placed(14_990, 500),
             ],
             false,
@@ -1632,7 +1640,7 @@ mod tests {
         let events = [
             header(&spcx, 20, main),
             priced(
-                spline_filled(spline, MathSide::Ask, 14_000, 300),
+                spline_filled(&spcx, spline, MathSide::Ask, 14_000, 300),
                 4_200_000,
                 0,
             ),
@@ -1643,7 +1651,7 @@ mod tests {
                 250,
             ),
             priced(
-                spline_filled(spline, MathSide::Ask, 15_000, 200),
+                spline_filled(&spcx, spline, MathSide::Ask, 15_000, 200),
                 3_000_001,
                 -50,
             ),
@@ -1682,5 +1690,143 @@ mod tests {
         assert_eq!(theirs.len(), 1);
         assert_eq!(theirs[0].fill.side, Side::Buy);
         assert_eq!(theirs[0].fill.fees, fee(1_000));
+    }
+
+    #[tokio::test]
+    async fn a_spline_fill_across_ticks_is_priced_at_what_it_paid() {
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        chain.set_account(main, account(PhoenixAccount::Trader, &owner));
+        let spline = Pubkey::new_unique();
+        let (meter, book) = spcx_meter(&chain, owner);
+        let spcx = meter.markets[0].clone();
+        let tick = spcx.tick_size_quote_lots;
+        let paid = |lots: u64| Decimal::new(lots as i64, u32::from(spcx.quote_lot_decimals));
+        let price = |ticks: u64| spcx.ticks_to_price(ticks);
+        // A 15-unit buy as Phoenix logged it on this snapshot: 8 lots at tick
+        // 13,821, then 14,992 lots through ticks 13,821 and 13,822 in one
+        // event that names the last. Then 200 lots split evenly over two
+        // ticks, and an event that filled nothing.
+        let events = [
+            header(&spcx, 30, main),
+            spline_filled(&spcx, spline, MathSide::Ask, 13_821, 8),
+            priced(
+                spline_filled(&spcx, spline, MathSide::Ask, 13_822, 14_992),
+                2_072_120_240,
+                0,
+            ),
+            priced(
+                spline_filled(&spcx, spline, MathSide::Ask, 15_001, 200),
+                (100 * 15_000 + 100 * 15_001) * tick,
+                0,
+            ),
+            spline_filled(&spcx, spline, MathSide::Ask, 15_002, 0),
+            summary_of(main, MathSide::Bid, 15_200, 0),
+        ];
+        chain.record_transaction(logged(50, 11, &events, false), &[book]);
+
+        let fills = meter.market_records(0).await.unwrap().fills;
+        assert_eq!(fills.len(), 4);
+        assert_eq!(fills[0].price, price(13_821));
+        assert_eq!(fills[0].worst_price, price(13_821));
+        // Between its two ticks, not at the last, and what was paid.
+        let across = &fills[1];
+        assert!(
+            price(13_821) < across.price && across.price < price(13_822),
+            "{}",
+            across.price
+        );
+        assert!((across.price * across.quantity - paid(2_072_120_240)).abs() < dec!(0.000001));
+        // Each names the last tick it reached as its worst level.
+        assert_eq!(across.worst_price, price(13_822));
+        assert_eq!(fills[2].price, (price(15_000) + price(15_001)) / dec!(2));
+        assert_eq!(fills[2].worst_price, price(15_001));
+        assert_eq!(
+            fills[2].price * fills[2].quantity,
+            paid((100 * 15_000 + 100 * 15_001) * tick)
+        );
+        // No size, no quote lots to divide: its tick.
+        assert_eq!(fills[3].price, price(15_002));
+        assert_eq!(fills[3].worst_price, price(15_002));
+        // The taker's fills, as an enforcer reads them, carry the same prices.
+        let mine = meter.records(0).await.unwrap().fills;
+        let prices: Vec<Decimal> = mine.iter().map(|f| f.fill.price).collect();
+        let all: Vec<Decimal> = fills.iter().map(|f| f.price).collect();
+        assert_eq!(prices, all);
+        let worst: Vec<Decimal> = mine.iter().map(|f| f.worst_price).collect();
+        assert_eq!(
+            worst,
+            fills.iter().map(|f| f.worst_price).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn the_owner_of_a_spline_is_judged_at_its_average_not_its_best_level() {
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        chain.set_account(main, account(PhoenixAccount::Trader, &owner));
+        let taker = Pubkey::new_unique();
+        let (meter, book) = spcx_meter(&chain, owner);
+        let spcx = meter.markets[0].clone();
+        let price = |ticks: u64| spcx.ticks_to_price(ticks);
+        // The account's spline sold 14,992 lots through ticks 13,821 and
+        // 13,822 to a buyer; then bought 6,000 lots through 13,819 and
+        // 13,818 from a seller. Each event names the last tick it reached.
+        let events = [
+            header(&spcx, 30, taker),
+            priced(
+                spline_filled(&spcx, main, MathSide::Ask, 13_822, 14_992),
+                2_072_120_240,
+                0,
+            ),
+            summary_of(taker, MathSide::Bid, 14_992, 0),
+            header(&spcx, 31, taker),
+            priced(
+                spline_filled(&spcx, main, MathSide::Bid, 13_818, 6_000),
+                829_115_000,
+                0,
+            ),
+            summary_of(taker, MathSide::Ask, 6_000, 0),
+        ];
+        chain.record_transaction(logged(50, 11, &events, false), &[book]);
+
+        let mine = meter.records(0).await.unwrap().fills;
+        assert_eq!(mine.len(), 2);
+        let sold = &mine[0];
+        assert_eq!(sold.fill.side, Side::Sell);
+        assert!(price(13_821) < sold.fill.price && sold.fill.price < price(13_822));
+        assert_eq!(sold.worst_price, sold.fill.price);
+        let bought = &mine[1];
+        assert_eq!(bought.fill.side, Side::Buy);
+        assert!(price(13_818) < bought.fill.price);
+        assert_eq!(bought.worst_price, bought.fill.price);
+        // The taker of the same events is judged at the last tick.
+        let all = meter.market_records(0).await.unwrap().fills;
+        assert_eq!(all[0].recorded(Side::Buy).worst_price, price(13_822));
+        assert_eq!(all[1].recorded(Side::Sell).worst_price, price(13_818));
+    }
+
+    #[tokio::test]
+    async fn a_spline_fill_of_size_for_no_quote_lots_is_refused() {
+        let chain = Arc::new(MockChainClient::new());
+        let owner = Pubkey::new_unique();
+        let main = TraderKey::derive_pda(&owner, 0, 0);
+        chain.set_account(main, account(PhoenixAccount::Trader, &owner));
+        let (meter, book) = spcx_meter(&chain, owner);
+        let spcx = meter.markets[0].clone();
+        let events = [
+            header(&spcx, 30, main),
+            priced(
+                spline_filled(&spcx, Pubkey::new_unique(), MathSide::Ask, 13_822, 10),
+                0,
+                0,
+            ),
+            summary_of(main, MathSide::Bid, 15_200, 0),
+        ];
+        chain.record_transaction(logged(50, 11, &events, false), &[book]);
+        let read = meter.market_records(0).await;
+        assert!(matches!(read, Err(MeterError::Decode { .. })), "{read:?}");
     }
 }

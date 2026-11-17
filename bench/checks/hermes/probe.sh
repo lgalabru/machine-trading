@@ -58,7 +58,7 @@ MTX_PROXY_TOKEN="$(MTX_MODELS="$registry" python3 -I "$harness/models.py" token 
 export MTX_PROXY_TOKEN
 # Harbor never holds the key or the batch's secret, only the route's token.
 env -u MOCK_API_KEY -u MTX_PROXY_SECRET PYTHONPATH="$harness${PYTHONPATH:+:$PYTHONPATH}" \
-  harbor run -y -p "$task" -o "$jobs" -a mtx_hermes:Hermes "${args[@]}" \
+  harbor run -y -p "$task" -o "$jobs" -a mtx_hermes:Hermes "${args[@]}" --allow-agent-host "$host" \
   --effort high --ak "version=$version" -k 2 -n 1 --disable-verification > "$jobs/harbor.log" 2>&1 \
   || { tail -20 "$jobs/harbor.log" >&2; exit 2; }
 fails=0

@@ -97,6 +97,9 @@ pub struct HeadlineFamily {
     pub fund_wallets: (u64, u64),
     pub horizon_slots: (u64, u64),
     pub fund_edge_bps: f64,
+    /// How often a fund's read of the move ahead is right, a horizon at a
+    /// time; the contrary fund errs as often, the other way.
+    pub fund_hit_rate: f64,
     pub fund_intensity: f64,
     pub fund_size: f64,
     pub noise_wallets: u32,
@@ -130,6 +133,7 @@ impl HeadlineFamily {
             fund_wallets: (2, 3),
             horizon_slots: (30, 90),
             fund_edge_bps: 2.0,
+            fund_hit_rate: 0.85,
             fund_intensity: 30.0,
             fund_size: 40.0,
             noise_wallets: 4,
@@ -386,6 +390,8 @@ impl HeadlineFamily {
                 wallets: fund_wallets,
                 horizon_slots: informed_horizon_slots,
                 edge_bps: self.fund_edge_bps,
+                hit_rate: self.fund_hit_rate,
+                view_noise_bps: 0.0,
                 intensity_mult: self.fund_intensity,
                 size_mult: self.fund_size,
                 limit_bps: 80.0,
@@ -395,6 +401,8 @@ impl HeadlineFamily {
                 wallets: fund_wallets,
                 horizon_slots: decoy_horizon_slots,
                 edge_bps: self.fund_edge_bps,
+                hit_rate: self.fund_hit_rate,
+                view_noise_bps: 0.0,
                 informed_for: Window {
                     from: jump_end_slot,
                     until: Some(jump_end_slot + 1),
