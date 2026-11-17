@@ -1,0 +1,23 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mtx-bot-hunt-or-breakout-informed"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# The strategy, and the process the ladder and calibration run (`bin/bot`):
+# only the ladder hands a bot its session's latent state, so it is never a
+# component.
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "mtx-hunt-or-breakout-informed"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-hunt-or-breakout = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }
+serde_json = "1"

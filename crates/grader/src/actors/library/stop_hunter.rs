@@ -1,7 +1,9 @@
 //! A stop hunter: it waits for the price to come near an obvious level (a
 //! round number on a `level_step_usd` grid), pushes it through with one
 //! large take, and trades back out `hold_slots` later, once the stops it
-//! was after have fired and the price has had time to return.
+//! was after have fired and the price has had time to return. A scenario
+//! may schedule its hunts (`at_slots`): a generator that moves the market
+//! through the run puts the hunter where the run starts.
 
 use async_trait::async_trait;
 use mtx_kit::Side;
@@ -64,6 +66,12 @@ pub struct StopHunter {
     /// Slots after a reversal before it hunts again.
     #[serde(default = "hundred_slots")]
     pub cooldown_slots: u64,
+    /// When set, it hunts only from these slots (ascending, into the
+    /// session): once each, the first time from that slot on that the price
+    /// is near a level, and never again for that slot once the next has
+    /// come. Without them it hunts whenever it is near one and cooled down.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub at_slots: Vec<u64>,
     /// How far past the price its reversal may fill, in basis points.
     #[serde(default = "fifty")]
     pub limit_bps: f64,
@@ -79,6 +87,9 @@ impl StopHunter {
         finite_positive("level_step_usd", self.level_step_usd)?;
         finite_positive("trigger_bps", self.trigger_bps)?;
         finite_positive("push_mult", self.push_mult)?;
+        if self.at_slots.windows(2).any(|w| w[0] >= w[1]) {
+            return Err("at_slots must be ascending, each once".into());
+        }
         finite_positive("limit_bps", self.limit_bps)
     }
 }
@@ -102,6 +113,8 @@ pub(super) struct Hunter {
     wallets: Vec<Wallet>,
     rng: Rng,
     state: State,
+    /// How many of `at_slots` are spent: hunted, or passed by the next.
+    spent: usize,
 }
 
 impl Hunter {
@@ -112,7 +125,21 @@ impl Hunter {
             wallets,
             rng,
             state: State::Waiting { from: 0 },
+            spent: 0,
         }
+    }
+
+    /// Whether a scheduled hunt is due at `at`, skipping those the next one
+    /// has passed; always, without a schedule.
+    fn due(&mut self, at: u64) -> bool {
+        let slots = &self.spec.at_slots;
+        if slots.is_empty() {
+            return true;
+        }
+        while self.spent + 1 < slots.len() && slots[self.spent + 1] <= at {
+            self.spent += 1;
+        }
+        self.spent < slots.len() && slots[self.spent] <= at
     }
 
     async fn look(&mut self, now: &Moment) {
@@ -141,7 +168,8 @@ impl Hunter {
                 };
             }
             State::Waiting { from } => {
-                if now.at < from || !Window::holds(&self.spec.active, now.at) {
+                if now.at < from || !Window::holds(&self.spec.active, now.at) || !self.due(now.at)
+                {
                     return;
                 }
                 let Ok((Some(bid), Some(ask))) = self.wallets[0].seat().top().await else {
@@ -173,6 +201,9 @@ impl Hunter {
                 };
                 if self.wallets[wallet].take(now.at, side, size, limit).await {
                     self.wallets[wallet].count("pushes", 1);
+                    if !self.spec.at_slots.is_empty() {
+                        self.spent += 1;
+                    }
                     self.state = State::Pushed {
                         side,
                         size,
@@ -212,6 +243,7 @@ mod tests {
             overshoot_ticks: 3,
             hold_slots: 10,
             cooldown_slots: 100,
+            at_slots: Vec::new(),
             limit_bps: 50.0,
             active: None,
         };
@@ -234,6 +266,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn with_a_schedule_it_hunts_once_from_each_slot_and_skips_a_passed_one() {
+        let (book, log) = Book::new("h", 100.04, 100.08);
+        let (wallet, _) = wallet(book);
+        let spec = StopHunter {
+            wallets: 1,
+            level_step_usd: 1.0,
+            trigger_bps: 10.0,
+            push_mult: 1.0,
+            overshoot_ticks: 3,
+            hold_slots: 2,
+            cooldown_slots: 0,
+            at_slots: vec![10, 30, 34, 60],
+            limit_bps: 50.0,
+            active: None,
+        };
+        let mut hunter = Hunter::new(spec, scale(), vec![wallet], Rng::new([1; 32]));
+        let pushes = || {
+            log.lock()
+                .unwrap()
+                .iter()
+                .filter(|l| l.contains("take Ask"))
+                .count()
+        };
+        // Near a level from the start, but nothing is due before slot 10.
+        for slot in [0, 2, 8] {
+            hunter.after_blocks(&at(slot, 100.0)).await;
+        }
+        assert_eq!(pushes(), 0);
+        // Slot 10's hunt, and its reversal; then nothing until 30.
+        for slot in [10, 12, 14, 20, 28] {
+            hunter.after_blocks(&at(slot, 100.0)).await;
+        }
+        assert_eq!(pushes(), 1);
+        // At 36 both 30 and 34 have come: one hunt, for 34.
+        for slot in [36, 38, 40, 50] {
+            hunter.after_blocks(&at(slot, 100.0)).await;
+        }
+        assert_eq!(pushes(), 2);
+        for slot in [60, 62, 64, 90] {
+            hunter.after_blocks(&at(slot, 100.0)).await;
+        }
+        assert_eq!(pushes(), 3);
+        let bad = StopHunter {
+            at_slots: vec![30, 30],
+            ..hunter.spec.clone()
+        };
+        assert!(bad.validate().is_err());
+    }
+
+    #[tokio::test]
     async fn with_several_wallets_each_hunt_runs_from_one_drawn_wallet_and_back() {
         let ledger_seats = |name: &str| {
             let (book, log) = Book::new(name, 100.04, 100.08);
@@ -248,6 +330,7 @@ mod tests {
             overshoot_ticks: 3,
             hold_slots: 2,
             cooldown_slots: 0,
+            at_slots: Vec::new(),
             limit_bps: 50.0,
             active: None,
         };

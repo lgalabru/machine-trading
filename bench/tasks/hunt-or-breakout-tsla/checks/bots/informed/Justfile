@@ -1,0 +1,16 @@
+# `just build` builds bin/bot, the process the ladder and calibration run
+# (`just run` starts it). The grader builds nothing: build before grading.
+
+# Build bin/bot.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    exe="$(cargo build --release --bin mtx-hunt-or-breakout-informed --message-format=json-render-diagnostics \
+      | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
+    mkdir -p bin
+    cp "$exe" bin/bot
+    echo "built bin/bot"
+
+# Start the process bot: what the grader runs for the anchor.
+run:
+    @exec ./bin/bot

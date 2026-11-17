@@ -1,0 +1,16 @@
+# The ladder's naive rungs for hunt-or-breakout-tsla, one process picked by
+# MTX_NAIVE (the ladder sets it per rung).
+[package]
+name = "mtx-bot-hunt-or-breakout-naive"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "mtx-hunt-or-breakout-naive"
+path = "src/main.rs"
+
+[dependencies]
+mtx-bot-hunt-or-breakout = { path = "../../../reference" }
+mtx-kit = { path = "../../../../../../crates/kit" }

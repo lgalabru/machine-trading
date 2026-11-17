@@ -62,9 +62,31 @@ impl Noise {
     }
 }
 
-/// Informed traders: they see the scenario's level `horizon_slots` ahead
-/// and, while it is more than `edge_bps` from the book's price, take its
-/// way at `intensity_mult` times the market's trade rate.
+/// What an informed trader sees ahead: where the book will be, or where the
+/// level (the oracle) will be.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Sees {
+    /// The book's price `horizon_slots` ahead, against the book's now:
+    /// it trades ahead of any move the book makes, a premium's too.
+    #[default]
+    Book,
+    /// The level `horizon_slots` ahead, against the level now: it trades
+    /// ahead of moves in value, and not on a premium the book trades at
+    /// for a while (a stop run's, say).
+    Level,
+}
+
+impl Sees {
+    fn is_book(&self) -> bool {
+        *self == Self::Book
+    }
+}
+
+/// Informed traders: they see the scenario's book (or, with `sees`, its
+/// level) `horizon_slots` ahead and, while it is more than `edge_bps` from
+/// where it is now, take its way at `intensity_mult` times the market's
+/// trade rate.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Informed {
@@ -72,6 +94,8 @@ pub struct Informed {
     pub wallets: u32,
     pub horizon_slots: u64,
     pub edge_bps: f64,
+    #[serde(default, skip_serializing_if = "Sees::is_book")]
+    pub sees: Sees,
     #[serde(default = "one")]
     pub intensity_mult: f64,
     #[serde(default = "one")]
@@ -307,8 +331,12 @@ impl InformedTrader {
 
     /// The side it trades `at`, if the move ahead is past its edge.
     fn side(&self, now: &Moment) -> Option<Side> {
-        let ahead = (self.path)(now.at + self.spec.horizon_slots).book_usd;
-        side_of((ahead / now.book_usd - 1.0) * 10_000.0, self.spec.edge_bps)
+        let ahead = (self.path)(now.at + self.spec.horizon_slots);
+        let (ahead, here) = match self.spec.sees {
+            Sees::Book => (ahead.book_usd, now.book_usd),
+            Sees::Level => (ahead.level_usd, now.level_usd),
+        };
+        side_of((ahead / here - 1.0) * 10_000.0, self.spec.edge_bps)
     }
 }
 
@@ -510,6 +538,7 @@ mod tests {
             wallets: 1,
             horizon_slots: 20,
             edge_bps: 50.0,
+            sees: Sees::Book,
             intensity_mult: 10.0,
             size_mult: 1.0,
             limit_bps: 50.0,
@@ -529,6 +558,51 @@ mod tests {
             "{log:?}"
         );
         assert_eq!(ledger.report().actors[0].counts["informed_steps"], 1);
+    }
+
+    #[tokio::test]
+    async fn informed_traders_that_see_the_level_ignore_a_premium() {
+        let (book, log) = Book::new("i", 99.0, 101.0);
+        let (wallet, _) = wallet(book);
+        // The book trades 1% over a flat level from slot 100 to 140; the
+        // level rises 1% from slot 200.
+        let moment = |s: u64| {
+            let level = if s >= 200 { 101.0 } else { 100.0 };
+            let book = if (100..140).contains(&s) { 101.0 } else { level };
+            Moment {
+                book_usd: book,
+                ..at(s, level)
+            }
+        };
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> = Arc::new(moment);
+        let spec = Informed {
+            wallets: 1,
+            horizon_slots: 20,
+            edge_bps: 50.0,
+            sees: Sees::Level,
+            intensity_mult: 10.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            active: None,
+        };
+        let mut informed =
+            InformedTrader::new(spec, scale(), vec![wallet], path, Rng::new([3; 32]));
+        // The premium ahead is not a move in the level.
+        informed.before_blocks(&moment(90)).await;
+        informed.before_blocks(&moment(100)).await;
+        assert!(log.lock().unwrap().is_empty());
+        // The level's rise is.
+        informed.before_blocks(&moment(182)).await;
+        assert!(!log.lock().unwrap().is_empty());
+        let spec: Informed = serde_json::from_str(
+            r#"{"horizon_slots": 20, "edge_bps": 5.0, "sees": "level"}"#,
+        )
+        .unwrap();
+        assert_eq!(spec.sees, Sees::Level);
+        let plain: Informed =
+            serde_json::from_str(r#"{"horizon_slots": 20, "edge_bps": 5.0}"#).unwrap();
+        assert_eq!(plain.sees, Sees::Book);
+        assert!(!serde_json::to_string(&plain).unwrap().contains("sees"));
     }
 
     #[tokio::test]

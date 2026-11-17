@@ -14,6 +14,7 @@
 use serde_json::{Value, json};
 
 use crate::{
+    breakout::{BreakoutFamily, Shape as BreakoutShape},
     carry::{CarryFamily, Shape as CarryShape},
     error::Result,
     making::MakingFamily,
@@ -84,6 +85,17 @@ pub const GENERATORS: &[Generator] = &[
                 WeekendFamily::spcx().draw_set("hidden", count, seed),
                 tell,
                 weekend_latent,
+            )
+        },
+    },
+    Generator {
+        name: "hunt-or-breakout",
+        practice: |prefix, count, seed| BreakoutFamily::tsla().sample_set(prefix, count, seed),
+        hidden: |count, seed, tell| {
+            shaped(
+                BreakoutFamily::tsla().draw_set("hidden", count, seed),
+                tell,
+                breakout_latent,
             )
         },
     },
@@ -205,6 +217,10 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
+    ("hunt-or-breakout", "hold_slots", Knowable::Process),
+    ("hunt-or-breakout", "trigger_bps", Knowable::Process),
+    ("hunt-or-breakout", "level_step_usd", Knowable::Process),
+    ("hunt-or-breakout", "horizon_slots", Knowable::Process),
 ];
 
 /// Nothing: a session's shock (its direction, legs and aftermath) is the
@@ -240,6 +256,21 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
         "worker_account": shape.worker_account,
         "impact_pct": shape.impact_pct,
         "half_life_slots": shape.half_life_slots,
+    })
+}
+
+/// Who hunts stops and who is informed (their wallets, through the
+/// roster: both are seated in every session), the hunter's hold and trigger,
+/// the grid, and how far ahead the informed wallets see. Not where or when
+/// the price runs through a level, which way, or whether a run is a hunt
+/// or a break.
+fn breakout_latent(shape: &BreakoutShape) -> Value {
+    json!({
+        "roster": ["informed", "stop-hunter"],
+        "hold_slots": shape.hold_slots,
+        "trigger_bps": shape.trigger_bps,
+        "level_step_usd": shape.level_step_usd,
+        "horizon_slots": shape.horizon_slots,
     })
 }
 
@@ -352,6 +383,9 @@ mod tests {
         for name in ["market-making", "market-making-v2"] {
             assert!(latent(name).iter().all(|l| l == "{}"), "{name}");
         }
+        assert!(latent("hunt-or-breakout").iter().all(|l| {
+            !l.contains("events") && !l.contains("hunt\"") && !l.contains("slot\"")
+        }));
     }
 
     /// The check above would catch a draw handed over: a shock's direction

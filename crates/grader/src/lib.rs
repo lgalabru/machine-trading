@@ -1,6 +1,7 @@
 //! Shared logic for the mtx Solana trading benchmark.
 
 pub mod actors;
+pub mod breakout;
 pub mod carry;
 pub mod chain;
 pub mod crank;
