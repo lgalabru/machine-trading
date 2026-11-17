@@ -124,6 +124,13 @@ pub struct Mtx {
     /// task otherwise (GRADING_DECISIONS D1, "one reported score").
     #[serde(default)]
     pub headline: Headline,
+    /// The anchors run as strategy components: the image builds each
+    /// anchor's crate for `wasm32-wasip2` too and puts its `bot.wasm` beside
+    /// `bin/bot`, which the grader then loads instead. A task whose sessions
+    /// hand the bot what only a component sees (requests for quotes) needs
+    /// it; the others keep their process anchors.
+    #[serde(default)]
+    pub component_anchors: bool,
 }
 
 /// A task's headline score.
@@ -356,11 +363,16 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     files.insert(
         PathBuf::from("bench/image/anchors.txt"),
         format!(
-            "# {GENERATED}\n# <anchor> <package> <binary> <directory>, one per task.\n{}\n",
+            "# {GENERATED}\n# <anchor> <package> <binary> <directory> [component], one per task.\n{}\n",
             join(
                 &|t| {
+                    let kind = if t.mtx.component_anchors {
+                        " component"
+                    } else {
+                        ""
+                    };
                     let mut lines = format!(
-                        "{} {} {} {}",
+                        "{} {} {} {}{kind}",
                         t.mtx.anchor(),
                         t.reference.package,
                         t.reference.bin,
@@ -368,7 +380,7 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
                     );
                     if let Some(informed) = &t.informed {
                         lines += &format!(
-                            "\n{} {} {} {}",
+                            "\n{} {} {} {}{kind}",
                             t.informed_anchor(),
                             informed.package,
                             informed.bin,

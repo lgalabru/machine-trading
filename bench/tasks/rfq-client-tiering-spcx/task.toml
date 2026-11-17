@@ -27,6 +27,7 @@ summary = "runs an SPCX RFQ desk: quotes benign clients to their reach and finds
 skill = "prices each client to its reach and declines the clients whose requests turn out to be informed, learning who they are from a handful of requests per client"
 leak_needles = ["Hit ratio on wide quotes", "flagged clients' flow", "the desk with the told policy"]
 headline = "v2"
+component_anchors = true
 
 [verifier]
 # Seventy-two hidden sessions drawn from the batch's secret, plus the
