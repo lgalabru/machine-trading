@@ -289,7 +289,9 @@ enum Command {
         /// the anchor's PnL and drawdown. The informed bot is handed each
         /// session's latent state (who is informed, which wallets) as it is
         /// in a grade, host-side, and the files carry none of it: only
-        /// the PnL reaches the agent's image. What `--out` already holds
+        /// the PnL reaches the agent's image, and the description is a
+        /// neutral one (the generator's states the draw in prose).
+        /// `--informed` needs `--v2-sessions`. What `--out` already holds
         /// for the other anchor is kept.
         #[arg(
             long,
@@ -1303,7 +1305,7 @@ async fn run() -> Result<()> {
             std::fs::create_dir_all(&out).with_context(|| out.display().to_string())?;
             let generator = generators::generator(&family)
                 .with_context(|| format!("no scenario generator `{family}`"))?;
-            let scenarios = (generator.practice)(&prefix, count, seed);
+            let scenarios = generator.practice(&prefix, count, seed);
             let mut written = Vec::new();
             for scenario in scenarios {
                 let path = out.join(format!("{}.json", scenario.name));
@@ -1663,10 +1665,19 @@ async fn run() -> Result<()> {
                         .with_context(|| format!("no scenario generator `{family}`"))?;
                     let seed = practice_seed.context("--practice needs --practice-seed")?;
                     let dir = practice_dir.as_deref().context("--practice needs --out")?;
+                    if informed && !v2_sessions {
+                        anyhow::bail!(
+                            "--practice --informed needs --v2-sessions: a v2 grade samples the drawdown every slot, and the practice anchors must be measured the same way"
+                        );
+                    }
                     let drawn = (generator.practice_drawn)(&practice_prefix, practice_count, seed)?;
                     latent = informed.then_some(drawn.latent);
                     let mut scenarios = Vec::new();
                     for mut scenario in drawn.scenarios {
+                        // The generator's description states the session's
+                        // latent state in prose, and the file goes into the
+                        // agent's image: it carries a neutral one.
+                        scenario.description = generator.neutral_description(&scenario.symbol);
                         let path = dir.join(format!("{}.json", scenario.name));
                         if path.exists() {
                             keep_other_anchors(&mut scenario, &Scenario::load(&path)?)?;
@@ -1731,10 +1742,12 @@ async fn run() -> Result<()> {
 
 /// A practice file that is already in `--out` keeps its anchors the
 /// calibration doesn't run, if it is the scenario the family draws at the
-/// seed: a file from another seed or family is an error, not overwritten.
+/// seed (whatever its description, which a calibration rewrites): a file
+/// from another seed or family is an error, not overwritten.
 fn keep_other_anchors(drawn: &mut Scenario, existing: &Scenario) -> anyhow::Result<()> {
     let bare = |s: &Scenario| {
         let mut s = s.clone();
+        s.description.clear();
         s.reference_pnl_usd = None;
         s.reference_max_drawdown_usd = None;
         s.informed_pnl_usd = None;
@@ -1986,6 +1999,13 @@ mod tests {
         assert_eq!(drawn.informed_pnl_usd, None);
         let mut other = ShockFamily::spcx().sample_set("practice", 1, 8).remove(0);
         assert!(keep_other_anchors(&mut other, &existing).is_err());
+        // A file from `mtx scenario generate` has the generator's description
+        // and the calibration's has the neutral one: the same scenario.
+        let mut renamed = existing.clone();
+        renamed.description = "SPCX practice session".into();
+        let mut again = ShockFamily::spcx().sample_set("practice", 1, 7).remove(0);
+        keep_other_anchors(&mut again, &renamed).unwrap();
+        assert_eq!(again.reference_pnl_usd, Some(3.0));
     }
 
     #[test]

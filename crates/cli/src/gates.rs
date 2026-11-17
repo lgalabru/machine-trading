@@ -81,6 +81,10 @@ pub enum Status {
     NotRun,
     /// It ran, but the sample is too small to decide: never fails the gate.
     Inconclusive,
+    /// A defect the task is allowed to keep (a v1 task's practice
+    /// descriptions state a latent): never fails the gate, and is never
+    /// reported as a pass.
+    Warn,
 }
 
 impl Status {
@@ -90,6 +94,7 @@ impl Status {
             Status::Fail => "FAIL",
             Status::NotRun => "not run",
             Status::Inconclusive => "inconclusive",
+            Status::Warn => "WARN",
         }
     }
 }
@@ -138,6 +143,15 @@ impl Check {
         Self::new(section, id, title, Status::Fail, d)
     }
 
+    fn warn(
+        section: &'static str,
+        id: &'static str,
+        title: &'static str,
+        d: impl Into<String>,
+    ) -> Self {
+        Self::new(section, id, title, Status::Warn, d)
+    }
+
     fn not_run(
         section: &'static str,
         id: &'static str,
@@ -183,6 +197,7 @@ impl Report {
                 Status::Fail => "fail",
                 Status::NotRun => "not_run",
                 Status::Inconclusive => "inconclusive",
+                Status::Warn => "warn",
             };
             *counts.entry(key).or_insert(0) += 1;
         }
@@ -200,13 +215,14 @@ impl Report {
     pub fn markdown(&self) -> String {
         let count = |k: &str| self.counts.get(k).copied().unwrap_or(0);
         let mut out = format!(
-            "# Gates: {}\n\n{} mode, commit `{}`. **{}**: {} passed, {} failed, {} inconclusive, {} not run.\n",
+            "# Gates: {}\n\n{} mode, commit `{}`. **{}**: {} passed, {} failed, {} warned, {} inconclusive, {} not run.\n",
             self.task,
             self.mode,
             self.commit,
             if self.passed { "PASSED" } else { "FAILED" },
             count("pass"),
             count("fail"),
+            count("warn"),
             count("inconclusive"),
             count("not_run"),
         );
@@ -557,56 +573,129 @@ pub fn bot_told_nothing(test: &str) -> Check {
     }
 }
 
-/// No practice file in the agent's image holds a latent state: practice is
-/// calibrated with the informed bot host-side (`mtx calibrate --practice`),
-/// which saves only its PnL. A latent or roster key in a shipped file would
-/// hand the agent who is informed.
-pub fn practice_holds_no_latent(root: &Path, task: &str) -> Check {
+/// No practice file in the agent's image states the session's latent state.
+/// Practice goes into the image whole (Docker copies `practice/` with its
+/// subdirectories), and the informed bot is run on it host-side
+/// (`mtx calibrate --practice`), which saves only its PnL. Every file must
+/// parse as a [`Scenario`](mtx_grader::scenario::Scenario), which refuses
+/// members it doesn't know (a `latent` among them), and nothing else may be
+/// there; no `latent`, `roster` or `wallets` member sits outside `actors`
+/// (where `informed` and `worker` are the library's own configuration); and
+/// no string names a latent field of the family or an account. A v2 task's
+/// description is the generator's neutral one: the generator's own describes
+/// the draw ("informed flow from account 4", the process's parameters). A v1
+/// task, unguarded, may keep the generator's: that is a warning, never a pass.
+pub fn practice_holds_no_latent(
+    root: &Path,
+    task: &str,
+    family: &str,
+    headline: tasks::Headline,
+) -> Check {
     let (id, title) = (
         "practice-no-latent",
-        "No practice file holds the latent state or a roster",
+        "No practice file states the latent state or a roster",
     );
     let dir = root
         .join("bench/tasks")
         .join(task)
         .join("environment/practice");
-    let mut files = 0;
-    let mut problems = Vec::new();
-    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let path = entry.path();
-        let Ok(text) = std::fs::read_to_string(&path) else {
+    let generator = mtx_grader::generators::generator(family);
+    let mut files = Vec::new();
+    collect_files(&dir, &mut files);
+    files.sort();
+    let name_of = |p: &Path| {
+        p.strip_prefix(&dir)
+            .unwrap_or(p)
+            .to_string_lossy()
+            .into_owned()
+    };
+    let (mut errors, mut told) = (Vec::new(), Vec::new());
+    for path in &files {
+        let name = name_of(path);
+        let Ok(text) = std::fs::read_to_string(path) else {
+            errors.push(format!("{name} is not text"));
             continue;
         };
-        files += 1;
+        let scenario = match serde_json::from_str::<mtx_grader::scenario::Scenario>(&text) {
+            Ok(s) if path.extension().is_some_and(|e| e == "json") => s,
+            Ok(_) => {
+                errors.push(format!("{name} is not a .json scenario file"));
+                continue;
+            }
+            Err(e) => {
+                errors.push(format!("{name} is not a scenario ({e})"));
+                continue;
+            }
+        };
         let keys = mtx_grader::generators::latent_keys_in(&text);
         if !keys.is_empty() {
-            problems.push(format!(
-                "{} holds {}",
-                path.file_name().unwrap_or_default().to_string_lossy(),
+            errors.push(format!(
+                "{name} holds {}",
                 keys.iter()
                     .map(|k| format!("`{k}`"))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
         }
+        let text_hits = mtx_grader::generators::latent_text_in(family, &text);
+        let neutral = generator
+            .is_some_and(|g| scenario.description == g.neutral_description(&scenario.symbol));
+        if !text_hits.is_empty() {
+            told.push(format!("{name} states {}", text_hits.join(", ")));
+        } else if !neutral && headline == tasks::Headline::V2 {
+            told.push(format!(
+                "{name} has the generator's description, not the neutral one"
+            ));
+        }
     }
-    if problems.is_empty() {
-        Check::pass(
-            GRADED,
-            id,
-            title,
-            format!("{files} practice files, none with a latent or roster key"),
-        )
-    } else {
+    let how = "calibrate with `mtx calibrate --informed --v2-sessions --practice <family>`, which writes the neutral description and saves only the PnL";
+    if headline == tasks::Headline::V2 {
+        errors.append(&mut told);
+    }
+    if !errors.is_empty() {
         Check::fail(
             GRADED,
             id,
             title,
             format!(
-                "{}: the image would show the agent who is informed; calibrate with `mtx calibrate --informed --practice`, which saves only the PnL",
-                problems.join("; ")
+                "{}: the image would tell the agent who is informed; {how}",
+                errors.join("; ")
             ),
         )
+    } else if !told.is_empty() {
+        Check::warn(
+            GRADED,
+            id,
+            title,
+            format!(
+                "{} of {} practice files state the latent state in their description ({}); the task is v1 and unguarded, so the agent can draw the family anyway. A v2 task fails this",
+                told.len(),
+                files.len(),
+                told.join("; ")
+            ),
+        )
+    } else {
+        Check::pass(
+            GRADED,
+            id,
+            title,
+            format!(
+                "{} practice files, none stating a latent or roster",
+                files.len()
+            ),
+        )
+    }
+}
+
+/// Every file under `dir`, subdirectories too.
+fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files(&path, out);
+        } else {
+            out.push(path);
+        }
     }
 }
 
@@ -1580,7 +1669,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let test = std::fs::read_to_string(root.join("bench/tasks").join(task).join("tests/test.sh"))
         .unwrap_or_default();
     checks.push(bot_told_nothing(&test));
-    checks.push(practice_holds_no_latent(root, task));
+    checks.push(practice_holds_no_latent(root, task, &family, headline));
     checks.extend(v2_checks(
         root,
         task,
@@ -2248,30 +2337,97 @@ mod tests {
     }
 
     #[test]
-    fn a_latent_or_roster_in_a_practice_file_fails_the_check() {
+    fn a_latent_in_a_practice_file_fails_a_v2_task_and_warns_a_v1_one() {
+        use mtx_grader::generators;
         let root = std::env::temp_dir().join(format!("mtx-practice-latent-{}", std::process::id()));
         let practice = root.join("bench/tasks/t/environment/practice");
         std::fs::create_dir_all(&practice).unwrap();
-        std::fs::write(
-            practice.join("practice-1.json"),
-            r#"{"name": "practice-1", "informed_pnl_usd": 4.0}"#,
-        )
-        .unwrap();
-        assert_eq!(practice_holds_no_latent(&root, "t").status, Status::Pass);
-        std::fs::write(
-            practice.join("practice-2.json"),
-            r#"{"name": "practice-2", "latent": {"roster": ["informed"]}}"#,
-        )
-        .unwrap();
-        let check = practice_holds_no_latent(&root, "t");
-        assert_eq!(check.status, Status::Fail);
+        let g = generators::generator("weekend-gap").unwrap();
+        let mut scenario = g.practice("practice", 6, 5).remove(0);
         assert!(
-            check
-                .detail
-                .contains("practice-2.json holds `latent`, `roster`"),
+            scenario.description.contains("account"),
             "{}",
-            check.detail
+            scenario.description
         );
+        let write = |name: &str, scenario: &mtx_grader::scenario::Scenario| {
+            scenario.save(&practice.join(name)).unwrap();
+        };
+        let (v1, v2) = (tasks::Headline::V1, tasks::Headline::V2);
+        let check = |h| practice_holds_no_latent(&root, "t", "weekend-gap", h);
+        // The generator's description names the draw ("account 4"): a v1
+        // task is warned, never passed, and a v2 task fails.
+        write("practice-1.json", &scenario);
+        let warned = check(v1);
+        assert_eq!(warned.status, Status::Warn, "{}", warned.detail);
+        assert!(
+            warned.detail.contains("practice-1.json states"),
+            "{}",
+            warned.detail
+        );
+        let failed = check(v2);
+        assert_eq!(failed.status, Status::Fail, "{}", failed.detail);
+        // The neutral description passes both.
+        scenario.description = g.neutral_description(&scenario.symbol);
+        write("practice-1.json", &scenario);
+        assert_eq!(check(v1).status, Status::Pass);
+        assert_eq!(check(v2).status, Status::Pass);
+        // A latent member fails both: `Scenario` refuses it.
+        let mut text: Value = serde_json::from_str(
+            &std::fs::read_to_string(practice.join("practice-1.json")).unwrap(),
+        )
+        .unwrap();
+        text["latent"] = serde_json::json!({"roster": ["informed"]});
+        std::fs::write(practice.join("practice-2.json"), text.to_string()).unwrap();
+        assert_eq!(check(v1).status, Status::Fail);
+        std::fs::remove_file(practice.join("practice-2.json")).unwrap();
+        // So does a file in a subdirectory, and a file that is not a scenario.
+        std::fs::create_dir_all(practice.join("sub")).unwrap();
+        std::fs::write(practice.join("sub/notes.txt"), "informed account 4").unwrap();
+        let check_sub = check(v1);
+        assert_eq!(check_sub.status, Status::Fail, "{}", check_sub.detail);
+        assert!(
+            check_sub.detail.contains("notes.txt"),
+            "{}",
+            check_sub.detail
+        );
+        std::fs::remove_dir_all(practice.join("sub")).unwrap();
+        // A weekend-gap description in a subdirectory is read too.
+        std::fs::create_dir_all(practice.join("sub")).unwrap();
+        let mut leaky = g.practice("practice", 6, 5).remove(0);
+        leaky.name = "practice-9".into();
+        leaky.save(&practice.join("sub/practice-9.json")).unwrap();
+        let sub = check(v2);
+        assert_eq!(sub.status, Status::Fail, "{}", sub.detail);
+        assert!(sub.detail.contains("sub/practice-9.json"), "{}", sub.detail);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// infra/53's actor scenarios configure `actors.informed` and
+    /// `actors.worker`, which are not a latent state.
+    #[test]
+    fn an_actors_config_with_informed_and_worker_passes() {
+        let root = std::env::temp_dir().join(format!("mtx-practice-actors-{}", std::process::id()));
+        let practice = root.join("bench/tasks/t/environment/practice");
+        std::fs::create_dir_all(&practice).unwrap();
+        let g = mtx_grader::generators::generator("weekend-gap").unwrap();
+        let scenario = g.practice("practice", 1, 5).remove(0);
+        let mut json = serde_json::to_value(&scenario).unwrap();
+        json["description"] = g.neutral_description(&scenario.symbol).into();
+        // The shape of bench/checks/actors/pooled.json (infra/53): informed
+        // wallets and a worker are the library's configuration.
+        json["actors"] = serde_json::json!({
+            "scale": {"trades_per_minute": 1.5, "trade_size": 0.02, "trade_size_sigma": 1.0},
+            "noise": [{"wallets": 3, "flow_mult": 20.0, "size_mult": 5.0}],
+            "informed": [{"wallets": 2, "horizon_slots": 40, "edge_bps": 30.0,
+                "intensity_mult": 40.0, "size_mult": 10.0}],
+        });
+        std::fs::write(practice.join("practice-1.json"), json.to_string()).unwrap();
+        for headline in [tasks::Headline::V1, tasks::Headline::V2] {
+            let check = practice_holds_no_latent(&root, "t", "weekend-gap", headline);
+            assert_eq!(check.status, Status::Pass, "{}", check.detail);
+        }
+        let keys = mtx_grader::generators::latent_keys_in(&json.to_string());
+        assert!(keys.is_empty(), "{keys:?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -2287,8 +2443,14 @@ mod tests {
             .unwrap();
             let check = bot_told_nothing(&test);
             assert_eq!(check.status, Status::Pass, "{}: {}", task.dir, check.detail);
-            let check = practice_holds_no_latent(&root, &task.dir);
-            assert_eq!(check.status, Status::Pass, "{}: {}", task.dir, check.detail);
+            let check =
+                practice_holds_no_latent(&root, &task.dir, &task.mtx.generator, task.mtx.headline);
+            assert_ne!(check.status, Status::Fail, "{}: {}", task.dir, check.detail);
+            // The four v1 tasks that keep the generator's description are
+            // reported, never certified clean.
+            if ["funding-carry", "weekend-gap"].contains(&task.mtx.generator.as_str()) {
+                assert_eq!(check.status, Status::Warn, "{}: {}", task.dir, check.detail);
+            }
         }
         let verifier = "mtx grade \\\n  --draw flash-crash \\\n  --bot /app/bot\n";
         assert_eq!(bot_told_nothing(verifier).status, Status::Pass);

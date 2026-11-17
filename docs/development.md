@@ -313,8 +313,10 @@ instruction. `mtx task status <name>` says which steps are done;
    (`mtx calibrate --informed --v2-sessions --practice <family>
    --practice-seed <seed> --out <practice dir>`, which redraws the set and
    tells the informed bot each session's latent state host-side; the files
-   keep only its PnL, and `mtx gates` fails a practice file that holds a
-   latent or roster key): every practice file carries
+   keep only its PnL and a neutral description, since the generator's own
+   states the draw in prose; `mtx gates` fails a v2 task's practice file that
+   is not a scenario, holds a latent or roster member, or has the generator's
+   description, and warns for a v1 task's): every practice file carries
    both anchors' PnL, since `mtx-practice` scores practice by v2 too
    (`guide practice`). `mtx task sync` writes the verifier's scoring flags
    into the task's `environment/Dockerfile` (`MTX_PRACTICE_SCORING`), which
