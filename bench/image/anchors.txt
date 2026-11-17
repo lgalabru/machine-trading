@@ -3,6 +3,6 @@
 flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
-skew-maker-follow mtx-bot-skew-maker-follow mtx-skew-maker-follow bench/tasks/skew-maker-follow-tsla/reference
-skew-maker-follow-informed mtx-bot-skew-maker-follow-informed mtx-skew-maker-follow-informed bench/tasks/skew-maker-follow-tsla/checks/bots/informed
+skew-maker-follow mtx-bot-skew-maker-follow mtx-skew-maker-follow bench/tasks/skew-maker-follow-tsla/reference component
+skew-maker-follow-informed mtx-bot-skew-maker-follow-informed mtx-skew-maker-follow-informed bench/tasks/skew-maker-follow-tsla/checks/bots/informed component
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference

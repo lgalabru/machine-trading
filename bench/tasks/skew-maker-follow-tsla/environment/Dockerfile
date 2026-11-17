@@ -1,7 +1,7 @@
-# The dev image (bench/image/Dockerfile, target dev): the grader, the chain
+# The agent image (bench/image/Dockerfile, target agent): the grader, the chain
 # snapshots, a Rust toolchain, the bot SDK at /opt/mtx/sdk with its
 # dependencies compiled, and a built starter bot at /app/bot.
-FROM ghcr.io/solana-foundation/machine-trading:0.12.0@sha256:6328c47bfe5b8b5963dab9d8b867b37f9af965ebbf6c3e49cd28bac049d94608
+FROM ghcr.io/solana-foundation/machine-trading:0.12.0-agent
 ENV MTX_SNAPSHOT=/opt/mtx/snapshots/phoenix-perps-2026-11-13
 # The task's name, before anything is copied in: the tasks' Dockerfiles are
 # otherwise identical, and BuildKit building two at once has put one task's
