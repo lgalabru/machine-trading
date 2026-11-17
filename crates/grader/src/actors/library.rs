@@ -810,6 +810,16 @@ impl Ledger {
         }
     }
 
+    /// The kind of actor `wallet` trades for (the first, in a pool).
+    fn kind_of(&self, wallet: &Pubkey) -> String {
+        let wallet = wallet.to_string();
+        self.state()
+            .actors
+            .iter()
+            .find(|tally| tally.wallets.contains(&wallet))
+            .map_or_else(|| "unknown".to_string(), |tally| tally.kind.clone())
+    }
+
     /// The takes kept from the `from`th on.
     fn takes_from(&self, from: usize) -> Vec<(u64, Pubkey, Side, f64)> {
         self.state()

@@ -79,7 +79,7 @@ enum Who {
 /// Who a shy trader found copying it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Copier {
-    Wallet,
+    Wallet(Pubkey),
     Bot,
 }
 
@@ -149,7 +149,7 @@ impl ShyWatch {
         self.others.clear();
         Some(match copier {
             Who::Bot => Copier::Bot,
-            Who::Wallet(_) => Copier::Wallet,
+            Who::Wallet(wallet) => Copier::Wallet(wallet),
         })
     }
 
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(watch.begin(38), None);
         // One more sale right after a fill makes a copier of `a`.
         ledger.took(32, a, Side::Ask, 0.7);
-        assert_eq!(watch.begin(40), Some(Copier::Wallet));
+        assert_eq!(watch.begin(40), Some(Copier::Wallet(a)));
         assert!(watch.throttled(40) && watch.throttled(139) && !watch.throttled(140));
     }
 

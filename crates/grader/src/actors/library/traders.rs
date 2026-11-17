@@ -322,9 +322,11 @@ fn begin_shy(shy: &mut Option<ShyWatch>, wallets: &[Wallet], at: u64) -> f64 {
     };
     if let Some(copier) = watch.begin(at) {
         wallets[0].count("throttles", 1);
-        if copier == Copier::Bot {
-            wallets[0].count("throttles_by_bot", 1);
-        }
+        let by = match copier {
+            Copier::Bot => "bot".to_string(),
+            Copier::Wallet(wallet) => wallets[0].ledger.kind_of(&wallet),
+        };
+        wallets[0].count(&format!("throttles_by_{by}"), 1);
     }
     if watch.throttled(at) {
         wallets[0].count("throttled_steps", 1);
