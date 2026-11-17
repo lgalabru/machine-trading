@@ -10,9 +10,8 @@
 //! - **Reach.** The family's tolerance is 0.2 to 0.5 bp; the desk narrows
 //!   it from its own answers: a declined quote was past the reach, a taken
 //!   one (from a client not flagged) within it.
-//! - **Hit ratio on wide quotes.** Each client's first two requests are
-//!   answered for one trade size, just past the widest reach the family
-//!   allows. No uninformed client takes that; an informed one does when its
+//! - **Hit ratio on wide quotes.** Each client's first request is answered
+//!   for one trade size, just past the widest reach the family allows. No uninformed client takes that; an informed one does when its
 //!   view is worth more than the gap. A client that takes one is flagged.
 //! - **Markouts.** Every request of a client, answered or not, is marked
 //!   against the index a minute later, signed by its side; a client whose
@@ -277,11 +276,11 @@ pub struct Reference {
 }
 
 /// The reference's settings.
-const PROBES: u32 = 2;
+const PROBES: u32 = 1;
 const PROBE_BP: f64 = 0.5;
 const MARKOUT_SLOTS: u64 = 60;
 const PRIOR: f64 = 0.3;
-const FLAG: f64 = 0.5;
+const FLAG: f64 = 0.7;
 const INFORMED_MARKOUT: f64 = 0.8;
 const SMALL_N: f64 = 4.0;
 const NEED: usize = 2;
