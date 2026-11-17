@@ -28,7 +28,8 @@
     "max(blind-long, blind-short) < reference",
     "max(fade, follow) < wait-oracle",
     "wait-oracle < reference",
-    "reference < informed < hindsight"
+    "reference < informed < hindsight",
+    "push-fade < informed"
   ],
   "rungs": [
     {
@@ -65,6 +66,13 @@
         "MTX_NAIVE": "wait-oracle"
       },
       "name": "wait-oracle"
+    },
+    {
+      "dir": "bench/tasks/hunt-or-breakout-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "push-fade"
+      },
+      "name": "push-fade"
     },
     {
       "dir": "bench/tasks/hunt-or-breakout-tsla/reference",

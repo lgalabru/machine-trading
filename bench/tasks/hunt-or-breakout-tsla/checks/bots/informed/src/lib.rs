@@ -13,18 +13,20 @@
 //! Phoenix names traders by their account, a PDA of the wallet, so it maps
 //! each wallet to its account and reads their TSLA positions every step.
 //!
-//! - **A hunt.** A hunter's account taking a clip in one step is a push. It
-//!   fades the run with the cap once the book is through the level, and
-//!   covers when the book comes back to it.
-//! - **A break.** The informed accounts building a position one way is the
-//!   break, before or after the book runs: it follows with the cap at once
-//!   and holds until the oracle has moved and stalled.
+//! - **A hunt.** A hunter's account taking a clip in one step is a push.
+//!   It rides the push into the book's run (with the cap, the push's way),
+//!   then, once the book is through the level, turns and fades the run with
+//!   the cap, and covers when the book comes back to it.
+//! - **A break.** An informed breaker's sweep, or the informed accounts'
+//!   flow building one way, is a break: it follows with the cap at once and
+//!   holds until the oracle has moved and stalled. A sweep's or a push's
+//!   trade back out is the end of its own run, never a new one.
 
 use mtx_bot_hunt_or_breakout::{Bet, LEVEL_STEP_USD, Trade, Watch, go_to, mid, told_number};
 use mtx_kit::{log, prelude::*, venue::PhoenixVenue};
 
-/// A hunter's clip in one step, in TSLA.
-const PUSH_UNITS: f64 = 1.0;
+/// A hunter's push or a breaker's sweep: a clip in one step, in TSLA.
+const PUSH_UNITS: f64 = 2.0;
 /// The informed accounts' net change over `FLOW_SLOTS` that is a break.
 const FLOW_UNITS: f64 = 1.0;
 const FLOW_SLOTS: u64 = 40;
@@ -49,9 +51,14 @@ pub struct Informed {
     step: f64,
     watch: Watch,
     informed: usize,
-    /// Each hunter account's open push, by way.
-    hunting: Vec<Option<f64>>,
+    /// Each watched account's open push or sweep, by way.
+    open: Vec<Option<f64>>,
     push: Option<Push>,
+    /// Riding a hunter's push into the run: its way.
+    riding: Option<f64>,
+    /// The informed accounts' pushes and sweeps, by slot, over the flow's
+    /// window: not their flow.
+    clip_log: std::collections::VecDeque<(u64, f64)>,
     trade: Option<Trade>,
     rest_until: u64,
 }
@@ -77,7 +84,7 @@ impl Strategy for Informed {
         let mut accounts = Watch::of_authorities(&venue, &informed)?;
         self.informed = accounts.len();
         accounts.extend(Watch::of_authorities(&venue, &hunters)?);
-        self.hunting = vec![None; accounts.len() - self.informed];
+        self.open = vec![None; accounts.len()];
         log(&format!(
             "informed {informed:?}, hunters {hunters:?}, accounts {accounts:?}"
         ));
@@ -94,28 +101,47 @@ impl Strategy for Informed {
         };
         let oracle = market.oracle;
 
-        // The hunter's pushes, and its trades back out.
+        // Pushes and sweeps, and their trades back out: a clip from a flat
+        // account opens one, the same account's clip the other way closes
+        // it. The informed accounts' flow is what is left.
         let last = self.watch.last_changes();
-        for (h, open) in self.hunting.iter_mut().enumerate() {
-            let c = last[self.informed + h];
+        let mut sweep: Option<f64> = None;
+        let mut clips = vec![0.0; last.len()];
+        for (i, open) in self.open.iter_mut().enumerate() {
+            let c = last[i];
             if c.abs() < PUSH_UNITS {
                 continue;
             }
+            clips[i] = c;
             match *open {
                 Some(dir) if dir == -c.signum() => *open = None,
                 _ => {
                     *open = Some(c.signum());
-                    self.push = Some(Push {
-                        dir: c.signum(),
-                        at: slot,
-                        mid,
-                    });
-                    log(&format!("slot {slot}: a hunter pushed {c:+.3}"));
+                    if i < self.informed {
+                        sweep = Some(c.signum());
+                        log(&format!("slot {slot}: an informed sweep {c:+.3}"));
+                    } else {
+                        self.push = Some(Push {
+                            dir: c.signum(),
+                            at: slot,
+                            mid,
+                        });
+                        log(&format!("slot {slot}: a hunter pushed {c:+.3}"));
+                    }
                 }
             }
         }
-        // The informed accounts' flow.
-        let flow: f64 = self.watch.changes(FLOW_SLOTS)[..self.informed].iter().sum();
+        self.clip_log
+            .push_back((slot, clips[..self.informed].iter().sum::<f64>()));
+        while self
+            .clip_log
+            .front()
+            .is_some_and(|(s, _)| s + FLOW_SLOTS < slot)
+        {
+            self.clip_log.pop_front();
+        }
+        let flow: f64 = self.watch.changes(FLOW_SLOTS)[..self.informed].iter().sum::<f64>()
+            - self.clip_log.iter().map(|(_, c)| c).sum::<f64>();
 
         if let Some(trade) = &mut self.trade {
             if trade.done(slot, mid, oracle) {
@@ -123,30 +149,39 @@ impl Strategy for Informed {
                 self.rest_until = slot + REST_SLOTS;
             }
         }
-        if self.trade.is_none() {
-            if let Some(push) = self.push {
-                if push.dir * (mid / push.mid - 1.0) >= THROUGH {
-                    let level = if push.dir > 0.0 {
-                        (push.mid / self.step).ceil() * self.step
-                    } else {
-                        (push.mid / self.step).floor() * self.step
-                    };
-                    log(&format!("slot {slot}: fade the hunt {:+} through {level}", push.dir));
-                    self.trade = Some(Trade::new(Bet::Fade, push.dir, level, slot, oracle));
-                    self.push = None;
-                } else if slot > push.at + PUSH_WAIT_SLOTS {
-                    self.push = None;
-                }
-            } else if flow.abs() >= FLOW_UNITS && slot >= self.rest_until {
-                let dir = flow.signum();
+        if let Some(push) = self.push {
+            if push.dir * (mid / push.mid - 1.0) >= THROUGH {
+                // The run is on: turn from riding it to fading it.
+                let level = if push.dir > 0.0 {
+                    (push.mid / self.step).ceil() * self.step
+                } else {
+                    (push.mid / self.step).floor() * self.step
+                };
+                log(&format!("slot {slot}: fade the hunt {:+} through {level}", push.dir));
+                self.trade = Some(Trade::new(Bet::Fade, push.dir, level, slot, oracle));
+                self.riding = None;
+                self.push = None;
+            } else if slot > push.at + PUSH_WAIT_SLOTS {
+                self.riding = None;
+                self.push = None;
+            } else if self.trade.is_none() {
+                self.riding = Some(push.dir);
+            }
+        } else if self.trade.is_none() {
+            let signal = sweep.or_else(|| {
+                (flow.abs() >= FLOW_UNITS && slot >= self.rest_until).then(|| flow.signum())
+            });
+            if let Some(dir) = signal {
                 // Its stop: well back from where it bought.
                 let stop = mid * (1.0 - dir * 0.006);
-                log(&format!("slot {slot}: follow the informed {flow:+.3}"));
+                log(&format!("slot {slot}: follow the informed {dir:+}"));
                 self.trade = Some(Trade::new(Bet::Follow, dir, stop, slot, oracle));
             }
         }
-        let target = match (&self.trade, market.last) {
-            (Some(trade), false) => trade.target(self.cap),
+        let target = match (&self.trade, self.riding, market.last) {
+            (_, _, true) => 0.0,
+            (Some(trade), _, _) => trade.target(self.cap),
+            (None, Some(dir), _) => dir * self.cap,
             _ => 0.0,
         };
         go_to(target, market, orders);

@@ -335,6 +335,9 @@ impl Library {
         }
         for informed in &self.informed {
             add("informed", own(PoolRole::Informed, informed.wallets));
+            if let Some(sweeps) = &informed.sweeps {
+                add("informed", sweeps.wallets);
+            }
         }
         for chaser in &self.chasers {
             add("chaser", own(PoolRole::Chasers, chaser.wallets));
@@ -435,6 +438,18 @@ impl Library {
                 setting.path.clone(),
                 rng("informed"),
             )));
+            // The sweeps that lead its moves trade from wallets of their own,
+            // never the pool's: a reader learns who they are only from what
+            // they do.
+            if let Some(sweeps) = &spec.sweeps {
+                let wallets = ledger.add("informed", seats_for(None, sweeps.wallets), false);
+                built.actors.push(Box::new(stop_hunter::Hunter::new(
+                    sweeps.clone(),
+                    scale,
+                    wallets,
+                    rng("informed-sweep"),
+                )));
+            }
         }
         for spec in &self.chasers {
             let wallets = ledger.add(
@@ -1187,6 +1202,28 @@ pub(crate) mod tests {
             book_usd: level_usd,
             fair_usd: None,
         }
+    }
+
+    #[test]
+    fn an_informed_traders_sweeps_trade_from_informed_wallets_of_their_own() {
+        let library: Library = serde_json::from_str(
+            r#"{"scale": {"trades_per_minute": 1.0, "trade_size": 0.01, "trade_size_sigma": 1.0},
+                "informed": [{"wallets": 3, "horizon_slots": 20, "edge_bps": 5.0,
+                              "sweeps": {"wallets": 2, "level_step_usd": 2.0, "at_slots": [100]}}],
+                "stop_hunters": [{"wallets": 2, "level_step_usd": 2.0}]}"#,
+        )
+        .unwrap();
+        assert_eq!(library.validate(), Ok(()));
+        let wallets = library.wallets();
+        assert_eq!(wallets.iter().filter(|(r, _)| *r == "informed").count(), 5);
+        assert_eq!(wallets.iter().filter(|(r, _)| *r == "stop-hunter").count(), 2);
+        let bad: Library = serde_json::from_str(
+            r#"{"scale": {"trades_per_minute": 1.0, "trade_size": 0.01, "trade_size_sigma": 1.0},
+                "informed": [{"horizon_slots": 20, "edge_bps": 5.0,
+                              "sweeps": {"wallets": 0, "level_step_usd": 2.0}}]}"#,
+        )
+        .unwrap();
+        assert!(bad.validate().unwrap_err().contains("sweeps"));
     }
 
     #[test]

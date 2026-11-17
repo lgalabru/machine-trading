@@ -8,10 +8,21 @@
 //!   oracle moves with within 30 slots, and fades one it doesn't while the
 //!   book is still through.
 //!
+//! - `push-fade`: the first screen's best bot (gpt-6.1-sol), its core: it
+//!   reads every trader account, and takes a clip of 2.2 TSLA or more from
+//!   an account flat before it as a stop hunter's push: it rides the push
+//!   into the run, fades the run once the book is through the level, and
+//!   follows every run nobody pushed. It reads sizes and flatness, never
+//!   who an account is.
+//!
 //! A run back through a level traded in the last 300 slots is the same run.
 
-use mtx_bot_hunt_or_breakout::{Bet, Crosses, LEVEL_STEP_USD, Trade, go_to, mid};
-use mtx_kit::{prelude::*, run};
+use mtx_bot_hunt_or_breakout::{Bet, Crosses, LEVEL_STEP_USD, Trade, Watch, go_to, mid};
+use mtx_kit::{
+    prelude::*,
+    run,
+    venue::{PhoenixVenue, key},
+};
 
 const ORACLE_SLOTS: u64 = 30;
 const ORACLE_BPS: f64 = 6.0;
@@ -21,7 +32,12 @@ enum Mode {
     Fade,
     Follow,
     WaitOracle,
+    PushFade,
 }
+
+/// The size of a push, in TSLA.
+const PUSH_UNITS: f64 = 2.2;
+const THROUGH: f64 = 0.0008;
 
 struct Naive {
     mode: Mode,
@@ -30,11 +46,19 @@ struct Naive {
     pending: Option<(f64, f64, u64, f64)>,
     trade: Option<Trade>,
     last_level: Option<(f64, u64)>,
+    watch: Watch,
+    /// A push seen: its way, slot and the mid then.
+    push: Option<(f64, u64, f64)>,
 }
 
 impl Strategy for Naive {
     fn start(&mut self, session: &Session) -> BotResult {
         self.cap = session.cap;
+        if self.mode == Mode::PushFade {
+            let venue = PhoenixVenue::from_json(&session.venue)?;
+            let own = venue.trader_account(&key(&session.authority)?).to_string();
+            self.watch = Watch::new(&venue, &session.symbol, Watch::every_trader(&own)?, 40)?;
+        }
         Ok(())
     }
 
@@ -45,6 +69,9 @@ impl Strategy for Naive {
             return Ok(());
         };
         let oracle = market.oracle;
+        if self.mode == Mode::PushFade {
+            return self.push_fade(slot, mid, oracle, market, orders);
+        }
         let cross = self.crosses.update(mid);
         if let Some(trade) = &mut self.trade {
             if trade.done(slot, mid, oracle) {
@@ -61,7 +88,7 @@ impl Strategy for Naive {
         if let Some((dir, level, at, was)) = self.pending {
             let bet = match self.mode {
                 Mode::Fade => Some(Bet::Fade),
-                Mode::Follow => Some(Bet::Follow),
+                Mode::Follow | Mode::PushFade => Some(Bet::Follow),
                 Mode::WaitOracle => {
                     if dir * (oracle / was - 1.0) * 10_000.0 >= ORACLE_BPS {
                         Some(Bet::Follow)
@@ -89,12 +116,75 @@ impl Strategy for Naive {
     }
 }
 
+impl Naive {
+    fn push_fade(
+        &mut self,
+        slot: u64,
+        mid: f64,
+        oracle: f64,
+        market: &Market,
+        orders: &mut Orders,
+    ) -> BotResult {
+        self.watch.read(slot)?;
+        let now = self.watch.now().to_vec();
+        for (i, c) in self.watch.last_changes().into_iter().enumerate() {
+            let before = now[i] - c;
+            let new = self.watch.first.get(i).is_some_and(|p| p.abs() < 1e-9);
+            if c.abs() >= PUSH_UNITS && before.abs() < 0.01 && new {
+                self.push = Some((c.signum(), slot, mid));
+            }
+        }
+        let cross = self.crosses.update(mid);
+        if let Some(trade) = &mut self.trade {
+            if trade.done(slot, mid, oracle) {
+                self.trade = None;
+            }
+        }
+        let mut riding = None;
+        if let Some((dir, at, then)) = self.push {
+            if dir * (mid / then - 1.0) >= THROUGH {
+                let level = if dir > 0.0 {
+                    (then / LEVEL_STEP_USD).ceil() * LEVEL_STEP_USD
+                } else {
+                    (then / LEVEL_STEP_USD).floor() * LEVEL_STEP_USD
+                };
+                self.trade = Some(Trade::new(Bet::Fade, dir, level, slot, oracle));
+                self.last_level = Some((level, slot));
+                self.push = None;
+            } else if slot > at + 12 {
+                self.push = None;
+            } else if self.trade.is_none() {
+                riding = Some(dir);
+            }
+        } else if self.trade.is_none()
+            && let Some((level, dir)) = cross
+        {
+            let again = self
+                .last_level
+                .is_some_and(|(l, at)| (l - level).abs() < 1e-6 && at + 300 > slot);
+            if !again {
+                self.trade = Some(Trade::new(Bet::Follow, dir, level, slot, oracle));
+                self.last_level = Some((level, slot));
+            }
+        }
+        let target = match (&self.trade, riding, market.last) {
+            (_, _, true) => 0.0,
+            (Some(trade), _, _) => trade.target(self.cap),
+            (None, Some(dir), _) => dir * self.cap,
+            _ => 0.0,
+        };
+        go_to(target, market, orders);
+        Ok(())
+    }
+}
+
 fn main() -> BotResult {
     let mode = match std::env::var("MTX_NAIVE").as_deref() {
         Ok("fade") => Mode::Fade,
         Ok("follow") => Mode::Follow,
         Ok("wait-oracle") => Mode::WaitOracle,
-        other => return Err(format!("MTX_NAIVE must be fade, follow or wait-oracle, not {other:?}").into()),
+        Ok("push-fade") => Mode::PushFade,
+        other => return Err(format!("MTX_NAIVE must be fade, follow, wait-oracle or push-fade, not {other:?}").into()),
     };
     run(Naive {
         mode,
@@ -103,5 +193,7 @@ fn main() -> BotResult {
         pending: None,
         trade: None,
         last_level: None,
+        watch: Watch::default(),
+        push: None,
     })
 }

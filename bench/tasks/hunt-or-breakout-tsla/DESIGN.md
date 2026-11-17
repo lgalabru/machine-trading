@@ -54,7 +54,8 @@ oracle.
 
 | Lever | What the market does | What a good bot does | How an honest operator detects it |
 | --- | --- | --- | --- |
-| The hunter | 2 wallets, one per hunt; pushes 2.4-4.8 TSLA a couple of slots before the run, trades the same size back its hold later | fade the run it leads; remember the wallet | trader accounts' positions (`getProgramAccounts`, then `getMultipleAccounts` each step), or the fills |
+| The hunter | one wallet; pushes 2.4-4.8 TSLA a couple of slots before the run, trades the same size back its hold later | ride the push, then fade the run it leads; remember the wallet |
+| The breaker | one informed wallet; sweeps 2.4-4.8 TSLA a couple of slots before each break, exactly as the hunter pushes, and trades it back its hold later | follow the run it leads; remember the wallet | trader accounts' positions (`getProgramAccounts`, then `getMultipleAccounts` each step), or the fills |
 | The informed | 2-3 wallets that trade the oracle's move 20-60 slots ahead of it | follow their flow | the same accounts, building one way before or as the book runs |
 | The excursion | the book's makers jump 0.15-0.45% through the level, hunts and breaks alike | nothing: it doesn't tell them apart | the book |
 | The oracle | stays put in a hunt; creeps then jumps in a break | a confirmation, not a trigger | `market.oracle` |
@@ -63,7 +64,7 @@ oracle.
 ## No tells
 
 - Every session seats every actor (noise, chasers, the informed, the
-  hunter's two wallets) and has both kinds of run; the roster the informed
+  hunter's wallet and the breaker's) and has both kinds of run; the roster the informed
   bot is told never depends on which runs come.
 - Hunts and breaks draw the excursion, the approach and the time the book
   spends through the level from the same ranges.
@@ -92,16 +93,58 @@ follows a break before the book moves.
 
 ## The anchors
 
-- **The reference (0.5)** lists Phoenix's trader accounts, keeps those that
-  are new this session and take liquidity, and classifies each run by its
-  leader (a single pusher, or a known hunter), the crowd that built a
-  position before it, and the oracle when those disagree. It isn't told
-  who anyone is.
-- **The informed bot (1)** is told the informed and hunter wallets, the
-  hunter's hold and trigger, the grid and the informed horizon (identity
-  and process facts; `LATENT_FIELDS`), never where, when or which way a run
-  goes or whether it is a hunt. It fades a hunter's push once the book is
-  through, and follows the informed wallets' flow at once.
+- **The reference (0.5)** lists Phoenix's trader accounts and reads their
+  TSLA positions every step. It takes a 2.2-TSLA-or-more clip from an
+  account that came into the session flat as a push, and once that push's
+  run has played out (90 slots) names the account a hunter (the oracle
+  never followed) or a breaker (it did). It rides and fades a known
+  hunter's later pushes and follows a known breaker's; it leaves an unknown
+  pusher alone, so it misses each session's first hunt and first break. It
+  isn't told who anyone is.
+- **The informed bot (1)** is told the informed wallets (the breakers'
+  among them) and the hunter's, the hunter's hold and trigger, the grid and
+  the informed horizon (identity and process facts; `LATENT_FIELDS`), never
+  where, when or which way a run goes or whether it is a hunt. It rides a
+  hunter's push into the run, then fades the run once the book is through;
+  it follows a breaker's sweep or the informed wallets' flow at once.
+
+## The exploit to defeat (first screen, 2026-11-17)
+
+On the first build, one gpt-6.1-sol run (native Codex, high effort,
+unguarded screen) scored raw 1.27: $6,244 on 72 hidden sessions against the
+informed bot's $4,631, every session profitable, worst session +$10.5. Its
+bot:
+
+- lists every Phoenix trader account at the start and reads their TSLA
+  positions each turn;
+- takes a clip of about 2.4-4.8 TSLA (20-40% of the cap) from an account
+  that was flat, a couple of slots before the book runs, as a stop hunter's
+  push: it buys (or sells) the cap with the push, rides the book's jump
+  through the level, then turns and fades the run until the book comes
+  back;
+- follows every run that no such push led;
+- learns a hunter from its push and trade back, and stops adding risk at
+  half the loss limit.
+
+It worked because the class was labelled by structure: every hunt began
+with one large push from a flat wallet and no break did, and the push
+always came a couple of slots before a scripted jump. Reading sizes and
+flatness was enough; who pushed never mattered. A fairness defect (no
+cheap labels), not skill.
+
+The fix: every break now begins the same way, with an informed breaker's
+sweep from a wallet of its own, drawn from the same size and hold
+ranges, flat before, traded back out a hold later. A push's size, timing
+and the wallet's flatness no longer separate a hunt from a break; only who
+pushed does, which a reader learns over the session from what each pushing
+wallet's earlier runs did, and the informed bot is told. The `push-fade`
+ladder rung re-implements the Sol bot's core without identity: it must stay
+under the informed bot.
+
+After the fix (fresh 72 sessions, `hidden/gate0/gate0-redesign.txt`):
+informed $6,990, reference $3,383 (0.48 weighted), push-fade $644 (0.04),
+wait-for-the-oracle −$475, fade-every-run −$1,440, follow-every-run
+−$2,382.
 
 ## Failure modes, priced
 
