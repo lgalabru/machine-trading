@@ -115,7 +115,10 @@ mod tests {
                 .filter(|id| id.matches('.').count() == 2)
             {
                 let bytes = fs::read(&path).unwrap();
-                files.insert(id.to_string(), super::super::calibration::sha256_hex(&bytes));
+                files.insert(
+                    id.to_string(),
+                    super::super::calibration::sha256_hex(&bytes),
+                );
                 texts.push((name, String::from_utf8(bytes).unwrap()));
             }
         }
