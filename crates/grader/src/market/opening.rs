@@ -1,13 +1,13 @@
 //! The jump regime the data supports in an instrument's opening window: the
 //! most a stated session spec may state (see
 //! `realism::stated_regime_bound`). Read from the hand-maintained
-//! `calibration/market/opening-windows.toml`, by the calibration's asset.
+//! `calibration/opening-windows.toml`, by the calibration's asset.
 
 use std::{collections::BTreeMap, sync::OnceLock};
 
 use serde::Deserialize;
 
-const FILE: &str = include_str!("../../../../calibration/market/opening-windows.toml");
+const FILE: &str = include_str!("../../../../calibration/opening-windows.toml");
 
 /// One asset's opening-window measurement.
 #[derive(Debug, Clone, Deserialize, PartialEq)]
@@ -62,7 +62,7 @@ pub fn parse(text: &str) -> Result<BTreeMap<String, Opening>, String> {
 /// The shipped file's measurement for `asset`, if it has one.
 pub fn for_asset(asset: &str) -> Option<&'static Opening> {
     static ALL: OnceLock<BTreeMap<String, Opening>> = OnceLock::new();
-    ALL.get_or_init(|| parse(FILE).expect("calibration/market/opening-windows.toml is valid"))
+    ALL.get_or_init(|| parse(FILE).expect("calibration/opening-windows.toml is valid"))
         .get(&asset.to_ascii_lowercase())
 }
 

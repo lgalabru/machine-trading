@@ -1,6 +1,7 @@
 # Opening-window jump bounds, one table per asset (the key is the
 # calibration's `meta.asset`). HAND-MAINTAINED: the fitter does not write it,
-# and the calibration files beside it stay exactly as the fitter wrote them.
+# and calibration/market/ (kept apart from this file) stays exactly as the
+# fitter wrote it.
 #
 # What it holds: the highest jump regime the data supports for a stated
 # session spec (`jump_rate_per_hour`, `jump_size`), measured in the

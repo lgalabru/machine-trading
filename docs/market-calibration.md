@@ -238,7 +238,7 @@ so treat as ranges, and cap at the largest observed):
 Earnings gaps are 3 to 10 times an ordinary overnight gap (n of 1 to 2 per
 name): use the calendar's gap field, not an event.
 
-These measured values are in `calibration/market/opening-windows.toml`, one
+These measured values are in `calibration/opening-windows.toml`, one
 table per asset (`per_hour`, the two sizes, `earnings_per_hour` where the data
 showed it, `measured_from`, `measured_through` and a `source`). The file is
 hand-maintained; the calibration files beside it stay as the fitter wrote them.
