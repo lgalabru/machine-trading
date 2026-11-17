@@ -128,7 +128,7 @@ impl CopyShyFamily {
             decoys: (1, 2),
             chasers: (2, 2),
             noise: (3, 5),
-            horizon_slots: (60, 150),
+            horizon_slots: (240, 480),
             edge_bps: (15.0, 20.0),
             informed_mult: 24.0,
             noise_mult: 2.0,
@@ -142,8 +142,8 @@ impl CopyShyFamily {
             shy_fills: 3,
             throttle: (0.15, 0.3),
             cooldown_slots: (600, 1_200),
-            max_position: 10.0,
-            max_drawdown_usd: 200.0,
+            max_position: 25.0,
+            max_drawdown_usd: 400.0,
             close_haircut_bps: 5.0,
         }
     }

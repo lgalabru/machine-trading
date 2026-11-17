@@ -42,6 +42,8 @@ use serde_json::{Value, json};
 /// Which rung the machinery runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
+    /// Never trades.
+    Nop,
     Reference,
     /// Told the fund's and the decoys' wallets and the shy rule
     /// (`MTX_REGIME`).
@@ -57,6 +59,7 @@ pub enum Mode {
 impl Mode {
     pub fn parse(name: &str) -> Option<Self> {
         Some(match name {
+            "nop" => Self::Nop,
             "reference" => Self::Reference,
             "informed" => Self::Informed,
             "full-copy" => Self::FullCopy,
@@ -102,9 +105,9 @@ impl Params {
     pub fn of(mode: Mode) -> Self {
         let base = Params {
             look_slots: 40,
-            hold_slots: 120,
+            hold_slots: 200,
             threshold: 0.0,
-            mark_slots: 40,
+            mark_slots: 120,
             chase_bps: 8.0,
             min_weight: 2.0,
             min_score_bps: 20.0,

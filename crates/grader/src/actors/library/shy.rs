@@ -2,10 +2,11 @@
 //! after its own fills, as anyone reading the chain can, and once a single
 //! account's flow keeps following it, it hides its trading for a while.
 //!
-//! Over its last `fills` fills, it adds up each other account's flow on the
-//! side of its own latest fill before it, from just after the first of them
-//! to `detect_slots` after the last. An account whose following flow comes
-//! to `copy_share` of what those fills traded is copying it. It then trades
+//! Over its last `fills` fills, it adds up each other account's flow that
+//! came within `detect_slots` after one of them, on that fill's side. An
+//! account whose following flow comes to `copy_share` of what those fills
+//! traded is copying it: flow at random seldom lands in those windows, a
+//! copier's does every time. It then trades
 //! `throttle` of its usual size and looks only `throttle` of its horizon
 //! ahead, so it trades later, closer to the move, until `cooldown_slots`
 //! after the last time it found itself copied. Each finding starts its
@@ -204,27 +205,23 @@ impl ShyWatch {
     }
 
     /// The account whose flow came to `copy_share` of its last `fills`
-    /// fills, each following on the side of its latest fill before, if one
-    /// did (the bot first).
+    /// fills, each within `detect_slots` after one of them and on its side,
+    /// if one did (the bot first).
     fn copier(&self) -> Option<Who> {
         if self.fills.len() < self.spec.fills as usize {
             return None;
         }
         let own: f64 = self.fills.iter().map(|(.., size)| size).sum();
-        let (first, ..) = self.fills.front()?;
-        let (last, ..) = self.fills.back()?;
-        let until = last + self.spec.detect_slots;
+        let detect = self.spec.detect_slots;
         let mut followed = BTreeMap::<Who, f64>::new();
-        for traded in self
-            .others
-            .iter()
-            .filter(|t| t.at > *first && t.at <= until)
-        {
-            let Some((_, side, _)) = self.fills.iter().rev().find(|(at, ..)| *at < traded.at)
-            else {
-                continue;
-            };
-            if *side == traded.side {
+        for traded in &self.others {
+            let follows = self
+                .fills
+                .iter()
+                .rev()
+                .find(|(at, ..)| *at < traded.at && traded.at <= at + detect)
+                .is_some_and(|(_, side, _)| *side == traded.side);
+            if follows {
                 *followed.entry(traded.who).or_default() += traded.size;
             }
         }
