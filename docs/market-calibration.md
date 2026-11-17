@@ -155,6 +155,8 @@ regime = "stressed"            # hold one regime; default: drawn, switching
 regime_clock = 1.0             # switch this many times faster than the hourly rates
 waypoint_slots = 4
 jumps = false                  # background jumps on top of the fitted tails
+jump_rate_per_hour = 2.75      # optional; needs jumps = true; replaces the calibration's rate
+# optional [jump_size] replaces the calibration's sizes (needs jumps = true); [[events]] are scheduled releases
 gaps = true
 [start]
 mode = "before"                # draw | session | before | at
@@ -162,6 +164,80 @@ kind = "regular"
 lead_seconds = 60
 ```
 
+
+**Stated jump regimes.** The calibration's jump rate and sizes are
+averages over a whole regular session, and most of the rate comes from the
+opening hour. Three optional departures state a different regime. None
+changes a draw unless set: a spec without them draws the same path and
+serialises the same record as before.
+
+- `jump_rate_per_hour` replaces the calibration's rate. Needs
+  `jumps = true`; finite, 0 to 120. The draw consumes the same random
+  numbers, so a rate equal to the calibration's gives the same path as none.
+- `[jump_size]` (`abs_median_pct`, `abs_p90_pct`, `source`) replaces the
+  calibration's jump sizes (lognormal, as the calibration's). Needs
+  `jumps = true`; median positive, p90 at least the median and at most
+  10 percent; `source` says where the numbers were measured. It is kept
+  apart from `vol_mult`, which still multiplies jump sizes as before, so
+  set `vol_mult` for diffusive stress and `[jump_size]` for the jumps.
+- `[[events]]` (`slot`, `abs_median_pct`, `abs_p90_pct`, `source`; at most
+  16) are scheduled releases: at `slot` one move is added with a lognormal
+  absolute size and a fair-coin sign, recorded in the path's `events` as
+  `scheduled`, whether or not `jumps` is on. The slot is known to whoever
+  states it; the sign and size are not. An event at or past the session's
+  end is not drawn. Realism checks mask scheduled events like gaps.
+
+The record keeps `jump_rate_per_hour`, `jump_size` and `scheduled`, and
+leaves each out when absent. Each is refused with the allowed range when
+out of bounds.
+
+**Measured reference values.** A stated value must come from real
+measurement, with the source cited in the family's description and in
+`source`. Reference measurement (2026-11-17): Phoenix 1 m mark candles from
+the calibration archives (NVDA from 2026-06-09, TSLA from 06-16, SPCX from
+06-12, SPY and QQQ from 09-09, to mid-November), jumps by the calibration's
+rule (a 1 m regular-hours return beyond 5 robust sigmas of the trailing
+hour). Event days (CPI, NFP, FOMC, witching, earnings) do not raise the
+jump count above ordinary days (0.3 to 0.8 an hour all-session, against
+0.3 to 0.9); the time-of-day regime is the opening hour, every day:
+
+| Instrument | Opening hour 09:31-10:30: rate / h | median % / p90 % | Rest of session: rate / h | median % / p90 % | Shipped all-session rate |
+|---|---|---|---|---|---|
+| NVDA | 2.75 | 0.305 / 0.533 | 0.19 | 0.231 / 0.383 | 0.582 |
+| TSLA | 3.9 | 0.382 / 0.652 | 0.27 | 0.186 / 0.363 | 0.753 |
+| SPY | 1.0 | 0.091 / 0.153 | 0.22 | 0.108 / 0.195 | 0.338 |
+| QQQ | 1.4 | 0.138 / 0.257 | 0.24 | 0.122 / 0.222 | 0.419 |
+| SPCX | 2.75 | 0.556 / 1.003 | 0.30 | 0.452 / 1.002 | 0.674 |
+
+The highest rates the data has shown: TSLA 6.7 an hour in the opening hour
+of the three earnings-reaction days (3 hours), and 1.9 an hour all-session
+on its own earnings days (2 days). Rate samples carry a 15 to 40 percent
+standard error.
+
+**Rule: no all-session rate above the measured opening-window rate for
+that instrument.** An opening-window regime is a session at the open, with
+the opening rate and size; the rest of the session takes the rest rate.
+Never set 4 to 6 an hour for a whole session: the largest all-session rate
+on any event category with five or more days was 0.83 an hour.
+
+Scheduled releases are single moves, 5 minutes from the release minute
+(absolute, bp, median / p90; n of 3 to 5 each, so treat as ranges, and cap
+at the largest observed):
+
+| Instrument | CPI 08:30 | NFP 08:30 | FOMC 14:00 | Same clock, ordinary days |
+|---|---|---|---|---|
+| NVDA | 63 / 84 | 31 / 44 (max) | 33 / 61 (max) | 7 / 22 |
+| TSLA | 43 / 81 | 39 / 56 (max) | not distinguishable | 7 / 21 |
+| SPY | 47 / 58 | 18 / 34 (max) | not distinguishable | 4 / 10 |
+| QQQ | 69 / 73 | 23 / 36 (max) | not distinguishable | 5 / 15 |
+| SPCX | 84 / 123 | 52 / 92 (max) | 52 / 167 (max) | 13 / 36 |
+
+Earnings gaps are 3 to 10 times an ordinary overnight gap (n of 1 to 2 per
+name): use the calendar's gap field, not an event.
+
+`mtx market-cal check --spec` draws with these fields like any other spec
+field. Jump events are not masked from the tail statistics, so it judges a
+stated jump regime against the all-days bands; scheduled events are masked.
 
 **Regimes at session timescale.** Calibrations switch regimes at hourly
 rates, so a task minutes long almost never sees a switch. Two stated

@@ -68,29 +68,33 @@ impl SessionPath {
         let log_levels = (0..=scenario.duration_slots)
             .map(|slot| (1.0 + level_at(&scenario.path, slot) / 100.0).ln())
             .collect();
-        let gaps: Vec<_> = scenario
+        let events: Vec<_> = scenario
             .market_model
             .iter()
             .flat_map(|m| &m.events)
-            .filter(|e| e.kind == EventKind::Gap)
             .collect();
+        let gaps: Vec<_> = events.iter().filter(|e| e.kind == EventKind::Gap).collect();
         Self {
             log_levels,
-            masked_slots: gaps.iter().map(|e| e.slot).collect(),
+            masked_slots: events
+                .iter()
+                .filter(|e| e.kind != EventKind::Jump)
+                .map(|e| e.slot)
+                .collect(),
             gaps_pct: gaps.iter().map(|e| e.pct).collect(),
         }
     }
 
     pub fn from_model(path: &ModelPath) -> Self {
-        let gaps: Vec<_> = path
-            .record
-            .events
-            .iter()
-            .filter(|e| e.kind == EventKind::Gap)
-            .collect();
+        let events = &path.record.events;
+        let gaps: Vec<_> = events.iter().filter(|e| e.kind == EventKind::Gap).collect();
         Self {
             log_levels: path.log_levels.clone(),
-            masked_slots: gaps.iter().map(|e| e.slot).collect(),
+            masked_slots: events
+                .iter()
+                .filter(|e| e.kind != EventKind::Jump)
+                .map(|e| e.slot)
+                .collect(),
             gaps_pct: gaps.iter().map(|e| e.pct).collect(),
         }
     }
