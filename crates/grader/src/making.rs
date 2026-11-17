@@ -754,6 +754,8 @@ impl MakingFamily {
             bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,
@@ -1115,7 +1117,9 @@ mod tests {
                 reactive: None,
             },
             takers: Vec::new(),
+            obligations: None,
             makers_bps,
+            close_out: false,
         };
         assert_eq!(making(None).makers_bps(), 10.0);
         assert_eq!(making(Some(20.0)).makers_bps(), 20.0);

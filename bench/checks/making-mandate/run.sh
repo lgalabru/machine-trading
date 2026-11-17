@@ -31,8 +31,8 @@
 # The probes must be built: `just build`, `just build one-sided`,
 # `just build taker` and `just build crosser` in bots/making-probe, and
 # `just process taker` and `just process crosser` for the process bots, and
-# `just one-unit` in bots/subaccount-probe, and `just build`, `just build honest`
-# and `just build drain` in bots/closeout-probe.
+# `just one-unit` in bots/subaccount-probe, and `just build`, `just build honest`,
+# `just build drain`, `just build pda` and `just build two-subs` in bots/closeout-probe.
 set -euo pipefail
 mtx=$1 snapshot=$2 out=$3
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -97,7 +97,7 @@ mkdir -p "$out/closed-subaccount"
 "$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$subprobe" --logs "$out/closed-subaccount/logs" \
   --report "$out/closed-subaccount/report.json" "$out"/closed/*.json \
   >"$out/closed-subaccount/stdout.log" 2>"$out/closed-subaccount/stderr.log" || { echo "closed-subaccount: the grade failed"; tail -20 "$out/closed-subaccount/stderr.log"; exit 1; }
-for name in honest dodge drain; do
+for name in honest dodge drain pda two-subs; do
   mkdir -p "$out/closeout-$name"
   "$mtx" grade --trusted --jobs 3 --snapshot "$snapshot" --bot "$closeprobe/$name" --logs "$out/closeout-$name/logs" \
     --report "$out/closeout-$name/report.json" "$out"/closed/*.json \
@@ -180,7 +180,8 @@ def check_closed(name, against):
         saw_close |= bool(forced)
         assert taking not in (s["disqualified"] or ""), f"{tag}: the close-out was taken for a breach"
         total = d["spread_capture_usd"] + d["taking_cost_usd"] - d["maker_fees_usd"] + d["inventory_usd"]
-        assert abs(total - s["pnl_usd"]) < 1e-6, f"{tag}: parts {total} vs pnl {s['pnl_usd']}"
+        charge = d["close_out"].get("residual_charge_usd", 0.0)
+        assert abs(total - (s["pnl_usd"] + charge)) < 1e-6, f"{tag}: parts {total} vs pnl {s['pnl_usd']} + charge {charge}"
         assert abs(d["pnl_usd"] - s["pnl_usd"]) < 1e-9
         # What the fills' logged prices and fees don't explain stays within a
         # few hundredths of a percent of what the close-out traded.
@@ -213,7 +214,7 @@ for s in sessions("closed-subaccount"):
 # exit as the honest one does: each account is closed from itself, and what is
 # left is charged, never valued at the oracle for free.
 honest = by_name("closeout-honest")
-for name in ("closeout-dodge", "closeout-drain"):
+for name in ("closeout-dodge", "closeout-drain", "closeout-pda", "closeout-two-subs"):
     for s in sessions(name):
         tag = f"{name} {s['scenario']}"
         d = s["decomposition"]["close_out"]

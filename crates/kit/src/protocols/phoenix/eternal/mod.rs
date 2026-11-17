@@ -31,7 +31,7 @@ pub use fills::{
     PerpMarketRecords, PerpOrderPlaced, PerpPositionChange, PositionChangeKind, TraderRecords,
 };
 pub use market::{DEFAULT_QUOTE_LOT_DECIMALS, PhoenixMarket};
-pub use meter::PhoenixEternalMeter;
+pub use meter::{AccountPositions, PhoenixEternalMeter, TraderAccount};
 /// Phoenix's SDK, re-exported so dependents do not have to pin it.
 pub use phoenix_rise;
 pub use trader::{PhoenixOrder, PhoenixOrderOptions, PhoenixTrader};

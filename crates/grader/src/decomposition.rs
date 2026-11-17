@@ -12,12 +12,16 @@
 //! markout at h    M_h  = sum over passive fills  q s (L(t + h) - L(t))   (<= 0: adversely selected)
 //! realised spread RS_h = S + M_h
 //! taking cost     T    = sum over taking fills   q s (L(t) - p) - taker fees   (the close-out included)
-//! inventory       V    = X - S - T + maker fees                          (position times the oracle's moves)
+//! inventory       V    = X - S - T + maker fees + C                      (position times the oracle's moves)
 //! ```
 //!
-//! `X` is the session's PnL, after the close-out. Horizons are 2, 20 and 120
-//! slots and the session's end; a horizon past the end is cut at it. `V` is
-//! what the fills don't explain, so the parts add up to `X` by construction.
+//! `X` is the session's PnL, after the close-out, and `C` what a position the
+//! close-out left was charged (`close_out.residual_charge_usd`, 0 when it left
+//! none). Horizons are 2, 20 and 120 slots and the session's end; a horizon
+//! past the end is cut at it. `V` is what the fills don't explain, so the
+//! parts add up to `X` plus the charge by construction: `S + T - maker fees +
+//! V = X + C`. The charge is a cost of the account's value, not a fill, so it
+//! is in none of `S`, `T` and `V`.
 //! The check that `V` is what it says counts the same inventory from the
 //! other side: the position held across each move of the level
 //! (`inventory_jump_usd` and `inventory_walk_usd`). `unexplained_usd` is
@@ -50,7 +54,8 @@ pub const MIN_MOVE_SCALE_PCT: f64 = 0.005;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Decomposition {
-    /// The session's PnL, after the close-out: what the parts add up to.
+    /// The session's PnL, after the close-out: the parts add up to it plus
+    /// `close_out.residual_charge_usd`.
     pub pnl_usd: f64,
     /// `S`: what the bot's resting orders earned against the level.
     pub spread_capture_usd: f64,
@@ -64,7 +69,7 @@ pub struct Decomposition {
     pub taking_cost_usd: f64,
     /// The fees the bot paid as a maker (a rebate is negative).
     pub maker_fees_usd: f64,
-    /// `V`: `pnl_usd - S - T + maker_fees_usd`.
+    /// `V`: `pnl_usd - S - T + maker_fees_usd + close_out.residual_charge_usd`.
     pub inventory_usd: f64,
     /// `V` counted from the position held across the level's moves, split
     /// into the jumps and the walk.
@@ -107,9 +112,9 @@ pub struct CloseOutCost {
     pub cost_usd: f64,
     /// The position the close left, in base units.
     pub residual_base: f64,
-    /// What that position was charged: the cost of the worst exit the close
-    /// would take (see `STOP_OUT_LIMIT_BPS`), instead of its value at the
-    /// level for free. Part of `cost_usd`.
+    /// What that position was charged: a worst-case exit, `STOP_OUT_LIMIT_BPS`
+    /// of its value at the level, instead of its value at the level for
+    /// free. Part of `cost_usd`.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub residual_charge_usd: f64,
 }
@@ -466,5 +471,24 @@ mod tests {
         let d = decompose(&session(&fills, &path, 0.3));
         let json = serde_json::to_string(&d).unwrap();
         assert_eq!(serde_json::from_str::<Decomposition>(&json).unwrap(), d);
+    }
+
+    #[test]
+    fn a_charged_residue_is_in_the_identity() {
+        let path = path();
+        let fills = [
+            fill(5, Side::Buy, "maker", 99.9, 2.0, 0.0),
+            fill(40, Side::Sell, "maker", 100.4, 0.5, 0.01),
+        ];
+        // 1.5 base left open and charged 0.3 of value.
+        let charge = 0.3;
+        let pnl_usd = pnl(&fills, &path, 0.0) - charge;
+        let mut s = session(&fills, &path, pnl_usd);
+        s.residual_charge_usd = charge;
+        let d = decompose(&s);
+        assert_eq!(d.close_out.residual_charge_usd, charge);
+        let total = d.spread_capture_usd + d.taking_cost_usd - d.maker_fees_usd + d.inventory_usd;
+        assert!((total - (pnl_usd + charge)).abs() < 1e-9, "{total}");
+        assert!(d.unexplained_usd.abs() < 1e-9, "{}", d.unexplained_usd);
     }
 }

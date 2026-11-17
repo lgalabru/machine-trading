@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use phoenix_rise::{
-    core::{LimitOrderTicket, MarketOrderTicket},
+    core::{LimitOrderTicket, MarketOrderTicket, TraderKey},
     ix::{
         hawkeye::{ViewAssetReturn, ViewBboReturn},
         types::OrderFlags,
@@ -136,6 +136,9 @@ pub struct PhoenixTrader {
     market: PhoenixMarket,
     authority: Pubkey,
     account: Pubkey,
+    /// The PDA and subaccount indices `account` is derived with.
+    pda_index: u8,
+    subaccount: u8,
     rpc_url: String,
     chain: Arc<dyn ChainClient>,
     options: ExecuteOptions,
@@ -163,6 +166,8 @@ impl PhoenixTrader {
         Ok(Self {
             market: exchange.market(symbol)?,
             account: exchange.trader_account(&authority),
+            pda_index: 0,
+            subaccount: 0,
             chain: Arc::new(RpcChainClient::new(rpc_url.clone())),
             exchange,
             authority,
@@ -177,6 +182,29 @@ impl PhoenixTrader {
             self.next_order_id
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         )
+    }
+
+    /// A trader for another of the authority's trader accounts, the one the
+    /// owner's PDA index and subaccount index name (what a trader account's
+    /// header carries: see [`TraderAccount`](super::TraderAccount)), in the
+    /// same market and through the same chain and options. Orders, plans
+    /// and cancels, with their options (reduce-only, say), go to that
+    /// account, signed by the same authority. The address is derived from
+    /// the two indices, so the two can't disagree. `(0, 0)` is the
+    /// cross-margin account [`PhoenixTrader::new`] has.
+    pub fn for_account(&self, pda_index: u8, subaccount_index: u8) -> Self {
+        Self {
+            exchange: self.exchange.clone(),
+            market: self.market.clone(),
+            authority: self.authority,
+            account: TraderKey::derive_pda(&self.authority, pda_index, subaccount_index),
+            pda_index,
+            subaccount: subaccount_index,
+            rpc_url: self.rpc_url.clone(),
+            chain: self.chain.clone(),
+            options: self.options,
+            next_order_id: std::sync::atomic::AtomicU64::new(1),
+        }
     }
 
     /// Sends through `chain` instead of a fresh RPC client.
@@ -247,13 +275,18 @@ impl PhoenixTrader {
             .book_from_bbo(&bbo, Some(bbo.mark_price_last_updated_slot)))
     }
 
-    /// Hawkeye's margin view of the account in this market, in Phoenix units
+    /// Hawkeye's margin view of this trader's account in this market, in Phoenix units
     /// (base lots, quote lots, ticks).
     pub async fn margin(&self) -> Result<ViewAssetReturn, PhoenixError> {
         Ok(self
             .exchange
             .hawkeye(&self.rpc_url, self.authority)
-            .view_margin_for_asset(self.authority, 0, 0, self.market.asset_id)
+            .view_margin_for_asset(
+                self.authority,
+                self.pda_index,
+                self.subaccount,
+                self.market.asset_id,
+            )
             .await?
             .value)
     }
@@ -315,6 +348,7 @@ impl PhoenixTrader {
                 let mut ticket = LimitOrderTicket::builder()
                     .authority(self.authority)
                     .trader_account(self.account)
+                    .subaccount_index(self.subaccount)
                     .symbol(symbol)
                     .side(phoenix_side(side))
                     .price(self.ticket_price(price)?)
@@ -341,6 +375,7 @@ impl PhoenixTrader {
                 let mut ticket = MarketOrderTicket::builder()
                     .authority(self.authority)
                     .trader_account(self.account)
+                    .subaccount_index(self.subaccount)
                     .symbol(symbol)
                     .side(phoenix_side(side))
                     .num_base_lots(lots)
@@ -567,53 +602,6 @@ impl PhoenixTrader {
         .await
     }
 
-    /// Cancels every open order in the market of `account`, one of the
-    /// authority's trader accounts (a subaccount's, say).
-    pub async fn cancel_all_in(
-        &self,
-        account: Pubkey,
-        signer: &dyn TransactionSigner,
-    ) -> Result<Signature, PhoenixError> {
-        let instructions = self.exchange.tx().build_cancel_all_orders(
-            self.authority,
-            account,
-            self.market.symbol(),
-        )?;
-        let plan = self.pack("cancel all", instructions)?;
-        self.execute(&plan, signer).await
-    }
-
-    /// A reduce-only market order from `account`, isolated subaccount number
-    /// `subaccount` of the authority's, to close what it holds: Phoenix
-    /// refuses it where it would open or flip that account's own position.
-    pub async fn reduce_in(
-        &self,
-        account: Pubkey,
-        subaccount: u8,
-        side: Side,
-        quantity: Decimal,
-        worst_price: Decimal,
-        signer: &dyn TransactionSigner,
-    ) -> Result<Signature, PhoenixError> {
-        let ticket = MarketOrderTicket::builder()
-            .authority(self.authority)
-            .trader_account(account)
-            .subaccount_index(subaccount)
-            .symbol(self.market.symbol())
-            .side(phoenix_side(side))
-            .num_base_lots(self.lots(quantity)?)
-            .price(self.ticket_price(worst_price)?)
-            .order_flags(OrderFlags::ReduceOnly)
-            .client_order_id(self.order_id());
-        let instructions = self
-            .exchange
-            .tx()
-            .place_market_order(ticket.build()?)
-            .await?;
-        let plan = self.pack("reduce", instructions)?;
-        self.execute(&plan, signer).await
-    }
-
     /// Cancels every open order of the account in the market.
     pub async fn cancel_all(
         &self,
@@ -791,5 +779,187 @@ mod tests {
             .post_only_v2(Side::Sell, (150.0, trader.lots(dec!(1)).unwrap()), flagged)
             .unwrap();
         assert_eq!(ours, sdk);
+    }
+
+    use solana_keypair::Keypair;
+    use solana_signer::Signer;
+
+    use crate::chain::mock::MockChainClient;
+
+    fn keys(plan: &ExecutionPlan) -> Vec<Pubkey> {
+        plan.steps
+            .iter()
+            .flat_map(|step| step.all_instructions())
+            .flat_map(|ix| ix.accounts.into_iter().map(|a| a.pubkey))
+            .collect()
+    }
+
+    fn market_order(quantity: Decimal, worst: Option<Decimal>) -> PhoenixOrder {
+        PhoenixOrder::Market {
+            side: Side::Sell,
+            quantity,
+            worst_price: worst,
+            all_or_none: false,
+        }
+    }
+
+    const REDUCE_ONLY: PhoenixOrderOptions = PhoenixOrderOptions {
+        reduce_only: true,
+        last_valid_slot: None,
+    };
+
+    #[tokio::test]
+    async fn for_account_targets_the_account_its_indices_name() {
+        let order = market_order(dec!(1), Some(dec!(140)));
+        let base = trader();
+        // Each plan is from a fresh trader: the client order id counts.
+        let main = trader().plan_with(&order, REDUCE_ONLY).await.unwrap();
+
+        // (0, 0) is the cross-margin account the base trader has.
+        let same = trader().for_account(0, 0);
+        assert_eq!(same.account(), base.account());
+        assert_eq!(same.plan_with(&order, REDUCE_ONLY).await.unwrap(), main);
+
+        // Another account of the authority's, by either index: its address
+        // is derived from them, and only it replaces the base's in the
+        // order and the cancel.
+        for (pda, sub) in [(0, 1), (1, 0), (2, 3), (255, 255)] {
+            let other = trader().for_account(pda, sub);
+            let address = TraderKey::derive_pda(&base.authority(), pda, sub);
+            assert_eq!(other.account(), address);
+            assert_ne!(address, base.account());
+            assert_eq!(other.authority(), base.authority());
+            let plan = other.plan_with(&order, REDUCE_ONLY).await.unwrap();
+            assert!(keys(&plan).contains(&address));
+            assert!(!keys(&plan).contains(&base.account()));
+            let cancel = other.plan_cancel_all().unwrap();
+            assert!(keys(&cancel).contains(&address));
+            assert!(!keys(&cancel).contains(&base.account()));
+            // The same market and exchange.
+            assert_eq!(other.market(), base.market());
+        }
+    }
+
+    #[tokio::test]
+    async fn an_order_to_another_account_names_its_subaccount() {
+        let order = market_order(dec!(1), Some(dec!(140)));
+        let limit = PhoenixOrder::Limit {
+            side: Side::Sell,
+            price: dec!(150),
+            quantity: dec!(1),
+        };
+        // The subaccount index is in the order itself, as the SDK's own
+        // ticket carries it: the same order to two subaccounts differs by
+        // it (and by the account), the same order to the same one doesn't.
+        for order in [order, limit] {
+            let plan = |pda, sub| async move {
+                trader()
+                    .for_account(pda, sub)
+                    .plan_with(&order, REDUCE_ONLY)
+                    .await
+                    .unwrap()
+            };
+            assert_eq!(plan(0, 1).await, plan(0, 1).await);
+            assert_ne!(plan(0, 1).await, plan(0, 2).await);
+            assert_ne!(plan(0, 1).await, plan(0, 0).await);
+            // Another PDA index, the same subaccount index: another account.
+            assert_ne!(plan(1, 0).await, plan(0, 0).await);
+        }
+    }
+
+    #[tokio::test]
+    async fn reduce_only_goes_to_the_other_account_like_to_the_main_one() {
+        let order = market_order(dec!(1), Some(dec!(140)));
+        let bytes = |plan: ExecutionPlan| -> Vec<Vec<u8>> {
+            plan.steps
+                .iter()
+                .flat_map(|step| step.all_instructions())
+                .map(|ix| ix.data)
+                .collect()
+        };
+        // Fresh traders each time: the client order id counts.
+        let other = || trader().for_account(1, 2);
+        let reduce = bytes(other().plan_with(&order, REDUCE_ONLY).await.unwrap());
+        let plain = bytes(other().plan(&order).await.unwrap());
+        assert_ne!(reduce, plain);
+        // The same flag as the base trader sets, in the same place: the two
+        // differ from their plain orders by the same bytes.
+        let main_reduce = bytes(trader().plan_with(&order, REDUCE_ONLY).await.unwrap());
+        let main_plain = bytes(trader().plan(&order).await.unwrap());
+        let flag_at = |reduce: &[Vec<u8>], plain: &[Vec<u8>]| -> Vec<usize> {
+            reduce
+                .iter()
+                .zip(plain)
+                .flat_map(|(r, p)| (0..r.len()).filter(|&i| r[i] != p[i]).collect::<Vec<_>>())
+                .collect()
+        };
+        assert!(!flag_at(&main_reduce, &main_plain).is_empty());
+        assert_eq!(flag_at(&reduce, &plain), flag_at(&main_reduce, &main_plain));
+    }
+
+    #[tokio::test]
+    async fn bad_orders_to_another_account_are_errors() {
+        let other = trader().for_account(0, 1);
+        let instrument = &other.market().instrument;
+        let (lot, tick) = (instrument.lot_size, instrument.tick_size);
+        // Zero, off the lot grid, off the tick grid, and out of range.
+        for order in [
+            market_order(dec!(0), Some(dec!(140))),
+            market_order(lot * dec!(1.5), Some(dec!(140))),
+            market_order(dec!(1), Some(dec!(0))),
+            market_order(dec!(1), Some(dec!(140) + tick / dec!(2))),
+            market_order(Decimal::MAX, Some(dec!(140))),
+            market_order(dec!(1), Some(Decimal::MAX)),
+            market_order(dec!(-1), Some(dec!(140))),
+        ] {
+            assert!(
+                other.plan_with(&order, REDUCE_ONLY).await.is_err(),
+                "{order:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn another_account_sends_signed_by_the_authority_and_cancels() {
+        let keypair = Keypair::new();
+        let chain = Arc::new(MockChainClient::new());
+        let exchange = trader().exchange.clone();
+        let base = PhoenixTrader::new(exchange, "SPCX", keypair.pubkey(), "http://127.0.0.1:1")
+            .unwrap()
+            .with_chain(chain.clone());
+        let other = base.for_account(0, 1);
+        let address = other.account();
+
+        other
+            .submit_with(
+                &market_order(dec!(1), Some(dec!(140))),
+                REDUCE_ONLY,
+                &keypair,
+            )
+            .await
+            .unwrap();
+        other.cancel_all(&keypair).await.unwrap();
+        let sent = chain.sent();
+        assert_eq!(sent.len(), 2);
+        for transaction in &sent {
+            let message = &transaction.message;
+            assert_eq!(message.static_account_keys()[0], keypair.pubkey());
+            assert!(message.static_account_keys().contains(&address));
+            assert!(!message.static_account_keys().contains(&base.account()));
+        }
+
+        // A refused send is the error, not a success.
+        chain.push_send_failure(solana_transaction::TransactionError::AccountNotFound);
+        assert!(
+            other
+                .submit_with(
+                    &market_order(dec!(1), Some(dec!(140))),
+                    REDUCE_ONLY,
+                    &keypair
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(chain.sent().len(), 2);
     }
 }

@@ -961,6 +961,7 @@ impl Account for SpotAccount {
             turn_ms: None,
             answered: None,
             fair_usd: None,
+            markets: Vec::new(),
         };
         self.last = Some(now);
         Ok(record)
@@ -1159,6 +1160,7 @@ impl Account for SpotAccount {
             forced_closes: done.forced_closes,
             liquidator: done.liquidator,
             oracle_starts: std::mem::take(&mut self.oracle_starts),
+            markets: Vec::new(),
             turns: done.turns,
             wall_ms: done.began.elapsed().as_millis() as u64,
             timeline: Timeline {
@@ -1170,6 +1172,7 @@ impl Account for SpotAccount {
                 transactions: done.transactions,
                 calls: done.calls,
                 taker_orders: done.actors.taker_orders,
+                market_taker_orders: Default::default(),
             },
         })
     }
@@ -1226,6 +1229,8 @@ mod tests {
             bound_on: Default::default(),
             market_model: None,
             raw_sends: None,
+            markets: Vec::new(),
+            joint: None,
             start_positions: Default::default(),
             close_out: Default::default(),
             tx_layer: None,

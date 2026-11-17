@@ -18,7 +18,9 @@ use mtx_kit::{
     chain::{ExecutionPlan, RpcChainClient},
     core::{Rounding, Side as CoreSide},
     phoenix_rise::types::exchange::ExchangeResponse,
-    protocols::phoenix::eternal::{PhoenixEternalMeter, PhoenixOrder},
+    protocols::phoenix::eternal::{
+        PhoenixEternalMeter, PhoenixOrder, PhoenixOrderOptions, TraderAccount,
+    },
 };
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
@@ -91,6 +93,58 @@ impl PerpMarket {
             },
             signer,
         )?)
+    }
+
+    /// Cancel every order `signer` has in this market from `account`, one
+    /// of its trader accounts (see [`mtx_kit::protocols::phoenix::eternal::PhoenixEternalMeter::account_positions`]).
+    pub async fn cancel_all_in(
+        &self,
+        signer: Keypair,
+        rpc_url: &str,
+        account: &TraderAccount,
+    ) -> Result<()> {
+        let trader = self.trader(signer, rpc_url)?;
+        trader
+            .inner
+            .for_account(account.pda_index, account.subaccount_index)
+            .cancel_all(&trader.keypair)
+            .await
+            .map_err(mtx_kit::Error::from)?;
+        Ok(())
+    }
+
+    /// A reduce-only market order of `size` base units from `account`, one
+    /// of `signer`'s trader accounts, limited to `limit` USD: Phoenix
+    /// refuses it where it would open or flip that account's own position.
+    /// The signature it landed with.
+    pub async fn reduce_in(
+        &self,
+        signer: Keypair,
+        rpc_url: &str,
+        account: &TraderAccount,
+        side: Side,
+        size: f64,
+        limit: f64,
+    ) -> Result<String> {
+        let trader = self.trader(signer, rpc_url)?;
+        let (side, quantity, worst) = order_terms(&trader, side, size, limit)?;
+        let order = PhoenixOrder::Market {
+            side,
+            quantity,
+            worst_price: Some(worst),
+            all_or_none: false,
+        };
+        let reduce_only = PhoenixOrderOptions {
+            reduce_only: true,
+            ..PhoenixOrderOptions::default()
+        };
+        let signature = trader
+            .inner
+            .for_account(account.pda_index, account.subaccount_index)
+            .submit_with(&order, reduce_only, &trader.keypair)
+            .await
+            .map_err(mtx_kit::Error::from)?;
+        Ok(signature.to_string())
     }
 }
 
@@ -407,34 +461,43 @@ impl UniquePerpSeat {
         Ok(())
     }
 
-    /// `size` base units on the lot grid, and `price` on the tick grid the
-    /// way Phoenix's tickets round it: bids down, asks up.
+    /// [`order_terms`] on this seat's trader.
     fn order_terms(
         &self,
         side: Side,
         size: f64,
         price: f64,
     ) -> Result<(CoreSide, Decimal, Decimal)> {
-        let trader = &self.seat.trader;
-        let instrument = &trader.inner.market().instrument;
-        let invalid = |what: String| Error::Transaction {
-            label: "an actor's order".into(),
-            reason: what,
-        };
-        let quantity = instrument.lots_to_quantity(trader.lots(size)?);
-        let (core, rounding) = match side {
-            Side::Bid => (CoreSide::Buy, Rounding::Down),
-            Side::Ask => (CoreSide::Sell, Rounding::Up),
-        };
-        let price: Decimal = price
-            .to_string()
-            .parse()
-            .map_err(|_| invalid(format!("price {price} isn't a number")))?;
-        let price = instrument
-            .checked_round_price(price, rounding)
-            .ok_or_else(|| invalid(format!("price {price} is past the tick grid")))?;
-        Ok((core, quantity, price))
+        order_terms(&self.seat.trader, side, size, price)
     }
+}
+
+/// `size` base units on the lot grid, and `price` on the tick grid the way
+/// Phoenix's tickets round it: bids down, asks up.
+fn order_terms(
+    trader: &Trader,
+    side: Side,
+    size: f64,
+    price: f64,
+) -> Result<(CoreSide, Decimal, Decimal)> {
+    let instrument = &trader.inner.market().instrument;
+    let invalid = |what: String| Error::Transaction {
+        label: "an actor's order".into(),
+        reason: what,
+    };
+    let quantity = instrument.lots_to_quantity(trader.lots(size)?);
+    let (core, rounding) = match side {
+        Side::Bid => (CoreSide::Buy, Rounding::Down),
+        Side::Ask => (CoreSide::Sell, Rounding::Up),
+    };
+    let price: Decimal = price
+        .to_string()
+        .parse()
+        .map_err(|_| invalid(format!("price {price} isn't a number")))?;
+    let price = instrument
+        .checked_round_price(price, rounding)
+        .ok_or_else(|| invalid(format!("price {price} is past the tick grid")))?;
+    Ok((core, quantity, price))
 }
 
 #[async_trait]

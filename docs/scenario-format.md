@@ -71,6 +71,9 @@ on a perp (`positions_fit_the_market`):
 - the order's market has no `close_out`: the order's broker already takes
   what is left of it.
 
+A perp session can trade several markets of one cross-margin Phoenix
+account (see [Several perp markets](#several-perp-markets)).
+
 A perp order and close-outs price the close at the scenario's own level at
 the last slot (the index, not Phoenix's mark, which quotes can push), and
 the session values the account there too (`valuation` `oracle`). A start
@@ -84,6 +87,63 @@ nothing moves with the price, or earns or pays the funding, and v2 refuses
 the grade. A v1
 grade takes a funded start position as it is: the funding the start earns
 or pays is in the session's PnL, order or not.
+
+## Several perp markets
+
+A perp session on several markets of one account names them in keyed maps,
+one per section, and leaves that section's one-market fields out:
+
+| Map | Holds, per market symbol |
+| --- | --- |
+| `venues.perp.markets` | `funding`, as `venues.perp.funding` (not with it) |
+| `market_model.markets` | `path`, `fair_path` and `record`, as the section's own fields (not with them); no `closed_period` |
+| `market_model.joint` | Optional: a joint draw of the markets' paths: `matrix_source` (`design` for a matrix the author states, or a correlation file's id, with its `matrix_sha256`), `assets` in the matrix's order, the correlation `matrix`, and each asset's draw in `records`. Like a single draw's record, never its seed |
+| `actors.markets` | `competitor`, `takers` and `takers_pricing`, as the section's own fields (not with them). One pool of taker accounts trades every market, so `account` numbers are shared |
+
+`assets.symbol` is the primary market, one of the maps' keys: it is the one
+`MTX_SYMBOL` names and the report's one-market fields describe. The actor
+library, if any, trades it.
+
+One rule joins the maps (`markets_agree`): `venues.perp.markets` names at
+least two markets, and `market_model.markets` and `actors.markets`, where
+given, name the same ones. The mandate's universe is exactly their perps,
+each with its own cap. Each market's funding, path and flow are checked as
+a one-market scenario's, and an error names the market. A Phoenix oracle
+feed may write any market's oracle, but not one whose market has a path.
+`start_positions` and `close_out` may name any of the markets, and an
+`order` may be on any of them; each is checked against its market's range.
+
+Each market's position is valued by its own rule (`oracle`, `book` or
+`mark`, as a one-market scenario's), and the bound is each market's at its
+own cap and start mark, summed. A session's report lists each market
+(`markets`: start and end marks, positions, valuation, flow), and each step
+records each market (`markets` in the timeline's steps).
+
+Net scoring (`scoring.net`) works per market: each market's start position is held to that market's fair close (else its level), and the holds are summed, so a bot that holds every market scores 0. `scoring.bound_on` works on several markets too.
+
+What a session on several markets doesn't do yet:
+
+- **Library actors** (`actors.library`) trade the primary market only.
+- **Making fills** (`making_fills`) record the primary market's fills only.
+- **Markout:** the grade's markout, luck and residual split is a
+  one-market split; a session on several markets reports none, whatever
+  fair paths it has.
+- **Raw sends** (`tx.raw_sends`) are refused: their pre-check audits one
+  market's position and value.
+- **Closed periods** stay a one-market scenario's.
+- **The liquidation keeper** (`venues.perp.liquidator`) is refused: it
+  liquidates the scenario's market only.
+- **Process bots** built on `mtx_kit::run` trade the primary market only:
+  its run loop holds one trader. A process bot that wants the others reads
+  `MTX_MARKETS` (`["phoenix:perp:NVDA", "phoenix:perp:SPCX"]`, the primary
+  first) and trades them itself; a strategy component gets a seat on every
+  market, and the planner cuts each market's lines to its own cap.
+
+There is no v1 form: `Scenario::save` refuses such a scenario and
+`save_v2` writes it (`save_any` writes each scenario in the layout it has,
+as `mtx calibrate` does). `mtx market-cal generate` draws one from a template
+on several markets, given `--calibration SYMBOL=FILE` per market and
+`--correlation`.
 
 ## The risk desk: `scoring.stop_out`
 
@@ -119,6 +179,20 @@ count toward the position and the PnL. Because the desk closes to flat, a
 scenario with `stop_out` must allow flat in every instrument's range: a
 `min_position` above 0 is refused. A component sees `MTX_STOP_OUT=1` in its session vars.
 The code is `crates/grader/src/risk.rs` and the session loop.
+
+On a session on several markets the desk closes every market of the
+account. It cancels the bot's orders on each, then goes round the markets
+in symbol order, one order to each market still open per round, within the
+same 8 orders a step: one market's book can't take the whole budget while
+another's exposure runs on, and a market whose book took nothing gets no
+more orders that step. `slice_base` caps every market's orders in that
+market's own base units, so on markets whose prices differ widely (SPY
+against SPCX, say) it slices the dearer one finer in dollars; set it for
+the market that most needs it. Each close order names its `market`, the
+forced close records each market's position at the trigger in
+`positions_before` (`position_before` stays the primary's), and `flat`
+holds only once every market is flat. The desk's fills on any market are
+marked `forced`.
 
 ## Market making: obligations and reduce-only taking
 
@@ -192,6 +266,9 @@ took (`making_fills`, `role` `taker`), so only one, without a
 The code is `crates/grader/src/obligations.rs`, `crates/grader/src/taking.rs`
 and the perp session.
 
+A market-making scenario is on one market, so both terms apply to the
+primary market of a session that lists several.
+
 ## Market making: the close-out and the decomposition
 
 A market-making scenario can have the grader exit the bot's position after
@@ -207,20 +284,21 @@ separate from the mandate terms above:
 its inventory open, as before, and reports neither.
 
 **The close-out.** After the bot's last turn (and the keeper's) the grader
-cancels the resting orders of every trader account the bot holds (its
-cross-margin account and any isolated subaccount), then closes each
+cancels the resting orders of every trader account the bot holds (the
+cross-margin account, any isolated subaccount and any other cross-margin
+account, each found by the indices its header names), then closes each
 account's own position from that account, signed with the bot's key through
 the grader's own endpoint: the cross-margin account with market orders for
-the whole position, limited 4% through the best price (the risk desk's
-limit), until it is flat or eight have gone; a subaccount with one
-reduce-only market order. No order is larger than the position of the account
+the whole position, each limited 4% through the best price at that moment
+(the risk desk's limit), until it is flat or eight have gone; every other
+account with one reduce-only market order. No order is larger than the position of the account
 it is sent from, so none opens or flips one, and none meets the bot's own
 quotes. It is a real trade against the live book (the competitor and
 Phoenix's makers), so the session's PnL and end value are measured after
 paying the book's impact and the taker fee. A position the close-out leaves
 (a book that took nothing, a margin refusal) is not valued at the oracle for
-free: it is charged what the worst exit the close-out would take costs (4% of
-its value at the level), reported as `residual_charge_usd` and counted in the
+free: it is charged a worst-case exit, 4% of its value at the level (the
+close orders' limit; about ten times what the honest exits cost), reported as `residual_charge_usd` and counted in the
 close-out's cost. It is a
 `forced_closes` entry with `reason.kind` `close_out`, and its fills are marked
 `forced` in `making_fills`, so they are the grader's, not the bot's: they
@@ -240,14 +318,16 @@ session, `q`, `p` and `s` a fill's size, price and sign, +1 a buy):
 | `markouts[]` | per horizon (`horizon_slots` 2, 20, 120, and absent for the session's end): `markout_usd` `M_h`, the sum over passive fills of `q s (L(t + h) - L(t))` (negative: adversely selected; a horizon past the end is cut at it), and `realized_spread_usd` `RS_h = S + M_h` |
 | `taking_cost_usd` | `T`, the sum over taking fills of `q s (L(t) - p)` less taker fees, the close-out included |
 | `maker_fees_usd` | what it paid as a maker (a rebate is negative) |
-| `inventory_usd` | `V = pnl_usd - S - T + maker_fees_usd`: the position times the oracle's moves, and so what the fills don't explain |
+| `inventory_usd` | `V = pnl_usd - S - T + maker_fees_usd + residual_charge_usd`: the position times the oracle's moves, and so what the fills don't explain |
 | `inventory_jump_usd`, `inventory_walk_usd` | the same inventory counted from the position held just before each move of the level, times the move, split into jumps and the walk (a move more than 4 robust standard deviations from the session's typical move is a jump) |
 | `unexplained_usd` | `inventory_usd` less those two: what the fills' logged prices and fees and the level don't account for in the account's value. Zero to the cent where the exit is small; a few hundredths of a percent of what the exit traded when it went through Phoenix's book |
 | `uptime` | the share of steps it quoted both sides within its obligations' band (with `obligations`) |
 | `close_out` | `fills`, `base` closed, `slippage_usd` (impact against the level), `fees_usd`, `cost_usd`, the `residual_base` left and the `residual_charge_usd` it was charged |
 | `passive_fills`, `passive_base`, `passive_notional_usd` | the passive volume the spread is earned on |
 
-`S + T - maker_fees_usd + inventory_usd = pnl_usd` by construction. A match
+`S + T - maker_fees_usd + inventory_usd = pnl_usd + close_out.residual_charge_usd`
+by construction (the charge is a cost of the account's value, not a fill, so it
+is in none of the three lines). A match
 between the bot's own accounts moves nothing and is left out of every line but
 the fees. The decomposition is reported, not scored; the code is
 `crates/grader/src/decomposition.rs`.

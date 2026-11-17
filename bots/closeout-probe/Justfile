@@ -1,5 +1,6 @@
 # Process bots for the close-out check: `just build` builds the dodge into
-# dodge/bin/bot, `just build honest` and `just build drain` the others, each
+# dodge/bin/bot, `just build honest`, `just build drain`, `just build pda` and
+# `just build two-subs` the others, each
 # with a Justfile beside it that runs it.
 
 build probe="dodge":

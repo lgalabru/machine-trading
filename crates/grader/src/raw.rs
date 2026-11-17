@@ -2145,10 +2145,8 @@ mod tests {
         )
         .unwrap();
         let mandate = Mandate::perp("phoenix", SPCX, 5.0, 50.0);
-        let allowance = mtx_core::mandate::Allowance {
-            taking: Some(mtx_core::mandate::Taking::ReduceOnly),
-            ..mandate.universe[0].clone()
-        };
+        let mut allowance = mandate.universe[0].clone();
+        allowance.taking = Some(mtx_core::mandate::Taking::ReduceOnly);
         let gate = crate::taking::TakeGate::new(
             &allowance,
             exchange,

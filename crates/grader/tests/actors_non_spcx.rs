@@ -1236,7 +1236,7 @@ async fn oracle_run(symbol: &str) {
         100,
         &oracles::World {
             phoenix: Some((rig.perp_asset_map(), rig.start_ticks)),
-            prices: Default::default(),
+            ..Default::default()
         },
     )
     .unwrap();
@@ -1293,7 +1293,7 @@ async fn fair_run(symbol: &str) {
         100,
         &oracles::World {
             phoenix: Some((rig.perp_asset_map(), rig.start_ticks)),
-            prices: Default::default(),
+            ..Default::default()
         },
     )
     .unwrap();
