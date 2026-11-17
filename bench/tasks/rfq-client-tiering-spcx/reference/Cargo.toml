@@ -19,14 +19,12 @@ path = "src/lib.rs"
 name = "mtx-rfq-client-tiering"
 path = "src/main.rs"
 
-# `export`: the crate is the task's component. The informed bot and the
-# ladder's rungs build on its desk without it.
+# `embedded`: the informed bot and the ladder's rungs build on the desk,
+# and export their own component instead of this one.
 [features]
-default = ["export"]
-export = []
+embedded = []
 
 [dependencies]
-serde_json = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 mtx-kit = { path = "../../../../crates/kit", default-features = false, features = ["component", "venue"] }

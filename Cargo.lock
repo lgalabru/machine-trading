@@ -5020,7 +5020,6 @@ name = "mtx-bot-rfq-client-tiering"
 version = "0.1.0"
 dependencies = [
  "mtx-kit",
- "serde_json",
 ]
 
 [[package]]
@@ -5029,6 +5028,7 @@ version = "0.1.0"
 dependencies = [
  "mtx-bot-rfq-client-tiering",
  "mtx-kit",
+ "serde_json",
 ]
 
 [[package]]
@@ -5037,6 +5037,7 @@ version = "0.1.0"
 dependencies = [
  "mtx-bot-rfq-client-tiering",
  "mtx-kit",
+ "serde_json",
 ]
 
 [[package]]

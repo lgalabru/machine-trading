@@ -18,13 +18,13 @@
 //!   hand; the ladder's exploit check needs a hindsight bound, which an RFQ
 //!   desk's sessions don't have).
 
-use mtx_bot_rfq_client_tiering::{Answer, Ask, Desk, EPS_BP, Policy, Tag, Told, View, reach_bp};
+use mtx_bot_rfq_client_tiering::{Answer, Ask, Desk, EPS_BP, Policy, TOLERANCE, Tag, View, reach_bp};
 use mtx_kit::prelude::*;
 
 #[derive(Default)]
 pub struct Naive {
     rule: String,
-    told: Told,
+    tolerance: f64,
     width: f64,
     tier_n: f64,
     window: u64,
@@ -37,7 +37,11 @@ fn setting(value: Option<&str>, default: f64) -> f64 {
 
 impl Policy for Naive {
     fn start(&mut self, session: &Session) {
-        self.told = Told::read(session);
+        self.tolerance = session
+            .var("MTX_REGIME")
+            .and_then(|r| serde_json::from_str::<serde_json::Value>(r).ok())
+            .and_then(|v| v["tolerance_bps"].as_f64())
+            .unwrap_or(TOLERANCE.0);
         self.rule = option_env!("MTX_NAIVE").unwrap_or("quote-all").to_string();
         self.width = setting(option_env!("MTX_WIDTH"), 2.0);
         self.tier_n = setting(option_env!("MTX_TIER_N"), 5.0);
@@ -46,7 +50,7 @@ impl Policy for Naive {
     }
 
     fn answer(&mut self, view: &View<'_>, ask: &Ask) -> Answer {
-        let reach = reach_bp(self.told.tolerance_bps, ask.n);
+        let reach = reach_bp(self.tolerance, ask.n);
         let quote = |bp: f64| Answer::Quote {
             bp,
             size: None,

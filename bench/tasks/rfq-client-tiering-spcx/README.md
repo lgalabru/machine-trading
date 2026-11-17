@@ -31,7 +31,20 @@ A session's PnL is the desk's value change over the idle desk: the wallet's SPCX
 
 ## Baselines
 
-<!-- TODO: the check table (oracle, nop, cheater, sneaky), the ladder, the reference's numbers on fresh sets. -->
+The ladder on three fresh hidden sets of 72 sessions (`bench/checks/ladder`), total PnL as a multiple of the reference's (the reference made $64, $67 and $84):
+
+| Rung | Set 1 | Set 2 | Set 3 |
+| --- | --- | --- | --- |
+| nop | 0 | 0 | 0 |
+| quote-all (every request just inside its reach) | −1.08 | 0.43 | −0.51 |
+| quote-wide (3 bp past the reach) | −1.28 | −0.48 | −1.05 |
+| fixed-width (2 bp) | −1.03 | −0.01 | −0.59 |
+| size-tier (only requests of 5 lots or more) | −0.12 | 0.25 | 0.05 |
+| side-skew (against the recent requests' lean) | 0.35 | 0.36 | 0.38 |
+| reference | 1 | 1 | 1 |
+| informed bot | 2.22 | 1.89 | 1.60 |
+
+Every order rule holds on 3 of 3 sets, bootstrap odds 0.98 or better. The reference's weighted PnL is 0.53 of the informed bot's over the three sets, with a per-session Sharpe of 0.56; the informed bot makes 5.2 times the best careful rung. HARBOR_RESULTS
 
 ## Realism limits
 
