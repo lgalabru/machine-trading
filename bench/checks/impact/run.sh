@@ -14,6 +14,12 @@
 #   - the same bot on noisy.json, four times: other traders trade around it,
 #     differently each run. An odd lot they leave at the touch must not hide
 #     the bot's sale: the book is below the level after it, every time.
+#   - the same bot on resistance.json: smoke.json with a zone from 5 to 30 bp
+#     above the level where four ticks walked move the book one. The buy
+#     moves the book by what the zone lets through of smoke's walk, and the
+#     asks it took are back; the fading part comes back through the zone;
+#     the sale ends below the level, where nothing resists, as far as
+#     smoke's does.
 #   bench/checks/impact/run.sh <mtx> <snapshot> <out>
 # The bots must be built (just --justfile bots/<bot>/Justfile build). The
 # snapshot is snapshots/phoenix-spcx-2026-10-29.
@@ -36,7 +42,8 @@ grade control first-strategy control
 grade idle starter smoke
 grade idle-control starter control
 for run in 1 2 3 4; do grade "noisy-$run" first-strategy noisy; done
-python3 -I - "$out" <<'PY'
+grade resisted first-strategy resistance
+python3 -I - "$out" "$here" <<'PY'
 import glob, gzip, json, sys
 out = sys.argv[1]
 TICK = 0.01
@@ -117,5 +124,39 @@ for run in (1, 2, 3, 4):
     assert noisy[held]["impact_bps"] > 5, "the buy left no impact among other traders"
     assert noisy[flat]["impact_bps"] < -5, "the sale left no impact among other traders"
     assert noisy[flat]["best_bid_usd"] < noisy[flat]["level_usd"], "the book is not below the level after the sale"
+
+# A zone above the level: the same trades, and a book that gives less there.
+resisted = steps("resisted")
+zone = json.load(open(f"{sys.argv[2]}/resistance.json"))["venues"]["perp"]["impact"]["resistance"][0]
+start = trade[0]["level_usd"]
+def offset(walked_usd):
+    # What the zone lets through of a walk above the level, in dollars.
+    lo, hi = (start * zone[k] / 10_000 for k in ("from_bps", "to_bps"))
+    if walked_usd <= lo:
+        return walked_usd
+    inside = min(walked_usd - lo, (hi - lo) * zone["strength"])
+    return lo + inside / zone["strength"] + (walked_usd - lo - inside)
+def usd(step):
+    return step["impact_bps"] * step["book_usd"] / 10_000
+assert next(i for i, s in enumerate(resisted) if s["position"] > 0) == bought, "the bot bought at another step"
+assert next(i for i, s in enumerate(resisted) if i > bought and s["position"] == 0) == sold, "the bot sold at another step"
+print("resisted: the buy moved the book", resisted[bought]["impact_bps"], "bps, of", at_once, "walked; held",
+      resisted[sold - 1]["impact_bps"], "of", trade[sold - 1]["impact_bps"], "; the sale", resisted[sold]["impact_bps"], "against", after)
+assert usd(trade[bought]) > start * zone["from_bps"] / 10_000 + 5 * TICK, "the buy does not reach into the zone: the check checks nothing"
+for at in (bought, sold - 1):
+    want = offset(usd(trade[at]))
+    assert abs(usd(resisted[at]) - want) <= 2 * TICK, f"step {at}: the book is {usd(resisted[at])} up, the zone lets {want} through"
+assert usd(resisted[bought]) < usd(trade[bought]) - 5 * TICK, "the zone held nothing of the buy"
+# The asks the book did not keep are back: the ask is under where the buy
+# left it by what the zone held.
+back = trade[bought]["best_ask_usd"] - resisted[bought]["best_ask_usd"]
+kept = usd(trade[bought]) - usd(resisted[bought])
+assert abs(back - kept) <= 3 * TICK, f"the ask came back {back}, the zone held {kept}"
+for s in resisted[bought:sold]:
+    assert abs(s["index_usd"] - s["level_usd"]) <= TICK, "the impact moved the index"
+# Below the level nothing resists: the sale ends where smoke's did.
+assert abs(usd(resisted[sold]) - usd(trade[sold])) <= 3 * TICK, "the sale did not move the book in full below the level"
+assert abs(resisted[-1]["impact_bps"]) < 1, "the impact of a closed round trip did not fade out"
+print("pnl with a zone", session("resisted")["pnl_usd"])
 print("IMPACT_SMOKE_OK")
 PY

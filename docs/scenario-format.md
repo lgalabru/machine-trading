@@ -189,6 +189,8 @@ it instead:
   where the book is, each side, is what a market order of this size would
   fill for on average. Larger than the odd lots that rest at the touch, and
   small beside the makers' depth.
+- `resistance`: stretches where the book is harder to move (none when
+  absent, 8 at most), described below.
 
 The path is then played by a Surfpool scenario script, not a schedule of
 overrides (`surfnet_registerScenario`'s `scripts`). On the first slot of
@@ -233,6 +235,48 @@ end to end.
 On the 2026-10-29 SPCX snapshot, buying 35 SPCX (about $5,000) walks the
 asks 2 ticks (1.4 bp), and 350 SPCX (about $49,000) walks them 28 ticks
 (20 bp).
+
+### Resistance: `impact.resistance`
+
+A level where the book is harder to push through: while the book sits
+inside a zone, a trade moves it a fraction of what the trade walked, and
+the makers put the rest of the depth back.
+
+```json
+"impact": {
+  "half_life_slots": 10,
+  "resistance": [
+    { "from_bps": 5, "to_bps": 30, "strength": 4 },
+    { "from_bps": -60, "to_bps": -40, "strength": 10 }
+  ]
+}
+```
+
+- `from_bps`, `to_bps`: where the zone is, as the book's distance from the
+  path's level, in basis points of the session's starting mark. Negative is
+  below the level. A zone may hold the level (`-10` to `10`); zones may
+  touch and may not overlap, and none reaches past `max_bps`.
+- `strength`: how many ticks of walking move the book one tick inside the
+  zone, above 1 and 50 at most.
+
+With the first zone above, the 350 SPCX buy that walks the asks 28 ticks
+moves the book 12: the 7 ticks to the zone, and a quarter of the 21 inside
+it. The makers are centred 12 ticks up, with their full depth, so the next
+buy starts 16 ticks under where the first one ended. The fading part and
+the limit work as before: what fades is walk, and the book comes back
+along the same zones; `max_bps` is the book's distance, so reaching it
+through a zone takes that much more walking.
+
+A zone is a place on one fixed curve from "ticks walked" to "ticks the book
+moved", measured from the path's level. That is what keeps the round trip's
+property: the curve never falls and is the same whichever way the book is
+going, so buying and selling back never sells above where it bought,
+however the trade is cut up and whatever the waits. It is also why a zone
+is not a price, does not give way once crossed and does not resist one
+direction only. Each of those is a curve that changes under the trader: buy
+where the book barely moves, sell where it moves in full, and the
+difference is profit no market paid for. To put a wall at a price, give
+the path a level there and a zone around it.
 
 ## Example
 
