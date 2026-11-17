@@ -18,6 +18,7 @@
       "nop",
       "twap",
       "late",
+      "passive",
       "trust-depth",
       "fade-walls"
     ]
@@ -25,7 +26,7 @@
   "min_rule_odds": 0.85,
   "probes": {},
   "rules": [
-    "max(twap, late) < reference",
+    "max(twap, late, passive) < reference",
     "max(trust-depth, fade-walls) < reference",
     "reference < informed < hindsight"
   ],
@@ -51,6 +52,10 @@
     {
       "name": "late",
       "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive/rungs/late"
+    },
+    {
+      "name": "passive",
+      "dir": "bench/tasks/spoof-or-iceberg-exit-qqq/checks/bots/naive/rungs/passive"
     },
     {
       "name": "trust-depth",

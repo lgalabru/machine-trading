@@ -6,7 +6,7 @@
 build:
     #!/usr/bin/env bash
     set -euo pipefail
-    for rung in dump twap late trust-depth fade-walls probe; do
+    for rung in dump twap late passive trust-depth fade-walls probe; do
       wasm="$(MTX_NAIVE=$rung cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
         | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
       mkdir -p "rungs/$rung"

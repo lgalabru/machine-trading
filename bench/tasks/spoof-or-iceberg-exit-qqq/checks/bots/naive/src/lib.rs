@@ -5,6 +5,8 @@
 //! - `dump`: sells the whole order at once.
 //! - `twap`: sells evenly over the session, crossing.
 //! - `late`: holds and sells late, as the reference does without a read.
+//! - `passive`: rests an ask at the best ask all session for a maker's fill,
+//!   and sells what is left late.
 //! - `trust-depth`: takes a large bid for support and a large ask for a
 //!   seller ahead of it: holds on a bid wall, sells on an ask wall.
 //! - `fade-walls`: takes every wall for a spoof: sells on a bid wall, holds
@@ -48,6 +50,13 @@ impl Strategy for Naive {
                 return Ok(());
             }
             "late" => {}
+            "passive" => {
+                if let Some(ask) = market.best_ask
+                    && held > 0.01
+                {
+                    orders.ask(ask, round_lots(held.min(2.0))).post_only();
+                }
+            }
             "trust-depth" | "fade-walls" if !self.decided => {
                 let book = self.book.read();
                 let wall = walls_in(&book, self.book.tick_usd, market.best_bid, market.best_ask)
