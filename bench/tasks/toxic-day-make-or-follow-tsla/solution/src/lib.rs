@@ -12,11 +12,11 @@
 //!   slots later, in basis points, the takes' way, volume-weighted. Once 30
 //!   steps are marked, a mean markout over 4 bp says the morning is toxic:
 //!   the takers know where the price goes.
-//! - **Quiet.** Rest a bid at the best bid and an ask at the best ask, one
-//!   TSLA each, post-only; past 4 TSLA only the side that reduces.
-//! - **Toxic.** The takers' net buying over the last 20 slots past 1.5
-//!   TSLA either way sets the side, with the cap, held 40 slots after the
-//!   last signal.
+//! - **Quiet.** Stay flat: at TSLA's open, resting quotes lose to the
+//!   price's drift under one-sided flow on either kind of morning.
+//! - **Toxic.** The takers' net buying over the last 20 slots past 3 TSLA
+//!   either way (a burst) sets the side, with the cap, held 40 slots after
+//!   the last signal.
 //!
 //! It isn't told who anyone is.
 
@@ -41,11 +41,12 @@ pub const TAKE_REACH: f64 = 0.006;
 /// long a side holds after its last signal.
 pub const FLOW_SLOTS: u64 = 20;
 pub const FLOW_UNITS: f64 = 1.5;
+pub const BURST_UNITS: f64 = 3.0;
 pub const HOLD_SLOTS: u64 = 40;
 /// A quote's size, and the inventory past which only the side that reduces
 /// it is quoted.
 pub const QUOTE_SIZE: f64 = 1.0;
-pub const QUOTE_MAX: f64 = 4.0;
+pub const QUOTE_MAX: f64 = 2.0;
 /// Slots a take is marked out over, the marked steps a read needs, and the
 /// mean markout, in basis points, past which the takers are informed.
 const MARKOUT_SLOTS: u64 = 60;
@@ -286,9 +287,43 @@ pub struct Markouts {
     pending: VecDeque<(u64, f64, Vec<f64>)>,
     /// Marked steps, and their volume-weighted markouts' sum and sum of
     /// squares, in basis points.
-    steps: u32,
+    pub steps: u32,
     sum: f64,
     sq: f64,
+}
+
+/// Bursts of net flow past [`BURST_UNITS`] (each new side one), marked out
+/// against the oracle [`MARKOUT_SLOTS`] later, in basis points, the burst's
+/// way: what following them would have paid before costs.
+#[derive(Debug, Clone, Default)]
+pub struct Paper {
+    side: f64,
+    pending: VecDeque<(u64, f64, f64)>,
+    pub count: u32,
+    sum: f64,
+}
+
+impl Paper {
+    pub fn update(&mut self, at: u64, oracle: f64, net: f64) {
+        while self
+            .pending
+            .front()
+            .is_some_and(|(then, ..)| then + MARKOUT_SLOTS <= at)
+        {
+            let (_, was, side) = self.pending.pop_front().expect("a burst is pending");
+            self.count += 1;
+            self.sum += side * (oracle / was - 1.0) * 10_000.0;
+        }
+        let side = flow_side(net, BURST_UNITS).unwrap_or(0.0);
+        if side != 0.0 && side != self.side {
+            self.pending.push_back((at, oracle, side));
+        }
+        self.side = side;
+    }
+
+    pub fn mean(&self) -> Option<f64> {
+        (self.count > 0).then(|| self.sum / f64::from(self.count))
+    }
 }
 
 impl Markouts {
@@ -316,6 +351,11 @@ impl Markouts {
     /// The mean markout so far, once enough steps are marked.
     pub fn mean(&self) -> Option<f64> {
         (self.steps >= MIN_STEPS).then(|| self.sum / f64::from(self.steps))
+    }
+
+    /// The mean markout so far, however few steps are marked.
+    pub fn mean_any(&self) -> Option<f64> {
+        (self.steps > 0).then(|| self.sum / f64::from(self.steps))
     }
 
     /// Whether the takers are informed: `None` until enough is marked.
@@ -392,7 +432,8 @@ impl Tape {
 /// What the desk does at a step, by what it reads.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Policy {
-    /// Read the tape: make while it is noise, follow once it is toxic.
+    /// Read the tape: stay flat while it is noise, follow its bursts once
+    /// it is toxic.
     Read,
     /// Never trade.
     Flat,
@@ -402,6 +443,8 @@ pub enum Policy {
     Follow(f64),
     /// Follow the net flow past `units`, and make between.
     Switch(f64),
+    /// Follow the net flow past `units`, and stay flat between.
+    Burst(f64),
 }
 
 /// The desk: a tape, a lean, and a policy.
@@ -411,6 +454,8 @@ pub struct Desk {
     tape: Tape,
     lean: Lean,
     said: Option<bool>,
+    paper: Paper,
+    closed: bool,
     counts: BTreeMap<&'static str, u64>,
 }
 
@@ -422,6 +467,8 @@ impl Desk {
             tape: Tape::default(),
             lean: Lean::default(),
             said: None,
+            paper: Paper::default(),
+            closed: false,
             counts: BTreeMap::new(),
         }
     }
@@ -458,8 +505,8 @@ impl Strategy for Desk {
             self.said = toxic;
         }
         let follow = match self.policy {
-            Policy::Read => (toxic == Some(true)).then_some(FLOW_UNITS),
-            Policy::Follow(units) | Policy::Switch(units) => Some(units),
+            Policy::Read => (toxic == Some(true)).then_some(BURST_UNITS),
+            Policy::Follow(units) | Policy::Switch(units) | Policy::Burst(units) => Some(units),
             Policy::Make | Policy::Flat => None,
         };
         if let Some(units) = follow
@@ -468,14 +515,25 @@ impl Strategy for Desk {
             self.lean.signal(dir, at);
         }
         self.lean.manage(at);
+        self.paper.update(at, market.oracle, self.tape.net());
         if closing(market) {
+            if !self.closed {
+                self.closed = true;
+                log(&format!(
+                    "slot {at}: close; mean markout {:?} bp over {} steps; bursts {} paper mean {:?} bp; {:?}",
+                    self.tape.markouts.mean_any(),
+                    self.tape.markouts.steps,
+                    self.paper.count,
+                    self.paper.mean(),
+                    self.counts
+                ));
+            }
             go_to(0.0, market, orders);
             return Ok(());
         }
         let quotes = match self.policy {
-            Policy::Read => toxic != Some(true),
             Policy::Make | Policy::Switch(_) => true,
-            Policy::Follow(_) | Policy::Flat => false,
+            Policy::Read | Policy::Follow(_) | Policy::Burst(_) | Policy::Flat => false,
         };
         if self.lean.dir != 0.0 {
             *self.counts.entry("lean_steps").or_default() += 1;
@@ -490,9 +548,6 @@ impl Strategy for Desk {
         } else {
             go_to(0.0, market, orders);
         }
-        if market.last {
-            log(&format!("counts {:?}", self.counts));
-        }
         Ok(())
     }
 }
@@ -500,5 +555,5 @@ impl Strategy for Desk {
 /// The reference strategy.
 pub type Reference = Desk;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "export"))]
 mtx_kit::export!(Reference);

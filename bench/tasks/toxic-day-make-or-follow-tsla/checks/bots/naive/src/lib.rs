@@ -5,10 +5,12 @@
 //! - `make`: makes all session, as the reference does on a quiet morning.
 //! - `follow`: follows the takers' net flow all session, as the reference
 //!   does on a toxic one.
-//! - `switch`: follows the net flow once it is past twice the reference's
-//!   bar, and makes between: a fixed threshold, the same every morning.
+//! - `switch`: follows the net flow's bursts (past the reference's bar),
+//!   and makes between: a fixed threshold, the same every morning.
+//! - `burst`: follows the bursts every morning, and stays flat between: the
+//!   reference's toxic-morning play, without the read.
 
-use mtx_bot_toxic_day_make_or_follow::{Desk, FLOW_UNITS, Policy};
+use mtx_bot_toxic_day_make_or_follow::{BURST_UNITS, Desk, FLOW_UNITS, Policy};
 use mtx_kit::prelude::*;
 
 /// The rung named `name`.
@@ -17,7 +19,8 @@ pub fn policy(name: &str) -> Option<Policy> {
         "flat" => Some(Policy::Flat),
         "make" => Some(Policy::Make),
         "follow" => Some(Policy::Follow(FLOW_UNITS)),
-        "switch" => Some(Policy::Switch(2.0 * FLOW_UNITS)),
+        "switch" => Some(Policy::Switch(BURST_UNITS)),
+        "burst" => Some(Policy::Burst(BURST_UNITS)),
         _ => None,
     }
 }

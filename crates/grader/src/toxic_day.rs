@@ -94,8 +94,10 @@ pub struct ToxicDayFamily {
     pub chaser_wallets: (u64, u64),
     pub chaser_trigger_bps: (f64, f64),
     pub chaser_lookback_slots: u64,
-    /// The chasers' pace while they trade, a multiple of the market's.
+    /// The chasers' pace while they trade, and the fund's at most, as
+    /// multiples of the market's.
     pub chaser_intensity: f64,
+    pub max_fund_intensity: f64,
     pub size_mult: f64,
     pub limit_bps: f64,
     pub max_position: f64,
@@ -125,6 +127,7 @@ impl ToxicDayFamily {
             chaser_trigger_bps: (10.0, 15.0),
             chaser_lookback_slots: 30,
             chaser_intensity: 20.0,
+            max_fund_intensity: 60.0,
             size_mult: 25.0,
             limit_bps: 80.0,
             // About 0.31x of the 10,000 USDC of collateral at $388.95.
@@ -205,10 +208,13 @@ impl ToxicDayFamily {
         // Paces that give the fund its share of a session's expected taker
         // volume, which is the same on both kinds of morning: the fund and
         // the chasers trade only while their trigger holds, noise always.
-        let fund_active = active_ahead(&walk, horizon_slots, edge_bps).max(0.02);
+        let fund_active = active_ahead(&walk, horizon_slots, edge_bps);
         let chaser_active = active_behind(&walk, self.chaser_lookback_slots, chaser_trigger);
-        let fund_volume = fund_share * self.total_flow;
-        let fund_intensity = round3(fund_volume / fund_active);
+        // At most `max_fund_intensity` while it trades: a path with little
+        // ahead to trade on leaves the fund a smaller share.
+        let fund_intensity =
+            round3((fund_share * self.total_flow / fund_active.max(1e-9)).min(self.max_fund_intensity));
+        let fund_volume = fund_intensity * fund_active;
         let chaser_volume = self.chaser_intensity * chaser_active;
         let noise_flow = round3((self.total_flow - fund_volume - chaser_volume).max(2.0));
 

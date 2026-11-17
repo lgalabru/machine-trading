@@ -13,7 +13,7 @@
 //! each wallet to its account and reads their TSLA positions every step.
 //! Any net buying or selling by the fund over the last 10 slots sets the
 //! side, with the cap, held 40 slots after the fund's last take; between
-//! the fund's trades it makes, as the reference does on a quiet morning.
+//! the fund's trades it stays flat.
 
 use mtx_bot_toxic_day_make_or_follow::{Lean, Watch, closing, go_to, make};
 use mtx_kit::{log, prelude::*, venue::PhoenixVenue};
@@ -37,7 +37,7 @@ impl Default for Informed {
             start_slot: 0,
             watch: Watch::default(),
             lean: Lean::default(),
-            makes: option_env!("MTX_INFORMED_MAKE") != Some("0"),
+            makes: option_env!("MTX_INFORMED_MAKE") == Some("1"),
         }
     }
 }
