@@ -10,12 +10,15 @@
 //! made after the book already moved its way by `CHASE_BPS` is a chase, and
 //! a wallet whose takes are mostly chases is dropped.
 //!
-//! The position is the cap the way the credible wallets' net flow over the
-//! last `LOOK_SLOTS` points, held `HOLD_SLOTS` past the last time it did.
+//! Each credible wallet's net flow over the last 20 slots is a vote. When
+//! two credible wallets agree (the one, if only one is credible) and more
+//! agree than disagree, it takes the cap their way and holds it 80 slots,
+//! with no flips: an informed wallet is wrong a whole horizon at a time, on
+//! its own, so one wallet's burst is worth waiting for another to confirm.
 //!
 //! The same machinery runs the ladder's rungs ([`Mode`]): the informed bot,
-//! told which wallets are informed and which are decoys, follows the
-//! informed alone from their first take; the rungs that don't read wallets
+//! told which wallets are informed and which are decoys, votes with the
+//! informed alone from their first takes; the rungs that don't read wallets
 //! follow or fade the market's net flow, or follow the price's move; the
 //! naive reader follows the busiest wallet.
 
@@ -90,6 +93,13 @@ pub struct Params {
     pub half_life_share: f64,
     /// The price move over `look_slots` that momentum follows, in bps.
     pub momentum_bps: f64,
+    /// With `agree` over 0, a signal is a vote: each trusted wallet's net
+    /// flow over `look_slots` is one, and the bot enters when at least
+    /// `agree` of them (all of them, if fewer are trusted) point one way and
+    /// more point that way than the other, then holds `hold_slots` with no
+    /// flips. A trusted wallet errs a whole horizon at a time, on its own, so
+    /// one wallet's burst isn't enough when another can confirm it.
+    pub agree: usize,
 }
 
 impl Params {
@@ -104,19 +114,22 @@ impl Params {
             min_score_bps: 5.0,
             half_life_share: 0.25,
             momentum_bps: 8.0,
+            agree: 0,
         };
         match mode {
             Mode::Informed => Params {
-                look_slots: 10,
-                hold_slots: 40,
+                look_slots: 20,
+                hold_slots: 80,
                 threshold: 0.0,
+                agree: 2,
                 ..base
             },
             Mode::Reference => Params {
-                look_slots: 10,
-                hold_slots: 40,
+                look_slots: 20,
+                hold_slots: 80,
                 threshold: 0.0,
                 min_score_bps: 20.0,
+                agree: 2,
                 ..base
             },
             Mode::MostActive => Params {
@@ -266,6 +279,34 @@ impl Flow {
             }
             Mode::FollowFlow => window.map(|t| t.signed).sum(),
             Mode::FadeFlow => -window.map(|t| t.signed).sum::<f64>(),
+            Mode::Informed | Mode::Reference if p.agree > 0 => {
+                let trusted: HashSet<&str> = match self.mode {
+                    Mode::Informed => setup.informed.iter().map(String::as_str).collect(),
+                    _ => self
+                        .records
+                        .keys()
+                        .filter(|w| self.credible(w))
+                        .map(String::as_str)
+                        .collect(),
+                };
+                let mut nets: HashMap<&str, f64> = HashMap::new();
+                for t in window.filter(|t| trusted.contains(t.wallet.as_str())) {
+                    *nets.entry(t.wallet.as_str()).or_default() += t.signed;
+                }
+                let up = nets.values().filter(|v| **v > 0.0).count();
+                let down = nets.values().filter(|v| **v < 0.0).count();
+                let need = trusted.len().min(p.agree);
+                if need == 0 {
+                    return None;
+                }
+                return if up >= need && up > down {
+                    Some(1.0)
+                } else if down >= need && down > up {
+                    Some(-1.0)
+                } else {
+                    None
+                };
+            }
             Mode::Informed => window
                 .filter(|t| setup.informed.contains(&t.wallet))
                 .map(|t| t.signed)
@@ -413,7 +454,10 @@ impl Strategy for Flow {
             self.read_tape(now, mid);
             self.mark_out(now, mid);
         }
-        if let Some(dir) = self.signal(now) {
+        // A vote holds its position to the end of its hold: no flips, and
+        // no extensions.
+        let held = self.params.agree > 0 && self.dir != 0.0 && now <= self.hold_until;
+        if let Some(dir) = self.signal(now).filter(|_| !held) {
             if dir != self.dir {
                 self.trades += 1;
             }

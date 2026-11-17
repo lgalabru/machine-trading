@@ -58,8 +58,8 @@ def load(report_path, details_dir):
 BASE = dict(look=40, hold=40, threshold=0.5, mark=40, chase=8.0, min_weight=2.0,
             min_score=5.0, half_life_share=0.25, momentum=8.0)
 MODES = {
-    "informed": dict(look=10, hold=40, threshold=0.0),
-    "reference": dict(look=10, hold=40, threshold=0.0, min_score=20.0),
+    "informed": dict(look=20, hold=80, threshold=0.0, agree=2),
+    "reference": dict(look=20, hold=80, threshold=0.0, min_score=20.0, agree=2),
     "most-active": dict(look=10, hold=20, threshold=0.0),
     "follow-flow": dict(look=40, hold=40, threshold=4.0),
     "fade-flow": dict(look=10, hold=10, threshold=6.0),
@@ -131,6 +131,24 @@ def run(session, mode, overrides=None):
                 net = sum(t[2] for t in window)
             elif mode == "fade-flow":
                 net = -sum(t[2] for t in window)
+            elif mode in ("informed", "reference") and p.get("agree"):
+                # Agree-of-k: each trusted wallet's net flow over the window
+                # is a vote; enter when at least min(trusted, k) agree and
+                # more agree than disagree, then hold with no flips.
+                trusted = informed if mode == "informed" else {w for w in rec if credible(w)}
+                nets = {}
+                for t in window:
+                    if t[1] in trusted:
+                        nets[t[1]] = nets.get(t[1], 0.0) + t[2]
+                up = sum(1 for v in nets.values() if v > 0)
+                dn = sum(1 for v in nets.values() if v < 0)
+                need = min(len(trusted), p["agree"])
+                net = 0.0
+                if direction == 0.0 and need > 0:
+                    if up >= need and up > dn:
+                        net = 1.0
+                    elif dn >= need and dn > up:
+                        net = -1.0
             elif mode == "informed":
                 net = sum(t[2] for t in window if t[1] in informed)
             elif mode == "reference":
@@ -140,6 +158,8 @@ def run(session, mode, overrides=None):
                 net = sum(t[2] for t in window if t[1] == busiest)
             if abs(net) > max(p["threshold"], 1e-9):
                 sig = 1.0 if net > 0 else -1.0
+        if sig is not None and p.get("agree") and direction != 0.0:
+            sig = None
         if sig is not None:
             if sig != direction:
                 entries += 1
