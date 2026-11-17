@@ -147,7 +147,13 @@ pub const GENERATORS: &[Generator] = &[
     },
     Generator {
         name: "hunt-or-breakout",
-        practice: |prefix, count, seed| BreakoutFamily::tsla().sample_set(prefix, count, seed),
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                BreakoutFamily::tsla().draw_set(prefix, count, seed),
+                false,
+                breakout_latent,
+            )
+        },
         hidden: |count, seed, tell| {
             shaped(
                 BreakoutFamily::tsla().draw_set("hidden", count, seed),
@@ -432,6 +438,7 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
     })
 }
 
+#[cfg(feature = "generators")]
 /// Who hunts stops and who is informed (their wallets, through the
 /// roster: both are seated in every session), the hunter's hold and trigger,
 /// the grid, and how far ahead the informed wallets see. Not where or when
