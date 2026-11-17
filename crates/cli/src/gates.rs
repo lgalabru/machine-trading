@@ -1582,7 +1582,12 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             true,
         )?;
         checks.extend(harbor_checks(&jobs, ran, &detail, headline));
-        let (ok, d) = run_in(root, "just", &["leak-audit"], false)?;
+        let (ok, d) = run_in(root, "just", &["leak-audit", task], false)?;
+        // The image Harbor runs is task.toml's, not the Dockerfile's.
+        let images = std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml"))
+            .map(|t| tasks::image_problems(&t, task))
+            .unwrap_or_default();
+        let ok = ok && images.is_empty();
         checks.push(Check::from(
             GRADED,
             "leak-audit",
@@ -1591,7 +1596,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             if ok {
                 "no answer in the image".into()
             } else {
-                d
+                format!("{}\n{d}", images.join("\n"))
             },
         ));
         let (ok, d) = run_in(root, "just", &["keypair-probe"], false)?;
@@ -1602,6 +1607,16 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             ok,
             if ok { "no keypair readable".into() } else { d },
         ));
+        if tasks::guarded(root, task) {
+            let (ok, d) = run_in(root, "just", &["network-probe", task], false)?;
+            checks.push(Check::from(
+                GRADED,
+                "network-probe",
+                "A guarded agent can't reach ghcr.io or github.com",
+                ok,
+                d,
+            ));
+        }
         if std::fs::read_to_string(root.join("bench/tasks").join(task).join("task.toml"))
             .is_ok_and(|t| t.contains("MTX_AGENT_TIMEOUT_SEC"))
         {

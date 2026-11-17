@@ -8,6 +8,9 @@ one's key and name before a batch spends anything.
     python3 -I models.py keys                      every variable that may hold a key
     python3 -I models.py token <name>              the model's token on the key proxy
     python3 -I models.py scan <dir>                files under <dir> holding a key, in any form
+    python3 -I models.py native-guard <tasks> <name>...  refuse native models on a guarded task (MTX_UNGUARDED=1 allows)
+    python3 -I models.py stamp-unguarded <batch>    mark a batch `guarded: false`, which publish refuses
+    python3 -I models.py fetch-scan <batch>         flag fetch attempts in a batch's trajectories
 
 MTX_MODELS names another registry (the harness check's). A name that
 isn't in it is `openai/<model>` as given, or
@@ -169,8 +172,84 @@ def scan(root: Path) -> int:
     return 1 if hits or unreadable else 0
 
 
+def guarded_tasks(tasks: Path) -> list[str]:
+    """The tasks whose environment starts from the base's `-agent` image: their
+    agents run with an allowlisted network, and no generator in their `mtx`."""
+    found = []
+    for dockerfile in sorted(tasks.glob("*/environment/Dockerfile")):
+        if re.search(r"^FROM \S+-agent(@\S+)?\s*$", dockerfile.read_text(), re.M):
+            found.append(dockerfile.parent.parent.name)
+    return found
+
+
+def native_guard(tasks: Path, names: list[str], unguarded: bool = False) -> str | None:
+    """Why `names` can't run on `tasks`, or None. A native harness (Claude Code,
+    Codex) can't be guarded: it holds its provider's real key in the agent's
+    environment, and the provider's API its network must allow can fetch the
+    web for the agent (and the key can be used to call it). So on a guarded
+    task they are refused, and only Hermes runs: its key proxy holds the keys
+    and body_policy.py refuses server tools. `unguarded` (MTX_UNGUARDED=1)
+    allows them for a screen that is never published (see stamp_unguarded)."""
+    native = [n for n in names if n.startswith("native:")]
+    guarded = guarded_tasks(tasks)
+    if unguarded or not native or not guarded:
+        return None
+    return (
+        f"{', '.join(native)}: native harnesses can't be guarded, so they can't run guarded tasks "
+        f"({', '.join(guarded)}): the provider API the agent's network would have to allow can fetch "
+        "the web for it. Run these models in Hermes (without `native:`), or set MTX_UNGUARDED=1 for "
+        "a screen that is never published."
+    )
+
+
+def stamp_unguarded(batch: Path) -> None:
+    """Mark a batch whose native harnesses ran on guarded tasks: `guarded: false`
+    in batch.json, and a `.unguarded` file `just publish` and `mtx bench
+    publish` refuse."""
+    (batch / ".unguarded").write_text("native harnesses ran on guarded tasks; not for publication\n")
+    plan = batch / "batch.json"
+    data = json.loads(plan.read_text()) if plan.is_file() else {}
+    data["guarded"] = False
+    plan.write_text(json.dumps(data, indent=2))
+
+
+# What an agent's trajectory shows when it tried to fetch from outside: a
+# fetch tool or client, another Codex, the Responses API, the repository's host.
+FETCH_PATTERNS = {
+    "curl": r"\bcurl\b",
+    "wget": r"\bwget\b",
+    "python requests": r"\b(requests\.(get|post)|urllib\.request|httpx\.|aiohttp)\b",
+    "codex exec": r"\bcodex\s+exec\b",
+    "web_search": r"web_search",
+    "responses api": r"/v1/responses",
+    "raw.githubusercontent": r"raw\.githubusercontent\.com",
+    "github": r"github\.com|ghcr\.io",
+}
+
+
+def fetch_flags(text: str) -> list[str]:
+    return [name for name, pattern in FETCH_PATTERNS.items() if re.search(pattern, text)]
+
+
+def fetch_scan(batch: Path) -> dict[str, list[str]]:
+    """Each trial's trajectory's fetch flags, written to `.fetch-scan.json` and
+    into batch.json's `fetch_flags`, for a run that wasn't guarded."""
+    found = {}
+    for trajectory in sorted(batch.glob("**/agent/trajectory.json")):
+        flags = fetch_flags(trajectory.read_text(errors="replace"))
+        if flags:
+            found[str(trajectory.relative_to(batch))] = flags
+    (batch / ".fetch-scan.json").write_text(json.dumps(found, indent=2))
+    plan = batch / "batch.json"
+    if plan.is_file():
+        data = json.loads(plan.read_text())
+        data["fetch_flags"] = found
+        plan.write_text(json.dumps(data, indent=2))
+    return found
+
+
 def main():
-    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2}
+    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2, "native-guard": 3, "stamp-unguarded": 2, "fetch-scan": 2}
     if len(sys.argv) < 2 or sys.argv[1] not in commands or len(sys.argv) < 1 + commands[sys.argv[1]]:
         sys.exit(__doc__)
     command, names = sys.argv[1], sys.argv[2:]
@@ -184,6 +263,15 @@ def main():
         print("\n".join(key_names()))
     elif command == "token":
         print(route_token(entry(names[0])["route"]))
+    elif command == "stamp-unguarded":
+        stamp_unguarded(Path(names[0]))
+    elif command == "fetch-scan":
+        for trial, flags in fetch_scan(Path(names[0])).items():
+            print(f"fetch attempt in {trial}: {', '.join(flags)}")
+    elif command == "native-guard":
+        refusal = native_guard(Path(names[0]), names[1:], bool(os.environ.get("MTX_UNGUARDED")))
+        if refusal:
+            sys.exit(refusal)
     elif command == "scan":
         sys.exit(scan(Path(names[0])))
     else:
