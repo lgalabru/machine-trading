@@ -77,33 +77,34 @@ The reference names a wall's owner only when the book tests the wall
 before the jump: the touch reaching a spoof wall (pulled) or an iceberg's
 slice (filled, reloaded). The walls' distance behind the touch sets how
 often that happens. Measured with the fixed prototypes (side and slot
-attribution): walls 6 to 28 ticks out give the reference 0.71 of the
-informed bot; 14 to 48 ticks gave about 0.2.
+attribution): walls 6 to 28 ticks out gave the reference 0.71 of the
+informed bot before #114; 8 to 36 ticks give 0.37 on #114's actors.
 
 ## Gate 0
 
-Engine runs on runner-4 (`hidden/gate0/gate0.py`, untracked): four fresh
-hidden sets of 36 sessions, pooled (144), every rung a component,
-bootstrapped 72-session sets. Walls 6 to 28 ticks out.
+Engine runs on runner-4 (`hidden/gate0/gate0.py`, untracked) on the actor
+library of #114 (sizes, offsets and holds drawn per action, shuffled
+onboarding): four fresh hidden sets of 36 sessions, pooled (144), every
+rung a component, bootstrapped 72-session sets. Walls 8 to 36 ticks out.
 
 | Rung | Total | Mean | v2-weighted share of informed |
 | --- | --- | --- | --- |
-| trust-depth | -101 | -0.70 | -0.33 |
-| late | 160 | 1.11 | 0.06 |
-| fade-walls | 240 | 1.67 | -0.11 |
-| twap | 251 | 1.74 | -0.10 |
-| reference | 1430 | 9.93 | 0.71 |
-| informed | 1999 | 13.88 | 1.00 |
+| fade-walls | -33 | -0.23 | -0.31 |
+| late | 35 | 0.24 | -0.01 |
+| trust-depth | 217 | 1.50 | -0.10 |
+| twap | 313 | 2.18 | -0.07 |
+| reference | 822 | 5.71 | 0.37 |
+| informed | 2014 | 13.99 | 1.00 |
 
-- Signal gate: informed / best non-reading (twap) = 7.98 (need 2); holds
-  on 0.997 of bootstrapped sets.
+- Signal gate: informed / best non-reading (twap) = 6.43 (need 2); holds
+  on 1.000 of bootstrapped sets.
 - Order `max(twap, late, trust-depth, fade-walls) < reference < informed`
-  holds on 1.000 of bootstrapped sets (need 0.85).
-- Strength band: reference 0.71 of informed, v2-weighted (band 0.2 to
-  0.7; by set 0.54, 0.83, 0.76, 0.69); per-session Sharpe 0.72.
-- Verdict: the signal gate and the order pass; the band sits just over
-  its top. Moving the walls back out (8 to 36 ticks) lowers the reference;
-  to settle on the actor-library changes of infra/56.
+  holds on 0.951 of bootstrapped sets (need 0.85).
+- Strength band: reference 0.37 of informed, v2-weighted (band 0.2 to
+  0.7, target 0.5 or under; by set 0.50, 0.06, 0.62, 0.32); per-session
+  Sharpe 0.43.
+- Passed. An earlier run with walls 6 to 28 ticks out, before #114, put
+  the reference at 0.71: the walls' distance sets the band.
 
 ## The anchors (Gate 0 prototypes)
 
