@@ -29,6 +29,11 @@ class Blend(unittest.TestCase):
         scaled = calibrate.scaled(self.gamble, size)
         self.assertAlmostEqual(calibrate.spread(scaled), calibrate.spread(self.ref))
 
+    def test_the_coin_is_sized_to_the_references_drawdown_when_that_is_smaller(self):
+        size = calibrate.size_for(self.ref, self.gamble, 0.2, 0.5)
+        self.assertAlmostEqual(size, 0.4)
+        self.assertAlmostEqual(calibrate.size_for(self.ref, self.gamble, 0.2, 0.2), 0.8)
+
     def test_a_coin_already_under_the_references_spread_stays_at_the_cap(self):
         self.assertEqual(calibrate.size_for(self.ref, (0.0, 50.0**2)), 1.0)
 
