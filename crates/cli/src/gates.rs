@@ -2423,9 +2423,10 @@ mod tests {
         let ok = check();
         assert_eq!(ok.status, Status::Pass, "{}", ok.detail);
         scenario.save(&practice.join("practice-1.json")).unwrap();
-        let mut stated: Value =
-            serde_json::from_str(&std::fs::read_to_string(practice.join("practice-1.json")).unwrap())
-                .unwrap();
+        let mut stated: Value = serde_json::from_str(
+            &std::fs::read_to_string(practice.join("practice-1.json")).unwrap(),
+        )
+        .unwrap();
         stated["schema"] = 1.into();
         std::fs::write(practice.join("practice-1.json"), stated.to_string()).unwrap();
         let ok = check();
@@ -2434,19 +2435,28 @@ mod tests {
         std::fs::write(practice.join("practice-2.json"), stated.to_string()).unwrap();
         let failed = check();
         assert_eq!(failed.status, Status::Fail, "{}", failed.detail);
-        assert!(failed.detail.contains("practice-2.json"), "{}", failed.detail);
+        assert!(
+            failed.detail.contains("practice-2.json"),
+            "{}",
+            failed.detail
+        );
         assert!(failed.detail.contains("roles"), "{}", failed.detail);
         // The same map as a schema-2 file stores it, under `actors`.
         std::fs::remove_file(practice.join("practice-2.json")).unwrap();
         scenario.save_v2(&practice.join("practice-3.json")).unwrap();
-        let mut v2: Value =
-            serde_json::from_str(&std::fs::read_to_string(practice.join("practice-3.json")).unwrap())
-                .unwrap();
+        let mut v2: Value = serde_json::from_str(
+            &std::fs::read_to_string(practice.join("practice-3.json")).unwrap(),
+        )
+        .unwrap();
         v2["actors"]["taker_roles"] = serde_json::json!({"informed": [7]});
         std::fs::write(practice.join("practice-3.json"), v2.to_string()).unwrap();
         let failed = check();
         assert_eq!(failed.status, Status::Fail, "{}", failed.detail);
-        assert!(failed.detail.contains("practice-3.json"), "{}", failed.detail);
+        assert!(
+            failed.detail.contains("practice-3.json"),
+            "{}",
+            failed.detail
+        );
         std::fs::remove_dir_all(&root).unwrap();
     }
 

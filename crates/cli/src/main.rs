@@ -2026,7 +2026,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("p.json");
         super::save_practice(&scenario, &path).unwrap();
-        assert_eq!(mtx_grader::scenario::Scenario::load(&path).unwrap(), scenario);
+        assert_eq!(
+            mtx_grader::scenario::Scenario::load(&path).unwrap(),
+            scenario
+        );
         // The same data with a c1-shaped role map compares equal once the
         // maps are stripped, as keep_other_anchors needs.
         let mut with_roles = serde_json::to_value(&scenario).unwrap();

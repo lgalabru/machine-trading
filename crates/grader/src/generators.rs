@@ -474,7 +474,10 @@ mod tests {
         // is a list of role names.
         let c1 = r#"{"making": {"takers": [], "roles": {"informed": [7]}}}"#;
         assert_eq!(latent_keys_in(c1), ["roles"]);
-        assert!(latent_keys_in(r#"{"actors": {"pool": {"wallets": 3, "roles": ["informed"]}}}"#).is_empty());
+        assert!(
+            latent_keys_in(r#"{"actors": {"pool": {"wallets": 3, "roles": ["informed"]}}}"#)
+                .is_empty()
+        );
         let mut value: Value = serde_json::from_str(
             r#"{"making": {"roles": {"informed": [7]}, "x": 1}, "actors": {"pool": {"roles": ["informed"]}}}"#,
         )
