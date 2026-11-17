@@ -151,6 +151,37 @@ async fn holding_the_start_through_a_fall_is_no_drawdown_in_a_net_scored_session
     }
 }
 
+/// The fair path only has to meet the level at the close: mid-session the
+/// account is valued at the oracle level, and so is the hold. A bot that holds
+/// through a dip that heals, with a flat fair path, draws down nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn holding_the_start_through_a_dip_that_heals_is_no_drawdown_with_a_fair_path() {
+    let dip = vec![
+        Waypoint::at(10, 0.0),
+        Waypoint::at(25, -3.0),
+        Waypoint::at(40, 0.0),
+    ];
+    let mut scenario = holding(dip, 100.0);
+    scenario.fair_path = Some(vec![Waypoint::at(10, 0.0), Waypoint::at(40, 0.0)]);
+    scenario.net = Some(NetScoring {
+        inventory_bps: 0.0,
+        venue_position: None,
+    });
+    let report = grade_nop(&[scenario], true).await;
+    let result = &report.scenarios[0];
+    assert_eq!(result.disqualified, None);
+    assert!(
+        result.session.max_drawdown_usd < 1.0,
+        "drew down {}",
+        result.session.max_drawdown_usd
+    );
+    assert!(
+        result.session.pnl_usd.abs() < 5.0,
+        "{}",
+        result.session.pnl_usd
+    );
+}
+
 /// An RFQ desk that starts with the asset: by default the asset's move is
 /// the desk's PnL, so a desk that quotes nothing makes or loses it.
 #[tokio::test(flavor = "multi_thread")]

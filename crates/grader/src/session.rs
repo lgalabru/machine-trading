@@ -179,7 +179,8 @@ pub struct SessionReport {
     /// The most positions or orders the bot held at once in other markets.
     pub positions_outside_universe: u32,
     /// The deepest the account's value fell below its running peak while the
-    /// bot ran, in USD.
+    /// bot ran, in USD. In a net-scored session it is net of the hold: the
+    /// value less what holding the start would have gained.
     pub max_drawdown_usd: f64,
     /// The account priced at each step, for the mandate's notional rules
     /// (gross notional, exposures, hedges), and as the term started where

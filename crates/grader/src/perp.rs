@@ -2211,23 +2211,19 @@ impl Account for PerpAccount {
     }
 }
 
-/// What holding every market's start position would have gained by `at`,
-/// each at its market's fair value where it has one, else its level: the
-/// baseline a net-scored session scores against (see [`settle`]), taken off
-/// the drawdown so that a bot that holds draws down nothing. 0 when the
+/// What holding every market's start position would have gained by `at`, at
+/// each market's level: the baseline a net-scored session scores against
+/// (see [`settle`]), taken off the drawdown so that a bot that holds draws
+/// down nothing. The account is valued at the oracle level, so mid-session
+/// the hold is too: a fair path only meets the level at the close. 0 when the
 /// session isn't net-scored.
 fn hold_gain_usd(net_scored: bool, markets: &[MarketState], at: u64) -> f64 {
+    if !net_scored {
+        return 0.0;
+    }
     markets
         .iter()
-        .map(|market| {
-            let close = fair_close_usd(net_scored, &market.scenario, market.start_mark_usd, at)
-                .unwrap_or_else(|| market.moment(at).level_usd);
-            if net_scored {
-                market.start_position * (close - market.start_mark_usd)
-            } else {
-                0.0
-            }
-        })
+        .map(|market| market.start_position * (market.moment(at).level_usd - market.start_mark_usd))
         .sum()
 }
 
