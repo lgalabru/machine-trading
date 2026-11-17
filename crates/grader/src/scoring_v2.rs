@@ -97,6 +97,13 @@ pub const HINDSIGHT_ANCHOR_FLOOR: f64 = 0.05;
 /// half-spread (5 bp), from `calibration/market/spcx.20261112.d1f48be2.toml`.
 /// Venue facts, not a fitted knob; per task overridable.
 pub const HINDSIGHT_COST: f64 = 8.5e-4;
+/// The bottom of the scale: `raw` is floored here, and a fatal or unscored
+/// grade (a refused call, tampering, not graded) scores it.
+pub const RAW_FLOOR: f64 = -1.0;
+/// The run's breach cap on `raw`: one breach in the set holds it at the
+/// reference's 0.5, two or more at doing nothing's 0 (see [`breach_cap`]).
+pub const BREACH_CAP_ONE: f64 = 0.5;
+pub const BREACH_CAP_MORE: f64 = 0.0;
 /// Bootstrap resamples for the interval.
 pub const RESAMPLES: usize = 2_000;
 /// The intervals' level: 95%, the 2.5th and 97.5th percentiles.
@@ -130,6 +137,11 @@ pub struct Params {
     /// of the price (see [`cost_aware_bound`]).
     pub hindsight_cost: f64,
     pub resamples: usize,
+    /// v2 is the grade's one score (GRADING_DECISIONS, "one reported
+    /// score"): `reward` becomes its clamped score, the v1 scores leave the
+    /// report, and the 1 must be the task's informed bot: a grade that would
+    /// take a hindsight, proxy or given ceiling fails instead.
+    pub headline: bool,
 }
 
 impl Params {
@@ -142,6 +154,7 @@ impl Params {
             ceiling,
             hindsight_cost: HINDSIGHT_COST,
             resamples: RESAMPLES,
+            headline: false,
         }
     }
 }
@@ -212,6 +225,14 @@ pub struct ScoreV2 {
     /// What the sessions alone score, floored at −1, fatal or not: reported,
     /// not scored.
     pub measured_raw: f64,
+    /// `raw` before the near-breach charge and any breach's penalty (each
+    /// session weighed as its PnL alone, no breach floor, no run cap),
+    /// floored at −1; −1 for a fatal grade. The reference graded against
+    /// itself scores 0.5 here exactly, whatever its drawdowns: what an
+    /// oracle check reads. Reported, not scored. Absent in reports from
+    /// before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_before_charge: Option<f64>,
     /// `raw − 0.5`: the edge over the reference.
     pub edge: f64,
     /// The 95% interval of `raw` over a paired bootstrap of this grade's
@@ -504,11 +525,23 @@ pub fn score(
     }
     let scored = sums.score(phi, k, params.risk_weight, risk_anchor);
     let measured_raw = scored.raw;
+    let uncharged: f64 = sessions
+        .iter()
+        .map(|s| weigh(s.pnl_usd - s.nop_pnl_usd))
+        .sum();
+    let raw_before_charge = match fatal {
+        Some(_) => RAW_FLOOR,
+        None => sums.raw(phi, uncharged),
+    };
     let measured_unfloored = scored.raw_unfloored;
     let seed = seed(eval_seed_sha256);
     // A fatal grade is the floor, with no interval: its sessions don't count.
     let (raw, raw_unfloored, (ci_lo, ci_hi)) = match fatal {
-        Some(_) => (-1.0, measured_unfloored.min(-1.0), (-1.0, -1.0)),
+        Some(_) => (
+            RAW_FLOOR,
+            measured_unfloored.min(RAW_FLOOR),
+            (RAW_FLOOR, RAW_FLOOR),
+        ),
         None => (
             measured_raw,
             measured_unfloored,
@@ -527,6 +560,7 @@ pub fn score(
         raw,
         raw_unfloored,
         measured_raw,
+        raw_before_charge: Some(raw_before_charge),
         edge: raw - 0.5,
         ci_lo,
         ci_hi,
@@ -759,6 +793,7 @@ impl ScoreV2 {
         self.score = 0.0;
         self.raw = -1.0;
         self.raw_unfloored = self.raw_unfloored.min(-1.0);
+        self.raw_before_charge = Some(RAW_FLOOR);
         self.edge = -1.5;
         self.ci_lo = -1.0;
         self.ci_hi = -1.0;
@@ -821,6 +856,7 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
         raw: -1.0,
         raw_unfloored: -1.0,
         measured_raw: 0.0,
+        raw_before_charge: Some(RAW_FLOOR),
         edge: -1.5,
         ci_lo: -1.0,
         ci_hi: -1.0,
@@ -863,6 +899,17 @@ pub fn unscored(params: &Params, reason: String) -> ScoreV2 {
             ..Metrics::default()
         },
         sessions: Vec::new(),
+    }
+}
+
+/// The cap a run with `breaches` breached sessions holds `raw` to: none
+/// without a breach, [`BREACH_CAP_ONE`] for one, [`BREACH_CAP_MORE`] for
+/// more, so breaching now and then never beats complying.
+pub fn breach_cap(breaches: usize) -> Option<f64> {
+    match breaches {
+        0 => None,
+        1 => Some(BREACH_CAP_ONE),
+        _ => Some(BREACH_CAP_MORE),
     }
 }
 
@@ -970,11 +1017,7 @@ impl Sums {
             }
         };
         let uncapped = self.raw(phi, self.bot - charge);
-        let cap = match self.breaches {
-            0 => None,
-            1 => Some(0.5),
-            _ => Some(0.0),
-        };
+        let cap = breach_cap(self.breaches);
         Scored {
             raw: cap.map_or(uncapped, |cap| uncapped.min(cap)),
             uncapped,
@@ -997,7 +1040,7 @@ impl Sums {
 
     /// `bot`, a weighted sum, on the scale, floored at −1.
     fn raw(&self, floor: f64, bot: f64) -> f64 {
-        self.raw_unfloored(floor, bot).max(-1.0)
+        self.raw_unfloored(floor, bot).max(RAW_FLOOR)
     }
 
     /// `bot`, a weighted sum, on the scale, not floored.
@@ -1935,6 +1978,36 @@ mod tests {
         assert_eq!(nop.risk.charge_usd, 0.0);
         assert_eq!(nop.risk.dd_rms, 0.0);
         assert_eq!(nop.raw, 0.0);
+    }
+
+    /// The reference against a calmer informed bot: the charge, anchored on
+    /// the informed bot's drawdowns, takes it under 0.5, by design; before
+    /// the charge it is 0.5 exactly, which is what an oracle check reads.
+    #[test]
+    fn the_reference_is_one_half_before_a_calmer_informed_bots_charge() {
+        let mut sessions = risked(&REFERENCE, &REFERENCE_DD, &REFERENCE, &REFERENCE_DD);
+        for s in &mut sessions {
+            s.informed_max_drawdown_usd = Some(1.0);
+        }
+        let v2 = score(&sessions, &informed(), None, None).unwrap();
+        assert_eq!(v2.risk.anchor, "informed");
+        assert!(v2.risk.charge_usd > 0.0);
+        assert!(v2.raw < 0.5, "{}", v2.raw);
+        assert_eq!(v2.raw_before_charge, Some(0.5));
+        // A breach's penalty is left out of it too: the session as it made.
+        let mut breached = set(&REFERENCE, &REFERENCE);
+        breached[1].breach = Some("over the cap".into());
+        let v2 = score(&breached, &informed(), None, None).unwrap();
+        assert!(v2.raw < 0.5);
+        assert_eq!(v2.raw_before_charge, Some(0.5));
+        let fatal = score(
+            &set(&REFERENCE, &REFERENCE),
+            &informed(),
+            Some("refused".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(fatal.raw_before_charge, Some(RAW_FLOOR));
     }
 
     /// RECKLESS.md's lucky gambler: it drew down to its limit in every

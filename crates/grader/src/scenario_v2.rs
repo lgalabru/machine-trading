@@ -43,12 +43,16 @@ use crate::{
     orders::{CloseOut, ExecutionOrder, NetScoring, Participation},
     phoenix::SLOTS_BETWEEN_STEPS,
     scenario::{
-        Funding, JointDraw, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, MarketScenario, RawSends, Scenario,
-        StopOut, StopRule, VENUE, Waypoint, move_slots,
+        BoundOn, Funding, JointDraw, MAX_PREMIUM_PCT, MIN_LEVEL_PCT, MarketScenario, RawSends,
+        Scenario, StopOut, StopRule, VENUE, Waypoint, move_slots,
     },
     spot::{MAX_DEPTH_LEVELS, SYMBOL, Spot, TurnData, VENUES},
     txlayer::TxLayer,
 };
+
+/// How far, in percent of the start mark, a net-scored session's fair path may
+/// end from its level: the drift is taken on one and the value on the other.
+const NET_CLOSE_TOLERANCE_PCT: f64 = 0.01;
 
 /// The schema version this module reads and writes.
 pub const SCHEMA: u32 = 2;
@@ -277,6 +281,10 @@ pub struct Competitor {
     pub competitor_bps: f64,
     /// How the grader's own maker competes.
     pub competition: Competition,
+    /// Where the snapshot's makers are widened to, when it isn't
+    /// `competitor_bps` (see [`Making::makers_bps`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub makers_bps: Option<f64>,
 }
 
 /// The transaction layer.
@@ -325,6 +333,10 @@ pub struct Scoring {
     /// Score the PnL net of the starting holding's price drift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub net: Option<NetScoring>,
+    /// The path the hindsight bound is valued on (see
+    /// [`crate::scenario::BoundOn`]).
+    #[serde(default, skip_serializing_if = "BoundOn::is_default")]
+    pub bound_on: BoundOn,
     /// Perp markets, by symbol, whose residual position a broker takes at
     /// the close, at a haircut the PnL pays. An order's market has its own
     /// broker, the order's.
@@ -555,6 +567,7 @@ impl Actors {
                 competitor_bps: competitor.competitor_bps,
                 competition: competitor.competition,
                 takers: self.takers.clone(),
+                makers_bps: competitor.makers_bps,
             }
             .validate(duration_slots)
             .map_err(|reason| format!("making: {reason}"));
@@ -681,6 +694,7 @@ impl ScenarioV2 {
         self.markets_agree()?;
         self.flows_do_not_mix()?;
         self.library_is_for_perps()?;
+        self.one_score_over_holding()?;
         self.takers_pricing_is_valid()?;
         if self.venues.spot.is_some() {
             self.spot_is_alone()?;
@@ -804,9 +818,54 @@ impl ScenarioV2 {
         if self.assets.wallet.is_some()
             || self.scoring.bound_usd.is_some()
             || self.scoring.participation.is_some()
-            || self.scoring.net.is_some()
         {
-            return Err("turn_data, participation and net are for spot scenarios".into());
+            return Err("turn_data and participation are for spot scenarios".into());
+        }
+        // Net scoring's rules hold on every market the session trades, and
+        // a market that breaks one refuses the scenario, by name.
+        if let Some(net) = &self.scoring.net
+            && net.venue_position.is_some()
+        {
+            return Err("net: venue_position is for spot scenarios".into());
+        }
+        let multi = self.is_multi_market();
+        for symbol in self.perp_symbols() {
+            let (path, fair, funded) = self.market_facts(symbol);
+            let named = |what: &str| {
+                if multi {
+                    format!("{what} ({symbol})")
+                } else {
+                    what.to_string()
+                }
+            };
+            if self.scoring.net.is_some() {
+                if funded && self.start_position_in(symbol) != 0.0 {
+                    return Err(named(
+                        "net: a funded start position needs a measured hold baseline, \
+                         which net scoring doesn't have",
+                    ));
+                }
+                if let Some(fair) = fair {
+                    let end = self.duration_slots;
+                    let gap = (crate::making::level_at(fair, end)
+                        - crate::making::level_at(path, end))
+                    .abs();
+                    if gap > NET_CLOSE_TOLERANCE_PCT {
+                        return Err(named(&format!(
+                            "net: the fair path ends {gap:.4}% from the level at the close; \
+                             a net-scored session needs them equal (within \
+                             {NET_CLOSE_TOLERANCE_PCT}%), or a bot that holds would not score 0"
+                        )));
+                    }
+                }
+            }
+            if self.scoring.bound_on == BoundOn::FairPath && fair.is_none() {
+                return Err(named(if multi {
+                    "scoring: bound_on fair_path needs a fair_path on every market"
+                } else {
+                    "scoring: bound_on fair_path needs market_model.fair_path"
+                }));
+            }
         }
         Ok(())
     }
@@ -911,6 +970,28 @@ impl ScenarioV2 {
             .and_then(|o| o.instrument.as_ref())
             .map_or(&self.assets.symbol, |i| &i.symbol);
         self.start_position_in(symbol)
+    }
+
+    /// The market `symbol`'s level path, fair path and whether funding
+    /// accrues on it, from the keyed sections of a session on several
+    /// markets or the flat ones of a session on one.
+    fn market_facts(&self, symbol: &str) -> (&[Waypoint], Option<&[Waypoint]>, bool) {
+        let perp = self.venues.perp.as_ref();
+        if self.is_multi_market() {
+            let path = self.market_model.markets.get(symbol);
+            (
+                path.map_or(&[][..], |m| m.path.as_slice()),
+                path.and_then(|m| m.fair_path.as_deref()),
+                perp.and_then(|p| p.markets.get(symbol))
+                    .is_some_and(|m| m.funding.is_some()),
+            )
+        } else {
+            (
+                &self.market_model.path,
+                self.market_model.fair_path.as_deref(),
+                perp.is_some_and(|p| p.funding.is_some()),
+            )
+        }
     }
 
     /// The starting position in `symbol`, in base units.
@@ -1171,6 +1252,29 @@ impl ScenarioV2 {
     /// only those, so a wider universe would go unenforced. It has no term
     /// (the session sets it); a perp mandate has a drawdown limit.
     fn mandate_covers_the_market(&self) -> Result<(), String> {
+        // A session prices only its own market at each measurement, so no
+        // session can enforce a rule across instruments until sessions
+        // trade several markets.
+        if self.mandate.universe.iter().any(|a| a.hedge.is_some()) {
+            return Err(
+                "mandate: a hedge needs its two instruments priced together, and no session \
+                 prices more than its own market yet"
+                    .into(),
+            );
+        }
+        if self
+            .mandate
+            .limits
+            .exposures
+            .iter()
+            .any(|e| e.weights.len() > 1)
+        {
+            return Err(
+                "mandate: an exposure across several instruments needs them priced together, \
+                 and no session prices more than its own market yet"
+                    .into(),
+            );
+        }
         if let Some(lending) = &self.venues.lending {
             let mut wanted = lending.instruments();
             let mut universe: Vec<InstrumentRef> = self
@@ -1242,6 +1346,38 @@ impl ScenarioV2 {
         }
         if self.venues.perp.is_some() && self.mandate.limits.max_drawdown_usd.is_none() {
             return Err("mandate: a perp scenario's mandate has a drawdown limit".into());
+        }
+        // No session tells the bot's taker fills from its maker fills yet.
+        if self.mandate.universe.iter().any(|a| a.taking.is_some()) {
+            return Err(
+                "mandate: no session records taker fills yet, so none can enforce taking".into(),
+            );
+        }
+        // Every session starts flat, so an exposure bounded by a fraction of
+        // its start would be bounded at zero. Lifted once sessions can start
+        // with positions.
+        if self
+            .mandate
+            .limits
+            .exposures
+            .iter()
+            .any(|e| e.max_abs_fraction_of_start.is_some())
+        {
+            return Err(
+                "mandate: max_abs_fraction_of_start needs a session that starts with positions; \
+                 every session starts flat"
+                    .into(),
+            );
+        }
+        // Only a perp session prices the account at each measurement.
+        if (self.venues.spot.is_some() || self.venues.lending.is_some())
+            && self.mandate.checks_samples()
+        {
+            return Err(
+                "mandate: notional limits and hedges are for perp scenarios; \
+                 a spot or lending session doesn't check them"
+                    .into(),
+            );
         }
         Ok(())
     }
@@ -1384,6 +1520,25 @@ impl ScenarioV2 {
         Ok(())
     }
 
+    /// `scoring.net` and an RFQ desk's `over_idle_desk` both score over
+    /// holding the start, with different price references and drawdown
+    /// series: a scenario picks one.
+    fn one_score_over_holding(&self) -> Result<(), String> {
+        let over_idle = self
+            .actors
+            .library
+            .as_ref()
+            .and_then(|l| l.rfq_clients.as_ref())
+            .is_some_and(|rfq| rfq.over_idle_desk);
+        if over_idle && self.scoring.net.is_some() {
+            return Err(
+                "actors.rfq_clients.over_idle_desk and scoring.net both score over holding the start: use one"
+                    .into(),
+            );
+        }
+        Ok(())
+    }
+
     /// The actor library trades a perp's book: a spot or lending session has none.
     fn library_is_for_perps(&self) -> Result<(), String> {
         if (self.venues.spot.is_some() || self.venues.lending.is_some())
@@ -1503,6 +1658,7 @@ impl ScenarioV2 {
                     Some(c) => (
                         Some(Making {
                             competitor_bps: c.competitor_bps,
+                            makers_bps: c.makers_bps,
                             competition: c.competition,
                             takers: actors.takers,
                         }),
@@ -1528,6 +1684,7 @@ impl ScenarioV2 {
                     competitor_bps: c.competitor_bps,
                     competition: c.competition,
                     takers,
+                    makers_bps: c.makers_bps,
                 }),
                 None,
                 Vec::new(),
@@ -1565,6 +1722,7 @@ impl ScenarioV2 {
             order,
             participation: scoring.participation,
             net: scoring.net,
+            bound_on: scoring.bound_on,
             start_positions: assets.start_positions,
             close_out: scoring.close_out,
             reference_pnl_usd: scoring.reference_pnl_usd,
@@ -1637,8 +1795,8 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 )
             }
             None => {
-                if v1.turn_data.is_some() || v1.participation.is_some() || v1.net.is_some() {
-                    return Err("turn_data, participation and net are for spot scenarios".into());
+                if v1.turn_data.is_some() || v1.participation.is_some() {
+                    return Err("turn_data and participation are for spot scenarios".into());
                 }
                 (
                     Venues {
@@ -1663,6 +1821,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 Some(Competitor {
                     competitor_bps: making.competitor_bps,
                     competition: making.competition,
+                    makers_bps: making.makers_bps,
                 }),
                 None,
                 making.takers.clone(),
@@ -1722,6 +1881,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 bound_usd: v1.spot.as_ref().and_then(|s| s.bound_usd),
                 participation: v1.participation.clone(),
                 net: v1.net.clone(),
+                bound_on: v1.bound_on,
                 close_out: v1.close_out.clone(),
                 stop_out: v1.stop_out.clone(),
             },
@@ -1760,6 +1920,7 @@ fn market_actors(markets: &[MarketScenario]) -> BTreeMap<String, MarketActors> {
                 Some(making) => MarketActors {
                     competitor: Some(Competitor {
                         competitor_bps: making.competitor_bps,
+                        makers_bps: making.makers_bps,
                         competition: making.competition,
                     }),
                     takers: making.takers.clone(),
@@ -1844,6 +2005,8 @@ pub enum ParseError {
 
 #[cfg(test)]
 mod tests {
+    use mtx_core::mandate::{Exposure, Hedge};
+
     use super::*;
     use crate::{making::MakingFamily, scenario::ShockFamily, weekend::WeekendFamily};
 
@@ -2070,6 +2233,61 @@ mod tests {
         s.mandate.limits.max_drawdown_usd = None;
         assert!(s.validate().unwrap_err().contains("drawdown"));
 
+        // A perp session checks notional limits; a spot session doesn't yet.
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
+        assert!(s.validate().unwrap_err().contains("notional"));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate
+            .limits
+            .exposures
+            .push(Exposure::max_abs_fraction_of_start(
+                "net",
+                [(s.perp_instrument(), 1.0)].into(),
+                0.5,
+            ));
+        assert!(s.validate().unwrap_err().contains("starts flat"));
+        s.mandate.limits.exposures[0].max_abs_fraction_of_start = None;
+        s.mandate.limits.exposures[0].max_abs_usd = Some(1_000.0);
+        assert_eq!(s.validate(), Ok(()));
+        let mut s = shock();
+        s.mandate.version = "v0.1".into();
+        s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
+        assert!(s.validate().unwrap_err().contains("taking"));
+        // Review probe: hedges and exposures across instruments validated,
+        // and no session could enforce them. They're refused, and say why.
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        let both: Vec<_> = s
+            .mandate
+            .universe
+            .iter()
+            .map(|a| (a.instrument.clone(), 1.0))
+            .collect();
+        assert_eq!(both.len(), 2);
+        s.mandate
+            .limits
+            .exposures
+            .push(Exposure::max_abs_usd("net", both, 1_000.0));
+        assert_eq!(s.mandate.validate(), Ok(()));
+        assert!(
+            s.validate()
+                .unwrap_err()
+                .contains("an exposure across several instruments")
+        );
+        let mut s = spot();
+        s.mandate.version = "v0.1".into();
+        let against = s.mandate.universe[0].instrument.clone();
+        s.mandate.universe[1].hedge = Some(Hedge::new(against, 1.0));
+        assert_eq!(s.mandate.validate(), Ok(()));
+        assert!(s.validate().unwrap_err().contains("a hedge needs"));
+
         let mut s = shock();
         s.scoring.bound_usd = Some(f64::NAN);
         assert!(s.scoring.validate().is_err());
@@ -2202,8 +2420,8 @@ mod tests {
         assert_eq!(scenario.validate(), Ok(()));
         // Each market's own cap, start mark and funding make its bound.
         let marks = [("NVDA".to_string(), 180.0), ("SPCX".to_string(), 100.0)].into();
-        let nvda = scenario.markets[0].bound_usd(40.0, 180.0, scenario.duration_slots);
-        let spcx = scenario.markets[1].bound_usd(70.0, 100.0, scenario.duration_slots);
+        let nvda = scenario.markets[0].bound_usd(BoundOn::Path, 40.0, 180.0, scenario.duration_slots);
+        let spcx = scenario.markets[1].bound_usd(BoundOn::Path, 70.0, 100.0, scenario.duration_slots);
         assert!(nvda > 0.0 && spcx > 0.0);
         assert_eq!(scenario.markets_bound_usd(&marks), nvda + spcx);
         assert_eq!(scenario.max_position(), 40.0);
@@ -2271,6 +2489,44 @@ mod tests {
         let mut s = multi();
         s.actors.takers = s.actors.markets["SPCX"].takers.clone();
         assert!(err(s).contains("actors: on several markets"));
+        // Net scoring holds on every market, and a market that breaks a
+        // rule is named.
+        let net = || NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        };
+        let mut s = multi();
+        s.scoring.net = Some(net());
+        assert_eq!(s.validate(), Ok(()));
+        s.assets.start_positions.insert("SPCX".into(), -5.0);
+        assert_eq!(s.validate(), Ok(()));
+        // NVDA has funding: a start position there needs a measured hold.
+        s.assets.start_positions.insert("NVDA".into(), 5.0);
+        let message = err(s);
+        assert!(message.contains("net: a funded start position") && message.contains("(NVDA)"));
+        let mut s = multi();
+        s.scoring.net = Some(NetScoring {
+            venue_position: Some(crate::orders::VenuePosition {
+                limit: 1.0,
+                price_bps: 1.0,
+            }),
+            ..net()
+        });
+        assert!(err(s).contains("venue_position is for spot"));
+        let mut s = multi();
+        s.scoring.net = Some(net());
+        s.market_model.markets.get_mut("SPCX").unwrap().fair_path =
+            Some(vec![Waypoint::at(20, 9.0)]);
+        let message = err(s);
+        assert!(message.contains("the fair path ends") && message.contains("(SPCX)"));
+        let mut s = multi();
+        s.scoring.bound_on = BoundOn::FairPath;
+        assert!(err(s.clone()).contains("a fair_path on every market"));
+        s.market_model.markets.get_mut("SPCX").unwrap().fair_path =
+            Some(s.market_model.markets["SPCX"].path.clone());
+        s.market_model.markets.get_mut("NVDA").unwrap().fair_path =
+            Some(s.market_model.markets["NVDA"].path.clone());
+        assert_eq!(s.validate(), Ok(()));
         // A Phoenix oracle feed on a market with a path; on one without,
         // it is fine.
         let feed = |symbol: &str| {
@@ -2444,6 +2700,97 @@ mod tests {
                 .unwrap_err()
                 .contains("markets.NVDA: its draw is recorded both")
         );
+    }
+
+    #[test]
+    fn an_rfq_desk_over_the_idle_desk_is_not_also_net_scored() {
+        let everyone = include_str!("../../../bench/checks/actors/everyone.json");
+        let mut library = parse(everyone).unwrap().actors.unwrap();
+        library.rfq_clients.as_mut().unwrap().over_idle_desk = true;
+        let mut s = shock();
+        s.actors.library = Some(library);
+        s.validate().unwrap();
+        s.scoring.net = Some(NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        let refused = s.validate().unwrap_err();
+        assert!(
+            refused.contains("over_idle_desk") && refused.contains("use one"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_perp_can_be_net_scored_against_holding_its_start_position() {
+        let mut s = shock();
+        let half = s.mandate.universe[0].max_position / 2.0;
+        s.assets.start_positions.insert("SPCX".into(), half);
+        s.scoring.net = Some(NetScoring {
+            inventory_bps: 0.0,
+            venue_position: None,
+        });
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert!(v1.net.is_some());
+        let round = ScenarioV2::try_from(&v1).unwrap();
+        assert_eq!(round.scoring.net, s.scoring.net);
+        assert_eq!(v1.valuation(), "oracle");
+
+        let mut with_venue = s.clone();
+        with_venue.scoring.net.as_mut().unwrap().venue_position =
+            Some(crate::orders::VenuePosition {
+                limit: 1.0,
+                price_bps: 1.0,
+            });
+        assert!(
+            with_venue
+                .validate()
+                .unwrap_err()
+                .contains("venue_position")
+        );
+
+        let mut funded = s.clone();
+        funded.venues.perp = Some(PerpVenue {
+            funding: Some(Funding {
+                interval_seconds: 3_600,
+                period_seconds: 86_400,
+                max_rate: 1,
+                mark: None,
+            }),
+            markets: Default::default(),
+            liquidator: None,
+        });
+        assert!(
+            funded
+                .validate()
+                .unwrap_err()
+                .contains("funded start position")
+        );
+        funded.assets.start_positions.clear();
+        funded.validate().unwrap();
+
+        let mut bound = s.clone();
+        bound.scoring.bound_on = BoundOn::FairPath;
+        assert!(bound.validate().unwrap_err().contains("fair_path"));
+        bound.market_model.fair_path = Some(vec![Waypoint::at(10, -4.0), Waypoint::at(20, 0.0)]);
+        // The level ends at 0 on this scenario's path; the fair path may not
+        // end elsewhere.
+        bound.market_model.path = vec![Waypoint::at(10, -6.0), Waypoint::at(20, 0.0)];
+        bound.validate().unwrap();
+        let mut apart = bound.clone();
+        apart.market_model.fair_path = Some(vec![Waypoint::at(10, -4.0)]);
+        assert!(apart.validate().unwrap_err().contains("fair path ends"));
+        apart.scoring.net = None;
+        apart.validate().unwrap();
+        let on_fair = bound.clone().into_scenario().unwrap();
+        let mut on_path = on_fair.clone();
+        on_path.bound_on = BoundOn::Path;
+        let fair_tv = on_fair.hindsight_bound_usd(100.0);
+        assert!((fair_tv - on_fair.max_position() * 100.0 * 0.08).abs() < 1e-9);
+        assert_ne!(fair_tv, on_path.hindsight_bound_usd(100.0));
+        let json = serde_json::to_string(&on_path).unwrap();
+        assert!(!json.contains("bound_on"));
     }
 
     #[test]

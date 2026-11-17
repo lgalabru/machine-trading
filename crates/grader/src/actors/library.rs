@@ -10,6 +10,8 @@
 //!   only a reader of each wallet's record tells from the informed.
 //! - **Spoofers** ([`Spoofer`]) rest walls near the touch and pull them as
 //!   the price comes near, always from the same wallet.
+//! - **Icebergs** ([`Iceberg`]) show a slice of a large parent order and
+//!   put it back at the same price after each fill.
 //! - **Stop hunters** ([`StopHunter`]) push the price through an obvious
 //!   level and then trade back.
 //! - **Front-runners** ([`FrontRunner`]) watch the bot's trading and, once
@@ -41,7 +43,9 @@
 
 mod arbitrageur;
 mod front_runner;
+mod iceberg;
 mod liquidator;
+mod pool;
 mod refill;
 pub mod rfq;
 mod spoofer;
@@ -59,7 +63,9 @@ use solana_transaction::Signature;
 pub use self::{
     arbitrageur::Arbitrageur,
     front_runner::FrontRunner,
+    iceberg::Iceberg,
     liquidator::{Candidate, Liquidations, Liquidator},
+    pool::{Pool, PoolRole},
     refill::Refill,
     rfq::{DeskReport, RfqBoard, RfqClients, RfqSeat, Settlement, SwapError, Swaps, Token},
     spoofer::Spoofer,
@@ -93,6 +99,8 @@ pub struct Library {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spoofers: Vec<Spoofer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub icebergs: Vec<Iceberg>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop_hunters: Vec<StopHunter>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub front_runners: Vec<FrontRunner>,
@@ -105,6 +113,9 @@ pub struct Library {
     /// The book's makers refilling after takes (see [`Refill`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refill: Option<Refill>,
+    /// Wallets several of the actors above trade from (see [`Pool`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool: Option<Pool>,
     /// Keep every action in the report's tape (checks and studies: it
     /// grows with the session).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -232,9 +243,49 @@ impl Library {
             self.spoofers.iter().map(Spoofer::validate).collect(),
         )?;
         each(
+            "icebergs",
+            self.icebergs.iter().map(Iceberg::validate).collect(),
+        )?;
+        each(
             "stop_hunters",
             self.stop_hunters.iter().map(StopHunter::validate).collect(),
         )?;
+        if let Some(pool) = &self.pool {
+            pool.validate().map_err(|e| format!("actors.pool: {e}"))?;
+            let wants = |role: PoolRole, wallets: Vec<u32>| {
+                wallets.iter().try_for_each(|n| {
+                    if !pool.serves(role) || *n <= pool.wallets {
+                        Ok(())
+                    } else {
+                        Err(format!(
+                            "actors.{}: {n} wallets from a pool of {}",
+                            role.section(),
+                            pool.wallets
+                        ))
+                    }
+                })
+            };
+            wants(
+                PoolRole::Noise,
+                self.noise.iter().map(|a| a.wallets).collect(),
+            )?;
+            wants(
+                PoolRole::Informed,
+                self.informed.iter().map(|a| a.wallets).collect(),
+            )?;
+            wants(
+                PoolRole::Chasers,
+                self.chasers.iter().map(|a| a.wallets).collect(),
+            )?;
+            wants(
+                PoolRole::Decoys,
+                self.decoys.iter().map(|a| a.wallets).collect(),
+            )?;
+            wants(
+                PoolRole::StopHunters,
+                self.stop_hunters.iter().map(|a| a.wallets).collect(),
+            )?;
+        }
         each(
             "front_runners",
             self.front_runners
@@ -271,23 +322,34 @@ impl Library {
             let from = wallets.iter().filter(|(r, _)| *r == role).count() as u32;
             wallets.extend((from..from + n).map(|i| (role, i)));
         };
+        let pool = self.pool.as_ref();
+        let own = |role: PoolRole, n: u32| match pool {
+            Some(pool) if pool.serves(role) => 0,
+            _ => n,
+        };
+        if let Some(pool) = pool {
+            add("pool", pool.wallets);
+        }
         for noise in &self.noise {
-            add("noise", noise.wallets);
+            add("noise", own(PoolRole::Noise, noise.wallets));
         }
         for informed in &self.informed {
-            add("informed", informed.wallets);
+            add("informed", own(PoolRole::Informed, informed.wallets));
         }
         for chaser in &self.chasers {
-            add("chaser", chaser.wallets);
+            add("chaser", own(PoolRole::Chasers, chaser.wallets));
         }
         for decoy in &self.decoys {
-            add("decoy", decoy.wallets);
+            add("decoy", own(PoolRole::Decoys, decoy.wallets));
         }
         for _ in &self.spoofers {
             add("spoofer", 1);
         }
-        for _ in &self.stop_hunters {
-            add("stop-hunter", 1);
+        for _ in &self.icebergs {
+            add("iceberg", 1);
+        }
+        for hunter in &self.stop_hunters {
+            add("stop-hunter", own(PoolRole::StopHunters, hunter.wallets));
         }
         for _ in &self.front_runners {
             add("front-runner", 1);
@@ -318,10 +380,12 @@ impl Library {
     ) -> Built {
         let ledger = Ledger::new(self.record);
         let mut seats = seats.into_iter();
-        let mut take = |n: u32| -> Vec<WalletSeat> { seats.by_ref().take(n as usize).collect() };
+        let mut take =
+            |n: u32| -> Vec<Shared> { seats.by_ref().take(n as usize).map(Shared::from).collect() };
         let mut built = Built {
             actors: Vec::new(),
             rfq: None,
+            roster: Roster::new(),
         };
         let mut nth = std::collections::BTreeMap::<&str, u32>::new();
         let mut rng = |role: &'static str| {
@@ -329,9 +393,28 @@ impl Library {
             *n += 1;
             Rng::new(seed(role, *n - 1))
         };
+        // The pool's wallets come first, as `wallets` lists them; an actor
+        // of a role it serves draws its own from them, from its own seed.
+        let pool: Vec<Shared> = self.pool.iter().flat_map(|p| take(p.wallets)).collect();
+        let mut pool_rng = Rng::new(seed("pool", 0));
+        let mut seats_for = |role: Option<PoolRole>, n: u32| -> Vec<Shared> {
+            match (&self.pool, role) {
+                (Some(p), Some(role)) if p.serves(role) => {
+                    pool::draw(&mut pool_rng, pool.len(), n as usize)
+                        .into_iter()
+                        .map(|i| pool[i].clone())
+                        .collect()
+                }
+                _ => take(n),
+            }
+        };
         let scale = self.scale;
         for spec in &self.noise {
-            let wallets = ledger.wallets("noise", take(spec.wallets));
+            let wallets = ledger.add(
+                "noise",
+                seats_for(Some(PoolRole::Noise), spec.wallets),
+                false,
+            );
             built.actors.push(Box::new(traders::NoiseTrader::new(
                 spec.clone(),
                 scale,
@@ -340,7 +423,11 @@ impl Library {
             )));
         }
         for spec in &self.informed {
-            let wallets = ledger.wallets("informed", take(spec.wallets));
+            let wallets = ledger.add(
+                "informed",
+                seats_for(Some(PoolRole::Informed), spec.wallets),
+                false,
+            );
             built.actors.push(Box::new(traders::InformedTrader::new(
                 spec.clone(),
                 scale,
@@ -350,7 +437,11 @@ impl Library {
             )));
         }
         for spec in &self.chasers {
-            let wallets = ledger.wallets("chaser", take(spec.wallets));
+            let wallets = ledger.add(
+                "chaser",
+                seats_for(Some(PoolRole::Chasers), spec.wallets),
+                false,
+            );
             built.actors.push(Box::new(traders::ChaserTrader::new(
                 spec.clone(),
                 scale,
@@ -360,7 +451,11 @@ impl Library {
             )));
         }
         for spec in &self.decoys {
-            let wallets = ledger.wallets("decoy", take(spec.wallets));
+            let wallets = ledger.add(
+                "decoy",
+                seats_for(Some(PoolRole::Decoys), spec.wallets),
+                false,
+            );
             built.actors.push(Box::new(traders::DecoyTrader::new(
                 spec.clone(),
                 scale,
@@ -370,7 +465,7 @@ impl Library {
             )));
         }
         for spec in &self.spoofers {
-            let wallet = ledger.wallets("spoofer", take(1)).remove(0);
+            let wallet = ledger.add("spoofer", seats_for(None, 1), false).remove(0);
             built.actors.push(Box::new(spoofer::SpooferActor::new(
                 spec.clone(),
                 scale,
@@ -378,16 +473,31 @@ impl Library {
                 setting.path.clone(),
             )));
         }
-        for spec in &self.stop_hunters {
-            let wallet = ledger.wallets("stop-hunter", take(1)).remove(0);
-            built.actors.push(Box::new(stop_hunter::Hunter::new(
+        for spec in &self.icebergs {
+            let wallet = ledger.add("iceberg", seats_for(None, 1), false).remove(0);
+            built.actors.push(Box::new(iceberg::IcebergActor::new(
                 spec.clone(),
                 scale,
                 wallet,
             )));
         }
+        for spec in &self.stop_hunters {
+            let wallets = ledger.add(
+                "stop-hunter",
+                seats_for(Some(PoolRole::StopHunters), spec.wallets),
+                false,
+            );
+            built.actors.push(Box::new(stop_hunter::Hunter::new(
+                spec.clone(),
+                scale,
+                wallets,
+                rng("stop-hunter"),
+            )));
+        }
         for spec in &self.front_runners {
-            let wallet = ledger.reacting("front-runner", take(1)).remove(0);
+            let wallet = ledger
+                .add("front-runner", seats_for(None, 1), true)
+                .remove(0);
             built.actors.push(Box::new(front_runner::Runner::new(
                 spec.clone(),
                 scale,
@@ -396,13 +506,15 @@ impl Library {
             )));
         }
         if let Some(spec) = &self.arbitrageur {
-            let wallet = ledger.wallets("arbitrageur", take(1)).remove(0);
+            let wallet = ledger
+                .add("arbitrageur", seats_for(None, 1), false)
+                .remove(0);
             built
                 .actors
                 .push(Box::new(arbitrageur::Arb::new(spec.clone(), scale, wallet)));
         }
         if let Some(spec) = &self.rfq_clients {
-            let clients = ledger.wallets("rfq-client", take(spec.clients));
+            let clients = ledger.add("rfq-client", seats_for(None, spec.clients), false);
             let board = RfqBoard::new(
                 format!("rfq:{}", setting.symbol),
                 setting.settlement.clone(),
@@ -422,7 +534,9 @@ impl Library {
             built.rfq = Some(board);
         }
         if let Some(spec) = &self.liquidator {
-            let wallet = ledger.wallets("liquidator", take(1)).remove(0);
+            let wallet = ledger
+                .add("liquidator", seats_for(None, 1), false)
+                .remove(0);
             built.actors.push(Box::new(liquidator::Competing::new(
                 spec.clone(),
                 wallet,
@@ -430,7 +544,7 @@ impl Library {
             )));
         }
         if let Some(spec) = &self.refill {
-            let wallet = ledger.wallets("refill", take(1)).remove(0);
+            let wallet = ledger.add("refill", seats_for(None, 1), false).remove(0);
             built.actors.push(Box::new(refill::RefillActor::new(
                 spec.clone(),
                 scale,
@@ -438,6 +552,7 @@ impl Library {
                 rng("refill"),
             )));
         }
+        built.roster = roster(&ledger, &built.actors);
         built.actors.push(Box::new(Reporter {
             ledger,
             rpc_url: setting.rpc_url.filter(|_| self.record),
@@ -472,11 +587,58 @@ pub struct WalletSeat {
     pub seat: Box<dyn Seat>,
 }
 
+/// A wallet's seat, shareable between the actors that trade from it (see
+/// [`Pool`]).
+#[derive(Clone)]
+struct Shared {
+    pubkey: Pubkey,
+    seat: Arc<dyn Seat>,
+}
+
+impl From<WalletSeat> for Shared {
+    fn from(w: WalletSeat) -> Self {
+        Self {
+            pubkey: w.pubkey,
+            seat: Arc::from(w.seat),
+        }
+    }
+}
+
 /// The library's actors, ready for the cast, and the RFQ board the bot's
 /// desk reads, if there are RFQ clients.
 pub struct Built {
     pub actors: Vec<Box<dyn Actor>>,
     pub rfq: Option<RfqBoard>,
+    /// Who is who in the session: see [`roster`].
+    pub roster: Roster,
+}
+
+/// Who is who in a session, by role: the wallets (the library's `kind`s:
+/// `noise`, `informed`, `stop-hunter`, …) and whatever else an actor's
+/// identity facts name, as strings.
+pub type Roster = std::collections::BTreeMap<String, Vec<String>>;
+
+/// The session's roster: each kind's wallets (a wallet in two roles is in
+/// both), and what each actor adds ([`Actor::roster`]).
+fn roster(ledger: &Ledger, actors: &[Box<dyn Actor>]) -> Roster {
+    let mut roster = Roster::new();
+    let mut add = |kind: &str, names: &[String]| {
+        let entry = roster.entry(kind.to_string()).or_default();
+        for name in names {
+            if !entry.contains(name) {
+                entry.push(name.clone());
+            }
+        }
+    };
+    for tally in &ledger.report().actors {
+        add(&tally.kind, &tally.wallets);
+    }
+    for actor in actors {
+        for (kind, names) in actor.roster() {
+            add(&kind, &names);
+        }
+    }
+    roster
 }
 
 /// Counts of actions: those that landed, by kind, and those that failed.
@@ -600,16 +762,12 @@ impl Ledger {
     }
 
     /// A new actor of `kind` trading from `seats`: its wallets.
+    #[cfg(test)]
     fn wallets(&self, kind: &str, seats: Vec<WalletSeat>) -> Vec<Wallet> {
-        self.add(kind, seats, false)
+        self.add(kind, seats.into_iter().map(Shared::from).collect(), false)
     }
 
-    /// As [`Ledger::wallets`], for an actor that acts on the bot's trading.
-    fn reacting(&self, kind: &str, seats: Vec<WalletSeat>) -> Vec<Wallet> {
-        self.add(kind, seats, true)
-    }
-
-    fn add(&self, kind: &str, seats: Vec<WalletSeat>, reacts_to_bot: bool) -> Vec<Wallet> {
+    fn add(&self, kind: &str, seats: Vec<Shared>, reacts_to_bot: bool) -> Vec<Wallet> {
         let mut state = self.state();
         state.actors.push(ActorTally {
             kind: kind.to_string(),
@@ -696,7 +854,7 @@ fn side_name(side: Side) -> String {
 
 /// One of an actor's wallets: its seat, with every action noted.
 pub struct Wallet {
-    seat: Box<dyn Seat>,
+    seat: Arc<dyn Seat>,
     pubkey: Pubkey,
     actor: usize,
     ledger: Ledger,
@@ -1080,6 +1238,136 @@ pub(crate) mod tests {
         assert!(bad.is_err(), "unknown fields are refused");
         let unscaled = Library::default();
         assert!(unscaled.validate().unwrap_err().contains("scale"));
+    }
+
+    fn pooled_library() -> Library {
+        let library: Library = serde_json::from_value(serde_json::json!({
+            "scale": { "trades_per_minute": 1.5, "trade_size": 0.02, "trade_size_sigma": 1.0 },
+            "noise": [{ "wallets": 2 }],
+            "stop_hunters": [{ "level_step_usd": 1.0, "wallets": 2 }],
+            "icebergs": [{ "side": "ask" }],
+            "informed": [{ "wallets": 1, "horizon_slots": 40, "edge_bps": 30.0 }],
+            "pool": { "wallets": 3, "roles": ["noise", "stop_hunters"] }
+        }))
+        .unwrap();
+        assert_eq!(library.validate(), Ok(()));
+        library
+    }
+
+    /// The library built on pretend seats whose wallets are `[n + 1; 32]`,
+    /// in `Library::wallets` order.
+    fn built(library: &Library, salt: u8) -> Built {
+        let seats = (0..library.wallets().len())
+            .map(|n| WalletSeat {
+                pubkey: Pubkey::new_from_array([n as u8 + 1; 32]),
+                seat: Box::new(Book::new("w", 100.0, 100.1).0),
+            })
+            .collect();
+        library.build(
+            seats,
+            Setting {
+                symbol: "X".into(),
+                base_slot: 0,
+                path: Arc::new(|s| at(s, 100.0)),
+                settlement: None,
+                send_reader: None,
+                liquidations: None,
+                rpc_url: None,
+            },
+            &|role, n| {
+                let mut seed = [salt; 32];
+                seed[0] = role.len() as u8;
+                seed[1] = n as u8;
+                seed
+            },
+        )
+    }
+
+    /// The pool wallet (0, 1 or 2) each of `names` is.
+    fn pool_index(names: &[String]) -> Vec<usize> {
+        names
+            .iter()
+            .map(|name| {
+                (0..3)
+                    .find(|n| *name == Pubkey::new_from_array([*n as u8 + 1; 32]).to_string())
+                    .expect("a pool wallet")
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pool_comes_first_and_its_actors_own_no_wallets() {
+        let library = pooled_library();
+        assert_eq!(
+            library.wallets(),
+            [
+                ("pool", 0),
+                ("pool", 1),
+                ("pool", 2),
+                ("informed", 0),
+                ("iceberg", 0)
+            ]
+        );
+        // Without the pool, the same actors have wallets of their own.
+        let mut alone = library.clone();
+        alone.pool = None;
+        assert_eq!(alone.wallets().len(), 2 + 1 + 1 + 2);
+        let json = serde_json::to_value(&library).unwrap();
+        assert_eq!(serde_json::from_value::<Library>(json).unwrap(), library);
+    }
+
+    #[test]
+    fn a_pool_is_checked() {
+        let mut library = pooled_library();
+        library.stop_hunters[0].wallets = 4;
+        let error = library.validate().unwrap_err();
+        assert!(
+            error.contains("stop_hunters") && error.contains("pool of 3"),
+            "{error}"
+        );
+        // A role the pool doesn't serve may want more than it holds.
+        library.pool.as_mut().unwrap().roles = vec![PoolRole::Noise];
+        assert_eq!(library.validate(), Ok(()));
+        library.pool.as_mut().unwrap().wallets = 0;
+        assert!(library.validate().unwrap_err().contains("actors.pool"));
+        library.stop_hunters[0].wallets = 0;
+        assert!(library.validate().is_err());
+    }
+
+    #[test]
+    fn pooled_actors_trade_from_shared_wallets_a_session_draws() {
+        let library = pooled_library();
+        let mut drawn = std::collections::BTreeSet::new();
+        for salt in 0..16 {
+            let roster = built(&library, salt).roster;
+            let (noise, hunters) = (
+                pool_index(&roster["noise"]),
+                pool_index(&roster["stop-hunter"]),
+            );
+            assert_eq!((noise.len(), hunters.len()), (2, 2));
+            assert_ne!(noise[0], noise[1]);
+            assert_ne!(hunters[0], hunters[1]);
+            // Both draw 2 of 3 wallets, so one is in both roles.
+            assert!(noise.iter().any(|w| hunters.contains(w)), "{roster:?}");
+            // The informed and the iceberg have wallets of their own.
+            for own in ["informed", "iceberg"] {
+                assert_eq!(roster[own].len(), 1);
+                assert!(!roster["noise"].contains(&roster[own][0]));
+                assert!(!roster["stop-hunter"].contains(&roster[own][0]));
+            }
+            drawn.insert((noise, hunters));
+        }
+        assert!(drawn.len() > 1, "which wallets play which role is a draw");
+        assert_eq!(built(&library, 3).roster, built(&library, 3).roster);
+    }
+
+    #[test]
+    fn the_roster_lists_each_kinds_wallets() {
+        let roster = built(&pooled_library(), 1).roster;
+        assert_eq!(
+            roster.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["iceberg", "informed", "noise", "stop-hunter"]
+        );
     }
 
     #[tokio::test]

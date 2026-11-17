@@ -36,8 +36,8 @@ every run (`mtx gates --fast` uses it in CI). It is never a hidden set: those
 come from fresh 256-bit secrets.
 
 It also writes `<out>/<task>/summary.json`, which `mtx gates` reads: each
-set's totals per rung (as graded), and every rule, exploit and clean-run
-verdict.
+set's totals per rung (as graded) and each rung's PnL session by session,
+and every rule, exploit and clean-run verdict.
 
 `--parallel N` grades N rungs at once. Each grade's bots run as its own
 range of the grader's bot users (`--first-bot-user`): a session's end kills
@@ -129,6 +129,10 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
     ]
     if rung.get("tell_regime"):
         command.append("--tell-regime")
+    # A v2 task's informed rung: told each session's latent state, as the
+    # verifier tells its informed bot (`mtx grade --informed`).
+    if rung.get("tell_latent"):
+        command.append("--tell-latent")
     # The steps of the rungs whose mark displacement is read, and of nop's,
     # the baseline.
     if "push" in rung or rung["name"] == "nop":
@@ -321,6 +325,9 @@ def main():
         "min_rule_odds": min_rule_odds,
         "public_seed": args.public_seed,
         "totals": [totals(reports) for reports in sets],
+        # Each rung's PnL session by session, for the gates that weigh them
+        # (scoring v2's strength band).
+        "pnls": [{name: pnls(report) for name, report in reports.items()} for reports in sets],
         "rules": [],
         "exploits": [],
         "disqualified": [],
