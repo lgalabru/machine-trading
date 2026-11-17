@@ -223,7 +223,7 @@ FETCH_PATTERNS = {
     "http.client": r"\bhttp\.client\b",
     "/dev/tcp": r"/dev/tcp/",
     "node fetch": r"(?<![\w.])fetch\(\s*[\"'`]https?:",
-    "web search/fetch ran": r"\"web_(search|fetch)_requests\":\s*[1-9]|\bweb_search_call\b|\"name\":\s*\"web_(search|fetch)\"|\bweb_fetch\b(?!_requests)",
+    "web search/fetch ran": r"\"web_(search|fetch)_requests\":\s*[1-9]|\bweb_search_call\b|\"(name|function_name|tool)\":\s*\"(web_(search|fetch)|Web(Search|Fetch))\"|\bweb_fetch\b(?!_requests)",
     "codex exec": r"(?<!nvm\.sh; fi; )\bcodex\s+exec\b(?!\s+--dangerously)",
     "provider api": r"api\.openai\.com|api\.anthropic\.com|chatgpt\.com|/v1/(responses|chat/completions|messages)",
     "key": r"auth\.json|\b(OPENAI|ANTHROPIC|CODEX)_API_KEY\b",
@@ -243,6 +243,7 @@ LOCAL_URL = re.compile(
 
 
 def fetch_flags(text: str) -> list[str]:
+    text = re.sub(r"\\[nrt]", " ", text).replace('\\"', '"')
     outside = bool(LOCAL_URL.search(text)) or "/dev/tcp/" in text
     return [
         name
@@ -255,7 +256,8 @@ def trajectory_flags(raw: str) -> list[str]:
     """A trajectory's fetch flags, from what the agent did: each of its tool
     calls on its own (a client call counts only with an outside URL in the same
     call), so the task's text, the files it printed and what came back don't
-    count. The server-side web tools that ran are read from the whole step."""
+    count. The web tools that ran are read from the step without what came back: a
+    usage counter counts only when it is above zero."""
     try:
         steps = json.loads(raw)["steps"]
     except (ValueError, KeyError, TypeError):
@@ -264,10 +266,11 @@ def trajectory_flags(raw: str) -> list[str]:
     for step in steps:
         if not isinstance(step, dict) or step.get("source") in ("user", "system"):
             continue
-        if re.search(FETCH_PATTERNS["web search/fetch ran"], json.dumps(step)):
+        made = {k: v for k, v in step.items() if k != "observation"}
+        if re.search(FETCH_PATTERNS["web search/fetch ran"], json.dumps(made)):
             flags.add("web search/fetch ran")
         calls = step.get("tool_calls")
-        units = [json.dumps(c) for c in calls] if calls else [json.dumps({k: v for k, v in step.items() if k != "observation"})]
+        units = [json.dumps(c) for c in calls] if calls else [json.dumps(made)]
         for unit in units:
             flags.update(fetch_flags(unit))
     return [name for name in FETCH_PATTERNS if name in flags]

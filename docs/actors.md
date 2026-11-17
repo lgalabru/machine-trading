@@ -152,6 +152,17 @@ can't run in a scenario with the transaction layer (`tx_layer`, see
 such a scenario is refused when it loads. Pool-aware actors come with PR
 17b.
 
+## The reactive competitor
+
+A market-making scenario's grader-side maker (`competition`) can opt into
+the reactive competitor with `"reactive": {}`: it keeps its prices in whole
+ticks, steps `step_ticks` inside any rival it sees, jitters its look timing,
+and widens after one-sided fills. It reacts to a resting order of at least
+`q_react` base units. Absent, `q_react` is the market's minimum lot, so any
+order the market accepts counts as a rival, however small: a bid a few
+percent under some round size is still a bid. An explicit `q_react` (0 or
+more) keeps its value, and quotes under it set no touch.
+
 ## When actors fail
 
 Each order, cancel, take and swap counts as an action. A session where more

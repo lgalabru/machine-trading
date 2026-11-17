@@ -797,7 +797,7 @@ pub fn informed_on_hidden_sets(root: &Path, task: &str, test: &str) -> Check {
             let listed = std::fs::read_to_string(root.join("bench/image/anchors.txt"))
                 .unwrap_or_default()
                 .lines()
-                .any(|l| l == line);
+                .any(|l| l.strip_suffix(" component").unwrap_or(l) == line);
             if !listed {
                 problems.push(format!(
                     "bench/image/anchors.txt doesn't list `{line}` (run `mtx task sync`)"
