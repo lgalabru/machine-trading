@@ -487,6 +487,7 @@ impl SessionReport {
                         instrument: fill.instrument.clone(),
                         side: fill.side,
                         price: fill.price,
+                        worst_price: fill.worst_price.unwrap_or(fill.price),
                     }),
             )
             .collect();
