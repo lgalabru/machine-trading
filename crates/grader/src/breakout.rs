@@ -13,15 +13,16 @@
 //!   (the scenario's level) stays where it was. Hunts and breaks draw it from
 //!   one distribution, so the first look at the book can't tell them apart.
 //! - **A hunt** holds the book there for the hunter's `hold_slots`, then the
-//!   makers go back to the level. The stop hunter pushes from one of its
-//!   wallets a couple of slots before the run starts, and trades back out
-//!   while the book is still through the level.
+//!   makers go back to the level. The stop hunter pushes from its wallet a
+//!   couple of slots before the run starts, and trades back out while the
+//!   book is still through the level. One wallet each: a reader who has
+//!   seen a session's first hunt and first break knows who is who.
 //! - **A break** leaves the book there for a lead drawn from the same range
 //!   as the hunts' hold, while the oracle starts to follow (a creep, drawn,
 //!   under the walk's noise at first); then the level jumps on through the
 //!   book to the break's continuation and stays. An informed breaker sweeps
-//!   through the level a couple of slots before, from one of two wallets of
-//!   its own, exactly as the hunter pushes (sizes and holds from the same
+//!   through the level a couple of slots before, from a wallet of its own,
+//!   exactly as the hunter pushes (sizes and holds from the same
 //!   ranges, from a wallet that was flat), and trades back out a hold later;
 //!   informed wallets, who see the level ahead, trade it before it goes.
 //! - **Mirrored.** What a follower makes from the excursion on in a break is
@@ -507,7 +508,7 @@ impl BreakoutFamily {
                 .collect()
         };
         let push = |push_mult, hold_slots, at_slots| StopHunter {
-            wallets: 2,
+            wallets: 1,
             level_step_usd: self.level_step_usd,
             trigger_bps,
             push_mult,

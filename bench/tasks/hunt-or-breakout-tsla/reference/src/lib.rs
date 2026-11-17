@@ -12,9 +12,9 @@
 //! - **The leader.** One account that took a large clip in a single step
 //!   just before the run is a pusher: a stop hunter, or an informed
 //!   breaker sweeping through the level, alike in size and both flat
-//!   before. Each trades back out of its run a little later. One whose run
-//!   the oracle never followed is a known hunter, one whose run it followed
-//!   a known breaker: a run either leads later is faded or followed at
+//!   before; each trades back out of its run a little later. Once a run has
+//!   played out, its pusher is a known hunter if the oracle never followed
+//!   it, a known breaker if it did: a run either leads later is faded or followed at
 //!   once, whoever else joins. An informed trader who happened to take a
 //!   large clip keeps trading the run's way, so the bot watches an unknown
 //!   pusher for a few slots.
@@ -337,9 +337,10 @@ const ORACLE_BPS: f64 = 6.0;
 /// Slots it watches a pusher after the run: a hunter goes quiet until it
 /// trades back; an informed trader who took a large clip keeps trading.
 const QUIET_SLOTS: u64 = 14;
-/// How far the oracle must have followed a run, in basis points, by the
-/// time its pusher trades back, for the pusher to be a breaker.
-const FOLLOWED_BPS: f64 = 15.0;
+/// How far the oracle must have followed a run, in basis points, once it
+/// has had `SETTLE_SLOTS` to play out, for its pusher to be a breaker.
+const FOLLOWED_BPS: f64 = 20.0;
+const SETTLE_SLOTS: u64 = 90;
 
 /// A run it has seen and not yet classified.
 #[derive(Debug, Clone, Copy)]
@@ -448,6 +449,28 @@ impl Reference {
     }
 
     fn learn(&mut self, slot: u64, mid: Option<f64>, oracle: f64) {
+        // A run's pusher, once its run has had time to play out: a hunter
+        // if the oracle never followed, a breaker if it did.
+        let settled: Vec<(usize, f64, f64)> = self
+            .led
+            .iter()
+            .filter(|(_, (at, _, _))| slot >= at + SETTLE_SLOTS)
+            .map(|(i, (_, dir, then))| (*i, *dir, *then))
+            .collect();
+        for (i, dir, then) in settled {
+            self.led.remove(&i);
+            let followed = dir * (oracle / then - 1.0) * 10_000.0 >= FOLLOWED_BPS;
+            let (list, other, what) = if followed {
+                (&mut self.breakers, &mut self.hunters, "a breaker")
+            } else {
+                (&mut self.hunters, &mut self.breakers, "a hunter")
+            };
+            other.retain(|j| *j != i);
+            if !list.contains(&i) {
+                list.push(i);
+                log(&format!("slot {slot}: account {} is {what}", self.watch.accounts[i]));
+            }
+        }
         let changes = self.watch.last_changes();
         if self.with_book.len() != changes.len() {
             self.with_book = vec![0; changes.len()];
@@ -472,27 +495,6 @@ impl Reference {
                 continue;
             }
             let way = c.signum();
-            if let Some((at, led, oracle_then)) = self.led.get(&i).copied() {
-                if led == -way && at + 120 >= slot {
-                    // It traded back out of a run it led: a hunter if the
-                    // oracle never followed, a breaker if it did.
-                    let followed = led * (oracle / oracle_then - 1.0) * 10_000.0 >= FOLLOWED_BPS;
-                    let (list, what) = if followed {
-                        (&mut self.breakers, "a breaker")
-                    } else {
-                        (&mut self.hunters, "a hunter")
-                    };
-                    if !list.contains(&i) {
-                        list.push(i);
-                        log(&format!(
-                            "slot {slot}: account {} is {what}",
-                            self.watch.accounts[i]
-                        ));
-                    }
-                    self.led.remove(&i);
-                    continue;
-                }
-            }
             self.pushes.insert(i, (slot, way));
         }
     }

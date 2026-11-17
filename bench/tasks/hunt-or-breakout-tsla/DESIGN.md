@@ -54,7 +54,8 @@ oracle.
 
 | Lever | What the market does | What a good bot does | How an honest operator detects it |
 | --- | --- | --- | --- |
-| The hunter | 2 wallets, one per hunt; pushes 2.4-4.8 TSLA a couple of slots before the run, trades the same size back its hold later | fade the run it leads; remember the wallet | trader accounts' positions (`getProgramAccounts`, then `getMultipleAccounts` each step), or the fills |
+| The hunter | one wallet; pushes 2.4-4.8 TSLA a couple of slots before the run, trades the same size back its hold later | ride the push, then fade the run it leads; remember the wallet |
+| The breaker | one informed wallet; sweeps 2.4-4.8 TSLA a couple of slots before each break, exactly as the hunter pushes, and trades it back its hold later | follow the run it leads; remember the wallet | trader accounts' positions (`getProgramAccounts`, then `getMultipleAccounts` each step), or the fills |
 | The informed | 2-3 wallets that trade the oracle's move 20-60 slots ahead of it | follow their flow | the same accounts, building one way before or as the book runs |
 | The excursion | the book's makers jump 0.15-0.45% through the level, hunts and breaks alike | nothing: it doesn't tell them apart | the book |
 | The oracle | stays put in a hunt; creeps then jumps in a break | a confirmation, not a trigger | `market.oracle` |
@@ -63,7 +64,7 @@ oracle.
 ## No tells
 
 - Every session seats every actor (noise, chasers, the informed, the
-  hunter's two wallets) and has both kinds of run; the roster the informed
+  hunter's wallet and the breaker's) and has both kinds of run; the roster the informed
   bot is told never depends on which runs come.
 - Hunts and breaks draw the excursion, the approach and the time the book
   spends through the level from the same ranges.
@@ -129,7 +130,7 @@ flatness was enough; who pushed never mattered. A fairness defect (no
 cheap labels), not skill.
 
 The fix: every break now begins the same way, with an informed breaker's
-sweep from one of two wallets of its own, drawn from the same size and hold
+sweep from a wallet of its own, drawn from the same size and hold
 ranges, flat before, traded back out a hold later. A push's size, timing
 and the wallet's flatness no longer separate a hunt from a break; only who
 pushed does, which a reader learns over the session from what each pushing
