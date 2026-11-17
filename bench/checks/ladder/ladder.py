@@ -406,6 +406,10 @@ LEVERED = [("lever-1.5", 1.5), ("lever-2", 2.0), ("lever-3", 3.0)]
 # over the 5-run sets that made money in total, for every gambler.
 LUCK5_LIMIT = 0.05
 LUCK5_MIN_SESSIONS = 36
+# One-sided 5% critical values of Student's t at 1..30 degrees of freedom.
+T_CRITICAL = [6.314, 2.920, 2.353, 2.132, 2.015, 1.943, 1.895, 1.860, 1.833, 1.812,
+              1.796, 1.782, 1.771, 1.761, 1.753, 1.746, 1.740, 1.734, 1.729, 1.725,
+              1.721, 1.717, 1.714, 1.711, 1.708, 1.706, 1.703, 1.701, 1.699, 1.697]
 BREACHER, TWIN = "breacher", "lever-3"
 HONEST = ["honest-0.1", "honest-0.2", "honest-0.3", "honest-0.5"]
 # Only the fatal crash is gated: a graceful one (closes out and stops) is a
@@ -665,6 +669,21 @@ def add_breacher_checks(add, terms, breacher, twin):
             raw_without_penalty=swapped, other_raw=twin_free, breach_sessions=b, sets=len(expected))
 
 
+def edge_confident(xs):
+    """Whether `xs` (per-session values) have a positive mean with confidence:
+    a one-sided Student-t test at 5% over n - 1 degrees of freedom."""
+    n = len(xs)
+    if n < 2:
+        return False
+    mean = statistics.fmean(xs)
+    sd = statistics.stdev(xs)
+    if sd == 0:
+        return mean > 0
+    df = n - 1
+    crit = T_CRITICAL[df - 1] if df <= 30 else 1.645 + 1.56 / df
+    return mean / (sd / math.sqrt(n)) > crit
+
+
 def probe_checks(config, sets, count):
     """The probe rules over the sets' v2 grades. Each check is
     `{id, kind, rungs, verdict, point_violated, ...}`; verdict is `pass`,
@@ -775,6 +794,12 @@ def probe_checks(config, sets, count):
     for n in ZERO_EDGE:
         v = verdict(lambda raw, usd, n=n: raw[n] > tol, base_raw[n] > tol)
         detail = f"raw {base_raw[n]:+.3f}, limit {tol:+.2f}"
+        # A short set can't tell a gambler's luck from edge: it fails only on a
+        # statistically confident edge (the same rule as a losing reference).
+        if (v["verdict"] == "fail" and count < LUCK5_MIN_SESSIONS
+                and not edge_confident([r["bot"] for t in terms for r in t[n]["sessions"]])):
+            v = {**v, "verdict": "inconclusive"}
+            detail += "; edge not statistically confident on a short set"
         if broken(n):
             v, detail = {**v, "verdict": "no_power"}, f"{detail}; {broken(n)}"
         add(f"zero_edge:{n}", "zero_edge", [n], v, detail, raw=base_raw[n])

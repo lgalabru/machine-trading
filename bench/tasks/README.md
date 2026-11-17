@@ -80,7 +80,7 @@ Within the limits, risk is **reported, not scored**:
 | --- | --- |
 | `worst_pnl_usd` | The worst session's PnL. |
 | `tail_pnl_usd` | The mean PnL of the worst sixth of sessions. |
-| `max_drawdown_usd` | The deepest any session's account value fell below its running peak. |
+| `max_drawdown_usd` | The deepest any session's account value fell below its running peak (net of the hold in a net-scored session). |
 | `profitable_share` | The share of sessions that made money. |
 | `sharpe` | Mean session PnL over its standard deviation, per session and not annualized. |
 

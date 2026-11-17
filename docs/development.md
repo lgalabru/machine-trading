@@ -138,9 +138,15 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      provider's API, which its network must allow, can fetch the web for
      it), so `just bench` refuses it on a guarded task. `MTX_UNGUARDED=1`
      allows it for a screen: the batch is stamped `guarded: false` before
-     its first trial, and is not for publication. A direct `harbor run` of
-     a native harness on a guarded task is unguarded too: Harbor opens the
-     harness's provider host itself.
+     its first trial, its trajectories are scanned for fetch attempts, and
+     `publish` refuses it. On a task that ran guarded (its `task.toml`'s
+     `[agent] network_mode = "allowlist"`, as it ran), `publish` accepts
+     only the bench's Hermes (`mtx_hermes:Hermes` through the key proxy's
+     private address) and refuses every other agent, whatever its
+     directory: a direct `harbor run` of any installed agent (Codex,
+     Claude Code, a plain `hermes`) on a guarded task is unguarded too,
+     because Harbor opens the agent's provider host itself. `export`
+     refuses the same for what was never published.
      Its token counts come from Hermes's session; a cost only when Hermes
      knows the model's price. `effort` (left empty, each harness keeps its
      default) sets one reasoning effort for every harness; cross-family
@@ -267,7 +273,7 @@ A task is one folder, `bench/tasks/<name>/`:
 
 | | |
 | --- | --- |
-| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator |
+| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator, and `component_anchors = true` for a task whose anchors must run as strategy components (requests for quotes reach only components), which the image then builds for `wasm32-wasip2` too |
 | `reference/` | The reference bot's crate (a workspace member): the verifier scores against it |
 | `solution/` | The oracle's copy of `reference/`, written by `mtx task sync` |
 | `checks/` | `ladder.json` (rungs, order rules, the `anchors` and `probes` a v2 task names), `rungs/` (rungs that run a bot), `bots/` (ladder bots' crates; `bots/informed` is a v2 task's informed bot) and `exploits/` (the frozen exploit bots) |

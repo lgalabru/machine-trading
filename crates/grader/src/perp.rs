@@ -390,8 +390,20 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 .map(|(role, n)| opts.keys.keypair(role, n))
                 .collect();
             let pubkeys: Vec<Pubkey> = keypairs.iter().map(Signer::pubkey).collect();
-            let seats =
-                onboard_unique(&world, &phoenix, &own.perp, &rpc, internal.url(), keypairs).await?;
+            // Onboarded in an order drawn from the session's seed: listed
+            // role by role, the order of their first transactions would
+            // tell a bot reading the chain which wallets are of a kind.
+            let order = onboarding_order(opts.keys.seed("onboarding", 0), keypairs.len());
+            let seats = onboard_in_order(
+                &world,
+                &phoenix,
+                &own.perp,
+                &rpc,
+                internal.url(),
+                keypairs,
+                &order,
+            )
+            .await?;
             tracing::info!(wallets = seats.len(), "library actors ready");
             let seats: Vec<WalletSeat> = pubkeys
                 .into_iter()
@@ -583,9 +595,12 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let send_reader = (!library.front_runners.is_empty())
             .then(|| send_reader(own.market.clone(), internal.url().to_string()));
         if !library.front_runners.is_empty() {
-            cast.watch(FlowWatch::new(vec![
-                own.perp.seat(bot.insecure_clone(), internal.url()).await?,
-            ]));
+            cast.watch(
+                FlowWatch::new(vec![
+                    own.perp.seat(bot.insecure_clone(), internal.url()).await?,
+                ])
+                .starting_at(&[own.start_position]),
+            );
         }
         let built = library.build(
             seats,
@@ -802,6 +817,40 @@ async fn onboard_unique(
         .into_iter()
         .map(|keypair| perp.unique_seat(keypair, rpc_url))
         .collect()
+}
+
+/// The order `n` wallets are onboarded in: a permutation drawn from `seed`.
+fn onboarding_order(seed: [u8; 32], n: usize) -> Vec<usize> {
+    let mut rng = crate::actors::library::Rng::new(seed);
+    let mut order: Vec<usize> = (0..n).collect();
+    for i in (1..n).rev() {
+        order.swap(i, rng.below(i + 1));
+    }
+    order
+}
+
+/// [`onboard_unique`] with the wallets onboarded in `order` (the `i`th is
+/// `keypairs[order[i]]`), their seats returned in the keypairs' own order.
+async fn onboard_in_order(
+    world: &snapshot::OfflineWorld,
+    phoenix: &Phoenix,
+    perp: &PerpMarket,
+    rpc: &solana_rpc_client::rpc_client::RpcClient,
+    rpc_url: &str,
+    keypairs: Vec<Keypair>,
+    order: &[usize],
+) -> Result<Vec<Box<dyn Seat>>> {
+    let mut keypairs: Vec<Option<Keypair>> = keypairs.into_iter().map(Some).collect();
+    let drawn = order
+        .iter()
+        .map(|i| keypairs[*i].take().expect("each wallet once"))
+        .collect();
+    let mut seats = onboard_unique(world, phoenix, perp, rpc, rpc_url, drawn).await?;
+    let mut placed: Vec<Option<Box<dyn Seat>>> = (0..order.len()).map(|_| None).collect();
+    for (seat, i) in seats.drain(..).zip(order) {
+        placed[*i] = Some(seat);
+    }
+    Ok(placed.into_iter().flatten().collect())
 }
 
 /// What setup gives a starting position with: on `perp`, the session's
@@ -1698,6 +1747,12 @@ impl PerpAccount {
         Ok(self.value(value_usd, units, slot).await? + self.desk_usd().await?)
     }
 
+    /// What holding the start positions would have gained `at` slots in
+    /// (see [`hold_gain_usd`]).
+    fn hold_usd(&self, at: u64) -> f64 {
+        hold_gain_usd(self.scenario.net.is_some(), &self.markets, at)
+    }
+
     /// Every market at a step, the primary included, in symbol order:
     /// nothing for a session on one market, whose step is its one market's.
     async fn market_steps(&self, at: u64, positions: &[f64]) -> Result<Vec<MarketStep>> {
@@ -1793,8 +1848,11 @@ impl Account for PerpAccount {
         let value_usd = self
             .value_with_desk(grader_f64(now.value_usd), &positions, slot)
             .await?;
-        self.peak_value_usd = self.peak_value_usd.max(value_usd);
-        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
+        let hold_usd = self.hold_usd(at);
+        self.peak_value_usd = self.peak_value_usd.max(value_usd - hold_usd);
+        self.max_drawdown_usd = self
+            .max_drawdown_usd
+            .max(self.peak_value_usd - (value_usd - hold_usd));
         let own = &self.markets[self.primary];
         let hawkeye = self.phoenix.hawkeye(self.bot);
         let bbo = patiently("the book", || hawkeye.view_bbo(&own.scenario.symbol))
@@ -1817,6 +1875,7 @@ impl Account for PerpAccount {
             position,
             value_usd,
             pnl_usd: value_usd - self.start_value_usd,
+            hold_usd,
             turn_ms: None,
             answered: None,
             markets: self.market_steps(at, &positions).await?,
@@ -1827,16 +1886,10 @@ impl Account for PerpAccount {
         Ok(())
     }
 
-    async fn sample(&mut self, slot: u64) -> Result<()> {
+    async fn sample(&mut self, _slot: u64) -> Result<()> {
         let now = self.measure().await?;
         record(&mut self.observed, &now)?;
-        let positions = self.positions(&now);
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
-        let value_usd = self
-            .value_with_desk(grader_f64(now.value_usd), &positions, slot)
-            .await?;
-        self.peak_value_usd = self.peak_value_usd.max(value_usd);
-        self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
         Ok(())
     }
 
@@ -2047,6 +2100,7 @@ impl Account for PerpAccount {
         let observed = std::mem::take(&mut self.observed);
         let fills = self.fills.take().unwrap_or_default();
         let at = done.end_slot.saturating_sub(self.base_slot);
+        let end_hold_usd = self.hold_usd(at);
         let scenario_net = self.scenario.net.is_some();
         let legs: std::collections::BTreeMap<String, Leg> = self
             .markets
@@ -2143,9 +2197,10 @@ impl Account for PerpAccount {
             instrument,
             positions: observed.positions,
             positions_outside_universe,
-            max_drawdown_usd: self
-                .max_drawdown_usd
-                .max(self.peak_value_usd.max(end_value_usd) - end_value_usd),
+            max_drawdown_usd: self.max_drawdown_usd.max(
+                self.peak_value_usd.max(end_value_usd - end_hold_usd)
+                    - (end_value_usd - end_hold_usd),
+            ),
             samples: observed.samples,
             term_start: observed.term_start,
             valuation: own.valuation,
@@ -2203,6 +2258,22 @@ impl Account for PerpAccount {
             },
         })
     }
+}
+
+/// What holding every market's start position would have gained by `at`, at
+/// each market's level: the baseline a net-scored session scores against
+/// (see [`settle`]), taken off the drawdown so that a bot that holds draws
+/// down nothing. The account is valued at the oracle level, so mid-session
+/// the hold is too: a fair path only meets the level at the close. 0 when the
+/// session isn't net-scored.
+fn hold_gain_usd(net_scored: bool, markets: &[MarketState], at: u64) -> f64 {
+    if !net_scored {
+        return 0.0;
+    }
+    markets
+        .iter()
+        .map(|market| market.start_position * (market.moment(at).level_usd - market.start_mark_usd))
+        .sum()
 }
 
 /// The fair value at the close, in USD, that a net-scored session takes
@@ -2506,6 +2577,56 @@ mod tests {
     use solana_account::Account;
 
     use super::*;
+
+    /// A session's seed, as the keys derive it: 32 bytes, all of them mixed.
+    fn seed_of(n: u64) -> [u8; 32] {
+        let mut z = n;
+        let mut seed = [0u8; 32];
+        for word in seed.chunks_mut(8) {
+            z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut x = z;
+            x = (x ^ (x >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            word.copy_from_slice(&(x ^ (x >> 31)).to_le_bytes());
+        }
+        seed
+    }
+
+    #[test]
+    fn library_wallets_onboard_in_an_order_that_follows_no_role() {
+        let n = 12;
+        let mut sorted = onboarding_order(seed_of(1), n);
+        sorted.sort_unstable();
+        assert_eq!(sorted, (0..n).collect::<Vec<_>>(), "a permutation");
+        assert_eq!(
+            onboarding_order(seed_of(1), n),
+            onboarding_order(seed_of(1), n)
+        );
+        assert_ne!(
+            onboarding_order(seed_of(1), n),
+            onboarding_order(seed_of(2), n)
+        );
+        // Wallets are listed role by role: the first four are one role, the
+        // last four another. How early each role's wallets are onboarded,
+        // over many sessions, is the same for both to within a draw's
+        // noise: nothing in the order tells the roles apart.
+        let sessions = 2_000;
+        let mean_rank = |role: std::ops::Range<usize>| {
+            let total: usize = (0..sessions)
+                .flat_map(|session| {
+                    let order = onboarding_order(seed_of(session), n);
+                    role.clone()
+                        .map(move |wallet| order.iter().position(|w| *w == wallet).unwrap())
+                })
+                .sum();
+            total as f64 / (sessions as usize * role.len()) as f64
+        };
+        let (first, last) = (mean_rank(0..4), mean_rank(8..12));
+        assert!(
+            (first - 5.5).abs() < 0.3 && (last - 5.5).abs() < 0.3,
+            "{first} {last}"
+        );
+    }
 
     /// [`settle`] on the scenario's one market.
     fn settle_one(

@@ -58,7 +58,8 @@ impl SessionKeys {
     }
 
     /// Salt the seed each of the bot's sessions hands its strategy with
-    /// the grade's secret (scoring v2's session rules). Unsalted, a session's
+    /// the grade's secret (every drawn grade, and scoring v2's session
+    /// rules). Unsalted, a session's
     /// seed is a hash of its scenario's name, the same in every grade, so a
     /// bot could tell which session it is in; salted, nothing without the
     /// secret maps one to the other. The reference's seeds stay as they are,
@@ -74,6 +75,7 @@ impl SessionKeys {
         SessionKeyring {
             keys: self,
             session: session.to_string(),
+            world: session.to_string(),
             salted: false,
         }
     }
@@ -92,10 +94,16 @@ pub struct RoleKeys<'a> {
 }
 
 impl<'a> RoleKeys<'a> {
-    /// The keys of the `index`th session, on `scenario`.
+    /// The keys of the `index`th session, on `scenario`. Its keypairs are
+    /// the role's own, but the world's randomness (see
+    /// [`SessionKeyring::seed`]) is the scenario's, whichever role plays it:
+    /// the reference, the informed bot, the bot that does nothing and the
+    /// bot meet the same actors drawing the same flow, so a strategy makes
+    /// the same as any of them as it does as the bot.
     pub fn session(&self, index: usize, scenario: &str) -> SessionKeyring<'a> {
         SessionKeyring {
             salted: self.keys.salted && self.role == "bot",
+            world: format!("world/{scenario}"),
             ..self
                 .keys
                 .session(&format!("{}/{index}/{scenario}", self.role))
@@ -107,6 +115,9 @@ impl<'a> RoleKeys<'a> {
 pub struct SessionKeyring<'a> {
     keys: &'a SessionKeys,
     session: String,
+    /// What the session's randomness is derived from: the scenario's name
+    /// for a grade's sessions, the same for every role that plays it.
+    world: String,
     salted: bool,
 }
 
@@ -118,10 +129,12 @@ impl SessionKeyring<'_> {
     }
 
     /// The seed of `role`'s randomness, the `index`th of its kind: the
-    /// grader's actors draw from it, so a session replays the same draws.
-    /// No key derives from it, and it is never written anywhere.
+    /// grader's actors draw from it, so a session replays the same draws,
+    /// and every role's session of a scenario draws the same (see
+    /// [`RoleKeys::session`]). No key derives from it, and it is never
+    /// written anywhere.
     pub fn seed(&self, role: &str, index: u32) -> [u8; 32] {
-        derive(SEED_DOMAIN, self.keys, &self.session, role, index)
+        derive(SEED_DOMAIN, self.keys, &self.world, role, index)
     }
 
     /// The seed the strategy gets for its randomness, in `scenario`: the
@@ -242,6 +255,48 @@ mod tests {
                 .session(3, "hidden-3")
                 .strategy_seed("hidden-3"),
             mtx_core::turns::scenario_seed("hidden-3")
+        );
+    }
+
+    /// The reference, the informed bot, the do-nothing bot and the bot
+    /// play one scenario against the same actors: their sessions' seeds
+    /// agree, wherever the scenario sits in each role's list, while their
+    /// keypairs stay their own.
+    #[test]
+    fn every_role_draws_the_same_world() {
+        let keys = SessionKeys::from_eval_seed(b"a batch secret of at least 32 chars")
+            .salt_strategy_seeds();
+        let bot = keys.role("bot").session(3, "hidden-4");
+        for other in [
+            keys.role("reference").session(3, "hidden-4"),
+            keys.role("informed").session(3, "hidden-4"),
+            keys.role("nop").session(0, "hidden-4"),
+        ] {
+            for (role, n) in [
+                ("noise", 0),
+                ("informed", 2),
+                ("decoy", 1),
+                ("competitor", 0),
+            ] {
+                assert_eq!(bot.seed(role, n), other.seed(role, n), "{role} {n}");
+            }
+            assert_eq!(bot.seed("onboarding", 0), other.seed("onboarding", 0));
+            assert_ne!(
+                bot.keypair("bot", 0).pubkey(),
+                other.keypair("bot", 0).pubkey()
+            );
+        }
+        // Another scenario, or another batch, draws another world.
+        assert_ne!(
+            bot.seed("noise", 0),
+            keys.role("bot").session(3, "hidden-5").seed("noise", 0)
+        );
+        assert_ne!(
+            bot.seed("noise", 0),
+            SessionKeys::from_eval_seed(b"another batch secret, 32 chars long")
+                .role("bot")
+                .session(3, "hidden-4")
+                .seed("noise", 0)
         );
     }
 

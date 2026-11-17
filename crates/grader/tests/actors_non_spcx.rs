@@ -1692,6 +1692,7 @@ fn reactive_making(bps: f64, floor: f64, react: u64, size: f64) -> Making {
             react_slots: react,
             size,
             reactive: Some(Reactive {
+                q_react: Some(1.0),
                 jitter: 0.0,
                 step_ticks: (1, 1),
                 ..Reactive::default()
