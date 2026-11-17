@@ -24,12 +24,14 @@ finished ladder) adjust a run.
 | Solvable and fair | the reference makes money on every set (it is the 1.0 line); doing nothing scores 0 | ladder |
 | | the skill ladder keeps its order, on every set and in the bootstrap | ladder |
 | | the best informed policy makes at least 2x the best non-reading one's graded total, or a $25 floor when every non-reading rung does worse | ladder rungs |
+| | every strategy of the zoo (generic, told nothing) scores under the reference and under half the informed rung, as the order rules hold (`zoo-below-reference`, `zoo-far-from-informed`) | ladder, the strategy zoo |
 | | the oracle (the reference) scores skill 1.0, or under scoring v2 0.5 before the near-breach charge and any breach penalty (`score_v2_raw_before_charge`), with `reward` v2's score and no `skill` beside it; the charge, anchored on the informed bot's drawdowns, can take a reference that draws down deeper under 0.5 by design, and is reported beside it, not checked; nop scores 0 under Harbor | full: `just harbor-checks` |
 | | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive, unless the reference loses money with confidence, which fails) | ladder, per-session PnL |
 | | no task's verifier tells the graded bot anything (`--tell-latent`, `--tell-regime`) | `tests/test.sh` |
 | | a v2 task's verifier runs its informed bot on the hidden set: `tests/test.sh` draws its set, grades only a component and passes `--informed /opt/mtx/anchors/<anchor>-informed`, which `bench/image/anchors.txt` builds from the ladder's informed anchor, and that bot is written (v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh`, `anchors.txt` |
 | Graded correctly | the exploit bots stay inside their limits (a pushing bot that moved the mark too little is `no_power`, and fails); no rung is refused or disqualified | ladder |
 | | the probe bots land in their scoring v2 bands, graded with the task's own v2 settings (the verifier's `--loss-weight`, `--risk-weight`, `--anchor-floor` and `--informed`), and a probe with no power (a breacher that never breached) fails | ladder, when the task declares `probes` (`bench/checks/probes/README.md`) |
+| | the informed bot with the best zoo rung in its idle steps (the hybrid) doesn't beat the informed bot with confidence: the 1.0 anchor leaves no public edge (`anchor-strength`) | ladder, the task's hybrid crate |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
 | | the agent's image holds no answer, and a guarded task's `mtx` offers only the allowlisted commands; a guarded task's agent can't reach ghcr.io or github.com; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit <task>`, `network-probe <task>`, `keypair-probe`, `clock-probe` |
 | | replays are byte-identical: the reference, graded again on the same fresh hidden set (fast: 2 sessions twice; full: 6 sessions three times on a loaded machine) | `mtx grade --replay`, when the build has it |
@@ -90,6 +92,37 @@ least `min_ratio` (default 2) times the best non-reading rung's, and the
 informed rung makes money. A losing or flat baseline counts as zero. If the
 informed policy can't double a policy that ignores the signal, the task isn't
 testing the signal.
+
+## The strategy zoo
+
+Each card hand-writes its blind rungs, and they miss shortcuts. Every ladder
+also runs the zoo (`bench/checks/zoo`): about twenty generic strategies told
+nothing (pacing, passive, patience, price breaks, flow and size tells) that
+adapt to the task through its mandate and order. Three checks read them:
+
+- `zoo-below-reference`: every zoo rung under the reference, as graded (v2
+  session values on a v2 task), on every set and in at least `min_rule_odds`
+  of the bootstrap, like `ladder-order`;
+- `zoo-far-from-informed`: every zoo rung under half the informed rung, the
+  signal gate's bar;
+- `anchor-strength`: the hybrid, the task's informed bot with the set's best
+  zoo rung trading the steps it leaves idle, must not beat the informed bot
+  with 95% paired-bootstrap confidence. It is a policy a bot told the informed
+  bot's facts could run, so a confident win means the 1.0 anchor is weak; it
+  can miss a weak anchor, never invent one.
+
+A zoo rule broken with 95% bootstrap confidence fails, in fast mode too; one
+that only misses the order rules' bar fails the full gate and is inconclusive
+on a fast set. A hybrid within noise, or one whose zoo rung found no idle step
+(`no_power`), is inconclusive.
+
+A task's ladder file chooses the rungs in its `zoo` section, skips one with a
+reason, names its hybrid crate (`zoo.hybrid`) or says why it has none
+(`zoo.hybrid_exempt`). Without a section every rung runs and the checks are
+enforced; `anchor-strength` then fails until the task names its hybrid. The
+four tasks that predate the zoo set `zoo.enforce` false with a reason: their
+zoo findings are warnings, and their grading is unchanged. How to add a
+task-specific rung or a hybrid crate: `bench/checks/zoo/README.md`.
 
 ## Scoring v2's anchors
 

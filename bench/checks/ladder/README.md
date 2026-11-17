@@ -30,6 +30,13 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
   0.2 over doing nothing. `summary.json`
   carries each rule's verdict (`pass`, `fail`, `inconclusive`, `no_power`, `not_exercised`).
 
+- **The strategy zoo** (`../zoo`): every ladder also grades the zoo's generic
+  strategies, told nothing, as rungs `zoo-<name>`, and, where the task names
+  its hybrid crate, `zoo-hybrid`, the informed bot with the set's best zoo
+  rung. `summary.json`'s `zoo` carries the three zoo checks
+  (`below_reference`, `far_from_informed`, `anchor_strength`) and their
+  verdicts. The ladder file's `zoo` section chooses the rungs.
+
 ## Flash-crash
 
 | Rung | What it is | Where it should land |
