@@ -1,0 +1,11 @@
+# Written by `mtx task sync`; do not edit.
+# What the engine does to this task's anchors on a fixed public draw
+# (12 sessions of the task's family): the SHA-256 of their results,
+# without wall times, compute units and signatures. CI recomputes it when
+# the engine changes (`mtx task anchor-digest --check`); a difference
+# means the engine changed what this task does: run
+# `mtx task sync --anchors` and commit the result.
+format: 1
+anchors: reference (this task has no informed bot)
+inputs: 2262ce99ff8357e3198a2c8d919c586b5099f50aa6484beca07099f091f3fe24
+digest: c0d3e96c4d63449893b0f9b3dd94ad69d01e67ab03dc28c7c86838f0748dd155

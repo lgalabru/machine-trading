@@ -59,6 +59,8 @@ pub(crate) const FILES: &[&str] = &[
 pub(crate) const SKIPPED_DIRS: &[&str] = &["target", "bin", "node_modules", ".git"];
 
 pub struct ReviewOptions {
+    /// Show a root whose trials mix versions (see [`crate::versions`]).
+    pub allow_version_mismatch: bool,
     pub port: u16,
     pub open: bool,
     /// Where the page opens, after the `#`.
@@ -233,6 +235,16 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
             primary.path.display()
         );
     }
+    let mixed = crate::versions::mismatches(&stamps_of(primary));
+    crate::versions::enforce(
+        &format!(
+            "{} ({} trials)",
+            primary.label,
+            discover(&primary.path).len()
+        ),
+        &mixed,
+        opts.allow_version_mismatch,
+    )?;
     let state = Arc::new(AppState {
         roots,
         trials: std::sync::Mutex::default(),
@@ -285,7 +297,12 @@ pub async fn review(roots: Vec<Root>, opts: ReviewOptions) -> Result<Value> {
         })
         .await?;
     ui::clear();
-    Ok(json!({ "root": state.roots[0].path, "trials": count, "url": page }))
+    Ok(json!({
+        "root": state.roots[0].path,
+        "trials": count,
+        "url": page,
+        "version_mismatch": crate::versions::to_json(&mixed),
+    }))
 }
 
 /// Write the review as a static site into `out`: the page, and every answer
@@ -703,6 +720,7 @@ fn summary(root: &Root, n: usize, dir: &FsPath) -> Value {
         "tampered": report.as_ref().map(|r| r["tampered"].clone()),
         "eval_seed_sha256": report.as_ref().map(|r| r["eval_seed_sha256"].clone()),
         "risk": report.as_ref().map(|r| r["risk"].clone()),
+        "versions": report.as_ref().map(|r| r["versions"].clone()),
         "sessions": scenarios.len(),
         "disqualified": disqualified,
         "details": dir.join("verifier/sessions/bot").is_dir(),
@@ -928,6 +946,24 @@ pub(crate) fn skill_of(short: &str) -> String {
             .map_or(short, |(skill, _)| skill)
             .to_string(),
     }
+}
+
+/// What each graded trial under `root` says about its task's and its
+/// scoring's version (see [`crate::versions`]). A trial with no report has no
+/// grade, so no stamp.
+pub(crate) fn stamps_of(root: &Root) -> Vec<crate::versions::Stamp> {
+    discover(&root.path)
+        .iter()
+        .enumerate()
+        .map(|(n, dir)| summary(root, n, dir))
+        .filter(|t| t["graded"] == json!(true))
+        .map(|t| {
+            let task = t["task"].as_str().unwrap_or_default();
+            let short = task.rsplit('/').next().unwrap_or(task);
+            let label = t["trial"].as_str().unwrap_or_default();
+            crate::versions::Stamp::of_report(label, short, &t)
+        })
+        .collect()
 }
 
 /// A root's scores from its trials' summaries: per task (by short name),

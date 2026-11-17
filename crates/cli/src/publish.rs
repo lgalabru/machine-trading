@@ -35,7 +35,7 @@ use serde_json::{Value, json};
 
 use crate::{
     review::{self, Root},
-    store,
+    store, versions,
 };
 
 /// The largest file a release keeps.
@@ -366,6 +366,7 @@ pub fn roots(first: Root, results: &Path) -> Vec<Root> {
 /// `artifacts`, nothing is uploaded either: the release goes there whole (as
 /// `<artifacts>/<version>`) and `<results>/<version>` is its slim release
 /// (see [`crate::slim`]).
+#[allow(clippy::too_many_arguments)]
 pub fn publish(
     batch: &Path,
     version: &str,
@@ -373,6 +374,7 @@ pub fn publish(
     force: bool,
     artifacts: Option<&Path>,
     local: bool,
+    allow_version_mismatch: bool,
     allow_missing_trajectories: bool,
 ) -> Result<Value> {
     if version.is_empty()
@@ -407,6 +409,29 @@ pub fn publish(
             pending.join(", ")
         );
     }
+    // Every score says which task and scoring produced it, and one release
+    // holds one of each per task.
+    let stamps = review::stamps_of(&Root {
+        label: version.to_string(),
+        path: batch.clone(),
+        published: false,
+    });
+    let mixed = versions::mismatches(&stamps);
+    versions::enforce(
+        &format!("{} as {version}", batch.display()),
+        &mixed,
+        allow_version_mismatch,
+    )?;
+    let unversioned = versions::unversioned(&stamps);
+    if !unversioned.is_empty() && !allow_version_mismatch {
+        bail!(
+            "{} trial{} carry no task fingerprint or scoring hash (graded before versions, or with a verifier that doesn't write them): {}\npass --allow-version-mismatch to publish them unversioned",
+            unversioned.len(),
+            if unversioned.len() == 1 { "" } else { "s" },
+            unversioned.join(", ")
+        );
+    }
+    let versions_json = versions::by_task(&stamps);
     // Every run's agent trajectory, unless asked to publish without: a run
     // without one can't be reviewed step by step (0.12.0 lost 67 of 120 to
     // an empty session export).
@@ -439,12 +464,13 @@ pub fn publish(
         std::fs::remove_dir_all(&staging)?;
     }
     std::fs::create_dir_all(&staging)?;
-    let written = copy_release(&batch, &trials, &staging, version).and_then(|mut summary| {
-        let compacted = crate::compact::compact_release(&staging)?;
-        summary["compacted"] = json!(compacted);
-        check_secrets(&batch, &trials, &staging)?;
-        Ok(summary)
-    });
+    let written = copy_release(&batch, &trials, &staging, version, &versions_json, &mixed)
+        .and_then(|mut summary| {
+            let compacted = crate::compact::compact_release(&staging)?;
+            summary["compacted"] = json!(compacted);
+            check_secrets(&batch, &trials, &staging)?;
+            Ok(summary)
+        });
     let mut summary = match written {
         Ok(summary) => summary,
         Err(error) => {
@@ -582,7 +608,14 @@ pub fn retable(release: &Path, version: &str) -> Result<()> {
     )
 }
 
-fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> Result<Value> {
+fn copy_release(
+    batch: &Path,
+    trials: &[PathBuf],
+    out: &Path,
+    version: &str,
+    versions: &Value,
+    mixed: &[versions::Mismatch],
+) -> Result<Value> {
     let mut skipped: Vec<String> = Vec::new();
     let mut jobs: Vec<PathBuf> = Vec::new();
     let mut tasks = serde_json::Map::new();
@@ -696,6 +729,8 @@ fn copy_release(batch: &Path, trials: &[PathBuf], out: &Path, version: &str) -> 
         "ran_at": started.first(),
         "trials": trials.len(),
         "tasks": tasks,
+        "versions": versions,
+        "version_mismatch": versions::to_json(mixed),
         "shared_reference_sessions": shared,
         "skipped": skipped,
     });
@@ -887,7 +922,7 @@ fn session_key(file: &Path) -> Option<String> {
     serde_json::to_string(&value).ok()
 }
 
-fn strip_volatile(value: &mut Value) {
+pub(crate) fn strip_volatile(value: &mut Value) {
     match value {
         Value::Object(map) => {
             for key in VOLATILE {
@@ -1066,6 +1101,26 @@ pub fn compare(a: &Root, b: &Root) -> Value {
     json!({ "a": a.label, "b": b.label, "tasks": rows })
 }
 
+/// [`compare`], after the check that each task's trials on both sides carry
+/// one task fingerprint and one scoring spec hash: scores of other versions
+/// aren't on one scale. With `allow`, the comparison goes on and lists the
+/// mismatches as `version_mismatch`.
+pub fn compare_checked(a: &Root, b: &Root, allow: bool) -> Result<Value> {
+    let side = |root: &Root| {
+        let mut stamps = review::stamps_of(root);
+        stamps
+            .iter_mut()
+            .for_each(|s| s.trial = format!("{}:{}", root.label, s.trial));
+        stamps
+    };
+    let stamps: Vec<_> = side(a).into_iter().chain(side(b)).collect();
+    let mixed = versions::mismatches(&stamps);
+    versions::enforce(&format!("{} against {}", a.label, b.label), &mixed, allow)?;
+    let mut cmp = compare(a, b);
+    cmp["version_mismatch"] = versions::to_json(&mixed);
+    Ok(cmp)
+}
+
 /// The comparison as a table on stderr.
 pub fn print_compare(cmp: &Value) {
     // Skill is a multiple of the reference (1×); v2 is a score (0.5 the
@@ -1134,6 +1189,24 @@ pub fn print_compare(cmp: &Value) {
                 show(&score(&m["a"]), va),
                 show(&score(&m["b"]), vb),
                 delta
+            );
+        }
+    }
+    if let Some(mixed) = cmp["version_mismatch"].as_array().filter(|m| !m.is_empty()) {
+        eprintln!("\n{}", crate::ui::bold("versions differ: not on one scale"));
+        for m in mixed {
+            let groups = m["groups"].as_object().into_iter().flatten().map(|(v, t)| {
+                format!(
+                    "{} ({})",
+                    v.get(..12).unwrap_or(v),
+                    t.as_array().map_or(0, Vec::len)
+                )
+            });
+            eprintln!(
+                "  {}: {}: {}",
+                m["task"].as_str().unwrap_or("?"),
+                m["field"].as_str().unwrap_or("?"),
+                groups.collect::<Vec<_>>().join(" vs ")
             );
         }
     }
@@ -1229,7 +1302,11 @@ mod tests {
             r#"{"trial_name":"task__a","task_name":"o/task","agent_info":{"name":"hermes"},"config":{"task":{"name":"o/task"},"agent":{"name":"mtx_hermes:Hermes","model_api_key_name":"MTX_PROXY_TOKEN","base_url":"http://10.0.0.1:1/x","extra_allowed_hosts":[]}}}"#,
         )
         .unwrap();
-        std::fs::write(trial.join("verifier/report.json"), "{}").unwrap();
+        std::fs::write(
+            trial.join("verifier/report.json"),
+            r#"{"versions": {"task_fingerprint": "aa", "scoring_hash": "bb"}}"#,
+        )
+        .unwrap();
         std::fs::write(trial.join("verifier/sessions/bot/hidden-1.json.gz"), "x").unwrap();
         std::fs::write(trial.join("artifacts/app/bot/src/main.rs"), "fn main() {}").unwrap();
         std::fs::write(trial.join("artifacts/app/bot/.env"), "KEY=1").unwrap();
@@ -1249,7 +1326,7 @@ mod tests {
         let results = tmp.join("results");
         std::fs::create_dir_all(&results).unwrap();
 
-        publish(&batch, "1.0.0", &results, false, None, true, false).unwrap();
+        publish(&batch, "1.0.0", &results, false, None, true, false, false).unwrap();
         let out = results.join("1.0.0/job/task__a");
         assert!(out.join("artifacts/app/bot/src/main.rs").is_file());
         assert!(out.join("verifier/sessions/bot/hidden-1.json.gz").is_file());
@@ -1280,7 +1357,7 @@ mod tests {
         );
         assert_eq!(releases(&results).len(), 1);
         assert!(
-            publish(&batch, "1.0.0", &results, false, None, true, false).is_err(),
+            publish(&batch, "1.0.0", &results, false, None, true, false, false).is_err(),
             "exists"
         );
 
@@ -1290,7 +1367,8 @@ mod tests {
             "0123456789abcdef0123456789abcdef",
         )
         .unwrap();
-        let error = publish(&batch, "1.0.1", &results, false, None, true, false).unwrap_err();
+        let error =
+            publish(&batch, "1.0.1", &results, false, None, true, false, false).unwrap_err();
         assert!(error.to_string().contains("seed"), "{error}");
         assert!(!results.join("1.0.1").exists());
         assert!(!results.join(".1.0.1.staging").exists());
@@ -1304,6 +1382,7 @@ mod tests {
             &results,
             false,
             Some(&artifacts),
+            false,
             false,
             false,
         )
@@ -1331,6 +1410,7 @@ mod tests {
                 false,
                 Some(&artifacts),
                 false,
+                false,
                 false
             )
             .is_err(),
@@ -1356,10 +1436,11 @@ mod tests {
 
         // A run without its agent's trajectory: refused, unless allowed.
         std::fs::remove_file(trial.join("agent/trajectory.json")).unwrap();
-        let error = publish(&batch, "1.0.3", &results, false, None, true, false).unwrap_err();
+        let error =
+            publish(&batch, "1.0.3", &results, false, None, true, false, false).unwrap_err();
         assert!(error.to_string().contains("no agent trajectory"), "{error}");
         assert!(!results.join("1.0.3").exists());
-        publish(&batch, "1.0.3", &results, false, None, true, true).unwrap();
+        publish(&batch, "1.0.3", &results, false, None, true, false, true).unwrap();
         assert!(
             results
                 .join("1.0.3/job/task__a/agent/hermes.txt.gz")
@@ -1689,5 +1770,78 @@ mod tests {
         assert!(cut.starts_with('a') && cut.ends_with('c'));
         assert!(cut.contains("[… 100000 bytes left out of the published log …]"));
         assert!(!cut.contains("bb"));
+    }
+
+    fn batch_of(trials: &[(&str, Option<&str>, Option<&str>)]) -> (PathBuf, PathBuf) {
+        let root = crate::versions::tests::root_of(trials);
+        let results = root
+            .path
+            .join("../")
+            .join(format!("res-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&results).unwrap();
+        for trial in review::discover(&root.path) {
+            std::fs::create_dir_all(trial.join("agent")).unwrap();
+            std::fs::write(trial.join("agent/trajectory.json"), "{}").unwrap();
+        }
+        (root.path, results)
+    }
+
+    #[test]
+    fn publish_refuses_mixed_or_unversioned_trials_and_records_the_versions() {
+        let (batch, results) =
+            batch_of(&[("t", Some("f1"), Some("s")), ("t", Some("f2"), Some("s"))]);
+        let error = publish(&batch, "1.0.0", &results, false, None, true, false, false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("t: task fingerprint differs"), "{error}");
+        assert!(!results.join("1.0.0").exists());
+        // Explicitly allowed: published, and the release says so.
+        let out = publish(&batch, "1.0.0", &results, false, None, true, true, false).unwrap();
+        let release: Value =
+            serde_json::from_slice(&std::fs::read(results.join("1.0.0/release.json")).unwrap())
+                .unwrap();
+        assert_eq!(release["versions"]["t"]["task_fingerprint"], "mixed");
+        assert_eq!(release["version_mismatch"][0]["field"], "task fingerprint");
+        assert_eq!(out["summary"]["version_mismatch"][0]["task"], "t");
+
+        let (batch, results) = batch_of(&[("t", None, None)]);
+        let error = publish(&batch, "1.0.0", &results, false, None, true, false, false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("carry no task fingerprint"), "{error}");
+
+        let (batch, results) =
+            batch_of(&[("t", Some("f"), Some("s")), ("t", Some("f"), Some("s"))]);
+        publish(&batch, "1.0.0", &results, false, None, true, false, false).unwrap();
+        let release: Value =
+            serde_json::from_slice(&std::fs::read(results.join("1.0.0/release.json")).unwrap())
+                .unwrap();
+        assert_eq!(release["versions"]["t"]["task_fingerprint"], "f");
+        assert_eq!(release["versions"]["t"]["scoring_hash"], "s");
+    }
+
+    #[test]
+    fn compare_refuses_runs_of_other_versions_unless_allowed() {
+        let a = crate::versions::tests::root_of(&[("t", Some("f1"), Some("s"))]);
+        let same = crate::versions::tests::root_of(&[("t", Some("f1"), Some("s"))]);
+        let task_moved = crate::versions::tests::root_of(&[("t", Some("f2"), Some("s"))]);
+        let spec_moved = crate::versions::tests::root_of(&[("t", Some("f1"), Some("s2"))]);
+        let other_task = crate::versions::tests::root_of(&[("u", Some("g"), Some("s3"))]);
+        assert!(
+            compare_checked(&a, &same, false).unwrap()["version_mismatch"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        // Tasks only one side has are not compared with anything.
+        assert!(compare_checked(&a, &other_task, false).is_ok());
+        for other in [&task_moved, &spec_moved] {
+            let error = compare_checked(&a, other, false).unwrap_err().to_string();
+            assert!(error.contains("differs"), "{error}");
+            let cmp = compare_checked(&a, other, true).unwrap();
+            assert_eq!(cmp["version_mismatch"][0]["task"], "t");
+            // The comparison table still prints the mismatch.
+            print_compare(&cmp);
+        }
     }
 }

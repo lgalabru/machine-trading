@@ -21,6 +21,12 @@
 //! - the task tables in `README.md` and `bench/tasks/README.md`, between
 //!   their `mtx:tasks` markers;
 //! - each task's `solution/`: a copy of its reference, but `main.rs`;
+//! - each task's `tests/anchor.digest`, what the engine does to its anchors
+//!   (kept as committed while its inputs are unchanged; `mtx task sync`
+//!   plays the anchors when they changed, `--anchors` always:
+//!   [`crate::anchors`]);
+//! - each task's `tests/task.fingerprint`, the hash the verifier writes into
+//!   every report ([`crate::versions::fingerprint`]);
 //! - the scoring rules in a v2 task's `instruction.md`, between its
 //!   `mtx:scoring` markers ([`crate::scoring_text`]).
 
@@ -448,6 +454,34 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
                 with_practice_scoring(&text, &practice_scoring(&script)).into_bytes(),
             );
         }
+        // The anchor digest stays as committed while its inputs are the
+        // ones it was played from; otherwise it is pending until `mtx task
+        // sync --anchors` plays them (it doesn't, here: no sessions).
+        let (inputs, informed) = crate::anchors::inputs(root, &task.dir, &|path| {
+            files
+                .get(path)
+                .cloned()
+                .or_else(|| std::fs::read(root.join(path)).ok())
+        })?;
+        let digest = match crate::anchors::committed(root, &task.dir) {
+            Some(d) if d.inputs == inputs && d.informed == informed => d,
+            _ => crate::anchors::Digest::pending(&inputs, informed),
+        };
+        files.insert(
+            folder.join(crate::anchors::DIGEST_FILE),
+            digest.text().into_bytes(),
+        );
+        // Last: it reads the files above as they will be.
+        let fingerprint = crate::versions::fingerprint(root, &task.dir, &|path| {
+            files
+                .get(path)
+                .cloned()
+                .or_else(|| std::fs::read(root.join(path)).ok())
+        })?;
+        files.insert(
+            folder.join(crate::versions::FINGERPRINT_FILE),
+            format!("{fingerprint}\n").into_bytes(),
+        );
     }
     Ok(files)
 }
@@ -666,6 +700,27 @@ fn dataset_with(text: &str, tasks: &[Task]) -> Result<String> {
     Ok(out)
 }
 
+/// Build and play the anchors of every task and write the digests. Slow,
+/// and Linux only: [`crate::anchors::compute`].
+pub fn play_anchor_digests(root: &Path) -> Result<()> {
+    for task in load(root)? {
+        eprintln!("{}: playing the anchors for tests/anchor.digest", task.dir);
+        let digest = crate::anchors::compute(root, &task.dir)?;
+        crate::anchors::write(root, &task.dir, &digest)?;
+    }
+    Ok(())
+}
+
+/// The tasks whose `tests/anchor.digest` isn't played yet (missing or
+/// `pending`).
+pub fn pending_digests(root: &Path) -> Result<Vec<String>> {
+    Ok(load(root)?
+        .into_iter()
+        .filter(|t| crate::anchors::committed(root, &t.dir).is_none_or(|d| d.is_pending()))
+        .map(|t| t.dir)
+        .collect())
+}
+
 /// Write every generated file. Returns the ones that changed.
 pub fn sync(root: &Path) -> Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
@@ -741,6 +796,11 @@ mod tests {
         let root = crate::authoring::repo_root();
         let stale = stale(&root).unwrap();
         assert!(stale.is_empty(), "run `mtx task sync`: stale {stale:?}");
+        let pending = pending_digests(&root).unwrap();
+        assert!(
+            pending.is_empty(),
+            "run `mtx task sync --anchors` on Linux: pending digests {pending:?}"
+        );
     }
 
     #[test]

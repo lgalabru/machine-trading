@@ -681,7 +681,7 @@ fn toml_string(s: &str) -> String {
     serde_json::to_string(s.trim()).unwrap_or_default()
 }
 
-fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> Result<()> {
     std::fs::create_dir_all(to).with_context(|| to.display().to_string())?;
     for entry in std::fs::read_dir(from).with_context(|| from.display().to_string())? {
         let entry = entry?;
@@ -1958,12 +1958,26 @@ mod tests {
             [
                 PathBuf::from(format!("bench/tasks/{name}/environment/Dockerfile")),
                 PathBuf::from(format!("bench/tasks/{name}/instruction.md")),
+                // The informed bot was rewritten above: the digest of what
+                // the engine does to the anchors was played from the copy.
+                PathBuf::from(format!("bench/tasks/{name}/tests/anchor.digest")),
+                // The rules the grader reads changed, so the task did.
+                PathBuf::from(format!("bench/tasks/{name}/tests/task.fingerprint")),
             ]
         );
         let (scoring, detail) = state_of(&status(&root, name).unwrap(), "scoring");
         assert_eq!(scoring, "todo");
         assert!(detail.contains("stale"), "{detail}");
         tasks::sync(&root).unwrap();
+        // A sync that can't play the anchors leaves the digest pending, and
+        // says so; `mtx task check` and CI refuse it.
+        assert!(
+            tasks::pending_digests(&root)
+                .unwrap()
+                .contains(&name.to_string())
+        );
+        assert!(read(&task.join("tests/anchor.digest")).contains("digest: pending"));
+        assert!(read(&task.join("tests/task.fingerprint")).trim().len() == 64);
         assert!(read(&task.join("instruction.md")).contains("**Losses count 2 times.**"));
         assert!(read(&task.join("environment/Dockerfile")).contains(
             "ENV MTX_PRACTICE_SCORING=\"--scoring v2-headline --loss-weight 2 --v2-sessions\""
