@@ -163,14 +163,13 @@ impl FeedActor {
                 .map_err(|e| e.to_string())
         })
         .await;
-        match sent {
-            Ok(Ok(())) => true,
-            Ok(Err(error)) | Err(error) => {
-                let error = error.to_string();
-                tracing::warn!(%error, "a feed gateway's call didn't land");
-                false
-            }
-        }
+        let error = match sent {
+            Ok(Ok(())) => return true,
+            Ok(Err(error)) => error,
+            Err(error) => error.to_string(),
+        };
+        tracing::warn!(%error, "a feed gateway's call didn't land");
+        false
     }
 }
 

@@ -1,0 +1,68 @@
+{
+  "anchors": {
+    "informed": "informed",
+    "reference": "reference"
+  },
+  "count": 72,
+  "exploits": {
+    "below": "informed",
+    "bots": [],
+    "max_profitable": 0.75
+  },
+  "family": "flipped-feed",
+  "gates": {
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop",
+      "follow-all",
+      "fade-all",
+      "follow-first",
+      "post-move",
+      "twap"
+    ]
+  },
+  "min_rule_odds": 0.85,
+  "probes": {},
+  "rules": [
+    "max(follow-all, fade-all, follow-first) < reference",
+    "max(post-move, twap) < reference",
+    "reference < informed"
+  ],
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "follow-all",
+      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/follow-all"
+    },
+    {
+      "name": "fade-all",
+      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/fade-all"
+    },
+    {
+      "name": "follow-first",
+      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/follow-first"
+    },
+    {
+      "name": "post-move",
+      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/post-move"
+    },
+    {
+      "name": "twap",
+      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/naive/rungs/twap"
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/flipped-feed-nvda/reference"
+    },
+    {
+      "name": "informed",
+      "dir": "bench/tasks/flipped-feed-nvda/checks/bots/informed",
+      "tell_latent": true
+    }
+  ]
+}
