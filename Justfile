@@ -488,7 +488,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     if [ -n "${MTX_UNGUARDED:-}" ] && python3 -I -c 'import sys; sys.exit(0 if "native:" in sys.argv[1] else 1)' "{{models}}"; then
       unguarded=1
       echo "WARNING: MTX_UNGUARDED is set: native harnesses run with their provider's API open and a real key" >&2
-      echo "WARNING: in the agent's environment. Guarded tasks are NOT guarded in this batch; it is a screen, not for publication." >&2
+      echo "WARNING: in the agent's environment. Guarded tasks are NOT guarded in this batch; it can't be published." >&2
     fi
     for model in {{models}}; do
       case "$model" in
@@ -612,6 +612,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     scan_batch() {
       [ -z "$scanned" ] || return 0
       scanned=1
+      [ -z "$unguarded" ] || python3 -I bench/harness/models.py fetch-scan "$batch" || true
       kill "$watcher" ${proxy:+"$proxy"} 2> /dev/null || true
       if python3 -I bench/harness/models.py scan "$batch" > "$batch/.scan" 2>&1; then
         mv "$batch/.scan" "$batch/.scan-passed"
@@ -672,7 +673,7 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     python3 -I bench/report.py "$batch"
     echo "browse it: just review $batch"
     if [ -n "$unguarded" ]; then
-      echo "WARNING: this batch was not guarded (guarded: false in batch.json): a screen, not for publication"
+      echo "WARNING: this batch was not guarded (guarded: false in batch.json): it can't be published"
     else
       echo "publish it: just publish $batch {{version}}"
     fi
