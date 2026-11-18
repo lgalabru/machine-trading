@@ -121,6 +121,29 @@ separate probe secret only (a 48-session recording and its replay model).
   reference reads the informed maker only after one or two of its moves
   (it follows a maker in about a third of sessions on the replay).
 
+### Second set, and the rework
+
+A second fresh 72-session set on main with #118 to #122 merged (shared
+worlds, maker odd lots, component anchors, solution exports):
+
+| Set | Reference / informed (v2) | Reference Sharpe | Informed Sharpe | Order |
+| --- | --- | --- | --- | --- |
+| 1 | 0.29 | 0.27 | 0.62 | 0.993 |
+| 2 | 0.46 | 0.25 | 0.46 | 0.996 |
+| pooled (144) | 0.38 | **0.2494** | 0.52 | 0.999 |
+
+Every non-reading rung lost on both sets (best: nop at 0). Pooled, the
+reference's Sharpe sits under the 0.25 floor by 0.0006: the one rework.
+No reference rule did better on the replay (leads of 25 to 35 bp, half
+size until a wider lead, dropping a maker that loses the lead: Sharpe 0.16
+to 0.22 against 0.22), so the rework lengthens the session within the
+measured regime: 4,500 slots (09:31 to 10:01, inside Table 2's 09:31 to
+10:30 window), where each session holds about 1.5 times the informed
+maker's leads. Set 2 ran while a third container (another agent's) shared
+the runner for part of it; every rung is trusted and the world waits for
+its turns, and every report shows 0 late slots, 0 overruns and 0 late
+sends.
+
 ## Risks for the full build
 
 - Thin margins: the band (0.29) and the reference's Sharpe (0.27) sit near
