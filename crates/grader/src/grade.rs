@@ -123,6 +123,10 @@ pub struct GradeReport {
     /// score, and `skill` and `reference_ratio` are left out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headline: Option<String>,
+    /// The task and the scoring rule that produced this grade: grades with
+    /// other versions aren't comparable.
+    #[serde(default, skip_serializing_if = "crate::versions::Versions::is_empty")]
+    pub versions: crate::versions::Versions,
     /// Set when the grade stopped at the bot's first breach
     /// ([`GradeOptions::stop_on_disqualify`]): `scenarios` is then only the
     /// sessions up to it, which scoring v2 refuses to score.
@@ -1054,6 +1058,8 @@ pub struct Verdict {
     pub tampered: Option<String>,
     pub not_graded: Option<String>,
     pub eval_seed_sha256: Option<String>,
+    #[serde(default)]
+    pub versions: crate::versions::Versions,
     pub truncated: Option<Truncated>,
     /// The report's sessions, for what only they hold (see
     /// [`ScenarioResult::nop_pnl_usd`]).
@@ -1083,6 +1089,7 @@ pub fn rescore(sessions: Vec<(SessionReport, Scenario)>, verdict: Verdict) -> Gr
         }
     };
     report.eval_seed_sha256 = verdict.eval_seed_sha256;
+    report.versions = verdict.versions;
     report.truncated = verdict.truncated;
     for (result, stored) in report.scenarios.iter_mut().zip(&verdict.scenarios) {
         result.nop_pnl_usd = stored.nop_pnl_usd;
@@ -1187,6 +1194,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         markout: total_markout(&scenarios),
         v2: None,
         headline: None,
+        versions: Default::default(),
         truncated: None,
         scenarios,
         anchors: Vec::new(),
@@ -1306,6 +1314,23 @@ fn total_markout(sessions: &[ScenarioResult]) -> Option<Decomposition> {
 /// The share of a market-making session's taker orders that may fail before
 /// the session isn't scored.
 pub const MAX_FAILED_TAKER_SHARE: f64 = 0.1;
+
+/// The version of v1's scoring (`reward` and `skill`, and what disqualifies
+/// a bot): bump it with any change to how a session maps to them that
+/// [`v1_spec_hash`]'s constants don't capture.
+pub const V1_CODE_VERSION: &str = "1.0";
+
+/// A hash of what fixes v1's scores, written into every v1 grade's report
+/// (and a v2 grade that keeps v1's reward): the code version, the clamp
+/// and the failed-taker share.
+pub fn v1_spec_hash() -> String {
+    let spec = serde_json::json!({
+        "code": V1_CODE_VERSION,
+        "reward_clamp": [0.0, 1.0],
+        "max_failed_taker_share": MAX_FAILED_TAKER_SHARE,
+    });
+    crate::versions::hash_parts([("scoring-v1", spec.to_string().as_bytes())])
+}
 
 /// Fail the grade, as an infrastructure error, rather than score sessions
 /// that didn't run as their scenarios describe. Harbor retries a failed
@@ -1756,6 +1781,20 @@ mod tests {
 
     use super::*;
     use crate::scenario::{VENUE, Waypoint};
+
+    #[test]
+    fn v1_has_its_own_pinned_spec_hash() {
+        let hash = v1_spec_hash();
+        assert_eq!(hash.len(), 64);
+        // A change to a v1 constant changes it: if deliberate, bump
+        // V1_CODE_VERSION and update the pin.
+        assert_eq!(
+            hash,
+            "6a70cd975247a7d87762a11def8de43537712f39c3e7e4ad3903a3ea443cb80e"
+        );
+        let v2 = scoring_v2::Params::new(scoring_v2::Ceiling::Informed { eta_override: None });
+        assert_ne!(hash, scoring_v2::spec_hash(&v2));
+    }
 
     #[test]
     fn a_failed_trusted_phase_leaves_its_logs_and_a_good_one_holds_them() {

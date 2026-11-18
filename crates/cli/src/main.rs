@@ -25,6 +25,8 @@ use tracing_subscriber::EnvFilter;
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod acp;
+#[cfg(feature = "generate")]
+mod anchors;
 mod author;
 #[cfg(feature = "generate")]
 mod authoring;
@@ -53,6 +55,7 @@ mod tables;
 mod tasks;
 mod tools;
 mod ui;
+mod versions;
 
 /// The snapshot `scenario new` and `play` start from: the checkout's, by
 /// absolute path, so an installed `mtx` finds it from any directory.
@@ -247,6 +250,11 @@ enum Command {
         /// `bot/<scenario>.json.gz` and `reference/<scenario>.json.gz`.
         #[arg(long)]
         details: Option<PathBuf>,
+        /// The task's fingerprint, written into the report with the scoring
+        /// spec's hash (default: the file `mtx task sync` ships to the
+        /// verifier, /tests/task.fingerprint, if it is there).
+        #[arg(long, env = "MTX_TASK_FINGERPRINT")]
+        task_fingerprint: Option<String>,
         #[command(flatten)]
         scoring: rescore::ScoringArgs,
     },
@@ -505,12 +513,36 @@ enum TaskCommand {
     Guide { step: String },
     /// The repository's tasks.
     List,
+    /// A task's fingerprint: a hash over what changes what it measures (its
+    /// spec, scenario family, practice files, anchors, mandate and grader
+    /// version, and what the engine does to its anchors), as every grade of
+    /// it records.
+    Fingerprint { task: String },
     /// Write the lists kept from the task folders' `[metadata.mtx]`: the
     /// Justfile's and the image's task lists, the dataset's and the READMEs'
-    /// tables.
-    Sync,
+    /// tables, each task's `solution/` and its fingerprint. A task whose
+    /// anchors' inputs changed gets a `pending` anchor digest (a warning
+    /// says so; `check` and CI refuse it) unless `--anchors` plays them.
+    Sync {
+        /// Build and play every task's anchors and write their digests
+        /// (Linux, `just` and Surfpool installed: see `anchor-digest`).
+        #[arg(long)]
+        anchors: bool,
+    },
     /// Fail if `mtx task sync` would change a file.
     Check,
+    /// What the engine does to a task's anchors: play the reference (and
+    /// the informed bot) on a fixed public draw and hash the sessions. With
+    /// `--check`, fail when the digest differs from the committed
+    /// `tests/anchor.digest`: an engine change altered what the task does.
+    /// Builds the anchors; needs Linux, `just` and Surfpool.
+    AnchorDigest {
+        /// The tasks (default: every task).
+        tasks: Vec<String>,
+        /// Compare with the committed digests instead of printing them.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(clap::Args)]
@@ -562,6 +594,11 @@ enum BenchCommand {
         /// Don't open a browser.
         #[arg(long)]
         no_open: bool,
+        /// Go on although the trials mix task fingerprints or scoring
+        /// hashes (their scores aren't on one scale); the output lists the
+        /// mismatch.
+        #[arg(long)]
+        allow_version_mismatch: bool,
         /// Where published releases are; defaults to this checkout's
         /// bench/results.
         #[arg(long)]
@@ -591,6 +628,11 @@ enum BenchCommand {
         /// nothing.
         #[arg(long)]
         local: bool,
+        /// Go on although the trials mix task fingerprints or scoring
+        /// hashes (their scores aren't on one scale); the output lists the
+        /// mismatch.
+        #[arg(long)]
+        allow_version_mismatch: bool,
         /// Publish trials without an agent trajectory (refused otherwise).
         #[arg(long)]
         allow_missing_trajectories: bool,
@@ -652,6 +694,11 @@ enum BenchCommand {
         /// Fail unless every trial scores as it was reported.
         #[arg(long)]
         check: bool,
+        /// Go on although the trials mix task fingerprints or scoring
+        /// hashes (their scores aren't on one scale); the output lists the
+        /// mismatch.
+        #[arg(long)]
+        allow_version_mismatch: bool,
         #[arg(long)]
         results: Option<PathBuf>,
         #[command(flatten)]
@@ -668,6 +715,11 @@ enum BenchCommand {
         /// Server port for --open; 0 picks a free one.
         #[arg(long, default_value_t = 0)]
         port: u16,
+        /// Go on although the trials mix task fingerprints or scoring
+        /// hashes (their scores aren't on one scale); the output lists the
+        /// mismatch.
+        #[arg(long)]
+        allow_version_mismatch: bool,
         #[arg(long)]
         results: Option<PathBuf>,
     },
@@ -973,9 +1025,51 @@ async fn run() -> Result<()> {
             })?
         }
         #[cfg(feature = "generate")]
-        Command::Task(TaskCommand::Sync) => {
-            let changed = tasks::sync(&authoring::repo_root())?;
+        Command::Task(TaskCommand::Sync { anchors }) => {
+            let root = authoring::repo_root();
+            if anchors {
+                tasks::play_anchor_digests(&root)?;
+            }
+            let changed = tasks::sync(&root)?;
+            let pending = tasks::pending_digests(&root)?;
+            if !pending.is_empty() {
+                eprintln!(
+                    "warning: tests/anchor.digest is pending for {}: CI refuses it. Run `mtx task sync --anchors` on Linux, or commit the digest CI prints",
+                    pending.join(", ")
+                );
+            }
             serde_json::to_string_pretty(&changed)?
+        }
+        #[cfg(feature = "generate")]
+        Command::Task(TaskCommand::AnchorDigest { tasks, check }) => {
+            let root = authoring::repo_root();
+            let names: Vec<String> = if tasks.is_empty() {
+                tasks::load(&root)?.into_iter().map(|t| t.dir).collect()
+            } else {
+                tasks
+            };
+            let mut out = serde_json::Map::new();
+            let mut failed = Vec::new();
+            for name in &names {
+                if check {
+                    match anchors::check(&root, name)? {
+                        None => {
+                            out.insert(name.clone(), "unchanged".into());
+                        }
+                        Some(why) => {
+                            eprintln!("{why}");
+                            failed.push(name.clone());
+                        }
+                    }
+                } else {
+                    let digest = anchors::compute(&root, name)?;
+                    out.insert(name.clone(), serde_json::json!(digest.digest));
+                }
+            }
+            if !failed.is_empty() {
+                anyhow::bail!("anchor digest differs for: {}", failed.join(", "));
+            }
+            serde_json::to_string_pretty(&out)?
         }
         #[cfg(feature = "generate")]
         Command::Task(TaskCommand::Check) => {
@@ -990,7 +1084,23 @@ async fn run() -> Result<()> {
                         .join(", ")
                 );
             }
+            let pending = tasks::pending_digests(&authoring::repo_root())?;
+            if !pending.is_empty() {
+                anyhow::bail!(
+                    "tests/anchor.digest is pending for {}: run `mtx task sync --anchors` on Linux",
+                    pending.join(", ")
+                );
+            }
             serde_json::to_string_pretty(&stale)?
+        }
+        #[cfg(feature = "generate")]
+        Command::Task(TaskCommand::Fingerprint { task }) => {
+            let root = authoring::repo_root();
+            let fingerprint =
+                versions::fingerprint(&root, &task, &|p| std::fs::read(root.join(p)).ok())?;
+            serde_json::to_string_pretty(
+                &serde_json::json!({ "task": task, "fingerprint": fingerprint }),
+            )?
         }
         #[cfg(feature = "generate")]
         Command::Task(TaskCommand::List) => {
@@ -999,11 +1109,16 @@ async fn run() -> Result<()> {
         Command::Bench(BenchCommand::Rescore {
             path,
             check,
+            allow_version_mismatch,
             results,
             scoring,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
-            let summary = rescore::rescore_trials(&publish::resolve(&path, &results)?, &scoring)?;
+            let summary = rescore::rescore_trials(
+                &publish::resolve(&path, &results)?,
+                &scoring,
+                allow_version_mismatch,
+            )?;
             if check && (summary["changed"] != 0 || summary["failed"] != 0) {
                 eprintln!("{}", serde_json::to_string_pretty(&summary)?);
                 anyhow::bail!(
@@ -1066,6 +1181,7 @@ async fn run() -> Result<()> {
             path,
             port,
             no_open,
+            allow_version_mismatch,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
@@ -1073,6 +1189,7 @@ async fn run() -> Result<()> {
             let summary = review::review(
                 publish::roots(first, &results),
                 review::ReviewOptions {
+                    allow_version_mismatch,
                     port,
                     open: !no_open,
                     start: None,
@@ -1139,6 +1256,7 @@ async fn run() -> Result<()> {
             force,
             artifacts,
             local,
+            allow_version_mismatch,
             allow_missing_trajectories,
             results,
         }) => {
@@ -1151,6 +1269,7 @@ async fn run() -> Result<()> {
                 force,
                 artifacts.as_deref(),
                 local,
+                allow_version_mismatch,
                 allow_missing_trajectories,
             )?;
             ui::done(format!(
@@ -1228,6 +1347,7 @@ async fn run() -> Result<()> {
             range,
             open,
             port,
+            allow_version_mismatch,
             results,
         }) => {
             let results = results.unwrap_or_else(publish::results_dir);
@@ -1236,7 +1356,7 @@ async fn run() -> Result<()> {
                 publish::resolve(&a, &results)?,
                 publish::resolve(&b, &results)?,
             );
-            let cmp = publish::compare(&a, &b);
+            let cmp = publish::compare_checked(&a, &b, allow_version_mismatch)?;
             publish::print_compare(&cmp);
             if open {
                 let start = format!("compare/{}...{}", a.label, b.label);
@@ -1247,6 +1367,7 @@ async fn run() -> Result<()> {
                 review::review(
                     roots,
                     review::ReviewOptions {
+                        allow_version_mismatch,
                         port,
                         open: true,
                         start: Some(start),
@@ -1447,9 +1568,20 @@ async fn run() -> Result<()> {
             reward,
             report,
             details,
+            task_fingerprint,
             scoring,
         } => {
             let v2 = scoring.params(None)?;
+            let versions = mtx_grader::versions::Versions {
+                task_fingerprint: versions::recorded_fingerprint(
+                    task_fingerprint,
+                    std::path::Path::new(versions::VERIFIER_FINGERPRINT),
+                ),
+                scoring_hash: Some(match &v2 {
+                    Some(params) => mtx_grader::scoring_v2::spec_hash(params),
+                    None => mtx_grader::grade::v1_spec_hash(),
+                }),
+            };
             v2_scores_every_session(stop_on_disqualify, v2.as_ref())?;
             #[cfg_attr(not(feature = "generate"), allow(unused_mut))]
             let mut regimes: Option<Vec<String>> = None;
@@ -1581,6 +1713,7 @@ async fn run() -> Result<()> {
             // the report is written with its v1 scores first; as the one
             // score, nothing is: a v1 score never stands in for it.
             let v2_failed = v2.as_ref().and_then(|params| graded.score_v2(params).err());
+            graded.versions = versions;
             let json = serde_json::to_string_pretty(&graded)?;
             if let Some(path) = report {
                 match report_to_write(v2.as_ref(), v2_failed.is_some(), &json) {

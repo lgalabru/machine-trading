@@ -93,6 +93,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+/// The scoring code's version: bump it with any change to how `score` maps
+/// sessions to a score that no constant or [`Params`] field captures, so the
+/// spec hash moves ([`spec_hash`]).
+pub const CODE_VERSION: &str = "2.1";
 /// The loss weight `k` by default.
 pub const LOSS_WEIGHT: f64 = 1.5;
 /// The reference anchor's floor `φ`, as a share of the ceiling, by default.
@@ -154,6 +158,64 @@ pub struct Params {
     /// report, and the 1 must be the task's informed bot: a grade that would
     /// take a hindsight, proxy or given ceiling fails instead.
     pub headline: bool,
+}
+
+/// A hash of everything that fixes how a grade is scored: the code version,
+/// every default and floor, the clamps, and these settings (`k`, `φ`, `λ`,
+/// the ceiling, the hindsight cost, the resamples, the headline). Written
+/// into every report: two scores are on one scale only when it matches.
+///
+/// It hashes the settings as they take effect: a headline grade's floor is
+/// [`ANCHOR_FLOOR`] when none is given (its ceiling is always the informed
+/// bot's), so a rescore that spells that out keeps the hash. A grade that
+/// keeps v1's `reward` carries v1's spec too ([`crate::grade::v1_spec_hash`]).
+///
+/// `Params` is destructured whole: a field added to it without a line here
+/// is a compile error.
+pub fn spec_hash(params: &Params) -> String {
+    let Params {
+        loss_weight,
+        anchor_floor,
+        risk_weight,
+        ceiling,
+        hindsight_cost,
+        resamples,
+        headline,
+    } = params;
+    let ceiling = match ceiling {
+        Ceiling::Informed { eta_override } => serde_json::json!({ "informed": eta_override }),
+        Ceiling::Given(given) => serde_json::json!({ "given": given }),
+    };
+    let anchor_floor = match (anchor_floor, headline) {
+        (None, true) => Some(ANCHOR_FLOOR),
+        (floor, _) => *floor,
+    };
+    let spec = serde_json::json!({
+        "code": CODE_VERSION,
+        "defaults": {
+            "loss_weight": LOSS_WEIGHT,
+            "anchor_floor": ANCHOR_FLOOR,
+            "hindsight_anchor_floor": HINDSIGHT_ANCHOR_FLOOR,
+            "risk_weight": RISK_WEIGHT,
+            "hindsight_cost": HINDSIGHT_COST,
+            "raw_floor": RAW_FLOOR,
+            "breach_rate_weight": BREACH_RATE_WEIGHT,
+            "resamples": RESAMPLES,
+            "ci_level": CI_LEVEL,
+        },
+        "score_clamp": [0.0, 1.0],
+        "params": {
+            "loss_weight": loss_weight,
+            "anchor_floor": anchor_floor,
+            "risk_weight": risk_weight,
+            "ceiling": ceiling,
+            "hindsight_cost": hindsight_cost,
+            "resamples": resamples,
+            "headline": headline,
+        },
+        "v1": if *headline { None } else { Some(crate::grade::v1_spec_hash()) },
+    });
+    crate::versions::hash_parts([("scoring-spec", spec.to_string().as_bytes())])
 }
 
 impl Params {
@@ -1438,6 +1500,83 @@ impl SplitMix64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_spec_hash_moves_with_every_setting_and_only_with_them() {
+        let base = Params::new(Ceiling::Informed { eta_override: None });
+        let hash = spec_hash(&base);
+        assert_eq!(hash.len(), 64);
+        assert_eq!(hash, spec_hash(&base.clone()));
+        let moved = [
+            Params {
+                loss_weight: 2.0,
+                ..base.clone()
+            },
+            Params {
+                anchor_floor: Some(0.2),
+                ..base.clone()
+            },
+            Params {
+                risk_weight: 0.0,
+                ..base.clone()
+            },
+            Params {
+                hindsight_cost: 1e-3,
+                ..base.clone()
+            },
+            Params {
+                resamples: 10,
+                ..base.clone()
+            },
+            Params {
+                headline: true,
+                ..base.clone()
+            },
+            Params::new(Ceiling::Informed {
+                eta_override: Some(0.5),
+            }),
+            Params::new(Ceiling::Given(Default::default())),
+        ];
+        for p in &moved {
+            assert_ne!(spec_hash(p), hash, "{p:?}");
+        }
+    }
+
+    #[test]
+    fn a_headline_grades_default_floor_hashes_as_the_floor_it_resolves_to() {
+        let headline = Params {
+            headline: true,
+            ..Params::new(Ceiling::Informed { eta_override: None })
+        };
+        let spelled = Params {
+            anchor_floor: Some(ANCHOR_FLOOR),
+            ..headline.clone()
+        };
+        assert_eq!(spec_hash(&headline), spec_hash(&spelled));
+        // Not a headline: the floor depends on the ceiling's source, so it stays.
+        let plain = Params {
+            headline: false,
+            ..headline.clone()
+        };
+        let plain_spelled = Params {
+            headline: false,
+            ..spelled
+        };
+        assert_ne!(spec_hash(&plain), spec_hash(&plain_spelled));
+        // v1's reward stays in a grade that keeps it, and is out of a headline.
+        assert_ne!(spec_hash(&plain), spec_hash(&headline));
+    }
+
+    #[test]
+    fn the_default_spec_hash_is_pinned() {
+        // A change to a scoring constant changes this hash: if it is
+        // deliberate, bump CODE_VERSION and update the pin.
+        let base = Params::new(Ceiling::Informed { eta_override: None });
+        assert_eq!(
+            spec_hash(&base),
+            "427836cf868d4212e805102e627416b54a0b30f87f0077b9bceedf0a350df3cd"
+        );
+    }
+
     use super::*;
 
     /// Sessions with a hindsight bound of 1,000 and an informed bot making
