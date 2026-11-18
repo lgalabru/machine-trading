@@ -144,6 +144,30 @@ the runner for part of it; every rung is trusted and the world waits for
 its turns, and every report shows 0 late slots, 0 overruns and 0 late
 sends.
 
+### Gate 0 after the rework (4,500-slot sessions)
+
+One fresh 72-session set from a new secret, every rung a component, one
+container on runner-14:
+
+| Rung | Total | Mean | sd | v2-weighted share of informed |
+| --- | --- | --- | --- | --- |
+| most-skewed | -360 | -5.00 | 6.97 | -1.36 |
+| neutral | -204 | -2.84 | 3.87 | -0.74 |
+| mean-skew | -109 | -1.51 | 6.48 | -0.53 |
+| seat-a | -104 | -1.45 | 8.90 | -0.55 |
+| twap | -56 | -0.78 | 5.25 | -0.34 |
+| nop | 0 | 0 | 0 | 0 |
+| reference | 255 | 3.54 | 9.00 | 0.58 |
+| informed | 440 | 6.11 | 10.75 | 1.00 |
+
+- Signal: every non-reading rung loses (best nop, 0); informed at least 2x
+  the best on 1.000 of bootstraps.
+- Order holds on 1.000 of 2,000 bootstrapped 72-session sets.
+- Band: reference 0.58 of informed (v2, k = 1.5), Sharpe 0.39; informed's
+  Sharpe 0.57. **Passed.** The longer session leaves the reference more
+  time to follow once it has read the maker, so the band rose from 0.38 to
+  0.58: still inside 0.2 to 0.7, above the 0.5 target.
+
 ## Risks for the full build
 
 - Thin margins: the band (0.29) and the reference's Sharpe (0.27) sit near
