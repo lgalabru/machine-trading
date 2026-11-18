@@ -1721,10 +1721,12 @@ fn calibration_check(root: &Path, exe: &Path, task: &str, family: &str) -> Check
                 .map_or(file.clone(), |n| n.to_string_lossy().into_owned());
             let status = realism_status(output.status.code(), &report);
             let detail = format!("{name}: {}", realism_summary(&report));
-            let detail = if status == Status::Inconclusive {
-                format!("not judged: {detail}")
-            } else {
-                detail
+            let detail = match (status, report["verdict"].as_str()) {
+                (Status::Inconclusive, Some("stylised")) => {
+                    format!("stylised paths, not a market: {detail}")
+                }
+                (Status::Inconclusive, _) => format!("not judged: {detail}"),
+                _ => detail,
             };
             Check::new(REALISTIC, id, title, status, detail)
         }
@@ -1734,14 +1736,15 @@ fn calibration_check(root: &Path, exe: &Path, task: &str, family: &str) -> Check
 
 /// What a realism report's exit code and verdict make of the check. A market
 /// not judged (exit 3, or verdict `not_judged`: the return checks didn't run)
-/// is neither a pass nor a failure; a failed check (exit 2) or any other
-/// error fails.
+/// and hand-set stress paths that miss the real asset's bands (exit 4,
+/// verdict `stylised`) are neither a pass nor a failure; a failed check
+/// (exit 2) or any other error fails.
 fn realism_status(code: Option<i32>, report: &Value) -> Status {
+    let inconclusive = |verdict: &str| report["verdict"] == verdict;
     match code {
-        Some(0) if report["passed"] == true && report["verdict"] != "not_judged" => Status::Pass,
-        Some(0) | Some(3) if report["verdict"] == "not_judged" || code == Some(3) => {
-            Status::Inconclusive
-        }
+        Some(0) if report["passed"] == true && !inconclusive("not_judged") => Status::Pass,
+        Some(0) | Some(3) if inconclusive("not_judged") || code == Some(3) => Status::Inconclusive,
+        Some(0) | Some(4) if inconclusive("stylised") || code == Some(4) => Status::Inconclusive,
         _ => Status::Fail,
     }
 }
@@ -1959,7 +1962,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         checks.push(full_only(
             GRADED,
             "keypair-probe",
-            "A bot can't read the grader's keypairs",
+            "A bot can't read the grader's secret, temp dirs or keypairs",
         ));
     } else {
         // Harbor adds a job directory per run and the checks read the last
@@ -1994,9 +1997,9 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         checks.push(Check::from(
             GRADED,
             "keypair-probe",
-            "A bot can't read the grader's keypairs",
+            "A bot can't read the grader's secret, temp dirs or keypairs",
             ok,
-            if ok { "no keypair readable".into() } else { d },
+            if ok { "no surface readable".into() } else { d },
         ));
         if tasks::guarded(root, task) {
             let (ok, d) = run_in(root, "just", &["network-probe", task], false)?;
@@ -2821,6 +2824,14 @@ mod tests {
         );
         assert_eq!(
             realism_status(Some(2), &report(true, "not_judged")),
+            Status::Fail
+        );
+        assert_eq!(
+            realism_status(Some(4), &report(false, "stylised")),
+            Status::Inconclusive
+        );
+        assert_eq!(
+            realism_status(Some(2), &report(false, "stylised")),
             Status::Fail
         );
         assert_eq!(realism_status(Some(1), &report(true, "pass")), Status::Fail);
