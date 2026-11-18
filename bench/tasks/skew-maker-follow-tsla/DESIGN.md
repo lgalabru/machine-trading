@@ -20,6 +20,62 @@ which one leans ahead of the price, and follows that maker's lean.
 - **Mandate:** TSLA only, a 2 TSLA cap, a $150 loss limit, valued at the
   index (what is left at the end closes at the closing index less 5 bp).
 
+## Mandate (checklist item 0)
+
+**As built and gated, C1 is an alpha card, not a desk mandate.** The desk
+starts flat with no duty: it may trade within a 2 TSLA cap, and its whole
+payoff is a directional position taken on the read (the take expression;
+the maker lean rarely fills behind the splines' 2.1 bp touch). Doing
+nothing scores exactly 0, which fails no duty. Item 0 asks for a rewrite,
+so the gates above (sets 1, 2 and the rework) measure the read's strength,
+not a mandate's.
+
+**Reframe: informed execution (item 0's sweet spot, as card 1 and B6).**
+
+- **What the desk must do.** Each session hands the desk an order: buy (or
+  sell) Q TSLA by the session's end, Q drawn per session (for example 4 to
+  8, sized to the book near the touch), the side drawn with equal odds and
+  mirrored in pairs. It must end within 80 to 100% of Q (the tolerance
+  band); whatever is left at the end is done by the broker at the closing
+  index plus (minus) a haircut. Same position cap (Q) and a loss limit out
+  of reach of the moves. Scored against the broker route (`order`, as B6):
+  doing nothing scores 0 and pays nothing, so the duty is set by charging
+  the unfilled band: below 80% the broker fills the rest at the haircut, and
+  the score is cost saved against TWAP over the session (the rung every
+  careful non-reader can run).
+- **How the read improves performance against the benchmark.** The read
+  never sets the side or the size; it sets pace and aggressiveness. When the
+  informed maker leans with the order's side (up ahead of a buy), the desk
+  crosses and front-loads before the move; when it leans against (down
+  ahead of a buy), the desk pauses or rests passively and buys after the
+  move, and within the band may finish nearer 80% if the price ran away. A
+  right read saves about the move (median jump 38 bp) on the share it
+  timed; a wrong read (a decoy's lean, or the informed maker's 15% wrong
+  horizons) buys ahead of a fall or waits through a rise, paying the move.
+- **Why doing nothing fails the duty.** An unfilled order goes to the
+  broker at the haircut, and below the band the shortfall is charged: idle
+  is a sure cost, TWAP is the honest non-reading baseline, and the blind
+  rungs (follow the mean lean, the most-leaned maker, one maker picked
+  blind) time the order on noise and pay crossing costs for it.
+- **What changes in the build.** The generator adds an `ExecutionOrder`
+  (side, Q, haircut) and start position 0, as B6's family does; the
+  mandate becomes the order's side with the cap at Q; the ladder's rungs
+  become `twap`, `dump` (all at once), `late`, `mean-skew`, `most-skewed`
+  and `seat-a` timing the same order; the reference and the informed bot
+  keep their reads and swap the follower for order pacing. The skewers,
+  the world and the told roster are unchanged. Gate 0 is re-run from
+  scratch on fork/main once actor validation phase 2 (actors at the
+  stated rate) and the maker fix (makers re-centre every step) have merged.
+
+An alternative is a market-making duty (quote both sides within a width,
+presence and minimum size, inventory within +/-N, scored on edge kept
+against a neutral quoter at the mandated width; the read sets skew and
+which side steps back). It fits the card's maker-reading story, but on main
+quoting obligations exist only in market-making sessions and are reported,
+not scored, and library actors inside a market-making session are
+unverified, so it needs engine work first. The batch 6 model also found the
+lean alone worth only 1.1 to 1.24x of a blind lean.
+
 ## The market
 
 - **Path.** TSLA's calibration from 09:31 New York on a drawn trading day,
