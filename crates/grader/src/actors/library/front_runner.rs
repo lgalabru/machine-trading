@@ -155,13 +155,21 @@ impl Inner {
             self.wallet.count("capped", 1);
             return;
         }
+        let before = self.wallet.seat().position().await.ok();
         if self
             .wallet
             .take(at, side, size, self.limit(side, price))
             .await
         {
-            self.held.push((side, size, self.steps));
-            self.wallet.count(what, 1);
+            // What filled: a take inside its limit may fill only part.
+            let filled = match (before, self.wallet.seat().position().await.ok()) {
+                (Some(before), Some(after)) => (after - before).abs().min(size),
+                _ => size,
+            };
+            if filled > 0.0 {
+                self.held.push((side, filled, self.steps));
+                self.wallet.count(what, 1);
+            }
         }
     }
 
@@ -402,6 +410,72 @@ mod tests {
         let tally = &ledger.report().actors[0];
         assert_eq!(tally.counts["front_runs"], 1);
         assert_eq!((tally.sold, tally.bought), (2.0, 2.0));
+    }
+
+    /// A seat that fills only half of a sale it is asked, and all of a buy.
+    struct Thin(Book);
+
+    #[async_trait::async_trait]
+    impl crate::venue::Seat for Thin {
+        fn market(&self) -> &str {
+            self.0.market()
+        }
+        fn executes(&self, action: &mtx_kit::Action) -> bool {
+            self.0.executes(action)
+        }
+        async fn send(&self, planned: &mtx_kit::Planned) -> mtx_kit::Sent {
+            self.0.send(planned).await
+        }
+        async fn take(&self, side: Side, size: f64, limit: f64) -> crate::venue::SeatResult {
+            let size = if side == Side::Ask { size / 2.0 } else { size };
+            self.0.take(side, size, limit).await
+        }
+        async fn rest(&self, side: Side, price: f64, size: f64) -> crate::venue::SeatResult {
+            self.0.rest(side, price, size).await
+        }
+        async fn cancel_all(&self) -> crate::venue::SeatResult {
+            self.0.cancel_all().await
+        }
+        async fn top(&self) -> crate::venue::SeatResult<(Option<f64>, Option<f64>)> {
+            self.0.top().await
+        }
+        async fn position(&self) -> crate::venue::SeatResult<f64> {
+            self.0.position().await
+        }
+        fn tick(&self) -> f64 {
+            self.0.tick()
+        }
+        fn lot(&self) -> f64 {
+            self.0.lot()
+        }
+    }
+
+    /// It buys back what it got, not what it asked for.
+    #[tokio::test]
+    async fn it_unwinds_what_filled_not_what_it_asked_for() {
+        let (book, _) = Book::new("f", 99.0, 101.0);
+        let position = book.position.clone();
+        let (wallet, _) = wallet(Thin(book));
+        let mut runner = Runner::new(
+            FrontRunner {
+                hold_steps: 2,
+                ..FrontRunner::default()
+            },
+            scale(),
+            wallet,
+            None,
+        );
+        for (s, flow) in [
+            (2, sold(4.0)),
+            (4, sold(4.0)),
+            (6, StepFlow::default()),
+            (8, StepFlow::default()),
+        ] {
+            runner.flow(&flow).await;
+            runner.after_blocks(&at(s, 100.0)).await;
+        }
+        // Asked to sell 2, sold 1; and it is flat again, not long 1.
+        assert!(position.lock().unwrap().abs() < 1e-9);
     }
 
     #[tokio::test]

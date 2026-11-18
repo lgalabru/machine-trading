@@ -93,6 +93,15 @@ impl FlowWatch {
         }
     }
 
+    /// Count from the positions the bot starts with, one per seat, so the
+    /// start's setup fill isn't read as its trading.
+    pub fn starting_at(mut self, positions: &[f64]) -> Self {
+        for (before, start) in self.positions.iter_mut().zip(positions) {
+            *before = *start;
+        }
+        self
+    }
+
     /// The flow since the last read. A market whose position can't be read
     /// counts as unmoved, and is read again next step.
     pub async fn step(&mut self) -> StepFlow {
@@ -120,6 +129,53 @@ impl FlowWatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::venue::SeatResult;
+
+    struct Held(f64);
+
+    #[async_trait::async_trait]
+    impl Seat for Held {
+        fn market(&self) -> &str {
+            "m"
+        }
+        fn executes(&self, _: &mtx_kit::Action) -> bool {
+            true
+        }
+        async fn send(&self, _: &mtx_kit::Planned) -> mtx_kit::Sent {
+            unimplemented!()
+        }
+        async fn take(&self, _: Side, _: f64, _: f64) -> SeatResult {
+            Ok(())
+        }
+        async fn rest(&self, _: Side, _: f64, _: f64) -> SeatResult {
+            Ok(())
+        }
+        async fn cancel_all(&self) -> SeatResult {
+            Ok(())
+        }
+        async fn top(&self) -> SeatResult<(Option<f64>, Option<f64>)> {
+            Ok((None, None))
+        }
+        async fn position(&self) -> SeatResult<f64> {
+            Ok(self.0)
+        }
+        fn tick(&self) -> f64 {
+            0.01
+        }
+        fn lot(&self) -> f64 {
+            0.0
+        }
+    }
+
+    /// A bot that starts long and doesn't trade has bought nothing: the
+    /// watch counts from where the bot starts, not from flat.
+    #[tokio::test]
+    async fn a_bot_that_starts_long_and_holds_has_not_bought() {
+        let mut watch = FlowWatch::new(vec![Box::new(Held(7.0))]).starting_at(&[7.0]);
+        assert_eq!(watch.step().await.bot_net(), 0.0);
+        let mut flat = FlowWatch::new(vec![Box::new(Held(7.0))]);
+        assert_eq!(flat.step().await.bot_net(), 7.0);
+    }
 
     #[test]
     fn the_flow_sums_by_side() {

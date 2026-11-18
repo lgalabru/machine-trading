@@ -47,7 +47,9 @@ COPY bots bots
 COPY calibration calibration
 # The tasks' reference bots and ladder bots (.dockerignore keeps the rest of
 # bench/tasks out), which are workspace members, and the list of the
-# references the verifier scores against: `<anchor> <package> <binary> <dir>`.
+# references the verifier scores against: `<anchor> <package> <binary> <dir>`,
+# and `component` for a task whose anchors run as strategy components (the
+# grader loads an anchor's bot.wasm over its bin/bot).
 COPY bench/tasks bench/tasks
 COPY bench/image/anchors.txt anchors.txt
 # One target cache per platform: a multi-platform build runs both at once.
@@ -66,10 +68,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     && cp target/release/mtx /usr/local/bin/mtx \
     && cargo build --release --locked -p mtx-cli --no-default-features \
     && cp target/release/mtx /usr/local/bin/mtx-agent \
-    && grep -v '^#' anchors.txt | while read -r anchor package bin dir; do \
+    && grep -v '^#' anchors.txt | while read -r anchor package bin dir kind; do \
       mkdir -p "/opt/mtx/anchors/$anchor/bin"; \
       cp "$dir/Justfile" "/opt/mtx/anchors/$anchor/Justfile"; \
       cp "target/release/$bin" "/opt/mtx/anchors/$anchor/bin/bot"; \
+      if [ "$kind" = component ]; then \
+        rustup target add wasm32-wasip2 \
+        && cargo build --release --locked --lib --target wasm32-wasip2 -p "$package" \
+        && cp "target/wasm32-wasip2/release/$(echo "$package" | tr - _).wasm" "/opt/mtx/anchors/$anchor/bot.wasm" \
+        || exit 1; \
+      fi; \
     done
 
 # Verifiers: the grader, the snapshots, and one unprivileged user per

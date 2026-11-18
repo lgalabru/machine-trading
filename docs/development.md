@@ -248,7 +248,7 @@ just ladder <task>                     # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
 just leak-audit <task>                 # the agent's image holds no answer (a guarded task's mtx can't draw)
 just network-probe <task>              # a guarded task's agent can't reach ghcr.io or github.com
-just keypair-probe                     # a bot can't read the grader's keypairs
+just keypair-probe                     # a bot can't read the grader's secret, temp dirs, /tests or any keypair file
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```
 
@@ -326,7 +326,7 @@ A task is one folder, `bench/tasks/<name>/`:
 
 | | |
 | --- | --- |
-| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator |
+| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator, and `component_anchors = true` for a task whose anchors must run as strategy components (requests for quotes reach only components), which the image then builds for `wasm32-wasip2` too |
 | `reference/` | The reference bot's crate (a workspace member): the verifier scores against it |
 | `solution/` | The oracle's copy of `reference/`, written by `mtx task sync` |
 | `checks/` | `ladder.json` (rungs, order rules, the `anchors` and `probes` a v2 task names), `rungs/` (rungs that run a bot), `bots/` (ladder bots' crates; `bots/informed` is a v2 task's informed bot) and `exploits/` (the frozen exploit bots) |
