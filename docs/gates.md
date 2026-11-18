@@ -47,7 +47,7 @@ A reference that loses money on a fast set fails only when the loss is
 confident (a one-sided Student-t test at 5%: t under minus the critical value at
 n - 1 degrees of freedom, 1.796 for twelve sessions); a loss within a short set's noise (market-making's -$38 over twelve
 sessions, t = -0.9) is `inconclusive`. The full ladder fails any set where it
-loses. The strength band follows the same rule. A noisy reference loss makes
+loses. The strength band follows the same rule. A zero-edge gambler's break of its band (the probe gate's `zero_edge`) is also `inconclusive` on a set under 36 sessions: twelve sessions can't tell a gambler's luck from edge (a martingale that made +0.11 on the fixed fast seed scored -0.13 over 60 sessions of another seed), and the full ladder fails it. A noisy reference loss makes
 inconclusive only the order rules that name `reference`; other broken rules
 still fail. A reference whose edge is a few large winning sessions can fail
 fast mode on its fixed public seed while passing the full ladder, because the
