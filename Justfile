@@ -59,6 +59,15 @@ install bin="mtx":
 ladder-test:
     python3 -I bench/checks/ladder/test_ladder.py
 
+# The probe bots' crate (outside the workspace, so `fmt`, `lint` and `test`
+# never see it) and its calibration: format, lint, tests. CI runs it.
+probes-check:
+    cargo +nightly fmt --manifest-path bench/checks/probes/Cargo.toml -- --check
+    cargo clippy --manifest-path bench/checks/probes/Cargo.toml --all-targets -- -D warnings
+    cargo test --manifest-path bench/checks/probes/Cargo.toml
+    python3 -I bench/checks/probes/test_calibrate.py
+    python3 -I bench/checks/ladder/test_ladder.py
+
 snapshot-build name *flags:
     cargo run --release -- snapshot build snapshots/{{name}}/recipe.toml {{flags}}
 
@@ -935,9 +944,11 @@ ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="targ
     for bot in {{tasks}}/{{task}}/checks/exploits/*/; do
       [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null
     done
-    # The shared exploit bots the ladder lists (bench/checks/exploits).
+    # The shared exploit and probe bots, and the task's own probe wrapper,
+    # that the ladder lists (bench/checks/exploits, bench/checks/probes,
+    # bench/tasks/<task>/checks/rungs/probe).
     for bot in $(jq -r '.rungs[].dir' "{{tasks}}/{{task}}/checks/ladder.json" | sort -u); do
-      case "$bot" in bench/checks/exploits/*)
+      case "$bot" in bench/checks/exploits/*|bench/checks/probes|bench/tasks/*/checks/rungs/probe)
         [ -x "$bot/build.sh" ] && CARGO_TARGET_DIR="$PWD/target/exploits" "$bot/build.sh" > /dev/null ;;
       esac
     done
