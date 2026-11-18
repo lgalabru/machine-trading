@@ -18,7 +18,7 @@ import random
 import statistics
 import sys
 
-NON_READING = ["fade", "follow"]
+NON_READING = ["fade", "follow", "ride-sweep"]
 PARTIAL = ["wait-oracle", "push-fade"]
 K = 1.5
 

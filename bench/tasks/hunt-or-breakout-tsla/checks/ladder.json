@@ -15,11 +15,12 @@
       "informed"
     ],
     "non_reading": [
-      "nop",
       "blind-long",
       "blind-short",
       "fade",
-      "follow"
+      "follow",
+      "nop",
+      "ride-sweep"
     ]
   },
   "min_rule_odds": 0.85,
@@ -29,7 +30,8 @@
     "max(fade, follow) < wait-oracle",
     "wait-oracle < reference",
     "reference < informed < hindsight",
-    "push-fade < informed"
+    "push-fade < informed",
+    "ride-sweep < reference"
   ],
   "rungs": [
     {
@@ -73,6 +75,13 @@
         "MTX_NAIVE": "push-fade"
       },
       "name": "push-fade"
+    },
+    {
+      "dir": "bench/tasks/hunt-or-breakout-tsla/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "ride-sweep"
+      },
+      "name": "ride-sweep"
     },
     {
       "dir": "bench/tasks/hunt-or-breakout-tsla/reference",

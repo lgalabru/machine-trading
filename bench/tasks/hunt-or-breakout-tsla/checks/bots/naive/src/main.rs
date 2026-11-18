@@ -15,6 +15,11 @@
 //!   follows every run nobody pushed. It reads sizes and flatness, never
 //!   who an account is.
 //!
+//! - `ride-sweep`: reads no identity either: a clip of 2.2 TSLA or more from
+//!   an account flat before it is taken as a push into a run, ridden with
+//!   the cap until the book is through the level, then closed. It earns
+//!   only if every push is followed by a run.
+//!
 //! A run back through a level traded in the last 300 slots is the same run.
 
 use mtx_bot_hunt_or_breakout::{Bet, Crosses, LEVEL_STEP_USD, Trade, Watch, go_to, mid};
@@ -33,6 +38,7 @@ enum Mode {
     Follow,
     WaitOracle,
     PushFade,
+    RideSweep,
 }
 
 /// The size of a push, in TSLA.
@@ -54,7 +60,7 @@ struct Naive {
 impl Strategy for Naive {
     fn start(&mut self, session: &Session) -> BotResult {
         self.cap = session.cap;
-        if self.mode == Mode::PushFade {
+        if matches!(self.mode, Mode::PushFade | Mode::RideSweep) {
             let venue = PhoenixVenue::from_json(&session.venue)?;
             let own = venue.trader_account(&key(&session.authority)?).to_string();
             self.watch = Watch::new(&venue, &session.symbol, Watch::every_trader(&own)?, 40)?;
@@ -69,7 +75,7 @@ impl Strategy for Naive {
             return Ok(());
         };
         let oracle = market.oracle;
-        if self.mode == Mode::PushFade {
+        if matches!(self.mode, Mode::PushFade | Mode::RideSweep) {
             return self.push_fade(slot, mid, oracle, market, orders);
         }
         let cross = self.crosses.update(mid);
@@ -88,7 +94,7 @@ impl Strategy for Naive {
         if let Some((dir, level, at, was)) = self.pending {
             let bet = match self.mode {
                 Mode::Fade => Some(Bet::Fade),
-                Mode::Follow | Mode::PushFade => Some(Bet::Follow),
+                Mode::Follow | Mode::PushFade | Mode::RideSweep => Some(Bet::Follow),
                 Mode::WaitOracle => {
                     if dir * (oracle / was - 1.0) * 10_000.0 >= ORACLE_BPS {
                         Some(Bet::Follow)
@@ -142,7 +148,10 @@ impl Naive {
         }
         let mut riding = None;
         if let Some((dir, at, then)) = self.push {
-            if dir * (mid / then - 1.0) >= THROUGH {
+            if dir * (mid / then - 1.0) >= THROUGH && self.mode == Mode::RideSweep {
+                // The run came: take the jump and stand aside.
+                self.push = None;
+            } else if dir * (mid / then - 1.0) >= THROUGH {
                 let level = if dir > 0.0 {
                     (then / LEVEL_STEP_USD).ceil() * LEVEL_STEP_USD
                 } else {
@@ -157,6 +166,7 @@ impl Naive {
                 riding = Some(dir);
             }
         } else if self.trade.is_none()
+            && self.mode == Mode::PushFade
             && let Some((level, dir)) = cross
         {
             let again = self
@@ -184,7 +194,8 @@ fn main() -> BotResult {
         Ok("follow") => Mode::Follow,
         Ok("wait-oracle") => Mode::WaitOracle,
         Ok("push-fade") => Mode::PushFade,
-        other => return Err(format!("MTX_NAIVE must be fade, follow, wait-oracle or push-fade, not {other:?}").into()),
+        Ok("ride-sweep") => Mode::RideSweep,
+        other => return Err(format!("MTX_NAIVE must be fade, follow, wait-oracle, push-fade or ride-sweep, not {other:?}").into()),
     };
     run(Naive {
         mode,
