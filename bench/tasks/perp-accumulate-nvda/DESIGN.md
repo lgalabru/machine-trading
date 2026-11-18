@@ -197,6 +197,29 @@ three: over 72 sessions every non-reading rung loses or breaks even, and
 ranking one losing naive rung against another tests nothing the card is
 about (they held on 0.69 and 0.50 of sets: a tie).
 
+## The re-gate (72 fresh sessions, 2026-11-18)
+
+After #118 (every role plays the same world), #119 (the maker steps in
+front of any order of at least one lot) and the informed bot's held
+oracle break, on a fresh secret:
+
+| Rung | Total | Weighted (losses 1.5x) |
+| --- | --- | --- |
+| nop | $0.0 | $0.0 |
+| dump | $127.4 | -$511.3 |
+| twap-cross | $105.4 | -$169.2 |
+| twap-passive | -$26.5 | -$90.5 |
+| reference | $441.2 | $374.4 |
+| informed | $1122.4 | $1027.6 |
+
+The informed bot makes 8.81x the best non-reading rung (dump, by raw
+total); the reference holds 0.393 of the informed bot's total (0.364
+weighted); `max(dump, twap-cross, twap-passive) < reference` holds on 0.860
+of bootstrapped sets and `reference < informed < hindsight` on 1.000. No
+rung breached or was disqualified. Gate 0 passes. The order rule sits near
+its 0.85 floor because dump's raw total turned positive (its losses still
+weigh it at -$511).
+
 ## Structural tells (checked before the screen)
 
 Nothing structural marks the informed trader or the move's direction: the
