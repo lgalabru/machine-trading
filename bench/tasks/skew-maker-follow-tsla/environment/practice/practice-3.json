@@ -40,12 +40,12 @@
         "skew_bps": 4.1,
         "view": {
           "gap_slots": [
-            256,
-            769
+            513,
+            1539
           ],
           "hold_slots": [
-            18,
-            36
+            36,
+            72
           ],
           "kind": "decoy"
         }
@@ -60,12 +60,12 @@
         "skew_bps": 7.0,
         "view": {
           "gap_slots": [
-            256,
-            769
+            513,
+            1539
           ],
           "hold_slots": [
-            18,
-            36
+            36,
+            72
           ],
           "kind": "decoy"
         }
@@ -94,9 +94,9 @@
     }
   },
   "description": "TSLA practice session",
-  "duration_slots": 3000,
-  "informed_max_drawdown_usd": 0.01,
-  "informed_pnl_usd": 0.0,
+  "duration_slots": 4500,
+  "informed_max_drawdown_usd": 0.43,
+  "informed_pnl_usd": 4.47,
   "mandate": {
     "limits": {
       "max_drawdown_usd": 150.0
@@ -112,6 +112,18 @@
   "market_model": {
     "calibration": "tsla.20261113.8b7bca8e",
     "calibration_sha256": "0f338a23d86256887c125ffebfaadf1c7787bc8a860b48bddd963496193dd75c",
+    "events": [
+      {
+        "kind": "jump",
+        "pct": 0.3688649458064615,
+        "slot": 3430
+      },
+      {
+        "kind": "jump",
+        "pct": -0.517680765532976,
+        "slot": 4054
+      }
+    ],
     "jump_rate_per_hour": 3.9,
     "jump_size": {
       "abs_median_pct": 0.382,
@@ -714,27 +726,323 @@
       "slot": 2880
     },
     {
-      "level_pct": -0.196,
-      "slot": 2900
-    },
-    {
-      "level_pct": -0.213,
+      "level_pct": -0.202,
       "slot": 2920
     },
     {
-      "level_pct": -0.203,
+      "level_pct": -0.189,
       "slot": 2940
     },
     {
-      "level_pct": -0.2,
+      "level_pct": -0.181,
       "slot": 2960
     },
     {
-      "level_pct": -0.195,
+      "level_pct": -0.17,
       "slot": 2980
+    },
+    {
+      "level_pct": -0.169,
+      "slot": 3000
+    },
+    {
+      "level_pct": -0.16,
+      "slot": 3020
+    },
+    {
+      "level_pct": -0.166,
+      "slot": 3040
+    },
+    {
+      "level_pct": -0.161,
+      "slot": 3060
+    },
+    {
+      "level_pct": -0.156,
+      "slot": 3080
+    },
+    {
+      "level_pct": -0.189,
+      "slot": 3100
+    },
+    {
+      "level_pct": -0.203,
+      "slot": 3120
+    },
+    {
+      "level_pct": -0.211,
+      "slot": 3140
+    },
+    {
+      "level_pct": -0.19,
+      "slot": 3160
+    },
+    {
+      "level_pct": -0.15,
+      "slot": 3180
+    },
+    {
+      "level_pct": -0.172,
+      "slot": 3200
+    },
+    {
+      "level_pct": -0.122,
+      "slot": 3220
+    },
+    {
+      "level_pct": -0.109,
+      "slot": 3240
+    },
+    {
+      "level_pct": -0.132,
+      "slot": 3260
+    },
+    {
+      "level_pct": -0.155,
+      "slot": 3280
+    },
+    {
+      "level_pct": -0.156,
+      "slot": 3300
+    },
+    {
+      "level_pct": -0.203,
+      "slot": 3320
+    },
+    {
+      "level_pct": -0.165,
+      "slot": 3340
+    },
+    {
+      "level_pct": -0.156,
+      "slot": 3360
+    },
+    {
+      "level_pct": -0.142,
+      "slot": 3380
+    },
+    {
+      "level_pct": -0.143,
+      "slot": 3400
+    },
+    {
+      "level_pct": -0.158,
+      "slot": 3420
+    },
+    {
+      "level_pct": 0.105,
+      "slot": 3440
+    },
+    {
+      "level_pct": 0.123,
+      "slot": 3460
+    },
+    {
+      "level_pct": 0.127,
+      "slot": 3480
+    },
+    {
+      "level_pct": 0.104,
+      "slot": 3500
+    },
+    {
+      "level_pct": 0.035,
+      "slot": 3520
+    },
+    {
+      "level_pct": 0.074,
+      "slot": 3540
+    },
+    {
+      "level_pct": 0.092,
+      "slot": 3560
+    },
+    {
+      "level_pct": 0.134,
+      "slot": 3580
+    },
+    {
+      "level_pct": 0.173,
+      "slot": 3600
+    },
+    {
+      "level_pct": 0.164,
+      "slot": 3620
+    },
+    {
+      "level_pct": 0.12,
+      "slot": 3640
+    },
+    {
+      "level_pct": 0.129,
+      "slot": 3660
+    },
+    {
+      "level_pct": 0.117,
+      "slot": 3680
+    },
+    {
+      "level_pct": 0.103,
+      "slot": 3700
+    },
+    {
+      "level_pct": 0.066,
+      "slot": 3720
+    },
+    {
+      "level_pct": 0.042,
+      "slot": 3740
+    },
+    {
+      "level_pct": 0.032,
+      "slot": 3760
+    },
+    {
+      "level_pct": 0.057,
+      "slot": 3780
+    },
+    {
+      "level_pct": 0.07,
+      "slot": 3800
+    },
+    {
+      "level_pct": 0.069,
+      "slot": 3820
+    },
+    {
+      "level_pct": 0.083,
+      "slot": 3840
+    },
+    {
+      "level_pct": 0.147,
+      "slot": 3860
+    },
+    {
+      "level_pct": 0.124,
+      "slot": 3880
+    },
+    {
+      "level_pct": 0.09,
+      "slot": 3900
+    },
+    {
+      "level_pct": 0.1,
+      "slot": 3920
+    },
+    {
+      "level_pct": 0.052,
+      "slot": 3940
+    },
+    {
+      "level_pct": 0.085,
+      "slot": 3960
+    },
+    {
+      "level_pct": 0.046,
+      "slot": 3980
+    },
+    {
+      "level_pct": 0.037,
+      "slot": 4000
+    },
+    {
+      "level_pct": 0.021,
+      "slot": 4020
+    },
+    {
+      "level_pct": -0.008,
+      "slot": 4040
+    },
+    {
+      "level_pct": -0.393,
+      "slot": 4060
+    },
+    {
+      "level_pct": -0.489,
+      "slot": 4080
+    },
+    {
+      "level_pct": -0.553,
+      "slot": 4100
+    },
+    {
+      "level_pct": -0.591,
+      "slot": 4120
+    },
+    {
+      "level_pct": -0.647,
+      "slot": 4140
+    },
+    {
+      "level_pct": -0.672,
+      "slot": 4160
+    },
+    {
+      "level_pct": -0.698,
+      "slot": 4180
+    },
+    {
+      "level_pct": -0.669,
+      "slot": 4200
+    },
+    {
+      "level_pct": -0.647,
+      "slot": 4220
+    },
+    {
+      "level_pct": -0.67,
+      "slot": 4240
+    },
+    {
+      "level_pct": -0.661,
+      "slot": 4260
+    },
+    {
+      "level_pct": -0.63,
+      "slot": 4280
+    },
+    {
+      "level_pct": -0.645,
+      "slot": 4300
+    },
+    {
+      "level_pct": -0.617,
+      "slot": 4320
+    },
+    {
+      "level_pct": -0.622,
+      "slot": 4340
+    },
+    {
+      "level_pct": -0.645,
+      "slot": 4360
+    },
+    {
+      "level_pct": -0.66,
+      "slot": 4380
+    },
+    {
+      "level_pct": -0.68,
+      "slot": 4400
+    },
+    {
+      "level_pct": -0.695,
+      "slot": 4420
+    },
+    {
+      "level_pct": -0.715,
+      "slot": 4440
+    },
+    {
+      "level_pct": -0.779,
+      "slot": 4460
+    },
+    {
+      "level_pct": -0.794,
+      "slot": 4480
     }
   ],
-  "reference_max_drawdown_usd": 0.0,
-  "reference_pnl_usd": 0.0,
+  "reference_max_drawdown_usd": 0.08,
+  "reference_pnl_usd": -0.14,
   "symbol": "TSLA"
 }
