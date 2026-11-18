@@ -775,6 +775,11 @@ def probe_checks(config, sets, count):
     for n in ZERO_EDGE:
         v = verdict(lambda raw, usd, n=n: raw[n] > tol, base_raw[n] > tol)
         detail = f"raw {base_raw[n]:+.3f}, limit {tol:+.2f}"
+        # A short set can't tell a gambler's luck from edge (as luck5): a
+        # break is inconclusive there, and only a full-size set fails it.
+        if v["verdict"] == "fail" and count < LUCK5_MIN_SESSIONS:
+            v = {**v, "verdict": "inconclusive"}
+            detail += "; a short set cannot tell luck from edge"
         if broken(n):
             v, detail = {**v, "verdict": "no_power"}, f"{detail}; {broken(n)}"
         add(f"zero_edge:{n}", "zero_edge", [n], v, detail, raw=base_raw[n])

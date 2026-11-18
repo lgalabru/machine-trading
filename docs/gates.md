@@ -31,7 +31,7 @@ finished ladder) adjust a run.
 | Graded correctly | the exploit bots stay inside their limits (a pushing bot that moved the mark too little is `no_power`, and fails); no rung is refused or disqualified | ladder |
 | | the probe bots land in their scoring v2 bands, graded with the task's own v2 settings (the verifier's `--loss-weight`, `--risk-weight`, `--anchor-floor` and `--informed`), and a probe with no power (a breacher that never breached) fails | ladder, when the task declares `probes` (`bench/checks/probes/README.md`) |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
-| | the agent's image holds no answer, and a guarded task's `mtx` offers only the allowlisted commands; a guarded task's agent can't reach ghcr.io or github.com; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit <task>`, `network-probe <task>`, `keypair-probe`, `clock-probe` |
+| | the agent's image holds no answer, and a guarded task's `mtx` offers only the allowlisted commands; a guarded task's agent can't reach ghcr.io or github.com; a bot can't read the grader's environment or `MTX_EVAL_SEED`, `/tests`, the grader's temp directories or any keypair file; `time-left` tracks the clock if the task opts in | full: `just leak-audit <task>`, `network-probe <task>`, `keypair-probe`, `clock-probe` |
 | | replays are byte-identical: the reference, graded again on the same fresh hidden set (fast: 2 sessions twice; full: 6 sessions three times on a loaded machine) | `mtx grade --replay`, when the build has it |
 | Realistic | the family's market matches its asset's latest `calibration/market/<asset>.*.toml` (its 300-session draw in both modes) | `mtx market-cal check <family>`, when the build has it |
 
@@ -47,7 +47,7 @@ A reference that loses money on a fast set fails only when the loss is
 confident (a one-sided Student-t test at 5%: t under minus the critical value at
 n - 1 degrees of freedom, 1.796 for twelve sessions); a loss within a short set's noise (market-making's -$38 over twelve
 sessions, t = -0.9) is `inconclusive`. The full ladder fails any set where it
-loses. The strength band follows the same rule. A noisy reference loss makes
+loses. The strength band follows the same rule. A zero-edge gambler's break of its band (the probe gate's `zero_edge`) is also `inconclusive` on a set under 36 sessions: twelve sessions can't tell a gambler's luck from edge (a martingale that made +0.11 on the fixed fast seed scored -0.13 over 60 sessions of another seed), and the full ladder fails it. A noisy reference loss makes
 inconclusive only the order rules that name `reference`; other broken rules
 still fail. A reference whose edge is a few large winning sessions can fail
 fast mode on its fixed public seed while passing the full ladder, because the
@@ -145,6 +145,12 @@ every bot has stopped; its sessions have their own keys and surfnets, so the
 bot's sessions are the same with or without it. The ladder's informed rung
 is told the same (`"tell_latent": true`). It costs one more bot run per
 session.
+
+The oracle installs `solution/src` into the agent's starter, which enables no
+cargo features, so the solution must export its strategy component there
+(`solution-exports`): `solution/src` holds an `mtx_kit::export!` call that no
+positive `feature` gate hides. `not(feature = …)` and target gates are fine.
+The check is static; it reads the source, not a build.
 
 Gates grade each task on its own snapshot: `[metadata] snapshot` in its
 `task.toml`, else the `MTX_SNAPSHOT` its verifier image sets, else the

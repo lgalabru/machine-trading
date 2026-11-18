@@ -327,6 +327,14 @@ class ProbeGate(unittest.TestCase):
         self.assertEqual(got["zero_edge:coin-flip-full"]["verdict"], "pass")
         self.assertEqual(got["zero_edge:martingale"]["verdict"], "fail")
 
+    def test_a_short_set_cannot_fail_a_gambler_but_a_full_one_does(self):
+        winning = {"martingale": [8.0, -1.0] * (self.N // 2)}
+        short = {c["id"]: c for c in ladder.probe_checks({}, self.ladder(**winning), 12)}
+        full = {c["id"]: c for c in ladder.probe_checks({}, self.ladder(**winning), 72)}
+        self.assertEqual(short["zero_edge:martingale"]["verdict"], "inconclusive")
+        self.assertTrue(short["zero_edge:martingale"]["point_violated"])
+        self.assertEqual(full["zero_edge:martingale"]["verdict"], "fail")
+
     def test_a_violation_the_sample_cannot_confirm_is_inconclusive(self):
         got = self.checks(**{"coin-flip-full": [40.0, -39.0] * (self.N // 2)})
         self.assertEqual(got["zero_edge:coin-flip-full"]["verdict"], "inconclusive")

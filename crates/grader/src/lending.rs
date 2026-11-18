@@ -1687,6 +1687,7 @@ impl Account for LendingAccount {
         Ok(SessionReport {
             scenario: self.scenario.name.clone(),
             start_mark_usd: start_price,
+            base_lots_decimals: 3,
             end_mark_usd: end_price,
             start_value_usd: self.start_value_usd,
             end_value_usd,
@@ -1724,6 +1725,7 @@ impl Account for LendingAccount {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            takes_unjudged: Vec::new(),
             obligations: None,
             lending: Some(LendingReport {
                 start: start.holdings.clone(),

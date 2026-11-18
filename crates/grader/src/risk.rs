@@ -97,15 +97,15 @@ pub struct CloseOrder {
 /// What one step of closing did.
 pub(crate) struct Closing {
     pub orders: Vec<CloseOrder>,
-    /// The position after them, in base units: on several markets, the
-    /// largest one left.
-    pub position: f64,
+    /// Every market's position is flat after them (see [`is_flat`]).
+    pub flat: bool,
 }
 
-/// Whether a position this small counts as flat: below one of Phoenix's
-/// base lots on the markets the grader trades (10^-3 of a share).
-pub(crate) fn is_flat(position: f64) -> bool {
-    position.abs() < 5e-4
+/// Whether a position this small counts as flat: below half a base lot of
+/// its market, a lot being `10^-base_lots_decimals` base units (a thousandth
+/// of a share on SPCX, a ten-thousandth of a BTC).
+pub(crate) fn is_flat(position: f64, base_lots_decimals: i8) -> bool {
+    position.abs() < 0.5 * 10f64.powi(-i32::from(base_lots_decimals))
 }
 
 #[cfg(test)]
@@ -165,9 +165,15 @@ mod tests {
     }
 
     #[test]
-    fn flat_is_below_a_base_lot() {
-        assert!(is_flat(0.0));
-        assert!(is_flat(-0.0004));
-        assert!(!is_flat(0.001));
+    fn flat_is_below_half_a_base_lot_of_the_market() {
+        assert!(is_flat(0.0, 3));
+        assert!(is_flat(-0.0004, 3));
+        assert!(!is_flat(0.001, 3));
+        // BTC's lot is a ten-thousandth: 0.0004 BTC is four lots, about $40.
+        assert!(!is_flat(0.0004, 4));
+        assert!(is_flat(0.00004, 4));
+        // SOL's is a hundredth.
+        assert!(is_flat(0.004, 2));
+        assert!(!is_flat(0.006, 2));
     }
 }

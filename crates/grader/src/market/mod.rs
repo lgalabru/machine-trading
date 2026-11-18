@@ -20,6 +20,7 @@ pub mod calibration;
 pub mod correlation;
 pub mod joint;
 pub mod model;
+pub mod opening;
 pub mod realism;
 
 pub use calibration::Calibration;
@@ -42,6 +43,12 @@ pub(crate) mod tests {
 
     pub(crate) fn spcx() -> Calibration {
         with_sha(Calibration::parse(SPCX).unwrap(), SPCX)
+    }
+
+    const TSLA: &str = include_str!("../../../../calibration/market/tsla.20261113.8b7bca8e.toml");
+
+    pub(crate) fn tsla() -> Calibration {
+        with_sha(Calibration::parse(TSLA).unwrap(), TSLA)
     }
 
     fn with_sha(mut calibration: Calibration, text: &str) -> Calibration {
