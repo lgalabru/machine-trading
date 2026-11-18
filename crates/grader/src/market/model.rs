@@ -82,6 +82,13 @@ pub struct ModelSpec {
     /// sign. Drawn whether or not `jumps` is on.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub events: Vec<ScheduledEvent>,
+    /// The session is an earnings-reaction day, stated: its jump rate may
+    /// reach the asset's earnings allowance (`earnings_per_hour` in
+    /// `calibration/opening-windows.toml`) instead of the opening
+    /// rate. A flag, not a rate: where the asset has no such allowance the
+    /// flag changes nothing (the opening rate still bounds the spec).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub earnings_day: bool,
     /// Gaps when a session opens (on by default).
     #[serde(default = "yes")]
     pub gaps: bool,
@@ -143,6 +150,10 @@ fn check_size(what: &str, median: f64, p90: f64, source: &str) -> Result<(), Str
     Ok(())
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 fn is_one(x: &f64) -> bool {
     *x == 1.0
 }
@@ -172,6 +183,7 @@ impl Default for ModelSpec {
             events: Vec::new(),
             gaps: true,
             regime_clock: 1.0,
+            earnings_day: false,
             regimes: None,
         }
     }
@@ -236,6 +248,9 @@ pub struct MarketModelRecord {
     /// The spec's stated regime chain, when it replaces the calibration's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub regime_set: Option<Regimes>,
+    /// The spec's earnings-day flag, when set.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub earnings_day: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -266,6 +281,34 @@ pub enum EventKind {
 }
 
 impl MarketModelRecord {
+    /// The spec's stated departures that change what a session looks like
+    /// (a jump rate, jump sizes, scheduled events), with the session's own
+    /// start and the departures that came with them, to draw more sessions
+    /// like it. `None` where the spec states none of them: such a session
+    /// is the calibration's.
+    pub fn stated_spec(&self) -> Option<ModelSpec> {
+        if self.jump_rate_per_hour.is_none()
+            && self.jump_size.is_none()
+            && self.scheduled.is_empty()
+        {
+            return None;
+        }
+        Some(ModelSpec {
+            vol_mult: self.vol_mult,
+            start: Start::At {
+                unix: self.start_unix,
+            },
+            jumps: true,
+            jump_rate_per_hour: self.jump_rate_per_hour,
+            jump_size: self.jump_size.clone(),
+            events: self.scheduled.clone(),
+            regime_clock: self.regime_clock,
+            regimes: self.regime_set.clone(),
+            earnings_day: self.earnings_day,
+            ..ModelSpec::default()
+        })
+    }
+
     pub fn validate(&self, duration_slots: u64) -> std::result::Result<(), String> {
         if self.calibration.is_empty()
             || self.calibration_sha256.len() != 64
@@ -764,6 +807,7 @@ impl<'a> Walker<'a> {
                 events: self.events,
                 regime_clock: self.model.spec.regime_clock,
                 regime_set: self.model.spec.regimes.clone(),
+                earnings_day: self.model.spec.earnings_day,
             },
         }
     }

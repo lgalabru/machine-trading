@@ -1197,9 +1197,9 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
 /// start mark, or, on several markets, each market's at its own.
 fn bound_of(scenario: &Scenario, session: &SessionReport) -> f64 {
     if scenario.markets.is_empty() {
-        scenario.bound_usd(session.start_mark_usd)
+        scenario.bound_usd(session.start_mark_usd, session.base_lots_decimals)
     } else {
-        scenario.markets_bound_usd(&session.start_marks_usd())
+        scenario.markets_bound_usd(&session.market_starts())
     }
 }
 
@@ -1817,6 +1817,7 @@ mod tests {
         SessionReport {
             scenario: "s".into(),
             start_mark_usd: 100.0,
+            base_lots_decimals: 3,
             end_mark_usd: 100.0,
             start_value_usd: 10_100.0,
             end_value_usd: 10_100.0 + pnl_usd,
@@ -1849,6 +1850,7 @@ mod tests {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            takes_unjudged: Vec::new(),
             obligations: None,
             tx_layer: None,
             lending: None,
@@ -2088,6 +2090,29 @@ mod tests {
             .collect()
     }
 
+    /// A report from before the lot size was written has no `base_lots_decimals`
+    /// and reads as 3. Written again it must be the same JSON, or `rescore
+    /// --check` calls every old report changed.
+    #[test]
+    fn a_report_from_before_the_lot_size_rewrites_the_same() {
+        let current = serde_json::to_value(session(1.0)).unwrap();
+        assert!(
+            current.get("base_lots_decimals").is_none(),
+            "3 isn't written"
+        );
+        let old = current.clone();
+        let read: SessionReport = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(read.base_lots_decimals, 3);
+        assert_eq!(serde_json::to_value(&read).unwrap(), old);
+        // Another lot size is written, and read back.
+        let mut fine = session(1.0);
+        fine.base_lots_decimals = 5;
+        let json = serde_json::to_value(&fine).unwrap();
+        assert_eq!(json["base_lots_decimals"], 5);
+        let back: SessionReport = serde_json::from_value(json).unwrap();
+        assert_eq!(back.base_lots_decimals, 5);
+    }
+
     #[test]
     fn a_grade_scored_again_from_its_details_is_the_same_report() {
         let dir = std::env::temp_dir().join(format!("mtx-rescore-{}", uuid::Uuid::new_v4()));
@@ -2289,6 +2314,7 @@ mod tests {
             .map(|symbol| session::MarketReport {
                 symbol: symbol.into(),
                 start_mark_usd: 100.0,
+                base_lots_decimals: 3,
                 end_mark_usd: 100.0,
                 start_position: 0.0,
                 end_position: 0.0,
