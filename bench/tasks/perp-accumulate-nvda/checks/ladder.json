@@ -43,6 +43,13 @@
       }
     },
     {
+      "name": "wait-break",
+      "dir": "bench/tasks/perp-accumulate-nvda/checks/bots/naive",
+      "env": {
+        "MTX_NAIVE": "wait-break"
+      }
+    },
+    {
       "name": "reference",
       "dir": "bench/tasks/perp-accumulate-nvda/reference"
     },
@@ -211,11 +218,12 @@
       "nop",
       "dump",
       "twap-cross",
-      "twap-passive"
+      "twap-passive",
+      "wait-break"
     ]
   },
   "rules": [
-    "max(dump, twap-cross, twap-passive) < reference",
+    "max(dump, twap-cross, twap-passive, wait-break) < reference",
     "reference < informed < hindsight"
   ],
   "exploits": {

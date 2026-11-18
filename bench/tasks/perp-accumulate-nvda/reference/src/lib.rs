@@ -7,11 +7,12 @@
 //! broker's `MTX_BROKER_HAIRCUT_BPS`) and the mandate (the cap is
 //! `max_position`, the price cap `max_buy_price`).
 //!
-//! - **Passive by default.** A post-only bid rests a tick inside the best
-//!   bid, so sellers fill it at the bid instead of the desk paying the ask.
-//!   Behind a back-loaded floor (`Q (t / 0.95 T)^3`) it crosses, but only
-//!   while the ask plus the taker fee is under the broker's haircut: what
-//!   costs more than the broker charges is left to the broker.
+//! - **Waits by default.** Until a move can no longer start (75% of the
+//!   session) it buys nothing: what it buys early costs it in a falling
+//!   session and saves little in a calm one. Then it finishes: a bid at the
+//!   front of the book, never over the broker's price less the fee and
+//!   3 bp, and takes of the asks under that price at an even pace; in the
+//!   last 120 slots, whatever still beats the broker.
 //! - **The flow.** The grader's maker leans 1 bp a unit against what it
 //!   holds, so its ask, less its first half-spread, is its short in units:
 //!   how much takers bought from it. Each step's change, less the desk's
@@ -20,10 +21,10 @@
 //!   is the burst signal; one over about 120 slots is the lean.
 //! - **A burst** that holds for a few slots puts it on watch. A buy burst
 //!   lifts its floor to half the order and lets it pay 10 bp over the
-//!   haircut; a sell burst pulls its bid and stops it buying. Once the
+//!   haircut; a sell burst stops it buying until 85% of the session. Once the
 //!   oracle has moved 15 bp the burst's way over 200 slots with the lean
 //!   still that way, the move is confirmed: it buys out (up), paying up to
-//!   30 bp over the haircut, or keeps waiting until the lean fades (down).
+//!   30 bp over the haircut, or keeps waiting (down).
 //!   A move that gets there with the lean behind it and no burst seen puts
 //!   it on watch all the same.
 //! - **Resilience.** It never sweeps: one or two units a step, and only
@@ -59,11 +60,10 @@ const WATCH_EDGE_BPS: f64 = 10.0;
 const CONFIRMED_EDGE_BPS: f64 = 30.0;
 /// The taker fee, in basis points.
 const TAKER_FEE_BPS: f64 = 3.5;
-/// Its largest buy a step, and its resting bid.
+/// Its largest buy a step, on watch and confirmed.
 const SLICE: f64 = 1.0;
 const FAST_SLICE: f64 = 2.0;
-const BID_SIZE: f64 = 1.0;
-/// From here on, in share of the session, it catches up whatever the flow.
+/// After a sell burst, the share of the session from which it finishes.
 const LATE: f64 = 0.85;
 /// The units a basis point of the maker's lean stands for.
 const UNITS_PER_BP: f64 = 1.0;
@@ -248,59 +248,81 @@ impl Strategy for Accumulator {
 
         let q = self.order.quantity;
         let left = (q - held).max(0.0);
-        let t = self.order.progress(slot);
-        let late = t > LATE;
-        let mut floor = q * (t / 0.95).min(1.0).powi(3);
-        let mut edge = 0.0;
-        let mut slice = SLICE;
-        let mut rest = z > -1.0;
-        match self.watch {
-            1 => {
-                floor = floor.max(if confirmed { q } else { 0.5 * q });
-                edge = if confirmed {
-                    CONFIRMED_EDGE_BPS
-                } else {
-                    WATCH_EDGE_BPS
-                };
-                if confirmed {
-                    slice = FAST_SLICE;
-                }
-                rest = false;
-            }
-            -1 if !late => {
-                orders.cancel_all();
-                return Ok(());
-            }
-            _ => {}
-        }
-
         orders.cancel_all();
         if left < 1e-3 {
             return Ok(());
         }
-        let limit = self.order.worth_usd(oracle, edge);
-        let behind = (floor - held).max(0.0);
-        if behind > 1e-3 && market.best_ask.is_some_and(|ask| ask <= limit) {
-            let size = round_lots(behind.min(slice).min(left));
-            if size > 0.0 {
-                orders.buy(size, limit);
-                self.sent = size;
-            }
-        }
-        // A tick inside the maker's own bid, where it quotes when it holds
-        // nothing: the best bid may be its own from the last step.
-        if rest && let Some(base) = self.flow.base_bps {
-            let bid = oracle * (1.0 - base / 10_000.0);
-            let price = round_down_cents((bid + 0.01).min(self.order.max_buy_price));
-            if market.best_ask.is_none_or(|ask| price < ask) {
-                let size = round_lots(BID_SIZE.min(left - self.sent));
-                if size > 0.0 {
-                    orders.bid(price, size).post_only();
+        match self.watch {
+            // Ahead of a rise: half the order on watch, all of it confirmed.
+            1 => {
+                let (floor, edge, slice) = if confirmed {
+                    (q, CONFIRMED_EDGE_BPS, FAST_SLICE)
+                } else {
+                    (0.5 * q, WATCH_EDGE_BPS, SLICE)
+                };
+                let limit = self.order.worth_usd(oracle, edge);
+                let behind = (floor - held).max(0.0);
+                if behind > 1e-3 && market.best_ask.is_some_and(|ask| ask <= limit) {
+                    let size = round_lots(behind.min(slice).min(left));
+                    if size > 0.0 {
+                        orders.buy(size, limit);
+                        self.sent = size;
+                    }
                 }
             }
+            // Ahead of a fall: nothing until it is late.
+            -1 => self.sent = finish(&self.order, market, orders, LATE),
+            // No move: nothing until no move can start, then the late finish.
+            _ => self.sent = finish(&self.order, market, orders, FINISH_FROM),
         }
         Ok(())
     }
+}
+
+/// From here on, in share of the session, a bot with no move to act on
+/// works the order: no informed move starts after 70% of the session.
+pub const FINISH_FROM: f64 = 0.75;
+/// What a late take keeps under the broker's price, in basis points.
+pub const FINISH_MARGIN_BPS: f64 = 3.0;
+/// In its last slots it takes whatever beats the broker.
+pub const FINAL_SLOTS: u64 = 120;
+/// Its late bid's largest size, in units.
+pub const FINISH_BID: f64 = 2.0;
+
+/// The late finish, from `from` (a share of the session) to the close: a
+/// bid at the front of the book, never over the broker's price less the
+/// fee and a margin, and takes of the asks under that price at an even pace
+/// to 97% of the session; in the last [`FINAL_SLOTS`] slots, whatever is
+/// left that beats the broker. Before `from` it does nothing. Returns what
+/// it sent as market orders.
+pub fn finish(order: &Order, market: &Market, orders: &mut Orders, from: f64) -> f64 {
+    let held = market.position.size;
+    let left = round_lots((order.quantity - held).max(0.0));
+    let t = order.progress(market.slot);
+    if left <= 0.0 || t < from {
+        return 0.0;
+    }
+    let limit = order.worth_usd(market.oracle, -FINISH_MARGIN_BPS);
+    let size = if market.slots_left <= FINAL_SLOTS {
+        left
+    } else {
+        let steps = (order.span_steps() * (0.97 - t)).max(1.0);
+        round_lots((left / steps).max(0.001)).min(left)
+    };
+    let mut sent = 0.0;
+    if market.best_ask.is_some_and(|ask| ask <= limit) {
+        orders.buy(size, limit);
+        sent = size;
+    }
+    let rest = round_lots(FINISH_BID.min(left - sent));
+    if rest > 0.0 {
+        let front = market.best_bid.map_or(limit, |bid| bid + 0.01);
+        let price = round_down_cents(front.min(limit));
+        if price > 0.0 && market.best_ask.is_none_or(|ask| price < ask) {
+            orders.bid(price, rest).post_only();
+        }
+    }
+    sent
 }
 
 /// The number after `key` in a flat JSON object.
@@ -325,3 +347,96 @@ pub fn round_lots(units: f64) -> f64 {
 
 #[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Accumulator);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 30 NVDA over slots 0 to 2000, a 20 bp broker, a $170 cap.
+    fn order() -> Order {
+        Order {
+            quantity: 30.0,
+            haircut_bps: 20.0,
+            max_buy_price: 170.0,
+            start_slot: 0,
+            end_slot: 2000,
+        }
+    }
+
+    fn market(slot: u64, held: f64, bid: f64, ask: f64) -> Market {
+        Market {
+            slot,
+            slots_left: 2000 - slot,
+            oracle: 160.0,
+            best_bid: Some(bid),
+            best_ask: Some(ask),
+            position: Position {
+                size: held,
+                entry_usd: 160.0,
+            },
+            cap: 30.0,
+            ..Market::default()
+        }
+    }
+
+    fn intents(market: &Market, from: f64) -> Vec<Intent> {
+        let mut orders = Orders::new();
+        finish(&order(), market, &mut orders, from);
+        orders.into_intents()
+    }
+
+    #[test]
+    fn finish_does_nothing_before_its_start() {
+        assert!(intents(&market(1000, 0.0, 159.9, 160.1), FINISH_FROM).is_empty());
+    }
+
+    #[test]
+    fn finish_takes_under_the_broker_and_bids_a_unit_at_the_front() {
+        // The broker's price less the fee and 3 bp: 160 x (1 + 13.5 bp) = 160.21.
+        let got = intents(&market(1600, 10.0, 159.9, 160.1), FINISH_FROM);
+        let limit = order().worth_usd(160.0, -FINISH_MARGIN_BPS);
+        assert!((limit - 160.21).abs() < 1e-9);
+        let Intent::Market { size, limit: l, .. } = got[0] else {
+            panic!("{got:?}")
+        };
+        assert!(size > 0.0 && size < 20.0 && (l - limit).abs() < 1e-9);
+        let Intent::Limit { price, size, .. } = got[1] else {
+            panic!("{got:?}")
+        };
+        assert!((price - 159.91).abs() < 1e-9 && size == FINISH_BID);
+    }
+
+    #[test]
+    fn finish_leaves_dear_asks_and_never_bids_over_the_broker() {
+        let got = intents(&market(1600, 10.0, 160.3, 160.4), FINISH_FROM);
+        assert_eq!(got.len(), 1, "{got:?}");
+        let Intent::Limit { price, .. } = got[0] else {
+            panic!("{got:?}")
+        };
+        assert!(price <= order().worth_usd(160.0, -FINISH_MARGIN_BPS));
+    }
+
+    #[test]
+    fn finish_takes_the_rest_at_the_close() {
+        let got = intents(&market(1950, 12.0, 159.9, 160.1), FINISH_FROM);
+        let Intent::Market { size, .. } = got[0] else {
+            panic!("{got:?}")
+        };
+        assert!((size - 18.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_reference_buys_nothing_early_without_a_move() {
+        let mut bot = Accumulator {
+            order: order(),
+            ..Accumulator::default()
+        };
+        for slot in (0..1400).step_by(2) {
+            let got = step_offline(&mut bot, &market(slot, 0.0, 159.94, 160.06)).unwrap();
+            assert!(
+                got.iter().all(|i| matches!(i, Intent::CancelAll)),
+                "slot {slot}: {got:?}"
+            );
+        }
+    }
+}

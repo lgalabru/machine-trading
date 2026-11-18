@@ -22,18 +22,20 @@
 //!   held 30 slots, is a move under way; a burst read later overrules it.
 //! - **Up:** it buys the rest of the order at once, at the maker when it can
 //!   and on the backstop when it must, paying up to 60 bp over the broker.
-//! - **Down:** it buys nothing, and rests nothing, until the fall has
-//!   landed (the oracle 0.5% under the session's high, and no new low for
-//!   80 slots), then works the rest as in a calm session.
-//! - **Until a burst, or in a calm session:** it rests a bid a tick inside
-//!   the maker and catches up behind a back-loaded floor, crossing only
-//!   while the ask beats the broker.
+//! - **Down:** it buys nothing until the fall has landed (the oracle 0.5%
+//!   under the session's high, and no new low for 80 slots), or until 85%
+//!   of the session, then finishes.
+//! - **No move:** it buys nothing until no move can start (75% of the
+//!   session), then finishes: a bid at the front of the book, never over the
+//!   broker's price less the fee and 3 bp, and takes of the asks under that
+//!   price at an even pace; in the last 120 slots, whatever still beats the
+//!   broker (the reference's `finish`).
 
 use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 
-use mtx_bot_perp_accumulate::{Order, number_after, round_down_cents, round_lots};
+use mtx_bot_perp_accumulate::{FINISH_FROM, Order, finish, number_after, round_lots};
 use mtx_kit::{
     log,
     prelude::*,
@@ -68,7 +70,6 @@ const BREAK_HOLD: u64 = 30;
 #[derive(Default)]
 pub struct Informed {
     order: Order,
-    maker_bps: f64,
     pace: f64,
     /// The informed trader's wallet, Phoenix's program and a base lot in
     /// NVDA.
@@ -177,7 +178,6 @@ impl Strategy for Informed {
             .var("MTX_REGIME")
             .ok_or("no MTX_REGIME: the informed bot is told the session's latent state")?;
         let n = |k: &str| number_after(told, &format!("\"{k}\""));
-        self.maker_bps = n("maker_bps").unwrap_or(4.0);
         self.pace = n("maker_size").unwrap_or(2.0) * 2.0 / n("react_slots").unwrap_or(6.0).max(2.0);
         let wallet = told
             .split("\"informed\":[\"")
@@ -291,37 +291,20 @@ impl Strategy for Informed {
             return Ok(());
         }
 
-        let calm_floor = |from: f64| {
-            let x = ((t - from) / (0.95 - from).max(0.05)).clamp(0.0, 1.0);
-            q * x.powi(3)
-        };
-        let (floor, edge, size, rest) = if self.sign > 0.0 {
-            (q, UP_EDGE_BPS, UP_SLICE.max(self.pace), false)
+        // Up: the rest now. Down: nothing until the fall has landed, or it
+        // is late. Otherwise: nothing until no move can start, then the
+        // late finish.
+        if self.sign > 0.0 {
+            let limit = self.order.worth_usd(oracle, UP_EDGE_BPS);
+            let size = round_lots(left.min(UP_SLICE.max(self.pace)));
+            if size > 0.0 && market.best_ask.is_some_and(|ask| ask <= limit) {
+                orders.buy(size, limit);
+            }
         } else if self.sign < 0.0 {
-            match self.landed {
-                Some(from) => (calm_floor(from), 0.0, self.pace.max(0.5), true),
-                None if t > LATE => (calm_floor(0.0), 0.0, self.pace.max(0.5), true),
-                None => return Ok(()),
-            }
+            let from = self.landed.unwrap_or(LATE);
+            finish(&self.order, market, orders, from);
         } else {
-            (calm_floor(0.0), 0.0, self.pace.max(0.5), true)
-        };
-        let limit = self.order.worth_usd(oracle, edge);
-        let behind = (floor - held).max(0.0);
-        let mut sent = 0.0;
-        if behind > 1e-3 && market.best_ask.is_some_and(|ask| ask <= limit) {
-            sent = round_lots(behind.min(size).min(left));
-            if sent > 0.0 {
-                orders.buy(sent, limit);
-            }
-        }
-        if rest {
-            let bid = oracle * (1.0 - self.maker_bps / 10_000.0);
-            let price = round_down_cents((bid + 0.01).min(self.order.max_buy_price));
-            let size = round_lots(1.0f64.min(left - sent));
-            if size > 0.0 && market.best_ask.is_none_or(|ask| price < ask) {
-                orders.bid(price, size).post_only();
-            }
+            finish(&self.order, market, orders, FINISH_FROM);
         }
         Ok(())
     }

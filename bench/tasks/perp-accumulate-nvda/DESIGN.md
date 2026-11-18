@@ -114,10 +114,14 @@ the README.
 
 ## The anchors
 
-- **The reference (0.5)** works the order passively, reads the flow
-  through the grader's maker's lean, buys ahead of a confirmed rise, stands
-  aside ahead of a sell burst, and leaves the broker what costs more to
-  buy. It doesn't parse the tape and doesn't size anything to the move.
+- **The reference (0.5)** reads the flow through the grader's maker's
+  lean, buys ahead of a confirmed rise and stands aside ahead of a sell
+  burst. Without a move it buys nothing until no move can start (75% of
+  the session), then finishes under the broker's price (the shared
+  `finish`: a bid at the front of the book and takes of the asks under the
+  broker's price less the fee and 3 bp, at an even pace; whatever still
+  beats the broker in the last 120 slots). It doesn't parse the tape and
+  doesn't size anything to the move.
 - **The informed bot (1)** is told what #47's boundary allows: identity
   and process facts, never a session's draws. The latent names the
   `informed` taker account in its roster, which the session resolves to
@@ -132,19 +136,19 @@ the README.
   (paying up to 60 bp over the broker); down, it waits until the oracle has
   fallen 0.5% from the high and stopped falling. It also reads the oracle
   as any bot can: a 0.25% break from its range over 150 slots, held 30
-  slots, is a move under way, and a burst read later overrules it. Until
-  a move, or in a calm session, it rests a one-unit bid a tick inside the
-  maker (a unit, not an odd lot) and catches up behind a back-loaded floor,
-  crossing only while the ask beats the broker. It isn't told whether the
-  session moves, which way, when or how far.
+  slots, is a move under way, and a burst read later overrules it. It
+  buys nothing before a signal: without one it finishes from 75% of the
+  session as the reference does, and after a fall from when the fall has
+  landed (or 85%). It isn't told whether the session moves, which way, when
+  or how far.
 
   On the fast set (12 sessions, 2026-11-17, after #113/#114) three versions
   were tried: the read-only bot ($182.6), the same plus the oracle break
   ($178.0: one session where a false break down came before the burst),
   and a version that capped early passive buying at a fifth of the order
   and took asks at an even pace late ($170.9: worse in falling sessions).
-  The second is the anchor: the break is what the screen's agents did
-  (0.22-0.3%), and catches a move whose burst the read misses.
+  The second was the anchor until the screen of 2026-11-18 showed that
+  waiting beats its early passive bid (below).
 
 ## Failure modes, priced
 
@@ -240,6 +244,40 @@ session, then below the broker's price. The informed bot's passive bid
 before a move costs it in falling sessions, and no ladder rung plays the
 wait-late strategy, so Gate 0's non-reading bar was too low. The run that
 rested a bid all session (Opus 3) landed below the informed bot.
+
+## The redesign (decided 2026-11-18)
+
+The one redesign the saturated-task policy allows, for a weak ladder and
+anchors: the screen's best non-reading play beat the informed anchor, and
+no rung played it.
+
+- **A new non-reading rung, `wait-break`** (`checks/bots/naive`), modelled
+  on Sol 2 and Opus 2: it reads only the oracle. A rise of 0.25% from its
+  low over 300 slots is a move up, and it buys the rest at once, paying up
+  to 40 bp over the oracle; a fall of 0.25% from the high is a move down.
+  Otherwise, and after a fall, it buys nothing until 75% of the session and
+  then finishes under the broker's price. It joins the non-reading gate and
+  the order rule: `max(dump, twap-cross, twap-passive, wait-break) <
+  reference`.
+- **The informed bot** plays the best known play plus the wallet read: no
+  buying before a signal, the oracle break beside the burst read, and the
+  late finish under the broker.
+- **The reference** likewise where it needs no told fact: it keeps its
+  flow read and its confirmed-rise buying, and stops buying early without
+  a move; it finishes late under the broker.
+
+Unit checks: the shared `finish` (nothing before its start, takes under the
+broker and a unit bid at the front, no dear asks, the rest at the close),
+the reference buying nothing early in a flat session, and `wait-break`
+(waits in a flat session then finishes; buys the rest on a break up;
+waits on a break down).
+
+**The re-gate** runs once, with the other held cards, after the infra list
+lands (permanent impact, #20, changes this market: every taker's flow now
+moves the price). The rule then: if the reading signal (the informed bot
+over the best non-reading rung, now `wait-break`) is under 1.9x, the family
+needs its one redesign (slower onsets, oracle fake-outs, less of the move
+left after the onset); if that fails too, it retires.
 
 ## Structural tells (checked before the screen)
 
