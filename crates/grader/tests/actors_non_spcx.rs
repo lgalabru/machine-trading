@@ -1099,7 +1099,8 @@ async fn carry(symbol: &str, premium_pct: f64, item: &str) {
         }
     }
     let accrued = series.last().unwrap().2;
-    let bound = sc.funding_bound_usd(start) * held / sc.max_position();
+    let lot_decimals = rig.phoenix.market(symbol).unwrap().base_lots_decimals;
+    let bound = sc.funding_bound_usd(start, lot_decimals) * held / sc.max_position();
     let mut report = ActorsReport::default();
     takers.report(&mut report).await;
     let flow = report.flow.unwrap();

@@ -994,6 +994,16 @@ impl Mandate {
                 });
             }
         }
+        for instrument in &observed.takes_unjudged {
+            if self
+                .allowance(instrument)
+                .is_some_and(|a| a.taking.is_some())
+            {
+                return Some(Breach::TakesUnjudged {
+                    instrument: instrument.clone(),
+                });
+            }
+        }
         for take in &observed.takes {
             let allowed = self
                 .allowance(&take.instrument)
@@ -1236,6 +1246,10 @@ pub struct Observed {
     /// Every fill the account took liquidity in, for the taking rule, from
     /// an enforcer that tells takers from makers.
     pub takes: Vec<ObservedTake>,
+    /// Instruments whose takes the enforcer could not tell (the account's
+    /// fills in them didn't add up to its positions): a mandate that limits
+    /// taking in one of them is then not judged kept.
+    pub takes_unjudged: Vec<InstrumentRef>,
 }
 
 /// A fill in which the account was the taker: which way, how much in base
@@ -1418,6 +1432,12 @@ pub enum Breach {
     /// The mandate has a notional rule the enforcer never measured: no
     /// samples, or none at the term's start for an exposure bounded by it.
     Unmeasured,
+    /// The mandate allows `instrument` to be taken in only to reduce, and the
+    /// enforcer couldn't tell the account's takes in it: its fills didn't add
+    /// up to its positions. Never read as kept.
+    TakesUnjudged {
+        instrument: InstrumentRef,
+    },
 }
 
 impl fmt::Display for Breach {
@@ -1518,6 +1538,11 @@ impl fmt::Display for Breach {
                  could use"
             ),
             Self::Unmeasured => f.write_str("its mandate's notional limits were never measured"),
+            Self::TakesUnjudged { instrument } => write!(
+                f,
+                "its reduce-only taking in {instrument} could not be judged: its fills did not \
+                 add up to its positions"
+            ),
         }
     }
 }
@@ -2730,5 +2755,38 @@ mod tests {
         let json = serde_json::to_value(&breach).unwrap();
         assert_eq!(json["rule"], "taking");
         assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
+        // Takes the enforcer couldn't tell are never read as kept, in the
+        // instrument the mandate limits.
+        let spcx = mandate.universe[0].instrument.clone();
+        let unjudged = Observed {
+            takes_unjudged: vec![spcx.clone()],
+            ..Observed::default()
+        };
+        let breach = mandate.audit(&unjudged).unwrap();
+        assert_eq!(breach, Breach::TakesUnjudged { instrument: spcx });
+        let json = serde_json::to_value(&breach).unwrap();
+        assert_eq!(json["rule"], "takes_unjudged");
+        assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
+        // A flag on an instrument with no taking rule is no breach, though
+        // another instrument has one.
+        let sol: InstrumentRef = "phoenix:perp:SOL".parse().unwrap();
+        let mut two = mandate.clone();
+        two.universe[0].taking = None;
+        let mut limited = Allowance::new(sol.clone(), 20.0);
+        limited.taking = Some(Taking::ReduceOnly);
+        two.universe.push(limited);
+        let flagged = Observed {
+            takes_unjudged: vec![two.universe[0].instrument.clone()],
+            ..Observed::default()
+        };
+        assert_eq!(two.audit(&flagged), None);
+        let flagged = Observed {
+            takes_unjudged: vec![two.universe[1].instrument.clone()],
+            ..Observed::default()
+        };
+        assert!(matches!(
+            two.audit(&flagged),
+            Some(Breach::TakesUnjudged { .. })
+        ));
     }
 }
