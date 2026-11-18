@@ -220,6 +220,27 @@ rung breached or was disqualified. Gate 0 passes. The order rule sits near
 its 0.85 floor because dump's raw total turned positive (its losses still
 weigh it at -$511).
 
+## Screen after the re-gate (provisional, unguarded; 2026-11-18)
+
+Hidden set anchors: reference $234.9, informed $754.3.
+
+| Run | Reward | Raw | Bot PnL | Reads transactions |
+| --- | --- | --- | --- | --- |
+| Sol 1 | 1.000 | 1.145 | $904.6 | yes (every taker's market orders) |
+| Sol 2 | 1.000 | 1.122 | $881.0 | no |
+| Sol 3 | 1.000 | 1.148 | $908.2 | yes |
+| Opus 1 | 1.000 | 1.092 | $850.3 | yes |
+| Opus 2 | 1.000 | 1.060 | $816.1 | no |
+| Opus 3 | 0.870 | 0.870 | $619.1 | no |
+
+Five of six runs beat the informed anchor, two of them without reading a
+transaction: an oracle break (0.25% from the recent low or high) to buy
+everything or stand aside, and otherwise no buying until about 75% of the
+session, then below the broker's price. The informed bot's passive bid
+before a move costs it in falling sessions, and no ladder rung plays the
+wait-late strategy, so Gate 0's non-reading bar was too low. The run that
+rested a bid all session (Opus 3) landed below the informed bot.
+
 ## Structural tells (checked before the screen)
 
 Nothing structural marks the informed trader or the move's direction: the
