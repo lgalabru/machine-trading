@@ -466,6 +466,11 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
                 with_practice_scoring(&text, &practice_scoring(&script)).into_bytes(),
             );
         }
+        // A task with no folder on disk (a test's made-up one) has no anchor
+        // digest or fingerprint.
+        if !root.join(folder.join("task.toml")).is_file() {
+            continue;
+        }
         // The anchor digest stays as committed while its inputs are the
         // ones it was played from; otherwise it is pending until `mtx task
         // sync --anchors` plays them (it doesn't, here: no sessions).
