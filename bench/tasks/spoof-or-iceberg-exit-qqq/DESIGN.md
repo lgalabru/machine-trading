@@ -101,7 +101,7 @@ before the jump: the touch reaching a spoof wall (pulled) or an iceberg's
 slice (filled, reloaded). The walls' distance behind the touch sets how
 often that happens. Measured with the fixed prototypes (side and slot
 attribution): walls 6 to 28 ticks out gave the reference 0.71 of the
-informed bot before #114; 8 to 36 ticks give 0.37 on #114's actors.
+informed bot before #114; 8 to 36 ticks give 0.42 on #114's actors, with both anchors selling passively.
 
 ## Gate 0
 
@@ -112,45 +112,46 @@ rung a component, bootstrapped 72-session sets. Walls 8 to 36 ticks out.
 
 | Rung | Total | Mean | v2-weighted share of informed |
 | --- | --- | --- | --- |
-| fade-walls | -33 | -0.23 | -0.31 |
-| late | 35 | 0.24 | -0.01 |
-| trust-depth | 217 | 1.50 | -0.10 |
-| twap | 313 | 2.18 | -0.07 |
-| passive (rests an ask at the touch, sells the rest late) | 393 | 2.73 | 0.11 |
-| reference | 822 | 5.71 | 0.37 |
-| informed | 2014 | 13.99 | 1.00 |
+| fade-walls | -33 | -0.23 | -0.38 |
+| late | 35 | 0.24 | -0.02 |
+| trust-depth | 217 | 1.50 | -0.12 |
+| twap | 313 | 2.18 | -0.09 |
+| passive (rests an ask at the touch, sells the rest late) | 393 | 2.73 | 0.14 |
+| reference | 866 | 6.01 | 0.42 |
+| informed | 1789 | 12.43 | 1.00 |
 
-- Signal gate: informed / best non-reading (passive) = 5.13 (need 2);
-  holds on 1.000 of bootstrapped sets.
+Both anchors work the order as a desk would: an ask resting at the touch,
+the rest sold late while the bid beats the broker, nothing resting ahead
+of a rise they know of. (The first gate 0 had them selling late only:
+reference 0.37, informed 13.99 a session.)
+
+- Signal gate: informed / best non-reading (passive) = 4.55 (need 2);
+  holds on 0.998 of bootstrapped sets.
 - Order `max(twap, late, passive, trust-depth, fade-walls) < reference <
-  informed` holds on 0.938 of bootstrapped sets (need 0.85). `passive` was
-  added after the early agent check, whose bot sold passively after the
-  jump; it was graded on the same four sets after the rest.
-- Strength band: reference 0.37 of informed, v2-weighted (band 0.2 to
-  0.7, target 0.5 or under; by set 0.50, 0.06, 0.62, 0.32); per-session
-  Sharpe 0.43.
+  informed` holds on 0.985 of bootstrapped sets (need 0.85).
+- Strength band: reference 0.42 of informed, v2-weighted (band 0.2 to
+  0.7, target 0.5 or under; by set 0.29, 0.46, 0.46, 0.49); per-session
+  Sharpe 0.45.
 - How far one set's band strays: bootstrapping the 144 sessions, a
-  72-session hidden set lands the reference at 0.18 to 0.54 of informed
-  (5th to 95th percentile), outside 0.2 to 0.7 in 7% of sets, nearly all
+  72-session hidden set lands the reference at 0.24 to 0.56 of informed
+  (5th to 95th percentile), outside 0.2 to 0.7 in 3% of sets, nearly all
   on the low side (a set whose falls the book seldom tests before the
-  jump). 100 sessions would cut that to 4% and 144 to 2%; the verifier
-  keeps the card's 72 for its time budget (the informed bot runs as a
-  process), so a grade's 0.5 can sit on a reference that read fewer walls
-  than usual.
-- The practice set (six sessions, seed 61, three falls) is a lucky one for
-  the reference: it reads two of the three falls, and makes 0.82 of the
-  informed bot's PnL. Practice scores there run lower than the hidden
-  set's for the same bot: matching the reference scores 0.5 on both, but
-  doing nothing to the reference's 0.82 leaves little room between.
+  jump); 100 sessions would cut that to 1%. The verifier keeps the card's
+  72 for its time budget (the informed bot runs as a process).
+- The practice set is six sessions drawn with seed 62. The first draw
+  (seed 61) gave the reference 0.97 of the informed bot's PnL (it read
+  every fall), which would leave an agent's practice score little room
+  between the two anchors; seeds 62, 63 and 64 gave 0.50, 0.60 and 0.58,
+  and 62 ships as the one nearest the hidden sets' 0.42.
 - Passed. An earlier run with walls 6 to 28 ticks out, before #114, put
   the reference at 0.71: the walls' distance sets the band.
 
 ## The probes' blends
 
 `bench/checks/probes/calibrate.py` on the four Gate 0 sets (the reference
-and the full-cap coin flip): the coin at the reference's risk is 0.324 of
-the cap; blends 0.342, 0.549 and 0.752 for per-session Sharpe 0.1, 0.2 and
-0.3. Sharpe 0.5 is out of reach (the reference's own is 0.43), so
+and the full-cap coin flip): the coin at the reference's risk is 0.329 of
+the cap; blends 0.331, 0.533 and 0.729 for per-session Sharpe 0.1, 0.2 and
+0.3. Sharpe 0.5 is out of reach (the reference's own is 0.45), so
 `honest-0.5` follows the reference in every session and is judged on what
 it measures.
 

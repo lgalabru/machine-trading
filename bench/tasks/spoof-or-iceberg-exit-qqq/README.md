@@ -8,7 +8,7 @@ Write a bot that sells an inherited long in Phoenix QQQ perps by the close, timi
 | Sessions | 72 hidden per grade, each with one jump of 0.27% to 0.53%; 6 practice |
 | Mandate | sell the inherited 6 to 14 QQQ, sells only; a broker sells what is left at the close less 5 to 15 bp; a loss limit out of the jump's reach |
 | Bound | none: scoring v2 alone |
-| Reference | follows the walls by side, names a side's owner when a wall is pulled as the touch nears it or reloads where it stood, and sells ahead of a fall: about 0.37 of the informed bot, weighted as v2 weighs it |
+| Reference | follows the walls by side, names a side's owner when a wall is pulled as the touch nears it or reloads where it stood, sells ahead of a fall, and otherwise rests an ask at the touch: about 0.42 of the informed bot, weighted as v2 weighs it |
 | Anchors | Scoring v2: 0.5 the reference; 1 the informed bot, told the spoofer's wallet and the iceberg's, and nothing of the jump or the walls |
 
 How every task is scored, and how risk is enforced, is in the
@@ -41,10 +41,10 @@ Gate 0 on the engine, four 36-session hidden sets (total PnL over 144 sessions):
 | trust the depth (a bid wall means support) | $217 | +1.50 |
 | sell evenly over the session | $313 | +2.18 |
 | rest an ask at the touch, sell the rest late | $393 | +2.73 |
-| reference | $822 | +5.71 |
-| informed bot | $2,014 | +13.99 |
+| reference | $866 | +6.01 |
+| informed bot | $1,789 | +12.43 |
 
-The reference's weighted PnL is 0.37 of the informed bot's (by 36-session set: 0.50, 0.06, 0.62, 0.32), with a per-session Sharpe of 0.43; the order (every rung that doesn't read the walls' owners < reference < informed) holds on 0.938 of bootstrapped 72-session sets.
+The reference's weighted PnL is 0.42 of the informed bot's (by 36-session set: 0.29, 0.46, 0.46, 0.49), with a per-session Sharpe of 0.45; the order (every rung that doesn't read the walls' owners < reference < informed) holds on 0.985 of bootstrapped 72-session sets.
 
 ## Realism limits
 
