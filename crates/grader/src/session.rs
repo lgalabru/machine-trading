@@ -720,6 +720,15 @@ pub(crate) trait Account: Send + Sync {
         Ok(())
     }
 
+    /// Before `slot` closes, once everything the session lands in it has
+    /// landed: what the account holds as it closes, for an account that
+    /// reconciles it with fills listed at `confirmed`, which list a slot
+    /// only once it has closed. Called once a step, before its first slot
+    /// moves on. Nothing by default.
+    async fn slot_closing(&mut self, _slot: u64) -> Result<()> {
+        Ok(())
+    }
+
     /// After the bot's turn, at `slot`, before the next step's takers
     /// trade: what it left quoting, for a market maker's obligations (see
     /// [`crate::obligations`]). Nothing by default.
@@ -1028,6 +1037,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             slot = crate::lending::warp(surfnet, &rpc, warp.slots).await?;
         }
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
+        let mut first = true;
         while slot < target {
             // Under the transaction layer, the slot's block: what its
             // builder picks, committed in order before the slot closes.
@@ -1037,6 +1047,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 for signature in engine.commit(slot + 1, picks).await {
                     guard.landed(&signature, k);
                 }
+            }
+            // The last step's slot, with the takers' trades and the bot's
+            // turn in it, is about to close.
+            if std::mem::take(&mut first) {
+                account.slot_closing(slot).await?;
             }
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
