@@ -882,9 +882,10 @@ leak-audit task="":
     fi
     exit "$status"
 
-# Fail if a bot can read the grader's own keypairs (takers', competitor's):
-# one market-making session in the runtime image `image` built, with a probe
-# bot that looks for them.
+# Fail if a bot can reach what the grader keeps from it (its environment and
+# MTX_EVAL_SEED, /tests, its temp directories, any keypair file): one
+# market-making session in the runtime image `image` built, with a probe bot
+# that checks each surface and reports it.
 keypair-probe:
     bench/checks/keypairs/probe.sh {{registry}}/{{image}}:{{tag}}-runtime
 

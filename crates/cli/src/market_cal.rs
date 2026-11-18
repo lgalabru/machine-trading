@@ -52,10 +52,13 @@ pub(crate) enum MarketCalCommand {
         seed: u64,
     },
     /// Realism checks: stylized facts of sessions against the calibration's
-    /// real windows. Prints a report with its verdict; exits 0 on a pass, 2
-    /// if a check fails, and 3 if the market wasn't judged (the return
-    /// checks didn't run: sessions shorter than the reference windows, or
-    /// too few), which is not a pass.
+    /// real windows. Sessions shorter than the reference windows are judged
+    /// on statistics scaled to their length (1 s volatility, jumps, range,
+    /// book spread). Prints a report with its verdict; exits 0 on a pass, 2
+    /// if a check fails, 3 if the market wasn't judged (too few sessions, or
+    /// a required check without power), and 4 if hand-set paths miss the
+    /// real asset's bands: stylised stress paths, which a task says it uses.
+    /// Only a pass exits 0.
     Check {
         /// Scenario files (a file or a directory of them), `model` for the
         /// calibration's own market model, or a task family
@@ -276,6 +279,7 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
                 Verdict::Pass => 0,
                 Verdict::Fail => 2,
                 Verdict::NotJudged => 3,
+                Verdict::Stylised => 4,
             };
             if code != 0 {
                 println!("{output}");
@@ -309,6 +313,7 @@ pub(crate) fn run(command: MarketCalCommand) -> Result<String> {
                 Verdict::Pass => 0,
                 Verdict::Fail => 2,
                 Verdict::NotJudged => 3,
+                Verdict::Stylised => 4,
             };
             if code != 0 {
                 println!("{output}");
