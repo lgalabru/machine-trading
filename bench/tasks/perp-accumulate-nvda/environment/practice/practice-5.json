@@ -1,15 +1,14 @@
 {
   "description": "NVDA practice session",
   "duration_slots": 1388,
-  "informed_max_drawdown_usd": 1.83,
-  "informed_pnl_usd": 3.4,
+  "informed_max_drawdown_usd": 2.17,
+  "informed_pnl_usd": 3.33,
   "making": {
     "competition": {
       "floor_bps": 1.85,
       "react_slots": 4,
       "reactive": {
         "jitter": 0.5,
-        "q_react": 1.0,
         "step_ticks": [
           1,
           2
@@ -1546,7 +1545,7 @@
       "slot": 1380
     }
   ],
-  "reference_max_drawdown_usd": 1.88,
-  "reference_pnl_usd": 3.02,
+  "reference_max_drawdown_usd": 1.78,
+  "reference_pnl_usd": 3.03,
   "symbol": "NVDA"
 }
