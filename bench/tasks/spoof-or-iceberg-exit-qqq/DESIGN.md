@@ -146,6 +146,24 @@ reference 0.37, informed 13.99 a session.)
 - Passed. An earlier run with walls 6 to 28 ticks out, before #114, put
   the reference at 0.71: the walls' distance sets the band.
 
+## The screen (Opus 5.5, 3 runs, 72 sessions)
+
+0.478, 0.595 and 0.886 (mean 0.65): every run read the walls as intended.
+The top run beat the reference on the same read made cleaner: a wall the
+touch sits on for two steps is an iceberg (a spoofer would have pulled),
+and a wall gone is matched with its side's next one, put back further
+from the touch (spoofer) or at its price (iceberg). It named the spoofer
+before 19 of the 32 falls the informed bot sold ahead of, against the
+first reference's 14, and almost never sold ahead of a rise. The
+reference now reads the walls that way (`Walls` in `reference/src/lib.rs`);
+it re-gates with the other held cards.
+
+For the strategy zoo (`bench/checks/zoo`, infra/62), not as a rung of
+this task: **probe the walls**. The middle run sold small clips (0.4 QQQ,
+1.2 QQQ in all, every 4 steps) down to just above the nearest large bid,
+to make the book test it: a spoofer pulls, an iceberg fills and reloads.
+Told nothing, generic to any book with resting walls.
+
 ## The probes' blends
 
 `bench/checks/probes/calibrate.py` on the four Gate 0 sets (the reference
