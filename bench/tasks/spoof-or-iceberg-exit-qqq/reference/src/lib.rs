@@ -326,11 +326,12 @@ pub fn sell_late(market: &Market, orders: &mut Orders, order: &Order) {
 
 /// What the desk does when the walls say nothing it should act on: rests an
 /// ask at the best ask, for a maker's fill, and late in the session sells
-/// what is left while the bid, less the fee, beats the broker's price.
-pub fn work(market: &Market, orders: &mut Orders, order: &Order) {
+/// what is left while the bid, less the fee, beats the broker's price. Says
+/// what it rested, as (price, size).
+pub fn work(market: &Market, orders: &mut Orders, order: &Order) -> Option<(f64, f64)> {
     let held = market.position.size;
     if held <= 1e-3 {
-        return;
+        return None;
     }
     let broker = market.oracle * (1.0 - order.haircut_bps / 10_000.0);
     let late = order.progress(market.slot) >= LATE;
@@ -340,13 +341,38 @@ pub fn work(market: &Market, orders: &mut Orders, order: &Order) {
             .is_some_and(|b| b * (1.0 - TAKER_FEE_BPS / 10_000.0) > broker)
     {
         sell_now(market, orders, held);
-        return;
+        return None;
     }
     let size = round_lots(held.min(ASK_SIZE));
-    if let Some(ask) = market.best_ask
-        && size > 0.0
-    {
-        orders.ask(ask, size).post_only();
+    let ask = market.best_ask.filter(|_| size > 0.0)?;
+    orders.ask(ask, size).post_only();
+    Some((ask, size))
+}
+
+/// The desk's own resting ask, kept out of the walls it reads: the ask it
+/// rested last step, and the book's number for its own trader once that ask
+/// shows there (the number holds while the desk has a position).
+#[derive(Debug, Clone, Default)]
+pub struct OwnAsk {
+    pub rested: Option<(f64, f64)>,
+    trader: Option<u32>,
+}
+
+impl OwnAsk {
+    /// Removes the desk's own orders from `book`.
+    pub fn drop_from(&mut self, book: &mut Vec<Rest>, tick_usd: f64) {
+        if let Some((price, size)) = self.rested.take()
+            && let Some(mine) = book.iter().find(|r| {
+                !r.bid
+                    && (r.ticks as f64 * tick_usd - price).abs() < tick_usd / 2.0
+                    && (r.initial - size).abs() < 1e-6
+            })
+        {
+            self.trader = Some(mine.trader);
+        }
+        if let Some(own) = self.trader {
+            book.retain(|r| r.trader != own);
+        }
     }
 }
 
@@ -394,6 +420,7 @@ pub struct Reference {
     /// A rise is coming: hold, with nothing resting, until it lands.
     rising: bool,
     jump: JumpWatch,
+    own: OwnAsk,
 }
 
 impl Strategy for Reference {
@@ -405,7 +432,8 @@ impl Strategy for Reference {
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         orders.cancel_all();
-        let book = self.book.read();
+        let mut book = self.book.read();
+        self.own.drop_from(&mut book, self.book.tick_usd);
         self.walls.update(
             &book,
             self.book.tick_usd,
@@ -425,7 +453,7 @@ impl Strategy for Reference {
         if self.selling {
             sell_now(market, orders, market.position.size);
         } else if !(self.rising && !self.jump.landed) {
-            work(market, orders, &self.order);
+            self.own.rested = work(market, orders, &self.order);
         }
         Ok(())
     }

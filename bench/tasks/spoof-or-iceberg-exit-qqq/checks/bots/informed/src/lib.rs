@@ -18,7 +18,7 @@
 //! is left sold late.
 
 use mtx_bot_spoof_or_iceberg_exit::{
-    BookReader, JumpWatch, Kind, Order, Rest, sell_now, sign_of, walls_in, work,
+    BookReader, JumpWatch, Kind, Order, OwnAsk, Rest, sell_now, sign_of, walls_in, work,
 };
 use mtx_kit::{log, prelude::*};
 
@@ -35,6 +35,7 @@ pub struct Informed {
     /// A rise is coming: hold, with nothing resting, until it lands.
     rising: bool,
     jump: JumpWatch,
+    own: OwnAsk,
 }
 
 /// The first wallet listed under `kind` in the told state.
@@ -107,7 +108,8 @@ impl Strategy for Informed {
         orders.cancel_all();
         self.jump.update(market.slot, market.oracle);
         if !self.selling {
-            let book = self.book.read();
+            let mut book = self.book.read();
+            self.own.drop_from(&mut book, self.book.tick_usd);
             self.watch();
             let signal = walls_in(&book, self.book.tick_usd, market.best_bid, market.best_ask)
                 .iter()
@@ -123,7 +125,7 @@ impl Strategy for Informed {
         if self.selling {
             sell_now(market, orders, market.position.size);
         } else if !(self.rising && !self.jump.landed) {
-            work(market, orders, &self.order);
+            self.own.rested = work(market, orders, &self.order);
         }
         Ok(())
     }
