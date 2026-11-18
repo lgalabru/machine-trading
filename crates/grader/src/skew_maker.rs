@@ -1,7 +1,13 @@
-//! The skew-maker family: TSLA's opening half hour, where three rival
-//! makers quote the perp around its index and lean their quotes, one of
-//! them on a real view of the price ahead.
+//! The skew-maker family: TSLA's opening half hour, where a desk must work
+//! an order (build a long, or unwind one) while three rival makers quote the
+//! perp around its index and lean their quotes, one of them on a real view
+//! of the price ahead.
 //!
+//! - **The order.** Buy Q TSLA from flat, or sell an inherited long of Q, by
+//!   the session's end, the side drawn per pair of sessions; a broker does
+//!   whatever is left at the closing index worse by a haircut (`order`).
+//!   Reading the makers only changes when and how hard the desk trades:
+//!   ahead of a move the order's way, now; ahead of one against it, later.
 //! - **The price** walks TSLA's market calibration from 09:31 New York on a
 //!   drawn trading day, at the opening hour's measured volatility, jump rate
 //!   and jump sizes (`JUMP_REGIME_MEASUREMENT.md` Table 2 and its caveat).
@@ -25,7 +31,7 @@
 
 use std::collections::BTreeMap;
 
-use mtx_core::mandate::Mandate;
+use mtx_core::{Side, mandate::Mandate};
 use serde::Serialize;
 use serde_json::json;
 
@@ -36,7 +42,7 @@ use crate::{
         calibration::sha256_hex,
         model::{EventKind, JumpSize, ModelPath, Start},
     },
-    orders::CloseOut,
+    orders::ExecutionOrder,
     scenario::{Scenario, SplitMix64, VENUE},
 };
 
@@ -62,6 +68,10 @@ pub struct Quoting {
 /// may be told. The informed bot is told only who is who.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Shape {
+    /// The order: `buy` or `sell`, its quantity and the broker's haircut.
+    pub side: String,
+    pub quantity: f64,
+    pub haircut_bps: f64,
     /// The session's start, Unix seconds (09:31 New York).
     pub start_unix: i64,
     pub mirrored: bool,
@@ -118,11 +128,14 @@ pub struct SkewMakerFamily {
     pub chaser_intensity: f64,
     pub trigger_bps: (f64, f64),
     pub limit_bps: f64,
-    pub max_position: f64,
-    pub max_drawdown_usd: f64,
-    /// What closing what is left at the end costs, in basis points under
-    /// the closing index: the session is valued at the index.
-    pub close_haircut_bps: f64,
+    /// The order's quantity in TSLA, the broker's haircut in basis points,
+    /// and the loss limit as a share of the order's notional (out of reach
+    /// of the moves: the order's value moves with the market either way).
+    pub quantity: (u64, u64),
+    pub haircut_bps: (f64, f64),
+    pub drawdown_share: f64,
+    /// The snapshot's mark, to size the loss limit.
+    pub arrival_usd: f64,
 }
 
 impl SkewMakerFamily {
@@ -152,9 +165,10 @@ impl SkewMakerFamily {
             chaser_intensity: 1.0,
             trigger_bps: (15.0, 25.0),
             limit_bps: 50.0,
-            max_position: 2.0,
-            max_drawdown_usd: 150.0,
-            close_haircut_bps: 5.0,
+            quantity: (4, 8),
+            haircut_bps: (3.0, 8.0),
+            drawdown_share: 0.05,
+            arrival_usd: 389.0,
         }
     }
 
@@ -225,20 +239,38 @@ impl SkewMakerFamily {
             let mut at = model.clone();
             at.spec.start = Start::At { unix: start_unix };
             let path = at.draw(rng.next_u64(), self.duration_slots);
+            // One side a pair: the mirror is the same order on the mirrored
+            // path, so a policy blind to the makers nets about nothing.
+            let side = if rng.next_f64() < 0.5 {
+                Side::Buy
+            } else {
+                Side::Sell
+            };
             let name = format!("{prefix}-{}", out.len() + 1);
-            out.push(self.build(&model, &name, &mut rng, path.clone(), start_unix, false));
+            out.push(self.build(
+                &model,
+                &name,
+                &mut rng,
+                path.clone(),
+                start_unix,
+                false,
+                side,
+            ));
             if out.len() < count {
                 let mut mirror = SplitMix64(draw_seed ^ 0x6d69_7272_6f72);
                 let mut flipped = path;
                 mirror_path(&mut flipped);
                 let name = format!("{prefix}-{}", out.len() + 1);
-                out.push(self.build(&model, &name, &mut mirror, flipped, start_unix, true));
+                out.push(self.build(
+                    &model, &name, &mut mirror, flipped, start_unix, true, side,
+                ));
             }
             n += 1;
         }
         out
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn build(
         &self,
         model: &MarketModel,
@@ -247,6 +279,7 @@ impl SkewMakerFamily {
         index: ModelPath,
         start_unix: i64,
         mirrored: bool,
+        side: Side,
     ) -> (Scenario, Shape) {
         let duration = self.duration_slots;
         let horizon_slots = rng.range_u64(self.horizon_slots);
@@ -321,6 +354,19 @@ impl SkewMakerFamily {
         }))
         .expect("the family's actors are a valid library");
 
+        // The order: buy Q from flat, or sell an inherited long of Q.
+        let quantity = rng.range_u64(self.quantity) as f64;
+        let haircut_bps = round2(rng.range_f64(self.haircut_bps));
+        let max_drawdown = (quantity * self.arrival_usd * self.drawdown_share).round();
+        let mut mandate = Mandate::perp(VENUE, &self.symbol, quantity, max_drawdown);
+        let allowance = &mut mandate.universe[0];
+        allowance.min_position = Some(0.0);
+        allowance.sides = Some(vec![side]);
+        let start_positions = match side {
+            Side::Sell => BTreeMap::from([(self.symbol.clone(), quantity)]),
+            Side::Buy => BTreeMap::new(),
+        };
+
         let jumps = index
             .record
             .events
@@ -328,7 +374,14 @@ impl SkewMakerFamily {
             .filter(|e| e.kind == EventKind::Jump)
             .map(|e| (e.slot, round3(e.pct)))
             .collect();
+        let side_name = match side {
+            Side::Buy => "buy",
+            Side::Sell => "sell",
+        };
         let shape = Shape {
+            side: side_name.into(),
+            quantity,
+            haircut_bps,
             start_unix,
             mirrored,
             skewers,
@@ -344,8 +397,8 @@ impl SkewMakerFamily {
             jumps,
         };
         let description = format!(
-            "{}: trade the perp in the opening half hour among three rival makers, within {} {} and a ${} loss limit",
-            self.symbol, self.max_position, self.symbol, self.max_drawdown_usd
+            "{}: {side_name} {quantity} by the end of the opening half hour among three rival makers; the broker does the rest at {haircut_bps} bp",
+            self.symbol
         );
         let record = index.record.clone();
         let scenario = Scenario {
@@ -353,12 +406,7 @@ impl SkewMakerFamily {
             description,
             symbol: self.symbol.clone(),
             duration_slots: duration,
-            mandate: Mandate::perp(
-                VENUE,
-                &self.symbol,
-                self.max_position,
-                self.max_drawdown_usd,
-            ),
+            mandate,
             path: index.waypoints(self.waypoint_slots),
             making: None,
             offhours: None,
@@ -372,7 +420,13 @@ impl SkewMakerFamily {
             oracles: None,
             lending: None,
             warps: Vec::new(),
-            order: None,
+            order: Some(ExecutionOrder {
+                instrument: None,
+                side,
+                quantity,
+                haircut_bps,
+                reduce_only: side == Side::Sell,
+            }),
             participation: None,
             net: None,
             reference_pnl_usd: None,
@@ -385,13 +439,8 @@ impl SkewMakerFamily {
             raw_sends: None,
             markets: Vec::new(),
             joint: None,
-            start_positions: Default::default(),
-            close_out: BTreeMap::from([(
-                self.symbol.clone(),
-                CloseOut {
-                    haircut_bps: self.close_haircut_bps,
-                },
-            )]),
+            start_positions,
+            close_out: Default::default(),
             tx_layer: None,
             stop_out: None,
             liquidator: None,
@@ -493,6 +542,7 @@ mod tests {
         );
         for pair in a.chunks(2) {
             assert!(!pair[0].1.mirrored && pair[1].1.mirrored);
+            assert_eq!(pair[0].1.side, pair[1].1.side);
             assert_eq!(pair[0].1.start_unix, pair[1].1.start_unix);
         }
         for (scenario, shape) in &a {
@@ -523,6 +573,30 @@ mod tests {
             }
         }
         assert!(seats.iter().all(|n| *n >= 10), "{seats:?}");
+    }
+
+    /// A sell order unwinds an inherited long, a buy order builds one from
+    /// flat, and the mandate allows only the order's side, within Q.
+    #[test]
+    fn each_session_works_one_order_the_mandate_holds_to() {
+        let family = SkewMakerFamily::tsla();
+        let set = family.draw_set("t", 24, 6);
+        let sides: Vec<&str> = set.iter().map(|(_, s)| s.side.as_str()).collect();
+        assert!(sides.contains(&"buy") && sides.contains(&"sell"), "{sides:?}");
+        for (scenario, shape) in &set {
+            let order = scenario.order.as_ref().unwrap();
+            assert_eq!(order.quantity, shape.quantity);
+            assert!((4.0..=8.0).contains(&order.quantity));
+            let held = scenario.start_positions.get("TSLA").copied().unwrap_or(0.0);
+            let allowance = &scenario.mandate.universe[0];
+            assert_eq!(allowance.max_position, order.quantity);
+            assert_eq!(allowance.min_position, Some(0.0));
+            assert_eq!(allowance.sides.as_deref(), Some(&[order.side][..]));
+            match order.side {
+                Side::Sell => assert!(held == order.quantity && order.reduce_only),
+                Side::Buy => assert!(held == 0.0 && !order.reduce_only),
+            }
+        }
     }
 
     #[test]

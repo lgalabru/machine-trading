@@ -5,7 +5,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 [task]
 name = "solana-foundation/skew-maker-follow-tsla"
 version = "0.1.0"
-description = "Write a bot that trades the Phoenix TSLA perp in the opening half hour among three rival makers, finding which maker's lean leads the price and following it, on an offline copy of Solana mainnet."
+description = "Write a bot that works a TSLA order on Phoenix in the opening half hour, building a long or unwinding one by the end, and times it by reading which of three rival makers leans ahead of the price, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "surfpool", "rust"]
 
 [[task.authors]]
@@ -23,8 +23,8 @@ generator = "skew-maker"
 anchor = "skew-maker-follow"
 emoji = "🆕"
 market = "Phoenix TSLA perp"
-summary = "reads which rival maker's lean leads the price from how each quotes, and follows that maker by leaning its own quotes or by taking"
-skill = "reads which rival maker's lean leads the price from how each quotes, and follows that maker by leaning its own quotes or by taking"
+summary = "times a TSLA order by reading which rival maker's lean leads the price, crossing ahead of a move the order's way and waiting through one against it"
+skill = "times a TSLA order by reading which rival maker's lean leads the price, crossing ahead of a move the order's way and waiting through one against it"
 leak_needles = ["mean skew of its last two quotes", "names each number by the slots its quotes were placed in"]
 headline = "v2"
 # The anchors run as strategy components, as Gate 0 ran them.

@@ -1,5 +1,5 @@
-//! The informed bot, scoring v2's 1: the reference's following, told who
-//! the rival makers are, and nothing of the session's draws.
+//! The informed bot, scoring v2's 1: the reference's pacing of the order,
+//! told who the rival makers are, and nothing of the session's draws.
 //!
 //! It reads `MTX_REGIME`, what the verifier's `--informed` hands it: the
 //! informed skewer's wallet and the decoys' (`wallets.skewer-informed`,
@@ -12,13 +12,13 @@
 //! names each maker by the slots its quotes were placed in: the told wallet
 //! that sent a transaction in that slot, when only one did, read off the
 //! wallets' signatures. Once a number has more such votes for the informed
-//! wallet than for any other, it follows that maker's lean as the reference
-//! follows the maker it chose.
+//! wallet than for any other, it paces the order on that maker's lean as the
+//! reference does on the maker it chose.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use mtx_bot_skew_maker_follow::{
-    BookReader, Follow, Follower, IndexHistory, Leans, index_of, makers,
+    BookReader, IndexHistory, Leans, Order, Pace, Pacer, index_of, makers,
 };
 use mtx_kit::{log, prelude::*};
 use serde_json::Value;
@@ -29,7 +29,8 @@ pub struct Informed {
     book: BookReader,
     history: IndexHistory,
     leans: Leans,
-    follower: Follower,
+    order: Order,
+    pacer: Pacer,
     /// The told wallets, the informed one first, and the slots each sent a
     /// transaction in.
     told: Vec<String>,
@@ -71,7 +72,8 @@ impl Informed {
 impl Strategy for Informed {
     fn start(&mut self, session: &Session) -> BotResult {
         self.book = BookReader::new(session)?;
-        self.follower = Follower::new(Follow::default());
+        self.order = Order::from_session(session)?;
+        self.pacer = Pacer::new(Pace::default());
         let told = session
             .var("MTX_REGIME")
             .ok_or("no MTX_REGIME: the informed bot is told the session's latent state")?;
@@ -141,7 +143,7 @@ impl Strategy for Informed {
             self.chosen = trader;
         }
         let signal = self.chosen.map_or(0.0, |m| self.leans.of(m));
-        self.follower.step(market, orders, signal);
+        self.pacer.step(market, orders, &self.order, signal);
         Ok(())
     }
 }

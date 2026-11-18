@@ -1,6 +1,11 @@
-//! Reference: trade the TSLA perp in the opening half hour by learning which
-//! rival maker's lean leads the price, and following it.
+//! Reference: work the session's order (build a TSLA long by the end, or
+//! unwind one) and time it by learning which rival maker's lean leads the
+//! price.
 //!
+//! - **The order** comes in the session's vars: `MTX_ORDER`'s side and
+//!   quantity, and the broker's haircut `MTX_BROKER_HAIRCUT_BPS`. Whatever is
+//!   left at the end, the broker does at the closing index worse by the
+//!   haircut.
 //! - **The makers.** Every step it reads Phoenix's TSLA orderbook account
 //!   and groups the resting orders by their trader: a trader with a bid and
 //!   an ask resting is a maker. Its skew is how far its mid sat from the
@@ -13,11 +18,15 @@
 //!   index. A maker that leans ahead of moves earns it; one that leans on
 //!   nothing earns about nothing.
 //! - **Committing.** Once one maker's following PnL leads every other's by
-//!   `LEAD_BPS` and is positive, it follows that maker; until then it does
-//!   nothing.
-//! - **Following.** On a full lean it takes the cap the maker's way, and on
-//!   a partial one it rests the favoured side only; once the lean has gone
-//!   for a few steps it closes. It never turns a position over in one go.
+//!   `LEAD_BPS` and is positive, it reads that maker; until then it reads
+//!   no one.
+//! - **Pacing.** The read sets only when and how hard it trades, never the
+//!   side or the size. A full lean the order's way (up ahead of a buy) means
+//!   the price is about to run from it: it crosses for the rest of the order
+//!   now. A lean against means the price is about to come to it: it waits.
+//!   Either holds for about a horizon after the lean fades. Otherwise it
+//!   holds off, and late in the session finishes what is left while the
+//!   book beats the broker.
 //!
 //! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
 //! solution), and a process (`src/main.rs`).
@@ -26,20 +35,20 @@ use std::collections::{BTreeMap, VecDeque};
 
 use mtx_kit::{log, prelude::*, rpc_account, venue::PhoenixVenue};
 
-/// The taker's limit past the index, in basis points.
+/// The taker's limit past the index, in basis points, and its fee.
 pub const TAKE_DEPTH_BPS: f64 = 15.0;
+pub const TAKER_FEE_BPS: f64 = 3.5;
 /// The most it takes a step, in TSLA.
 pub const SLICE: f64 = 1.0;
-/// Its resting order on the favoured side: size, in TSLA, and how far
-/// under (over) the index, in basis points.
-pub const LEAN_SIZE: f64 = 0.25;
-pub const LEAN_IN_BPS: f64 = 1.0;
-/// Steps a lean must be gone before it closes: about a horizon, so it
+/// Steps a lean must be gone before its pace lapses: about a horizon, so it
 /// holds through the move the lean was ahead of.
 pub const EXIT_STEPS: u32 = 40;
 /// The lead, in basis points of a unit, a maker's following PnL must hold
-/// over every other's before the reference follows it.
+/// over every other's before the reference reads it.
 pub const LEAD_BPS: f64 = 30.0;
+/// From this share of the session on, it finishes the order while the book
+/// beats the broker.
+pub const LATE: f64 = 0.9;
 
 /// One resting order on Phoenix's book.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -258,87 +267,179 @@ pub fn sign(x: f64) -> f64 {
     }
 }
 
-/// How a signal is followed: the skew at which it takes the cap, and the
-/// skew at which it rests the favoured side.
-#[derive(Debug, Clone, Copy)]
-pub struct Follow {
-    pub take: f64,
-    pub lean: f64,
+/// The session's order.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Order {
+    /// Buying (building a long from flat) or selling (an inherited long).
+    pub buy: bool,
+    pub quantity: f64,
+    pub haircut_bps: f64,
+    pub start_slot: u64,
+    pub end_slot: u64,
 }
 
-impl Default for Follow {
+impl Order {
+    pub fn from_session(session: &Session) -> BotResult<Self> {
+        let order = session.var("MTX_ORDER").ok_or("no MTX_ORDER")?;
+        let side = order
+            .split("\"side\"")
+            .nth(1)
+            .ok_or("MTX_ORDER has no side")?;
+        let buy = side.trim_start_matches([':', ' ', '"']).starts_with("buy");
+        let quantity = number_after(order, "\"quantity\"").ok_or("MTX_ORDER has no quantity")?;
+        let haircut_bps = session
+            .var("MTX_BROKER_HAIRCUT_BPS")
+            .and_then(|h| h.trim().parse().ok())
+            .ok_or("no MTX_BROKER_HAIRCUT_BPS")?;
+        Ok(Self {
+            buy,
+            quantity,
+            haircut_bps,
+            start_slot: session.start_slot,
+            end_slot: session.end_slot,
+        })
+    }
+
+    /// `+1` for a buy, `-1` for a sell.
+    pub fn way(&self) -> f64 {
+        if self.buy { 1.0 } else { -1.0 }
+    }
+
+    /// What is left of the order at `position`.
+    pub fn left(&self, position: f64) -> f64 {
+        let left = if self.buy {
+            self.quantity - position
+        } else {
+            position
+        };
+        round_lots(left.max(0.0))
+    }
+
+    /// How far into the session `slot` is, from 0 to 1.
+    pub fn progress(&self, slot: u64) -> f64 {
+        let span = self.end_slot.saturating_sub(self.start_slot).max(1) as f64;
+        (slot.saturating_sub(self.start_slot) as f64 / span).min(1.0)
+    }
+}
+
+/// The number after `key` in a JSON text: enough for the session's vars.
+pub fn number_after(text: &str, key: &str) -> Option<f64> {
+    let rest = &text[text.find(key)? + key.len()..];
+    let rest = rest.trim_start_matches([':', ' ', '"']);
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == 'e'))
+        .unwrap_or(rest.len());
+    rest[..end].parse().ok()
+}
+
+/// Crosses for up to `size` of the order, at most `SLICE` a step.
+pub fn cross(market: &Market, orders: &mut Orders, order: &Order, size: f64) {
+    let index = index_of(market);
+    let size = round_lots(size.min(SLICE));
+    if size < 0.001 || index <= 0.0 {
+        return;
+    }
+    if order.buy {
+        orders.buy(
+            size,
+            round_up_cents(index * (1.0 + TAKE_DEPTH_BPS / 10_000.0)),
+        );
+    } else {
+        orders.sell(
+            size,
+            round_down_cents(index * (1.0 - TAKE_DEPTH_BPS / 10_000.0)),
+        );
+    }
+}
+
+/// Late in the session, finishes what is left while the touch, after the
+/// fee, beats the broker's price at the index now.
+pub fn finish_late(market: &Market, orders: &mut Orders, order: &Order) {
+    let left = order.left(market.position.size);
+    if left < 0.001 || order.progress(market.slot) < LATE {
+        return;
+    }
+    let index = index_of(market);
+    let fee = TAKER_FEE_BPS / 10_000.0;
+    let haircut = order.haircut_bps / 10_000.0;
+    let beats = if order.buy {
+        market
+            .best_ask
+            .is_some_and(|a| a * (1.0 + fee) < index * (1.0 + haircut))
+    } else {
+        market
+            .best_bid
+            .is_some_and(|b| b * (1.0 - fee) > index * (1.0 - haircut))
+    };
+    if beats {
+        cross(market, orders, order, left);
+    }
+}
+
+/// How a read paces the order: the lean, as a share of a full one, at
+/// which a lean the order's way sends it in now, and at which a lean
+/// against holds it back.
+#[derive(Debug, Clone, Copy)]
+pub struct Pace {
+    pub now: f64,
+    pub wait: f64,
+}
+
+impl Default for Pace {
     fn default() -> Self {
         Self {
-            take: 0.6,
-            lean: 0.35,
+            now: 0.6,
+            wait: 0.35,
         }
     }
 }
 
-/// Following a signal: takes the cap its way on a full lean, rests the
-/// favoured side on a partial one, and closes once it has gone.
+/// What a read has the order doing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Mode {
+    /// No read: hold off, and finish late while the book beats the broker.
+    #[default]
+    Idle,
+    /// The price is about to run from the order: cross for the rest.
+    Now,
+    /// The price is about to come to the order: wait.
+    Wait,
+}
+
+/// Pacing an order on a signal (`+1` a full lean up, `-1` down, 0 none).
 #[derive(Debug, Clone, Default)]
-pub struct Follower {
-    pub follow: Follow,
+pub struct Pacer {
+    pub pace: Pace,
+    pub mode: Mode,
     quiet: u32,
 }
 
-impl Follower {
-    pub fn new(follow: Follow) -> Self {
-        Self { follow, quiet: 0 }
+impl Pacer {
+    pub fn new(pace: Pace) -> Self {
+        Self {
+            pace,
+            ..Self::default()
+        }
     }
 
-    /// One step on `signal` (`+1` a full lean up, `-1` down, 0 none).
-    pub fn step(&mut self, market: &Market, orders: &mut Orders, signal: f64) {
+    /// One step of the order on `signal`.
+    pub fn step(&mut self, market: &Market, orders: &mut Orders, order: &Order, signal: f64) {
         orders.cancel_all();
-        let held = market.position.size;
-        let cap = market.cap;
-        let index = index_of(market);
-        let way = sign(signal);
-        let strength = signal.abs();
-        let mut target = held;
-        if strength >= self.follow.take {
-            self.quiet = 0;
-            // Never turned over in one go: close first.
-            target = if held * way < -1e-9 { 0.0 } else { way * cap };
-        } else if strength >= self.follow.lean && held * way >= -1e-9 {
-            self.quiet = 0;
-        } else {
+        let aligned = signal * order.way();
+        if aligned >= self.pace.now {
+            (self.mode, self.quiet) = (Mode::Now, 0);
+        } else if aligned <= -self.pace.wait {
+            (self.mode, self.quiet) = (Mode::Wait, 0);
+        } else if self.mode != Mode::Idle {
             self.quiet += 1;
-            let against = held * way < -1e-9 && strength >= self.follow.lean;
-            if self.quiet >= EXIT_STEPS || against {
-                target = 0.0;
+            if self.quiet >= EXIT_STEPS {
+                self.mode = Mode::Idle;
             }
         }
-        let gap = target - held;
-        let size = round_lots(gap.abs().min(SLICE));
-        if size >= 0.001 && index > 0.0 {
-            if gap > 0.0 {
-                orders.buy(
-                    size,
-                    round_up_cents(index * (1.0 + TAKE_DEPTH_BPS / 10_000.0)),
-                );
-            } else {
-                orders.sell(
-                    size,
-                    round_down_cents(index * (1.0 - TAKE_DEPTH_BPS / 10_000.0)),
-                );
-            }
-            return;
-        }
-        // A partial lean: rest the favoured side only, inside the cap.
-        if strength >= self.follow.lean && index > 0.0 {
-            let room = round_lots((cap - held * way).clamp(0.0, LEAN_SIZE));
-            if room >= 0.001 {
-                if way > 0.0 {
-                    orders.bid(
-                        round_down_cents(index * (1.0 - LEAN_IN_BPS / 10_000.0)),
-                        room,
-                    );
-                } else {
-                    orders.ask(round_up_cents(index * (1.0 + LEAN_IN_BPS / 10_000.0)), room);
-                }
-            }
+        match self.mode {
+            Mode::Now => cross(market, orders, order, order.left(market.position.size)),
+            Mode::Wait => {}
+            Mode::Idle => finish_late(market, orders, order),
         }
     }
 }
@@ -395,18 +496,20 @@ impl Markout {
 /// The strategy.
 #[derive(Default)]
 pub struct Reference {
+    order: Order,
     book: BookReader,
     history: IndexHistory,
     leans: Leans,
     markout: Markout,
-    follower: Follower,
+    pacer: Pacer,
     chosen: Option<u32>,
 }
 
 impl Strategy for Reference {
     fn start(&mut self, session: &Session) -> BotResult {
+        self.order = Order::from_session(session)?;
         self.book = BookReader::new(session)?;
-        self.follower = Follower::new(Follow::default());
+        self.pacer = Pacer::new(Pace::default());
         Ok(())
     }
 
@@ -417,18 +520,18 @@ impl Strategy for Reference {
         let makers = makers(&book, self.book.tick_usd);
         self.leans.update(&makers, &self.history);
         self.markout
-            .update(&self.leans, index, self.follower.follow.lean);
+            .update(&self.leans, index, self.pacer.pace.wait);
         if let Some(leader) = self.markout.leader(LEAD_BPS)
             && self.chosen != Some(leader)
         {
             log(&format!(
-                "slot {}: following maker {leader} ({:.0} bp)",
+                "slot {}: reading maker {leader} ({:.0} bp)",
                 market.slot, self.markout.pnl[&leader]
             ));
             self.chosen = Some(leader);
         }
         let signal = self.chosen.map_or(0.0, |m| self.leans.of(m));
-        self.follower.step(market, orders, signal);
+        self.pacer.step(market, orders, &self.order, signal);
         Ok(())
     }
 }
@@ -469,6 +572,50 @@ mod tests {
         history.push(0, 400.0);
         history.push(10, 401.0);
         assert!((history.skew(&makers[&1]) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_lean_the_orders_way_crosses_now_and_one_against_waits() {
+        let order = Order {
+            buy: true,
+            quantity: 6.0,
+            haircut_bps: 5.0,
+            start_slot: 0,
+            end_slot: 4_500,
+        };
+        assert_eq!(order.left(2.5), 3.5);
+        assert_eq!(order.left(7.0), 0.0);
+        let sell = Order { buy: false, ..order };
+        assert_eq!((sell.left(6.0), sell.way()), (6.0, -1.0));
+        let market = Market {
+            slot: 100,
+            index: 400.0,
+            oracle: 400.0,
+            best_bid: Some(399.9),
+            best_ask: Some(400.1),
+            ..Market::default()
+        };
+        let mut pacer = Pacer::new(Pace::default());
+        let mut orders = Orders::new();
+        pacer.step(&market, &mut orders, &order, 0.8);
+        assert_eq!(pacer.mode, Mode::Now);
+        let mut orders = Orders::new();
+        pacer.step(&market, &mut orders, &order, -0.5);
+        assert_eq!(pacer.mode, Mode::Wait);
+        // Early in the session, with no read, it holds off.
+        let mut idle = Pacer::new(Pace::default());
+        let mut orders = Orders::new();
+        idle.step(&market, &mut orders, &order, 0.0);
+        assert_eq!(idle.mode, Mode::Idle);
+        assert_eq!(orders.lines().count(), 1, "only the cancel");
+    }
+
+    #[test]
+    fn the_order_is_read_from_the_session_vars() {
+        assert_eq!(
+            number_after(r#"{"side": "buy", "quantity": 6}"#, "\"quantity\""),
+            Some(6.0)
+        );
     }
 
     #[test]

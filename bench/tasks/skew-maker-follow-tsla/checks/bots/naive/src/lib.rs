@@ -1,35 +1,35 @@
-//! The ladder's rungs that trade without learning which maker knows. A
-//! component has no environment, so each rung is its own build, its rule
-//! set by `MTX_NAIVE` at build time:
+//! The ladder's rungs that work the order without learning which maker
+//! knows. A component has no environment, so each rung is its own build,
+//! its rule set by `MTX_NAIVE` at build time:
 //!
-//! - `mean-skew`: follows the mean skew of every maker on the book, leaning
-//!   and taking as the reference follows the maker it chose.
-//! - `most-skewed`: follows whichever maker leans furthest at each step.
-//! - `seat-a`: always follows one maker, the first on the book by its
-//!   trader number: "always act as if this one knows".
-//! - `twap`: buys the cap evenly over the session and holds it.
-//! - `neutral`: quotes both sides around the index, leaning nowhere.
+//! - `dump`: the whole order at once, crossing.
+//! - `twap`: evenly over the session, crossing.
+//! - `late`: holds off, and finishes late while the book beats the broker,
+//!   as the reference does with no read.
+//! - `passive`: rests the rest of the order at the touch on its side all
+//!   session, and finishes late: good prices only.
+//! - `mean-skew`: paces the order on the mean lean of every maker on the
+//!   book, as the reference paces on the maker it chose.
+//! - `most-skewed`: on whichever maker leans furthest at each step.
+//! - `seat-a`: on one maker, the first on the book by its trader number:
+//!   "always act as if this one knows".
 //! - `probe`: trades nothing and logs the book's makers each step.
 
 use mtx_bot_skew_maker_follow::{
-    BookReader, Follow, Follower, IndexHistory, LEAN_SIZE, Leans, TAKE_DEPTH_BPS, index_of, makers,
+    BookReader, IndexHistory, Leans, Order, Pace, Pacer, cross, finish_late, index_of, makers,
     round_down_cents, round_lots, round_up_cents,
 };
 use mtx_kit::{log, prelude::*};
 
-/// The neutral quote's half-width, in basis points.
-const NEUTRAL_BPS: f64 = 5.0;
-
 #[derive(Default)]
 pub struct Naive {
     mode: String,
+    order: Order,
     book: BookReader,
     history: IndexHistory,
     leans: Leans,
-    follower: Follower,
+    pacer: Pacer,
     seat: Option<u32>,
-    start_slot: u64,
-    end_slot: u64,
 }
 
 impl Strategy for Naive {
@@ -37,86 +37,82 @@ impl Strategy for Naive {
         self.mode = option_env!("MTX_NAIVE")
             .ok_or("built without MTX_NAIVE")?
             .to_string();
+        self.order = Order::from_session(session)?;
         self.book = BookReader::new(session)?;
         // Three makers' mean is a third of one's lean, and two leaning
-        // together reach the others' thresholds' half: the best of 0.1 to
-        // 0.3 on a replay of 48 sessions.
-        let follow = if self.mode == "mean-skew" {
-            Follow {
-                take: 0.3,
-                lean: 0.15,
+        // together reach the others' thresholds' half.
+        let pace = if self.mode == "mean-skew" {
+            Pace {
+                now: 0.3,
+                wait: 0.15,
             }
         } else {
-            Follow::default()
+            Pace::default()
         };
-        self.follower = Follower::new(follow);
-        self.start_slot = session.start_slot;
-        self.end_slot = session.end_slot;
+        self.pacer = Pacer::new(pace);
         Ok(())
     }
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
+        let order = self.order;
+        let left = order.left(market.position.size);
+        match self.mode.as_str() {
+            "dump" => {
+                orders.cancel_all();
+                cross(market, orders, &order, left);
+                return Ok(());
+            }
+            "twap" => {
+                orders.cancel_all();
+                let due = order.quantity * order.progress(market.slot);
+                let done = order.quantity - left;
+                cross(market, orders, &order, round_lots(due - done));
+                return Ok(());
+            }
+            "late" => {
+                orders.cancel_all();
+                finish_late(market, orders, &order);
+                return Ok(());
+            }
+            "passive" => {
+                orders.cancel_all();
+                let size = round_lots(left);
+                if size >= 0.001 {
+                    if order.buy {
+                        if let Some(bid) = market.best_bid {
+                            orders.bid(round_down_cents(bid), size);
+                        }
+                    } else if let Some(ask) = market.best_ask {
+                        orders.ask(round_up_cents(ask), size);
+                    }
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
         let index = index_of(market);
         self.history.push(market.slot, index);
         let book = self.book.read();
         let makers = makers(&book, self.book.tick_usd);
         self.leans.update(&makers, &self.history);
         let skews = self.leans.all();
-        match self.mode.as_str() {
-            "mean-skew" => {
-                let mean = if skews.is_empty() {
-                    0.0
-                } else {
-                    skews.iter().map(|(_, s)| s).sum::<f64>() / skews.len() as f64
-                };
-                self.follower.step(market, orders, mean);
+        let signal = match self.mode.as_str() {
+            "mean-skew" if !skews.is_empty() => {
+                skews.iter().map(|(_, s)| s).sum::<f64>() / skews.len() as f64
             }
-            "most-skewed" => {
-                let most = skews
-                    .iter()
-                    .map(|(_, s)| *s)
-                    .max_by(|a, b| a.abs().total_cmp(&b.abs()))
-                    .unwrap_or(0.0);
-                self.follower.step(market, orders, most);
-            }
+            "mean-skew" => 0.0,
+            "most-skewed" => skews
+                .iter()
+                .map(|(_, s)| *s)
+                .max_by(|a, b| a.abs().total_cmp(&b.abs()))
+                .unwrap_or(0.0),
             "seat-a" => {
                 if self.seat.is_none() && skews.len() >= 3 {
                     self.seat = skews.first().map(|(trader, _)| *trader);
                 }
-                let signal = self
-                    .seat
+                self.seat
                     .and_then(|seat| skews.iter().find(|(t, _)| *t == seat))
-                    .map_or(0.0, |(_, s)| *s);
-                self.follower.step(market, orders, signal);
-            }
-            "twap" => {
-                orders.cancel_all();
-                let span = self.end_slot.saturating_sub(self.start_slot).max(1) as f64;
-                let done = (market.slot.saturating_sub(self.start_slot) as f64 / span).min(1.0);
-                let size = round_lots(market.cap * done - market.position.size);
-                if size >= 0.001 && index > 0.0 {
-                    orders.buy(
-                        size,
-                        round_up_cents(index * (1.0 + TAKE_DEPTH_BPS / 10_000.0)),
-                    );
-                }
-            }
-            "neutral" => {
-                orders.cancel_all();
-                let held = market.position.size;
-                let bid = round_lots((market.cap - held).clamp(0.0, LEAN_SIZE));
-                let ask = round_lots((market.cap + held).clamp(0.0, LEAN_SIZE));
-                if index > 0.0 {
-                    if bid >= 0.001 {
-                        orders.bid(
-                            round_down_cents(index * (1.0 - NEUTRAL_BPS / 10_000.0)),
-                            bid,
-                        );
-                    }
-                    if ask >= 0.001 {
-                        orders.ask(round_up_cents(index * (1.0 + NEUTRAL_BPS / 10_000.0)), ask);
-                    }
-                }
+                    .map_or(0.0, |(_, s)| *s)
             }
             "probe" => {
                 let mut seen: Vec<String> = book
@@ -144,9 +140,12 @@ impl Strategy for Naive {
                     touch(market.best_ask),
                     seen.join(" ")
                 ));
+                orders.cancel_all();
+                return Ok(());
             }
             other => return Err(format!("unknown MTX_NAIVE {other}").into()),
-        }
+        };
+        self.pacer.step(market, orders, &order, signal);
         Ok(())
     }
 }

@@ -16,23 +16,42 @@
     ],
     "non_reading": [
       "nop",
+      "dump",
+      "twap",
+      "late",
+      "passive",
       "mean-skew",
       "most-skewed",
-      "seat-a",
-      "twap",
-      "neutral"
+      "seat-a"
     ]
   },
   "min_rule_odds": 0.85,
   "probes": {},
   "rules": [
-    "max(nop, mean-skew, most-skewed, seat-a, twap, neutral) < reference",
+    "max(nop, dump, twap, late, passive) < reference",
+    "max(mean-skew, most-skewed, seat-a) < reference",
     "reference < informed"
   ],
   "rungs": [
     {
       "name": "nop",
       "dir": "bots/starter"
+    },
+    {
+      "name": "dump",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/dump"
+    },
+    {
+      "name": "twap",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/twap"
+    },
+    {
+      "name": "late",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/late"
+    },
+    {
+      "name": "passive",
+      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/passive"
     },
     {
       "name": "mean-skew",
@@ -45,14 +64,6 @@
     {
       "name": "seat-a",
       "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/seat-a"
-    },
-    {
-      "name": "twap",
-      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/twap"
-    },
-    {
-      "name": "neutral",
-      "dir": "bench/tasks/skew-maker-follow-tsla/checks/bots/naive/rungs/neutral"
     },
     {
       "name": "reference",
