@@ -399,6 +399,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
             "//! {INFORMED_TODO}: this is a copy of the reference. Make it the task's informed\n//! bot, scoring v2's 1: it reads every fact the task's data could tell in\n//! principle (`MTX_REGIME`: the session's latent state, which the verifier\n//! and the ladder's `tell_latent` hand it) but not the session's future,\n//! and trades under the same costs, mandate and latency. Then drop this\n//! paragraph.\n//!\n{source}"
         ),
     )?;
+    hybrid_crate(root, name, &family, &informed_package, &source)?;
     let probes = probe_rungs(
         root,
         base.task(),
@@ -413,7 +414,7 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
             + "\n",
     )?;
     written.push(format!(
-        "bench/tasks/{name}/checks: ladder.json (both anchors, the probe gate), the informed bot's slot (package {informed_package})"
+        "bench/tasks/{name}/checks: ladder.json (both anchors, the probe gate, the strategy zoo), the informed bot's slot (package {informed_package}), the zoo's hybrid (rungs/hybrid)"
     ));
 
     // Everything that lists the task is written from its task.toml.
@@ -561,6 +562,58 @@ fn v2_verifier(script: &str, informed_anchor: &str) -> String {
     )
 }
 
+/// The task's anchor-strength hybrid (bench/checks/zoo/README.md):
+/// `checks/rungs/hybrid`, running the informed bot (the strategy its
+/// `lib.rs`, `informed`, exports) beside a zoo rung.
+fn hybrid_crate(
+    root: &Path,
+    name: &str,
+    family: &str,
+    informed_package: &str,
+    informed: &str,
+) -> Result<()> {
+    let to = root
+        .join("bench/tasks")
+        .join(name)
+        .join("checks/rungs/hybrid");
+    std::fs::create_dir_all(to.join("src"))?;
+    let zoo = root.join("bench/checks/zoo");
+    for file in ["build.sh", "run.sh", ".gitignore"] {
+        if zoo.join(file).is_file() {
+            std::fs::copy(zoo.join(file), to.join(file))?;
+        }
+    }
+    let strategy = informed
+        .split("export!(")
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .unwrap_or("Strategy");
+    std::fs::write(
+        to.join("Cargo.toml"),
+        format!(
+            "# The {name} anchor-strength hybrid (bench/checks/zoo): its informed bot\n\
+             # with a zoo rung in the steps it leaves idle. Outside the repository's\n\
+             # workspace and out of the task image, like the other rungs.\n\
+             [package]\nname = \"mtx-hybrid-{family}\"\nedition = \"2024\"\nversion = \"0.1.0\"\n\
+             license = \"MIT\"\npublish = false\n\n[[bin]]\nname = \"bot\"\npath = \"src/main.rs\"\n\n\
+             [dependencies]\n{informed_package} = {{ path = \"../../bots/informed\" }}\n\
+             mtx-kit = {{ path = \"../../../../../../crates/kit\" }}\n\
+             mtx-zoo = {{ path = \"../../../../../checks/zoo\" }}\n\n[workspace]\n"
+        ),
+    )?;
+    std::fs::write(
+        to.join("src/main.rs"),
+        format!(
+            "//! The {name} hybrid, with the task's informed bot to run.\n\n\
+             fn main() -> mtx_kit::BotResult {{\n    mtx_zoo::hybrid_main(Box::new({}::{strategy}::default()))\n}}\n",
+            informed_package.replace('-', "_")
+        ),
+    )?;
+    Ok(())
+}
+
 /// The base task's probe rungs (the probe gate's, `bench/checks/probes`),
 /// rewritten for the new task, and its `probes` section; the probe crate that
 /// wraps the base's reference is copied too. A base without them gives
@@ -646,6 +699,7 @@ fn ladder(name: &str, family: &str, probes: &(Vec<Value>, Value), count: u32) ->
         ],
         "exploits": { "bots": [], "max_profitable": 0.75, "below": "informed" },
         "probes": probes.1,
+        "zoo": { "hybrid": format!("bench/tasks/{name}/checks/rungs/hybrid") },
     })
 }
 
@@ -1812,6 +1866,23 @@ mod tests {
             json!({ "reference": "reference", "informed": "informed" })
         );
         assert_eq!(ladder["probes"], json!({}));
+        // The strategy zoo's hybrid: the informed bot beside a zoo rung.
+        let hybrid = task.join("checks/rungs/hybrid");
+        assert_eq!(
+            ladder["zoo"]["hybrid"],
+            format!("bench/tasks/{name}/checks/rungs/hybrid")
+        );
+        let cargo = read(&hybrid.join("Cargo.toml"));
+        assert!(
+            cargo.contains("mtx-bot-funding-squeeze-informed = { path = \"../../bots/informed\" }"),
+            "{cargo}"
+        );
+        assert!(cargo.contains("mtx-zoo = { path = \"../../../../../checks/zoo\" }"));
+        let main = read(&hybrid.join("src/main.rs"));
+        assert!(
+            main.contains("mtx_zoo::hybrid_main(Box::new(mtx_bot_funding_squeeze_informed::"),
+            "{main}"
+        );
         let names: Vec<&str> = ladder["rungs"]
             .as_array()
             .unwrap()

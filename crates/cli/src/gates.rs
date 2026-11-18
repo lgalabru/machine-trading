@@ -1433,6 +1433,17 @@ pub fn zoo_checks(summary: &LadderSummary, fast: bool, thin: bool) -> Vec<Check>
         "checked" => match zoo.checks.iter().find(|c| c.kind == "anchor_strength") {
             None => Check::not_run(GRADED, id, title, "no informed rung to compare with"),
             Some(c) => match c.verdict.as_str() {
+                // A fast set's few test sessions can't carry the bound.
+                "fail" if fast => Check::new(
+                    GRADED,
+                    id,
+                    title,
+                    Status::Inconclusive,
+                    format!(
+                        "inconclusive at fast size, the full ladder decides: {}",
+                        c.detail
+                    ),
+                ),
                 "fail" => Check::fail(GRADED, id, title, c.detail.clone()),
                 "pass" => Check::pass(GRADED, id, title, c.detail.clone()),
                 "no_power" => Check::new(
@@ -1451,6 +1462,12 @@ pub fn zoo_checks(summary: &LadderSummary, fast: bool, thin: bool) -> Vec<Check>
                 ),
             },
         },
+        "no_arm" => Check::not_run(
+            GRADED,
+            id,
+            title,
+            "the ladder file names a hybrid, but no zoo rung it can run was graded on every set",
+        ),
         _ => Check::fail(
             GRADED,
             id,
@@ -2786,6 +2803,11 @@ mod tests {
         };
         let status = |z| zoo_statuses(Some(z), false)[2].1;
         assert_eq!(status(anchor("fail")), Status::Fail);
+        assert_eq!(
+            zoo_statuses(Some(anchor("fail")), true)[2].1,
+            Status::Inconclusive
+        );
+        assert_eq!(status(zoo(true, "no_arm", vec![])), Status::NotRun);
         assert_eq!(status(anchor("inconclusive")), Status::Inconclusive);
         assert_eq!(status(anchor("no_power")), Status::Inconclusive);
         assert_eq!(status(anchor("pass")), Status::Pass);

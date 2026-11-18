@@ -105,11 +105,13 @@ adapt to the task through its mandate and order. Three checks read them:
   of the bootstrap, like `ladder-order`;
 - `zoo-far-from-informed`: every zoo rung under half the informed rung, the
   signal gate's bar;
-- `anchor-strength`: the hybrid, the task's informed bot with the set's best
-  zoo rung trading the steps it leaves idle, must not beat the informed bot
-  with 95% paired-bootstrap confidence. It is a policy a bot told the informed
-  bot's facts could run, so a confident win means the 1.0 anchor is weak; it
-  can miss a weak anchor, never invent one.
+- `anchor-strength`: the hybrid, the task's informed bot with a zoo rung
+  trading the steps it leaves idle, must not beat the informed bot with 95%
+  paired-bootstrap confidence. The rung is chosen out of sample (the best over
+  every set's even sessions) and the hybrid is tested on the odd sessions
+  only, so a lucky arm's luck can't carry into the test: under the null it
+  fails at about the bootstrap's level (about 6% at 4 sets of 72 sessions).
+  A fast set's failure is inconclusive. It can still miss a weak anchor.
 
 A zoo rule broken with 95% bootstrap confidence fails, in fast mode too; one
 that only misses the order rules' bar fails the full gate and is inconclusive

@@ -96,21 +96,28 @@ soft. The **hybrid** is such a bot, built without knowing the task
 - otherwise, unless the informed bot has orders resting, the zoo rung's sheet
   goes out.
 
-The zoo rung is the set's best by graded total; it never sees `MTX_REGIME`.
-The check compares the hybrid with the informed bot on the same sessions,
-paired: it **fails** when a bootstrap over the sessions puts the hybrid's total
-over every set above the informed bot's with 95% confidence. A higher total
-short of that is noise (inconclusive, never a failure); a hybrid that did
-exactly what the informed bot did in every session is `no_power` (the zoo rung
-found no idle step), reported as inconclusive.
+The zoo rung is chosen **out of sample**: the one with the best graded total
+over the even sessions of every set, and the same rung runs in the hybrid on
+every set. It never sees `MTX_REGIME`, and it starts as the informed rung does
+(its `env`, with `MTX_ZOO` set). The check compares the hybrid with the
+informed bot on the **odd** sessions only, paired: it **fails** when a bootstrap
+over those sessions puts the hybrid's total above the informed bot's with 95%
+confidence. A higher total short of that is noise (inconclusive, never a
+failure); a hybrid that did exactly what the informed bot did in every session
+is `no_power` (the zoo rung found no idle step), reported as inconclusive. On a
+fast set its six test sessions can't carry the bound: a failure there is
+inconclusive, and the full ladder decides.
 
-Why it is sound: the hybrid never looks ahead and the zoo rung reads only
-public data, so it is a policy any bot told the informed bot's facts could run.
-When it beats the informed bot past noise, a better told policy exists, whatever
-the overlay's rule. The check can miss a weak anchor, never invent one: the zoo
-rung may find no idle step, and an informed bot that trades toward a target
-takes back the zoo rung's fills (which costs the hybrid). It wraps one informed
-bot, so a task names it (`zoo.informed`) when its signal gate lists several.
+Why it is sound: the hybrid never looks ahead, the zoo rung reads only public
+data, and no session the arm was chosen on tests it. So under the null (no zoo
+rung adds edge to the informed bot) the check fails at about the bootstrap's
+own level: about 6% at 4 sets of 72 sessions in simulation, where picking the
+best arm on the test sessions themselves failed sound anchors most of the time
+(`test_a_noise_only_arm_chosen_out_of_sample_cannot_fail_the_anchor`). It can
+still miss a weak anchor: the zoo rung may find no idle step, an informed bot
+that trades toward a target takes back the zoo rung's fills, and half the
+sessions go to choosing the arm. It wraps one informed bot, so a task names it
+(`zoo.informed`) when its signal gate lists several.
 
 ## A task's `zoo` section
 
@@ -172,5 +179,6 @@ fn main() -> mtx_kit::BotResult {
 }
 ```
 
-`just ladder` builds it. The ladder hands it what the informed rung is told
-(`tell_latent` or `tell_regime`) and the arm in `MTX_ZOO`.
+`just ladder` builds it. The ladder starts it with the informed rung's `env`
+and tells it what that rung is told (`tell_latent` or `tell_regime`), with the
+arm in `MTX_ZOO`. `mtx task new` writes this crate for a new task.

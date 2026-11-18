@@ -30,7 +30,7 @@ and sometimes knows the next jump.
 | A tick inside, symmetric | most fills | informed bursts run it over before jumps |
 | Wide | safe | nothing fills, and the competitor takes the flow |
 | Join the competitor | queue priority | its price moves when it undercuts |
-| Trade with every burst | informed flow predicts jumps | fake-outs, and 40% of jumps come unannounced |
+| Trade with every burst | informed flow predicts jumps | fake-outs, and 15% of jumps come unannounced |
 
 **The calculation chain:** read the oracle and the book each turn → place
 the competitor's quotes and stay just inside them → skew by inventory → read
@@ -60,7 +60,7 @@ jumps take it back in the valuation.
 | --- | --- | --- | --- |
 | the grader's maker | undercuts a better quote by a tick, down to a 2–6 bp floor, eases back out | prices against its floor, doesn't race it to zero | its quotes in the book every turn |
 | taker limits | each order fills only within its own limit | quotes inside the limits most orders carry | its own fill rate by quote distance |
-| informed bursts (~60% of jumps) | 6–12 orders in the jump's way, within 24 slots ahead | widens or steps back on one-sided flow | the tape: its fills, the trade ring, `getBlock` |
+| informed bursts (~85% of jumps) | 6–14 orders in the jump's way, starting 6 to 30 slots ahead | widens or steps back on one-sided flow | the tape: its fills, the trade ring, `getBlock` |
 | fake-outs (0–3 a session) | bursts with no jump | doesn't bet the house on a burst | — |
 | trends | drift with leaning flow | leans and skews | the oracle's drift |
 

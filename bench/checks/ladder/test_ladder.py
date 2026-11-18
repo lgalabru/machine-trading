@@ -4,6 +4,7 @@ import gzip
 import importlib.util
 import json
 import os
+import random
 import re
 import statistics
 import subprocess
@@ -816,20 +817,47 @@ class StrategyZoo(unittest.TestCase):
         zoo = ladder.zoo_section(zoo_config({"enforce": False, "why": "an existing task"}))
         self.assertFalse(zoo["enforce"])
 
-    def test_the_hybrid_runs_the_best_zoo_rung_told_what_the_informed_rung_is(self):
+    def test_the_hybrid_arm_is_chosen_on_other_sessions_than_it_is_tested_on(self):
         config = zoo_config({"hybrid": "h"})
         zoo = ladder.zoo_section(config)
         config["rungs"] += ladder.zoo_rungs(zoo)
         config["rungs"].append({"name": "mine", "dir": "m", "zoo": True, "arm": "my-arm"})
         config["rungs"].append({"name": "other", "dir": "o", "zoo": True})
-        reports = {"reference": report([1.0]), "zoo-dump": report([3.0]),
-                   "zoo-fade": report([-2.0]), "mine": report([5.0]), "other": report([9.0])}
-        self.assertEqual(ladder.hybrid_arm(config, reports), "my-arm")
-        del reports["mine"]
-        self.assertEqual(ladder.hybrid_arm(config, reports), "dump")
+        arms = ladder.hybrid_arms(config)
+        self.assertNotIn("other", [n for n, _ in arms])
+        one = {"reference": report([1.0] * 4), "zoo-dump": report([3.0, -9.0, 3.0, -9.0]),
+               "zoo-fade": report([-2.0, 9.0, -2.0, 9.0])}
+        # Chosen on the even sessions, tested on the odd ones.
+        self.assertEqual(ladder.arm_choice(arms, [one]), ("dump", [[1, 3]]))
+        good = {"reference": report([1.0] * 4), "zoo-dump": report([-5.0] * 4),
+                "zoo-fade": report([5.0] * 4), "mine": report([9.0] * 4)}
+        # One arm for every set, chosen over every set's even sessions; the
+        # task's rung needs every set to have it.
+        self.assertEqual(ladder.arm_choice(arms, [one, good]), ("fade", [[1, 3], [1, 3]]))
+        self.assertEqual(ladder.arm_choice(arms, [good]), ("my-arm", [[1, 3]]))
+        self.assertEqual(ladder.arm_choice([], [one]), (None, []))
+
+    def test_the_hybrid_is_started_and_told_as_the_informed_rung_is(self):
+        config = zoo_config({"hybrid": "h"})
+        config["rungs"][2]["env"] = {"MTX_RUNG": "told", "MTX_ZOO": "stale"}
+        zoo = ladder.zoo_section(config)
         rung = ladder.hybrid_rung(config, zoo, "dump")
-        self.assertEqual(rung, {"name": "zoo-hybrid", "dir": "h", "env": {"MTX_ZOO": "dump"},
+        self.assertEqual(rung, {"name": "zoo-hybrid", "dir": "h",
+                                "env": {"MTX_RUNG": "told", "MTX_ZOO": "dump"},
                                 "may_breach": True, "tell_regime": True})
+        self.assertNotIn("env", config["rungs"][2]["env"])
+        self.assertEqual(config["rungs"][2]["env"]["MTX_ZOO"], "stale")
+
+    def test_every_tasks_told_rung_keeps_its_env_in_the_hybrid(self):
+        for task in ("funding-carry-spcx", "weekend-gap-spcx"):
+            with open(os.path.join(HERE, "../../tasks", task, "checks/ladder.json")) as f:
+                config = json.load(f)
+            told = next(r for r in config["rungs"] if r["name"] == "told")
+            zoo = dict(ladder.zoo_section(config), hybrid="h", informed=["told"])
+            rung = ladder.hybrid_rung(config, zoo, "fade")
+            for name, value in (told.get("env") or {}).items():
+                self.assertEqual(rung["env"][name], value, task)
+            self.assertEqual(rung["env"]["MTX_ZOO"], "fade")
 
 
 def zoo_sets(rungs, sets=1):
@@ -839,7 +867,9 @@ def zoo_sets(rungs, sets=1):
 
 def zoo_verdicts(rungs, members, min_odds=0.85, hybrid=False, sets=1):
     zoo = ladder.zoo_section(zoo_config({"hybrid": "h"} if hybrid else {}))
-    checks = ladder.zoo_checks(zoo_sets(rungs, sets), zoo, members, min_odds)
+    n = len(next(iter(rungs.values()))[0])
+    tests = [list(range(n))] * sets if hybrid else None
+    checks = ladder.zoo_checks(zoo_sets(rungs, sets), zoo, members, min_odds, tests)
     return {c["id"]: c for c in checks}
 
 
@@ -893,6 +923,55 @@ class ZooRules(unittest.TestCase):
     def test_a_hybrid_that_did_what_the_informed_bot_did_has_no_power(self):
         v = zoo_verdicts(self.rungs(**{"zoo-hybrid": (list(self.told), ())}), [], hybrid=True)
         self.assertEqual(v["anchor_strength"]["verdict"], "no_power")
+
+    def test_a_hybrid_is_tested_only_on_its_test_sessions(self):
+        lucky = list(self.told)
+        lucky[0] += 500.0
+        rows = [ladder.session_rows({"told": report(self.told), "zoo-hybrid": report(lucky)})]
+        self.assertEqual(ladder.anchor_strength(rows, "told", [[1, 2, 3]])["verdict"], "pass")
+        self.assertEqual(ladder.anchor_strength(rows, "told", [list(range(12))])["verdict"],
+                         "inconclusive")
+
+    def test_a_noise_only_arm_chosen_out_of_sample_cannot_fail_the_anchor(self):
+        # The null the review simulated: no arm has an edge; the hybrid gains
+        # rho times the chosen arm's own per-session noise. Choosing the arm on
+        # the test sessions fails a sound anchor most of the time; out of sample
+        # it fails at about the test's level.
+        rng = random.Random(7)
+        old = ladder.BOOTSTRAP_DRAWS
+        ladder.BOOTSTRAP_DRAWS = 400
+        try:
+            fails = {"in": 0, "out": 0}
+            trials = 60
+            for _ in range(trials):
+                sets = []
+                for _ in range(4):
+                    reports = {"reference": report([10.0] * 12), "told": report([40.0] * 12)}
+                    for name in ladder.ZOO:
+                        reports["zoo-" + name] = report([rng.gauss(0, 10) for _ in range(12)])
+                    sets.append(reports)
+                config = zoo_config({"hybrid": "h"})
+                config["rungs"] += ladder.zoo_rungs(ladder.zoo_section(config))
+                arms = ladder.hybrid_arms(config)
+                chosen, split = ladder.arm_choice(arms, sets)
+                for mode in ("in", "out"):
+                    rows, tests = [], []
+                    for k, reports in enumerate(sets):
+                        if mode == "out":
+                            arm, test = chosen, split[k]
+                        else:
+                            t = ladder.totals(reports)
+                            arm, test = max(arms, key=lambda a: t[a[0]])[1], list(range(12))
+                        noise = [p for p in ladder.pnls(reports["zoo-" + arm])]
+                        hybrid = report([40.0 + 0.9 * x for x in noise])
+                        rows.append(ladder.session_rows({"told": reports["told"],
+                                                         "zoo-hybrid": hybrid}))
+                        tests.append(test)
+                    fails[mode] += ladder.anchor_strength(rows, "told", tests)["verdict"] == "fail"
+        finally:
+            ladder.BOOTSTRAP_DRAWS = old
+        self.assertGreater(fails["in"], trials // 2)
+        self.assertLessEqual(fails["out"], trials // 8)
 
     def test_without_an_informed_rung_only_the_reference_rule_runs(self):
         zoo = ladder.zoo_section(zoo_config(gates={}))

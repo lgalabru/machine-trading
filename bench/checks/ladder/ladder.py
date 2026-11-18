@@ -1035,25 +1035,49 @@ def zoo_members(config):
 
 def hybrid_rung(config, zoo, arm):
     """The hybrid rung: the task's hybrid crate, running the informed bot
-    with the zoo rung `arm`, told what the informed rung is told."""
+    with the zoo rung `arm`, started as the informed rung is (its `env`,
+    with `MTX_ZOO` set) and told what it is told."""
     informed = next(r for r in config["rungs"] if r["name"] == zoo["informed"][0])
-    rung = {"name": HYBRID, "dir": zoo["hybrid"], "env": {"MTX_ZOO": arm}, "may_breach": True}
+    env = dict(informed.get("env") or {}, MTX_ZOO=arm)
+    rung = {"name": HYBRID, "dir": zoo["hybrid"], "env": env, "may_breach": True}
     for flag in ("tell_latent", "tell_regime"):
         if informed.get(flag):
             rung[flag] = True
     return rung
 
 
-def hybrid_arm(config, reports):
-    """The zoo rung the hybrid runs on a set: the best by graded total of the
-    rungs it can run (the zoo's, and a task rung that names its `arm`)."""
+def hybrid_arms(config):
+    """The rungs the hybrid can run, as (rung name, `MTX_ZOO` arm): the
+    zoo's, and a task rung that names its `arm`."""
     arms = [(r["name"], r["env"]["MTX_ZOO"] if r.get("dir") == ZOO_DIR else r.get("arm"))
             for r in config["rungs"] if r.get("zoo")]
-    arms = [(name, arm) for name, arm in arms if arm and name in reports]
-    if not arms:
-        return None
-    t = totals(reports)
-    return max(arms, key=lambda a: t[a[0]])[1]
+    return [(name, arm) for name, arm in arms if arm]
+
+
+def arm_choice(arms, sets):
+    """The one arm the hybrid runs on every set, chosen out of sample, and
+    each set's sessions it is then tested on: the arm is the best by graded
+    total over the even sessions of every set, and the hybrid is tested on
+    the odd ones. No session an arm is chosen on ever tests it: picking the
+    luckiest of many arms on the test sessions would carry its luck into
+    the hybrid (and choosing per set, on the other sets, still ties the
+    sets' tests together through the choice). (None, []) when no arm was
+    graded."""
+    names = [(name, arm) for name, arm in arms if all(name in r for r in sets)]
+    if not names or not sets:
+        return None, []
+    rows = [session_rows(reports) for reports in sets]
+
+    def total(row, idx):
+        values, zeroed = row
+        return 0.0 if zeroed else sum(values[i] for i in idx)
+
+    def evens(r, name):
+        return range(0, len(r[name][0]), 2)
+
+    score = {name: sum(total(r[name], evens(r, name)) for r in rows) for name, _ in names}
+    best = max(names, key=lambda a: score[a[0]])
+    return best[1], [list(range(1, len(r["reference"][0]), 2)) for r in rows]
 
 
 def session_rows(reports):
@@ -1065,7 +1089,7 @@ def session_rows(reports):
     return {n: (pnls(r), disqualified(r)) for n, r in reports.items()}
 
 
-def zoo_checks(sets, zoo, members, min_rule_odds):
+def zoo_checks(sets, zoo, members, min_rule_odds, hybrid_tests=None):
     """The zoo's rules, over the sets. Each check is `{id, kind, rungs,
     verdict, point_violated, odds, detail}`; verdict `pass`, `fail`,
     `inconclusive` or `no_power`, as the probe checks:
@@ -1077,17 +1101,13 @@ def zoo_checks(sets, zoo, members, min_rule_odds):
       it is `inconclusive` with the point violated (the full gate fails it).
     - `far_from_informed`: every zoo rung under half the best informed rung
       (`zoo < informed / 2`), the same way.
-    - `anchor_strength`: the hybrid (the informed bot, with the best zoo rung
-      in its idle steps) against the informed bot on the same sessions,
-      paired: it fails when the hybrid's total over every set is higher in at
-      least `ZOO_CONFIDENCE` of the bootstrap; a higher total short of that is
-      `inconclusive` without a point violation (noise); a hybrid that did
-      exactly what the informed bot did in every session is `no_power`.
+    - `anchor_strength`: see `anchor_strength`; `hybrid_tests` are each
+      set's test sessions (`arm_choice`).
     """
     rows = [session_rows(reports) for reports in sets]
     informed = [n for n in zoo["informed"] if all(n in r for r in rows)]
-    hybrid = all(HYBRID in r for r in rows) and bool(rows)
-    needed = set(members) | {"reference"} | set(informed) | ({HYBRID} if hybrid else set())
+    hybrid = any(HYBRID in r for r in rows)
+    needed = set(members) | {"reference"} | set(informed)
     rng = random.Random(0)
     draws = []
     for r in rows:
@@ -1129,30 +1149,59 @@ def zoo_checks(sets, zoo, members, min_rule_odds):
                  f"half of {'max(' + ', '.join(informed) + ')' if len(informed) > 1 else informed[0]}")
 
     if hybrid and informed:
-        base = zoo["informed"][0]
-        point = sum(t[HYBRID] - t[base] for t in full)
-        beats = statistics.fmean(
-            sum(b[k][HYBRID] - b[k][base] for b in boot) > 0 for k in range(BOOTSTRAP_DRAWS))
-        same = all(abs(a - b) < 0.005 for r in rows
-                   for a, b in zip(r[HYBRID][0], r[base][0])) and \
-            all(r[HYBRID][1] == r[base][1] for r in rows)
-        if same:
-            verdict = "no_power"
-        elif point > 0 and beats >= ZOO_CONFIDENCE:
-            verdict = "fail"
-        elif point > 0:
-            verdict = "inconclusive"
-        else:
-            verdict = "pass"
-        out.append({"id": "anchor_strength", "kind": "anchor_strength", "rungs": [HYBRID, base],
-                    "verdict": verdict, "point_violated": verdict == "fail", "odds": beats,
-                    "total": sum(t[HYBRID] for t in full), "bar": sum(t[base] for t in full),
-                    "detail": f"the hybrid ${sum(t[HYBRID] for t in full):.0f} against {base} "
-                              f"${sum(t[base] for t in full):.0f} (paired, odds it is higher "
-                              f"{beats:.2f})" + ("; it did exactly what the informed bot did: "
-                                                 "the zoo rung found no idle step to trade"
-                                                 if same else "")})
+        out.append(anchor_strength(rows, zoo["informed"][0], hybrid_tests))
     return out
+
+
+def anchor_strength(rows, base, tests):
+    """The hybrid (the informed bot, with a zoo rung chosen out of sample in
+    its idle steps) against the informed bot `base`, paired, on each set's
+    test sessions `tests` only (the sessions its arm wasn't chosen on): it
+    fails when the hybrid's total over them is higher in at least
+    `ZOO_CONFIDENCE` of a bootstrap over them; a higher total short of that
+    is `inconclusive` without a point violation (noise); a hybrid that did
+    exactly what the informed bot did in every session is `no_power`.
+    `rows`: `session_rows` per set; a v1 rung that breached totals 0."""
+    used = [(r, t) for r, t in zip(rows, tests or []) if HYBRID in r and t]
+
+    def total(row, idx):
+        values, zeroed = row
+        return 0.0 if zeroed else sum(values[i] for i in idx)
+
+    rng = random.Random(0)
+    point = sum(total(r[HYBRID], t) - total(r[base], t) for r, t in used)
+    hybrid_total = sum(total(r[HYBRID], t) for r, t in used)
+    base_total = sum(total(r[base], t) for r, t in used)
+    higher = 0
+    for _ in range(BOOTSTRAP_DRAWS):
+        diff = 0.0
+        for r, t in used:
+            idx = [t[rng.randrange(len(t))] for _ in t]
+            diff += total(r[HYBRID], idx) - total(r[base], idx)
+        higher += diff > 0
+    beats = higher / BOOTSTRAP_DRAWS
+    same = all(abs(a - b) < 0.005 for r in rows if HYBRID in r
+               for a, b in zip(r[HYBRID][0], r[base][0])) and \
+        all(r[HYBRID][1] == r[base][1] for r in rows if HYBRID in r)
+    if not used:
+        verdict = "no_power"
+    elif same:
+        verdict = "no_power"
+    elif point > 0 and beats >= ZOO_CONFIDENCE:
+        verdict = "fail"
+    elif point > 0:
+        verdict = "inconclusive"
+    else:
+        verdict = "pass"
+    sessions = sum(len(t) for _, t in used)
+    return {"id": "anchor_strength", "kind": "anchor_strength", "rungs": [HYBRID, base],
+            "verdict": verdict, "point_violated": verdict == "fail", "odds": beats,
+            "total": hybrid_total, "bar": base_total, "test_sessions": sessions,
+            "detail": f"the hybrid ${hybrid_total:.0f} against {base} ${base_total:.0f} on "
+                      f"{sessions} test sessions its arm wasn't chosen on (paired, odds it is "
+                      f"higher {beats:.2f})" + ("; it did exactly what the informed bot did: "
+                                                "the zoo rung found no idle step to trade"
+                                                if same else "")}
 
 
 def main():
@@ -1207,6 +1256,8 @@ def main():
             raise SystemExit("zoo.hybrid: name the one informed rung it wraps in zoo.informed")
     members = zoo_members(config)
     arms = []
+    hybrid_tests = []
+    secrets_by_set = []
 
     def rung_v2(rung):
         # On a v1 task a zoo rung is compared on its v1 grade: no v2 run needed.
@@ -1239,9 +1290,20 @@ def main():
                 for rung in config["rungs"]
             }
             reports = {name: future.result() for name, future in futures.items()}
-        # The hybrid runs the best zoo rung of this set beside the informed bot.
-        arm = hybrid_arm(config, reports) if zoo["hybrid"] and zoo["informed"] else None
-        if arm:
+        secrets_by_set.append(secret)
+        sets.append(reports)
+        print(f"set {k + 1} (reference ${totals(reports)['reference']:.0f}): " + ", ".join(
+            f"{name} {s:.2f}" for name, s in skills(reports).items()
+        ), flush=True)
+
+    # The hybrid runs, on every set, the zoo rung chosen on other sessions
+    # than the ones it is tested on (`arm_choice`), beside the informed bot.
+    if zoo["hybrid"] and zoo["informed"]:
+        arm, hybrid_tests = arm_choice(hybrid_arms(config), sets)
+        for k, (set_dir, reports) in enumerate(zip(set_dirs, sets)):
+            arms.append(arm)
+            if not arm:
+                continue
             marker = os.path.join(set_dir, f"{HYBRID}.arm")
             cached = os.path.join(set_dir, f"{HYBRID}.json")
             if os.path.exists(cached) and (not os.path.exists(marker) or open(marker).read() != arm):
@@ -1249,13 +1311,8 @@ def main():
             with open(marker, "w") as f:
                 f.write(arm)
             reports[HYBRID] = grade(args.mtx, args.snapshot, config["family"], count, args.jobs,
-                                    hybrid_rung(config, zoo, arm), secret, set_dir, users,
-                                    rung_v2({"zoo": True}))
-        arms.append(arm)
-        sets.append(reports)
-        print(f"set {k + 1} (reference ${totals(reports)['reference']:.0f}): " + ", ".join(
-            f"{name} {s:.2f}" for name, s in skills(reports).items()
-        ), flush=True)
+                                    hybrid_rung(config, zoo, arm), secrets_by_set[k], set_dir,
+                                    users, rung_v2({"zoo": True}))
 
     failed = []
     min_rule_odds = args.min_rule_odds if args.min_rule_odds is not None else config["min_rule_odds"]
@@ -1415,14 +1472,15 @@ def main():
 
     print("\nstrategy zoo (told nothing; " + ("enforced" if zoo["enforce"] else
           f"information only: {zoo['why']}") + "):")
-    checks = zoo_checks(sets, zoo, members, min_rule_odds)
-    hybrid_status = ("checked" if any(arms) else "absent") if zoo["hybrid"] else (
+    checks = zoo_checks(sets, zoo, members, min_rule_odds, hybrid_tests)
+    hybrid_status = ("checked" if any(arms) else "no_arm") if zoo["hybrid"] else (
         "exempt" if zoo["hybrid_exempt"] else "absent")
     summary["zoo"] = {
         "status": "checked", "declared": zoo["declared"], "enforce": zoo["enforce"],
         "why": zoo["why"], "rungs": members, "skipped": zoo["skip"],
         "informed": zoo["informed"], "hybrid_status": hybrid_status,
-        "hybrid_exempt": zoo["hybrid_exempt"], "hybrid_arms": arms, "checks": checks,
+        "hybrid_exempt": zoo["hybrid_exempt"], "hybrid_arms": arms,
+        "hybrid_test_sessions": hybrid_tests, "checks": checks,
     }
     for name, why in sorted(zoo["skip"].items()):
         print(f"  skip {ZOO_PREFIX}{name}: {why}")
