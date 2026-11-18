@@ -38,11 +38,9 @@ not a mandate's.
   mirrored in pairs. It must end within 80 to 100% of Q (the tolerance
   band); whatever is left at the end is done by the broker at the closing
   index plus (minus) a haircut. Same position cap (Q) and a loss limit out
-  of reach of the moves. Scored against the broker route (`order`, as B6):
-  doing nothing scores 0 and pays nothing, so the duty is set by charging
-  the unfilled band: below 80% the broker fills the rest at the haircut, and
-  the score is cost saved against TWAP over the session (the rung every
-  careful non-reader can run).
+  of reach of the moves. Scored against the broker route, as B6's `order`:
+  PnL is cost saved against letting the broker do the whole order at the
+  close, so the benchmark is the route a desk takes when it does nothing.
 - **How the read improves performance against the benchmark.** The read
   never sets the side or the size; it sets pace and aggressiveness. When the
   informed maker leans with the order's side (up ahead of a buy), the desk
@@ -52,11 +50,13 @@ not a mandate's.
   right read saves about the move (median jump 38 bp) on the share it
   timed; a wrong read (a decoy's lean, or the informed maker's 15% wrong
   horizons) buys ahead of a fall or waits through a rise, paying the move.
-- **Why doing nothing fails the duty.** An unfilled order goes to the
-  broker at the haircut, and below the band the shortfall is charged: idle
-  is a sure cost, TWAP is the honest non-reading baseline, and the blind
-  rungs (follow the mean lean, the most-leaned maker, one maker picked
-  blind) time the order on noise and pay crossing costs for it.
+- **Why doing nothing fails the duty.** The order is not optional: left
+  alone, the broker fills all of it at the closing index plus the haircut,
+  the benchmark's zero, and below the band's 80% the desk has not done its
+  job. Working the order evenly (TWAP) is the honest non-reading route and
+  pays crossing costs over a mirrored path; the blind rungs (follow the
+  mean lean, the most-leaned maker, one maker picked blind) time the order
+  on noise and pay for it.
 - **What changes in the build.** The generator adds an `ExecutionOrder`
   (side, Q, haircut) and start position 0, as B6's family does; the
   mandate becomes the order's side with the cap at Q; the ladder's rungs
