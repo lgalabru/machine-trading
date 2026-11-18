@@ -261,9 +261,7 @@ impl SkewMakerFamily {
                 let mut flipped = path;
                 mirror_path(&mut flipped);
                 let name = format!("{prefix}-{}", out.len() + 1);
-                out.push(self.build(
-                    &model, &name, &mut mirror, flipped, start_unix, true, side,
-                ));
+                out.push(self.build(&model, &name, &mut mirror, flipped, start_unix, true, side));
             }
             n += 1;
         }
@@ -582,7 +580,10 @@ mod tests {
         let family = SkewMakerFamily::tsla();
         let set = family.draw_set("t", 24, 6);
         let sides: Vec<&str> = set.iter().map(|(_, s)| s.side.as_str()).collect();
-        assert!(sides.contains(&"buy") && sides.contains(&"sell"), "{sides:?}");
+        assert!(
+            sides.contains(&"buy") && sides.contains(&"sell"),
+            "{sides:?}"
+        );
         for (scenario, shape) in &set {
             let order = scenario.order.as_ref().unwrap();
             assert_eq!(order.quantity, shape.quantity);

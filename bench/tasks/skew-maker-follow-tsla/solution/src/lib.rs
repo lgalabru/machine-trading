@@ -585,7 +585,10 @@ mod tests {
         };
         assert_eq!(order.left(2.5), 3.5);
         assert_eq!(order.left(7.0), 0.0);
-        let sell = Order { buy: false, ..order };
+        let sell = Order {
+            buy: false,
+            ..order
+        };
         assert_eq!((sell.left(6.0), sell.way()), (6.0, -1.0));
         let market = Market {
             slot: 100,
