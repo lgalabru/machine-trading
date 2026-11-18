@@ -1353,9 +1353,12 @@ pub struct PositionRange {
 }
 
 impl PositionRange {
-    /// The largest position, long or short.
+    /// The largest position, long or short. A flat account's is `+0.0` on
+    /// every machine: `f64::max` leaves the sign of a zero to the target
+    /// (arm64 picks `+0.0`, x86_64 `-0.0` for `0.0.max(-0.0)`).
     pub fn peak(&self) -> f64 {
-        self.highest.max(-self.lowest)
+        let peak = self.highest.max(-self.lowest);
+        if peak == 0.0 { 0.0 } else { peak }
     }
 }
 
@@ -1648,6 +1651,21 @@ mod tests {
 
     fn spcx() -> InstrumentRef {
         "phoenix:perp:SPCX".parse().unwrap()
+    }
+
+    #[test]
+    fn a_flat_peak_is_a_positive_zero() {
+        let flat = PositionRange {
+            instrument: spcx(),
+            lowest: 0.0,
+            highest: 0.0,
+        };
+        assert_eq!(flat.peak().to_bits(), 0.0f64.to_bits());
+        let short = PositionRange {
+            lowest: -3.0,
+            ..flat
+        };
+        assert_eq!(short.peak(), 3.0);
     }
 
     fn observed(held: f64, drawdown: f64) -> Observed {

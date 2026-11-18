@@ -27,10 +27,8 @@
 //!   (its fingerprint moves with it; bump `GRADER_VERSION` only for changes
 //!   the digests can't see).
 //!
-//! A digest is played on x86_64 Linux, as CI and the verifier run: the
-//! sessions' floating point goes through the system's maths library, and
-//! an arm64 box plays some tasks (flash-crash, weekend-gap) differently. A
-//! failing check prints the file to commit.
+//! A digest doesn't depend on the machine: any Linux box (arm64 or x86_64)
+//! plays the same one, and a failing check prints the file to commit.
 
 use std::{
     io::Read,
@@ -339,24 +337,29 @@ fn digest_of(details: &Path, informed: bool) -> Result<String> {
 }
 
 /// What a session file says the anchor did: without the volatile fields,
-/// and without a wasm strategy's fuel, which differs between identical runs
-/// (`fuel_used`, `fuel_max_call`) and says nothing about what it traded.
+/// without a wasm strategy's fuel, which differs between identical runs
+/// (`fuel_used`, `fuel_max_call`) and says nothing about what it traded,
+/// and with every `-0.0` written `0.0`: the sign of a zero can follow the
+/// machine (`f64::max` leaves it to the target) and is no behaviour.
 fn behaviour(json: &[u8]) -> Result<Vec<u8>> {
-    fn strip_fuel(value: &mut Value) {
+    fn canonical(value: &mut Value) {
         match value {
             Value::Object(map) => {
                 for key in FUEL {
                     map.remove(*key);
                 }
-                map.values_mut().for_each(strip_fuel);
+                map.values_mut().for_each(canonical);
             }
-            Value::Array(items) => items.iter_mut().for_each(strip_fuel),
+            Value::Array(items) => items.iter_mut().for_each(canonical),
+            Value::Number(n) if n.as_f64().is_some_and(|f| f == 0.0 && f.is_sign_negative()) => {
+                *value = serde_json::json!(0.0);
+            }
             _ => {}
         }
     }
     let mut value: Value = serde_json::from_slice(json)?;
     crate::publish::strip_volatile(&mut value);
-    strip_fuel(&mut value);
+    canonical(&mut value);
     Ok(serde_json::to_vec(&value)?)
 }
 
@@ -420,17 +423,14 @@ fn judge(
     let played = play()?;
     if played.digest != committed.digest {
         let played_short = short(&played.digest).to_owned();
-        // The whole file, as for a pending digest: the sessions' floating
-        // point follows the machine's maths library, so a digest played on
-        // another architecture (an arm64 box) can differ from this one.
+        // The whole file, as for a pending digest, so nobody needs a Linux
+        // box of their own to fix it.
         return Ok(Some(format!(
-            "{task}: the anchors play differently: digest {played_short} was {}. An engine, kit or dependency \
-             change altered what this task does, or the committed digest was played on another \
-             architecture than this one ({}). Run `mtx task sync --anchors` on the architecture \
-             CI runs, or commit this as bench/tasks/{task}/{DIGEST_FILE} (then `mtx task sync` \
-             for the fingerprint):\n{}",
+            "{task}: the anchors play differently: digest {played_short} was {}. An engine, kit \
+             or dependency change altered what this task does. Run `mtx task sync --anchors`, \
+             or commit this as bench/tasks/{task}/{DIGEST_FILE} (then `mtx task sync` for the \
+             fingerprint):\n{}",
             short(&committed.digest),
-            std::env::consts::ARCH,
             Digest {
                 inputs: now.to_string(),
                 ..played
@@ -501,6 +501,24 @@ mod tests {
         assert_ne!(
             base,
             behaviour(&session(43_524_702_445, 10, 72.08)).unwrap()
+        );
+    }
+
+    #[test]
+    fn the_sign_of_a_zero_never_moves_the_digest() {
+        let session = |peak: f64| {
+            serde_json::to_vec(&serde_json::json!({
+                "report": { "peak_position": peak, "pnl_usd": 0.0, "end_position": 0 },
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            behaviour(&session(-0.0)).unwrap(),
+            behaviour(&session(0.0)).unwrap()
+        );
+        assert_ne!(
+            behaviour(&session(0.0)).unwrap(),
+            behaviour(&session(1.0)).unwrap()
         );
     }
 
