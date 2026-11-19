@@ -6,7 +6,7 @@
 //! `orders.target_position(units)` to be long or short,
 //! `orders.quote(bid, ask, size)` to make a market, and `mtx_kit::rpc` to
 //! read anything else from the chain. `market.sends` says what became of
-//! the last step's orders. `build.sh` builds it into `bot.wasm`.
+//! the last step's orders. `just build` builds it into `bot.wasm`.
 
 use mtx_kit::{log, prelude::*};
 

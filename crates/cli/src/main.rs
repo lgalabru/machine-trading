@@ -408,8 +408,9 @@ enum BotCommand {
         /// The task, as named in bench/tasks (default: the flash-crash task).
         #[arg(long)]
         task: Option<String>,
-        /// A practice scenario by name (`practice-3`), or a scenario file
-        /// (default: the task's first practice scenario).
+        /// The studio's `practice-101` (the default) or `practice-102`, one of
+        /// the task's practice scenarios by name (`practice-3`), or a
+        /// scenario file.
         #[arg(long)]
         scenario: Option<String>,
         /// Run the bot as it is, without running `just build`.
