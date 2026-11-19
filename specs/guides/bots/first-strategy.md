@@ -106,7 +106,7 @@ what it printed. With `--debug` it stops after every step:
           position flat   resting 0/0   pnl +$0.00   drawdown $0.00
  printed  │ mark 143.11, oracle 143.05, holding 0
  sheet    empty: no orders
- cost     6.3K fuel · 0 rpc
+ cost     10.5K fuel · 0 rpc
   enter: next step · c: run to the end · q: stop showing steps
 ```
 
@@ -177,31 +177,30 @@ mtx bot run --debug
 
 ```
 ━━ step 2 of 5 · slot 462882349 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
- market   mark 138.97   oracle 138.82   index 138.82   bid 141.00 · ask 138.83
+ market   mark 138.83   oracle 138.82   index 138.82   bid 138.82 · ask 138.83
           position flat   resting 0/0   pnl +$0.00   drawdown $0.00
- printed  │ down 2.89% from the start: buying
+ printed  │ down 2.99% from the start: buying
  sheet    target_position(+35)
- sent     ✓ market buy 10 ≤ 141.75
-          ✓ market buy 10 ≤ 141.75
-          ✓ market buy 10 ≤ 141.75
-          ✓ market buy 5 ≤ 141.75
- cost     5.4K fuel · 0 rpc
+ sent     ✓ market buy 10 ≤ 141.61
+          ✓ market buy 10 ≤ 141.61
+          ✓ market buy 10 ≤ 141.61
+          ✓ market buy 5 ≤ 141.61
+ cost     11.6K fuel · 0 rpc
 
 ━━ step 3 of 5 · slot 462882351 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
  market   mark 138.85   oracle 138.82   index 138.82   bid 138.82 · ask 138.85
-          position +35 @ 138.84   resting 0/0   pnl −$4.20   drawdown $4.20
+          position +35 @ 138.84   resting 0/0   pnl +$0.70   drawdown $0.00
  sheet    empty: no orders
- cost     600 fuel · 0 rpc
+ cost     13.0K fuel · 0 rpc
 ```
 
-At step 2 the mark is 2.89% below the start, so the strategy asks for 35
+At step 2 the mark is 2.99% below the start, so the strategy asks for 35
 SPCX. The grader sends four market orders: one order that crosses much of
 the book could exceed a transaction's budget, so `target_position` slices
-them, 10 at a time. Each may fill up to 2% past the mark (141.75). At step
+them, 10 at a time. Each may fill up to 2% past the mark (141.61). At step
 3 the position is there, bought at 138.84, and the strategy asks for
-nothing: it holds, and the mark hasn't recovered. (The book's bid, 141.00,
-sits above its ask at step 2: the makers' bid takes a step to follow a 3%
-drop.) At step 4 the mark is back at the start, and it sells. The session
+nothing: it holds, and the mark hasn't recovered. At step 4 the mark is
+back at the start, and it sells the 35, again in four orders. The session
 ends up **+$145.38**.
 
 ## 4. When the dip doesn't come back
@@ -215,7 +214,7 @@ mtx bot run --scenario practice-102
 ```
 
 ```
-│ down 2.95% from the start: buying
+│ down 2.99% from the start: buying
 
 practice-102  −$152.72   bound $1202.12   reference —
 ```
@@ -229,8 +228,8 @@ the fall to slow before buying.
 ## 5. Grade it
 
 `mtx bot run` plays one session. `mtx bot practice` grades the strategy the
-way the benchmark does, on all of the task's practice scenarios (a minute
-or two of market each, with a sudden shock somewhere in it):
+way the benchmark does, on all of the task's practice scenarios (about
+two minutes of market each, with a sudden shock somewhere in it):
 
 ```sh
 mtx bot practice

@@ -18,21 +18,30 @@ const NAME = "Machine Trading Protocol";
 // Where the site is served: link previews need absolute URLs.
 const SITE = "https://lgalabru.github.io/machine-trading";
 const SOURCE = "https://github.com/lgalabru/machine-trading/tree/main/specs";
-// Folders of the index after the core spec, in order.
+const REPOSITORY = "https://github.com/lgalabru/machine-trading/blob/main";
+// Folders of the index after the core spec, in order. `order` names the
+// files a folder lists first: the instruments the reference implementation
+// reads come before the proposed ones.
 const FOLDERS = [
-  { dir: "instruments", title: "Instruments" },
+  { dir: "instruments", title: "Instruments", order: ["perp", "spot", "money-market"] },
   { dir: "venues", title: "Venues" },
   { dir: "examples", title: "Examples" },
 ];
 // The guides have their own index, guides/index.html, in the same style.
+// Its folders, and the guides `order` names in each, are in reading order:
+// a guide assumes the ones before it (spot builds on the perp guide's
+// example, arbitrage on perps, selling a large position on spot, and the
+// bots trade a perp). Each guide ends with links to the one before it and
+// the one after.
 const GUIDE_FOLDERS = [
-  { dir: "guides/bots", title: "Bots" },
-  { dir: "guides/instruments", title: "Instruments" },
-  { dir: "guides/strategies", title: "Strategies" },
+  { dir: "guides/instruments", title: "Instruments", order: ["perp", "spot", "money-market"] },
+  { dir: "guides/strategies", title: "Strategies", order: ["arbitrage", "selling-a-large-position"] },
+  { dir: "guides/bots", title: "Bots", order: ["first-strategy", "writing-a-bot"] },
   { dir: "guides", title: "Reference" },
 ];
 const GUIDES_INDEX = "guides/index.html";
-const GUIDES_INTRO = `<p>Guides that teach the protocol's instruments and strategies to people, one idea at a time, with interactive figures. They follow one running example: you have $1,000, and the market is at $100.</p>
+const GUIDES_INTRO = `<p>Guides that teach the protocol's instruments and strategies, and how to write a bot that trades them, one idea at a time, with interactive figures. The instrument and strategy guides share one running example: you have $1,000, and the market is at $100.</p>
+<p><strong>New to trading?</strong> Read them in the order below, starting with <a href="instruments/perp.html">perpetual futures</a>: the other guides build on it. <strong>Here to write a bot?</strong> Start with <a href="bots/first-strategy.html">your first strategy, step by step</a>, then <a href="bots/writing-a-bot.html">writing a bot</a>.</p>
 <p>The guides are not normative. Where a guide and a specification disagree, the <a href="../index.html">specification</a> is right.</p>`;
 const INDEX_PAGES = new Set(["index.html", GUIDES_INDEX]);
 // Guide pages load the labs' runtime, and their own models: the .js file
@@ -49,6 +58,25 @@ function walk(dir) {
 }
 
 const rel = (file) => path.relative(root, file).split(path.sep).join("/");
+/**
+ * A folder's specs and examples: the ones its `order` names first, as
+ * listed, then the rest by name. A name with no file fails the build, so a
+ * renamed guide can't silently drop out of the reading order.
+ */
+function filesOf({ dir, order = [] }) {
+  const inFolder = files.filter((f) => path.posix.dirname(rel(f)) === dir && /\.(md|json)$/.test(f)).sort();
+  const named = order.map((name) => {
+    const file = inFolder.find((f) => path.basename(f) === `${name}.md`);
+    if (!file) throw new Error(`${dir}: its reading order names ${name}, and there is no ${name}.md`);
+    return file;
+  });
+  return [...named, ...inFolder.filter((f) => !named.includes(f))];
+}
+/** A spec's name in an index: its title without the kind ("Guide: ") or the version. */
+function nameOf(spec) {
+  const short = spec.title.replace(/^.*?:\s*/, "").replace(/,\s*v\d+$/, "");
+  return short.charAt(0).toUpperCase() + short.slice(1);
+}
 const pageOf = (file) => rel(file).replace(/\.md$/, ".html");
 const titleOf = (markdown) => (markdown.match(/^#\s+(.+)$/m)?.[1] ?? "").replace(/`/g, "").trim();
 const statusOf = (markdown) => markdown.match(/^Status:\s*(.+)$/m)?.[1]?.trim();
@@ -71,13 +99,16 @@ function link(from, to) {
 
 /**
  * Rewrite a link written in a spec to the site: a .md file to its page, and
- * a directory to its folder in the index.
+ * a directory to its folder in the index (the guides' index, for `guides/`
+ * and the folders under it), and a file outside specs/ to the repository.
  */
 function rewrite(href, page) {
   if (/^([a-z]+:|#|\/)/i.test(href)) return href;
   const [target, anchor] = href.split("#");
   const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(page), target));
-  if (target.endsWith("/")) return `${link(page, "index.html")}#${path.posix.basename(resolved)}`;
+  // A file outside specs/ has no page here: link to it in the repository.
+  if (resolved.startsWith("../")) return `${REPOSITORY}/${resolved.slice(3)}${anchor ? `#${anchor}` : ""}`;
+  if (target.endsWith("/")) return folderLink(page, resolved.replace(/\/$/, ""));
   const to = resolved === "README.md" ? "index.html" : resolved.replace(/\.md$/, ".html");
   return link(page, to) + (anchor ? `#${anchor}` : "");
 }
@@ -357,6 +388,20 @@ if (glossarySpec) {
   glossary = glossaryOf(glossarySpec.markdown);
   glossarySpec.markdown = stripGlossaryData(glossarySpec.markdown);
 }
+// The guides' reading path: each ordered folder's guides, one folder after
+// the other. The glossary is a reference, so it isn't on the path.
+const guidePath = GUIDE_FOLDERS.filter((folder) => folder.order)
+  .flatMap(filesOf)
+  .map((file) => specs.find((s) => s.file === file));
+function pager(spec) {
+  const at = guidePath.indexOf(spec);
+  if (at < 0) return "";
+  const step = (other, label) =>
+    other
+      ? `<a class="pager-${label.toLowerCase()}" href="${link(spec.page, other.page)}"><span>${label}</span>${escape(nameOf(other))}</a>`
+      : "";
+  return `<nav class="pager" aria-label="Guides, in reading order">${step(guidePath[at - 1], "Previous")}${step(guidePath[at + 1], "Next")}</nav>`;
+}
 for (const spec of specs) {
   const { body, toc } = render(spec.markdown, spec.page, modelsOf(spec.file));
   const meta = spec.status
@@ -364,7 +409,11 @@ for (const spec of specs) {
     : "";
   write(
     spec.page,
-    layout({ ...spec, head: `<h1>${escape(spec.title)}</h1>${meta}${tocHtml(toc)}`, body: `<main>${body}</main>` }),
+    layout({
+      ...spec,
+      head: `<h1>${escape(spec.title)}</h1>${meta}${tocHtml(toc)}`,
+      body: `<main>${body}</main>${pager(spec)}`,
+    }),
   );
 }
 
@@ -374,17 +423,13 @@ const entry = (child, last) =>
   `<div class="spec-entry"><span class="branch">${last ? "└──" : "├──"}</span> <a class="spec-title" href="${escape(child.href)}">${escape(child.title)}</a> <span class="formats">${child.note}</span></div>`;
 function treeOf(folders, from) {
   let tree = "";
-  for (const { dir, title } of folders) {
-    const children = files
-      .filter((f) => path.posix.dirname(rel(f)) === dir && /\.(md|json)$/.test(f))
-      .sort()
-      .map((f) => {
-        const spec = specs.find((s) => s.file === f);
-        if (!spec) return { href: link(from, rel(f)), title: path.basename(f), note: "JSON" };
-        const short = spec.title.replace(/^.*?:\s*/, "").replace(/,\s*v\d+$/, "");
-        const name = short.charAt(0).toUpperCase() + short.slice(1);
-        return { href: link(from, spec.page), title: name, note: escape(spec.status ?? "") };
-      });
+  for (const folder of folders) {
+    const { dir, title } = folder;
+    const children = filesOf(folder).map((f) => {
+      const spec = specs.find((s) => s.file === f);
+      if (!spec) return { href: link(from, rel(f)), title: path.basename(f), note: "JSON" };
+      return { href: link(from, spec.page), title: nameOf(spec), note: escape(spec.status ?? "") };
+    });
     if (!children.length) continue;
     tree += `<div class="folder" id="${folderId(dir)}"><span class="folder-icon">~/</span>${title}</div>`;
     tree += children.map((c, i) => entry(c, i === children.length - 1)).join("");
@@ -392,7 +437,16 @@ function treeOf(folders, from) {
   return tree;
 }
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
-const intro = new Marked({ gfm: true }).parse(readme.replace(/^#\s+.*$/m, "").split(/^##\s/m)[0].trim());
+// The README's links are written for the repository: point them at the site's pages.
+const introLinks = {
+  link({ href, title, tokens }) {
+    const text = this.parser.parseInline(tokens);
+    return `<a href="${escape(rewrite(href, "index.html"))}"${title ? ` title="${escape(title)}"` : ""}>${text}</a>`;
+  },
+};
+const intro = new Marked({ gfm: true, renderer: introLinks }).parse(
+  readme.replace(/^#\s+.*$/m, "").split(/^##\s/m)[0].trim(),
+);
 const core = specs.find((s) => s.page === "mandate.html");
 // The core specs, at the root: the mandate first, then the rest.
 const coreSpecs = [core, ...specs.filter((s) => !s.page.includes("/") && s !== core)];

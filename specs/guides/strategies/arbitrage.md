@@ -151,7 +151,7 @@ bet you set out to avoid.
     { "label": "The carry works", "set": {}, "note": "SPCX drifts, the legs cancel, and the short collects about 1 bp an hour: about $60 in a month on $1,000." },
     { "label": "Rally at 5×", "set": { "path": "rally" }, "note": "SPCX rises 30%. The short leg is liquidated near $122 (the funding it collected bought it a little room), leaving you long SPCX, unhedged. SPCX kept rising, so the month ends up: luck, not the trade. A fall from there would have been all loss." },
     { "label": "Rally at 2×", "set": { "path": "rally", "leverage": 2 }, "note": "Less leverage: the short leg survives the rally, the hedge holds, and the carry is earned on fewer SPCX." },
-    { "label": "Spike", "set": { "path": "spike" }, "note": "A one-day 25% spike that fully reverses: the short leg is liquidated at the top, and the spot leg's gain vanishes on the way back down." },
+    { "label": "Spike", "set": { "path": "spike" }, "note": "A one-day 25% spike that fully reverses: the short leg is liquidated on the way up, near $120, and the spot leg's gain vanishes on the way back down." },
     { "label": "Funding flips", "set": { "rate": -0.5 }, "note": "The crowd turned short: now your short pays funding every hour, and the trade loses money slowly." }
   ],
   "caption": "While both legs stand, price moves cancel and only funding is left. The risk is the short leg's margin: the spot leg's gains can't pay for it unless you move dollars across in time."
