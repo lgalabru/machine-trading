@@ -123,6 +123,10 @@ pub struct GradeReport {
     /// score, and `skill` and `reference_ratio` are left out.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub headline: Option<String>,
+    /// The task and the scoring rule that produced this grade: grades with
+    /// other versions aren't comparable.
+    #[serde(default, skip_serializing_if = "crate::versions::Versions::is_empty")]
+    pub versions: crate::versions::Versions,
     /// Set when the grade stopped at the bot's first breach
     /// ([`GradeOptions::stop_on_disqualify`]): `scenarios` is then only the
     /// sessions up to it, which scoring v2 refuses to score.
@@ -644,6 +648,26 @@ impl Drop for PrivateDir {
     }
 }
 
+/// A phase's log files, by path relative to its log directory.
+type HeldLogs = Vec<(std::path::PathBuf, Vec<u8>)>;
+
+/// What a trusted phase logged, taken out of its private directory. A phase
+/// that failed has run before any bot did, and its logs are the only evidence
+/// of why, so they are written to `to` at once.
+fn keep_logs<T>(ran: Result<T>, logs: PrivateDir, to: &Path) -> Result<(T, HeldLogs)> {
+    let held = read_files(&logs.0);
+    match (ran, held) {
+        (Ok(value), Ok(held)) => Ok((value, held)),
+        (Ok(_), Err(e)) => Err(e),
+        (Err(e), held) => {
+            if let Ok(held) = held {
+                let _ = write_files(to, &held);
+            }
+            Err(e)
+        }
+    }
+}
+
 /// Every file under `dir`, by its path relative to `dir`, read into
 /// memory.
 fn read_files(dir: &Path) -> Result<Vec<(std::path::PathBuf, Vec<u8>)>> {
@@ -730,26 +754,37 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
     }
     let mut scenarios = opts.scenarios.to_vec();
     let mut anchored = Vec::new();
+    // The reference plays the bot's world, so its logs say when its flow
+    // arrives, and the informed bot's may say what it was told: each phase
+    // logs where only the grader can enter and is held in memory, with
+    // nothing of it on disk, while the bot runs.
+    let mut reference_logs = None;
     if let Some(reference) = opts.reference_dir {
-        let anchors = run_sessions(
-            opts.snapshot_dir,
-            reference,
-            &scenarios,
-            &opts.log_dir.join("reference"),
-            opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
-            None,
-            false,
-            true,
-            None,
-            opts.keys.role("reference"),
-            // The anchor's drawdown at the bot's granularity.
-            session::Rules {
-                every_slot: opts.v2_sessions,
-            },
-        )
-        .await?;
-        check_timing(&anchors)?;
-        check_anchors("the reference", &anchors)?;
+        let logs = PrivateDir::create("mtx-reference-logs")?;
+        let ran = async {
+            let anchors = run_sessions(
+                opts.snapshot_dir,
+                reference,
+                &scenarios,
+                &logs.0,
+                opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
+                None,
+                false,
+                true,
+                None,
+                opts.keys.role("reference"),
+                // The anchor's drawdown at the bot's granularity.
+                session::Rules {
+                    every_slot: opts.v2_sessions,
+                },
+            )
+            .await?;
+            check_timing(&anchors)?;
+            check_anchors("the reference", &anchors)?;
+            Ok(anchors)
+        }
+        .await;
+        let (anchors, held) = keep_logs(ran, logs, &opts.log_dir.join("reference"))?;
         for (scenario, anchor) in scenarios.iter_mut().zip(&anchors) {
             scenario.reference_pnl_usd = Some((anchor.pnl_usd * 100.0).round() / 100.0);
         }
@@ -758,32 +793,35 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "reference graded"
         );
         anchored = anchors;
+        reference_logs = Some(held);
     }
     let mut informed_sessions = Vec::new();
-    // The informed bot's logs may say what it was told: written where only
-    // the grader can enter, then held in memory, with nothing of them on
-    // disk, while the bot runs.
     let mut informed_logs = None;
     if let Some(informed) = &opts.informed {
         let logs = PrivateDir::create("mtx-informed-logs")?;
-        let sessions = run_sessions(
-            opts.snapshot_dir,
-            informed.dir,
-            &scenarios,
-            &logs.0,
-            opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
-            informed.latent,
-            false,
-            true,
-            None,
-            opts.keys.role("informed"),
-            session::Rules {
-                every_slot: opts.v2_sessions,
-            },
-        )
-        .await?;
-        check_timing(&sessions)?;
-        check_anchors("the informed bot", &sessions)?;
+        let ran = async {
+            let sessions = run_sessions(
+                opts.snapshot_dir,
+                informed.dir,
+                &scenarios,
+                &logs.0,
+                opts.first_bot_user..opts.first_bot_user + opts.anchor_jobs,
+                informed.latent,
+                false,
+                true,
+                None,
+                opts.keys.role("informed"),
+                session::Rules {
+                    every_slot: opts.v2_sessions,
+                },
+            )
+            .await?;
+            check_timing(&sessions)?;
+            check_anchors("the informed bot", &sessions)?;
+            Ok(sessions)
+        }
+        .await;
+        let (sessions, held) = keep_logs(ran, logs, &opts.log_dir.join("informed"))?;
         // As `calibrate --informed` saves them in a scenario file.
         for (scenario, session) in scenarios.iter_mut().zip(&sessions) {
             scenario.informed_pnl_usd = Some((session.pnl_usd * 100.0).round() / 100.0);
@@ -795,17 +833,34 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             "informed bot graded"
         );
         informed_sessions = sessions;
-        informed_logs = Some(read_files(&logs.0)?);
-        drop(logs);
+        informed_logs = Some(held);
     }
+    // No bot has run yet, or every bot has stopped: where a later phase
+    // fails, the held logs are the evidence of why, so they are written
+    // before the error goes on.
+    let publish_held = || -> Result<()> {
+        if let Some(logs) = &reference_logs {
+            write_files(&opts.log_dir.join("reference"), logs)?;
+        }
+        if let Some(logs) = &informed_logs {
+            write_files(&opts.log_dir.join("informed"), logs)?;
+        }
+        Ok(())
+    };
     // What doing nothing makes, where it isn't 0: measured by a bot that
     // does nothing, so no rule has to say what holding the start is worth.
     let nops = if opts.v2_sessions {
-        run_nop(&opts, &scenarios).await?
+        match run_nop(&opts, &scenarios).await {
+            Ok(nops) => nops,
+            Err(e) => {
+                publish_held()?;
+                return Err(e);
+            }
+        }
     } else {
         vec![None; scenarios.len()]
     };
-    let sessions = run_sessions(
+    let ran = run_sessions(
         opts.snapshot_dir,
         opts.bot_dir,
         &scenarios,
@@ -820,13 +875,12 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
             every_slot: opts.v2_sessions,
         },
     )
-    .await?;
+    .await;
+    // Every bot has stopped: the held logs join the others, and the
+    // scenarios can be written out.
+    publish_held()?;
+    let sessions = ran?;
     check_timing(&sessions)?;
-    // Every bot has stopped: the informed bot's logs join the others, and
-    // the scenarios can be written out.
-    if let Some(logs) = &informed_logs {
-        write_files(&opts.log_dir.join("informed"), logs)?;
-    }
     if let Some(dir) = opts.detail_dir {
         // Whatever a bot left there goes first, links included: the
         // grader writes as root.
@@ -1004,6 +1058,8 @@ pub struct Verdict {
     pub tampered: Option<String>,
     pub not_graded: Option<String>,
     pub eval_seed_sha256: Option<String>,
+    #[serde(default)]
+    pub versions: crate::versions::Versions,
     pub truncated: Option<Truncated>,
     /// The report's sessions, for what only they hold (see
     /// [`ScenarioResult::nop_pnl_usd`]).
@@ -1033,6 +1089,7 @@ pub fn rescore(sessions: Vec<(SessionReport, Scenario)>, verdict: Verdict) -> Gr
         }
     };
     report.eval_seed_sha256 = verdict.eval_seed_sha256;
+    report.versions = verdict.versions;
     report.truncated = verdict.truncated;
     for (result, stored) in report.scenarios.iter_mut().zip(&verdict.scenarios) {
         result.nop_pnl_usd = stored.nop_pnl_usd;
@@ -1137,6 +1194,7 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
         markout: total_markout(&scenarios),
         v2: None,
         headline: None,
+        versions: Default::default(),
         truncated: None,
         scenarios,
         anchors: Vec::new(),
@@ -1147,9 +1205,9 @@ fn score(sessions: Vec<(SessionReport, &Scenario)>) -> GradeReport {
 /// start mark, or, on several markets, each market's at its own.
 fn bound_of(scenario: &Scenario, session: &SessionReport) -> f64 {
     if scenario.markets.is_empty() {
-        scenario.bound_usd(session.start_mark_usd)
+        scenario.bound_usd(session.start_mark_usd, session.base_lots_decimals)
     } else {
-        scenario.markets_bound_usd(&session.start_marks_usd())
+        scenario.markets_bound_usd(&session.market_starts())
     }
 }
 
@@ -1256,6 +1314,23 @@ fn total_markout(sessions: &[ScenarioResult]) -> Option<Decomposition> {
 /// The share of a market-making session's taker orders that may fail before
 /// the session isn't scored.
 pub const MAX_FAILED_TAKER_SHARE: f64 = 0.1;
+
+/// The version of v1's scoring (`reward` and `skill`, and what disqualifies
+/// a bot): bump it with any change to how a session maps to them that
+/// [`v1_spec_hash`]'s constants don't capture.
+pub const V1_CODE_VERSION: &str = "1.0";
+
+/// A hash of what fixes v1's scores, written into every v1 grade's report
+/// (and a v2 grade that keeps v1's reward): the code version, the clamp
+/// and the failed-taker share.
+pub fn v1_spec_hash() -> String {
+    let spec = serde_json::json!({
+        "code": V1_CODE_VERSION,
+        "reward_clamp": [0.0, 1.0],
+        "max_failed_taker_share": MAX_FAILED_TAKER_SHARE,
+    });
+    crate::versions::hash_parts([("scoring-v1", spec.to_string().as_bytes())])
+}
 
 /// Fail the grade, as an infrastructure error, rather than score sessions
 /// that didn't run as their scenarios describe. Harbor retries a failed
@@ -1707,6 +1782,42 @@ mod tests {
     use super::*;
     use crate::scenario::{VENUE, Waypoint};
 
+    #[test]
+    fn v1_has_its_own_pinned_spec_hash() {
+        let hash = v1_spec_hash();
+        assert_eq!(hash.len(), 64);
+        // A change to a v1 constant changes it: if deliberate, bump
+        // V1_CODE_VERSION and update the pin.
+        assert_eq!(
+            hash,
+            "6a70cd975247a7d87762a11def8de43537712f39c3e7e4ad3903a3ea443cb80e"
+        );
+        let v2 = scoring_v2::Params::new(scoring_v2::Ceiling::Informed { eta_override: None });
+        assert_ne!(hash, scoring_v2::spec_hash(&v2));
+    }
+
+    #[test]
+    fn a_failed_trusted_phase_leaves_its_logs_and_a_good_one_holds_them() {
+        let to = std::env::temp_dir().join(format!("mtx-keep-logs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&to);
+        let logs = PrivateDir::create("mtx-keep-logs-test").unwrap();
+        std::fs::write(logs.0.join("hidden-1.log"), "the reference crashed").unwrap();
+        let held = keep_logs(Ok(7), logs, &to).unwrap();
+        assert_eq!(held.0, 7);
+        assert_eq!(held.1.len(), 1);
+        assert!(!to.exists(), "a good phase's logs wait for the bot to end");
+
+        let logs = PrivateDir::create("mtx-keep-logs-test").unwrap();
+        std::fs::write(logs.0.join("hidden-1.log"), "the reference crashed").unwrap();
+        let held = keep_logs::<()>(Err(Error::Jobs(0, 1)), logs, &to);
+        assert!(held.is_err());
+        assert_eq!(
+            std::fs::read_to_string(to.join("hidden-1.log")).unwrap(),
+            "the reference crashed"
+        );
+        let _ = std::fs::remove_dir_all(&to);
+    }
+
     #[tokio::test]
     async fn a_components_only_grade_of_a_process_bot_scores_zero() {
         let dir = std::env::temp_dir().join(format!("mtx-not-a-component-{}", std::process::id()));
@@ -1745,6 +1856,7 @@ mod tests {
         SessionReport {
             scenario: "s".into(),
             start_mark_usd: 100.0,
+            base_lots_decimals: 3,
             end_mark_usd: 100.0,
             start_value_usd: 10_100.0,
             end_value_usd: 10_100.0 + pnl_usd,
@@ -1777,6 +1889,7 @@ mod tests {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            takes_unjudged: Vec::new(),
             obligations: None,
             tx_layer: None,
             lending: None,
@@ -2019,6 +2132,29 @@ mod tests {
             .collect()
     }
 
+    /// A report from before the lot size was written has no `base_lots_decimals`
+    /// and reads as 3. Written again it must be the same JSON, or `rescore
+    /// --check` calls every old report changed.
+    #[test]
+    fn a_report_from_before_the_lot_size_rewrites_the_same() {
+        let current = serde_json::to_value(session(1.0)).unwrap();
+        assert!(
+            current.get("base_lots_decimals").is_none(),
+            "3 isn't written"
+        );
+        let old = current.clone();
+        let read: SessionReport = serde_json::from_value(old.clone()).unwrap();
+        assert_eq!(read.base_lots_decimals, 3);
+        assert_eq!(serde_json::to_value(&read).unwrap(), old);
+        // Another lot size is written, and read back.
+        let mut fine = session(1.0);
+        fine.base_lots_decimals = 5;
+        let json = serde_json::to_value(&fine).unwrap();
+        assert_eq!(json["base_lots_decimals"], 5);
+        let back: SessionReport = serde_json::from_value(json).unwrap();
+        assert_eq!(back.base_lots_decimals, 5);
+    }
+
     #[test]
     fn a_grade_scored_again_from_its_details_is_the_same_report() {
         let dir = std::env::temp_dir().join(format!("mtx-rescore-{}", uuid::Uuid::new_v4()));
@@ -2220,6 +2356,7 @@ mod tests {
             .map(|symbol| session::MarketReport {
                 symbol: symbol.into(),
                 start_mark_usd: 100.0,
+                base_lots_decimals: 3,
                 end_mark_usd: 100.0,
                 start_position: 0.0,
                 end_position: 0.0,

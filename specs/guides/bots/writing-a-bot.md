@@ -44,13 +44,21 @@ line a session, then the grade:
 
 ```
 scenario                     your PnL    reference        bound
-practice-1                      $0.00      +$73.77        $1028
+practice-1                      $0.00     +$531.67        $1514
+practice-2                      $0.00       −$9.70         $632
+practice-3                      $0.00      +$39.09        $1323
+practice-4                      $0.00      −$17.95        $1124
+practice-5                      $0.00     +$171.36         $949
+practice-6                      $0.00     −$175.01         $946
 
-reward 0.000   (your PnL $0.00 over the hindsight bound $1028)
+reward 0.000   (your PnL $0.00 over the hindsight bound $6488)
 skill  0.00    (your PnL over the reference bot's: 1 matches it)
+risk   worst session $0.00, deepest drawdown $0, profitable in 0% of sessions
 ```
 
-The starter doesn't trade, so it scores 0. The rest is yours. To watch a
+`reference` is what the task's reference bot made on the same session, and
+`bound` what a trader who knew the session's future could have made at
+most. The starter doesn't trade, so it scores 0. The rest is yours. To watch a
 strategy play one session, step by step, run `mtx bot run --debug`; the
 [step-by-step guide](first-strategy.md) starts there.
 
@@ -133,7 +141,7 @@ trading key's public key (`authority`), the task's variables
 | `position` | Your position (`size` in SPCX, positive long, and `entry_usd`). |
 | `cap`, `max_drawdown` | The mandate's position cap (70 SPCX) and drawdown limit. |
 | `resting_bids`, `resting_asks` | What you have resting, in SPCX: every bid and ask the grader placed since your last cancel or quote, filled or not. |
-| `pnl`, `peak_pnl`, `drawdown` | Your PnL since the first step, marked to market, its high and how far below it you are. An estimate: it leaves out fees and funding, which the grader counts. |
+| `pnl`, `peak_pnl`, `drawdown` | Your PnL since the first step, marked to market, its high and how far below it you are. An estimate: it leaves out fees, funding and slippage, which the grader counts. |
 | `sends` | What became of each order your last sheet planned: its line on the sheet, the venue, your client id, the order as planned, and its state: `Landed` with its signature, `Failed` with the reason (the venue's, or a post-only order that would have crossed) and, for a transaction that ran on chain and failed, its signature, or `NotSent` with why not. Slot, fee and tip are there for sessions that know them. |
 | `notes` | What the grader cut or dropped from your last sheet, and why: the same notes it logs. |
 | `venues` | Each of the session's markets (`Session::venues`, yours first, each with a unique id and its account's address): its best bid and ask, its book and its trades since the last step where the session reports them (`Session::reports`; a reported tape that's empty is a step without trades), your position there, and, as venues arrive, your resting orders, liquidity positions, lending account and the venue's own numbers (`stats`). |
@@ -294,7 +302,7 @@ can't show: fills, slippage, and the market moving.
 | `mtx bot practice more/*.json` | Grades on scenarios `mtx scenario generate` drew. |
 | `mtx bot practice --json` | The grader's full report instead of the summary. |
 | `mtx bot check` | Checks the bot directory: a `bot.wasm` that is a component, built from the current source. |
-| `mtx bot pack -o my-bot.tar.gz` | Packages the source, without builds or logs, with a manifest of the task and the `mtx` it was made with. |
+| `mtx bot pack -o my-bot.tar.gz` | Packages the source, without builds or logs, with a manifest of the task and the `mtx` it was made with. A bot made by `mtx bot new` depends on `mtx-kit` by a path on your machine, and `pack` says so: `mtx bot new --git` depends on it by git instead, so the archive builds anywhere. |
 
 A component is the same file on any machine: what practises on your laptop
 is what the benchmark grades.
@@ -352,7 +360,8 @@ language.
 ### The bot directory
 
 The grader runs `just run`, from the bot's `Justfile`, in the bot's
-directory; `just build` builds it. The bots in `bots/` all look like this:
+directory; `just build` builds it. Each task's reference bot
+(`bench/tasks/<task>/reference`) has both recipes. In short, market-making's:
 
 ```just
 build:
@@ -451,7 +460,10 @@ Three limits:
 | 500 ms a step, summed over the session | The same. |
 
 A transaction sent while the world moves is refused, which isn't a breach: it
-just misses the turn.
+just misses the turn. The benchmark's own bots (a task's reference and its
+other anchors) are trusted instead: the world waits up to 120 s for each of
+their turns, with no budget over the session, so a loaded machine can't make
+one miss a turn.
 
 ### The chain
 
@@ -497,11 +509,19 @@ The grader disqualifies a session, whatever its PnL, when the bot:
 2. broke its [mandate](../../mandate.md#rules), which the grader checks
    after every step: a market outside its universe, the position past its
    cap, the account past its drawdown limit;
-3. ended the session with its account liquidatable;
-4. wrote a file the grader reports its grade in.
+3. traded against the session's order, where it has one (`MTX_ORDER`):
+   bought on an order to sell, sold on an order to buy, or grew the
+   position on a reduce-only order;
+4. ended the session with its account liquidatable (unless the scenario has
+   a liquidation keeper: the keeper liquidates the account, and the loss is
+   in its PnL);
+5. wrote a file the grader reports its grade in.
 
-On the benchmark, **one disqualified session scores the whole grade 0**.
-Each task's README gives its score, its account, its mandate and its market.
+On today's tasks, **one disqualified session scores the whole grade 0**. A
+task on scoring v2 (`docs/grading.md`) prices a breach instead: the session
+counts as at least the mandate's whole loss limit lost, and the run's score
+falls with its share of breached sessions. Each task's README gives its
+score, its account, its mandate and its market.
 
 ## Glossary
 

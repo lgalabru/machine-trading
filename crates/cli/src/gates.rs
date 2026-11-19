@@ -38,6 +38,9 @@ use crate::{Cli, authoring, scoring_text, tasks};
 /// The ladder's extra gate: the best informed policy must make at least this
 /// many times the best one that doesn't read the task's signal.
 const DEFAULT_MIN_RATIO: f64 = 2.0;
+/// The least the best non-reading rung is taken to earn (total PnL over every
+/// set), so losing rungs don't make the informed bot's multiple unbounded.
+const MIN_BASELINE_USD: f64 = 25.0;
 /// The strength band by default: the reference's weighted PnL as a share of
 /// the informed bot's, so there is room above and below 0.5.
 const DEFAULT_BAND: [f64; 2] = [0.2, 0.7];
@@ -269,12 +272,21 @@ pub struct Options {
 pub struct LadderSummary {
     #[serde(default)]
     pub sessions: usize,
-    /// Per set, each rung's total PnL as graded (0 if disqualified), and the
+    /// Per set, each rung's total on the grade the task gives it (0 if
+    /// disqualified on v1; the v2 value on a v2 task), and the
     /// set's `hindsight` bound.
     pub totals: Vec<BTreeMap<String, f64>>,
     pub rules: Vec<RuleResult>,
     pub exploits: Vec<ExploitResult>,
     pub disqualified: Vec<Disqualified>,
+    #[serde(default)]
+    pub probes: Option<Vec<ProbeResult>>,
+    /// `checked`, `exempt` (the ladder file says why: `probes_exempt`) or
+    /// `absent`: the task declares nothing about the probe gate.
+    #[serde(default)]
+    pub probes_status: Option<String>,
+    #[serde(default)]
+    pub probes_exempt: Option<String>,
     /// Per set, each rung's PnL in each session, as graded (absent in older
     /// summaries).
     #[serde(default)]
@@ -290,7 +302,7 @@ pub struct RuleResult {
     pub odds: f64,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ExploitResult {
     pub bot: String,
     pub ok: bool,
@@ -317,6 +329,31 @@ pub struct ExploitResult {
     pub below_odds: Option<f64>,
     #[serde(default)]
     pub reached_bound: Option<bool>,
+    /// The most it may earn as a multiple of the reference (absent in older
+    /// summaries: no test).
+    #[serde(default)]
+    pub max_ratio: Option<f64>,
+    /// `pass`, `fail` or `no_power`: a pushing bot that moved the mark too
+    /// little proves nothing by losing.
+    #[serde(default)]
+    pub verdict: Option<String>,
+    #[serde(default)]
+    pub no_power: Option<String>,
+}
+
+/// One probe rule's verdict (scoring v2's probe gate, `ladder.py`'s
+/// `probe_checks`): `pass`, `fail`, `inconclusive` (the point estimate
+/// breaks it, the sample can't confirm that) or `no_power` (a probe that was
+/// to breach never did).
+#[derive(Debug, Deserialize)]
+pub struct ProbeResult {
+    pub id: String,
+    pub verdict: String,
+    pub detail: String,
+    /// The point estimate breaks the rule, whatever the sample can confirm:
+    /// the full gate fails on it.
+    #[serde(default)]
+    pub point_violated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -458,7 +495,9 @@ pub fn strength_band(
         "weighted (k = {k}) over {} sessions: reference ${e_ref:.0}, informed ${e_inf:.0}, ratio {ratio:.2} in [{low}, {high}]; reference Sharpe {s:.2} (at least {min_sharpe})",
         reference.len()
     );
-    match (misses.is_empty(), fast) {
+    // A reference that loses money fails in fast mode as in full, unless the
+    // loss is within a short set's noise.
+    match (misses.is_empty(), fast && !loses_confidently(&reference)) {
         (true, _) => Check::pass(SOLVABLE, id, title, measured),
         (false, true) => Check::new(
             SOLVABLE,
@@ -538,6 +577,67 @@ pub fn v2_checks(
     });
     checks.push(informed_on_hidden_sets(root, task, test));
     checks
+}
+
+/// The oracle installs `solution/src` into the agent's starter, whose
+/// Cargo.toml has no features of its own: a component export gated on one
+/// (`#[cfg(feature = "export")]`) vanishes there, and the bot trades nothing.
+/// Only `not(feature = ...)` and target gates survive the starter's build.
+pub fn solution_exports_component(root: &Path, task: &str) -> Check {
+    let (id, title) = (
+        "solution-exports",
+        "The solution exports its component when built as the starter",
+    );
+    let src = root.join("bench/tasks").join(task).join("solution/src");
+    let mut files = Vec::new();
+    collect_files(&src, &mut files);
+    let sources: Vec<String> = files
+        .iter()
+        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .collect();
+    match export_problem(&sources) {
+        None => Check::pass(
+            SOLVABLE,
+            id,
+            title,
+            "mtx_kit::export! is not behind a cargo feature",
+        ),
+        Some(why) => Check::fail(SOLVABLE, id, title, why),
+    }
+}
+
+/// Why `sources`, built as the starter's `src/`, would export no component.
+fn export_problem(sources: &[String]) -> Option<String> {
+    let mut found = false;
+    for source in sources {
+        let lines: Vec<&str> = source.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            let code = line.trim_start();
+            if code.starts_with("//") || !code.contains("export!(") {
+                continue;
+            }
+            found = true;
+            let mut j = i;
+            while j > 0 && lines[j - 1].trim_start().starts_with("#[") {
+                j -= 1;
+                let mut attr = lines[j].to_string();
+                while let Some(at) = attr.find("not(feature") {
+                    let end = attr[at..].find(')').map_or(attr.len(), |e| at + e + 1);
+                    attr.replace_range(at..end, "");
+                }
+                if attr.contains("feature") {
+                    return Some(format!(
+                        "`{}` is gated on a cargo feature ({}): the starter's Cargo.toml enables none, so the oracle's bot exports nothing and trades nothing. Gate it on `not(feature = \"embedded\")` or on the target only",
+                        code.trim_end(),
+                        lines[j].trim()
+                    ));
+                }
+            }
+        }
+    }
+    (!found)
+        .then(|| "no mtx_kit::export! in solution/src: the oracle's bot is not a component".into())
 }
 
 /// No task's verifier tells the graded bot anything about its sessions:
@@ -768,7 +868,7 @@ pub fn informed_on_hidden_sets(root: &Path, task: &str, test: &str) -> Check {
             let listed = std::fs::read_to_string(root.join("bench/image/anchors.txt"))
                 .unwrap_or_default()
                 .lines()
-                .any(|l| l == line);
+                .any(|l| l.strip_suffix(" component").unwrap_or(l) == line);
             if !listed {
                 problems.push(format!(
                     "bench/image/anchors.txt doesn't list `{line}` (run `mtx task sync`)"
@@ -830,20 +930,18 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
         (Ok(i), Ok(b)) => (i, b),
         (Err(e), _) | (_, Err(e)) => return Check::fail(SOLVABLE, id, title, e),
     };
-    let floor = baseline.1.max(0.0);
+    // The best non-reading rung's graded total, held to a small positive floor
+    // so that rungs that all lose don't make the ratio infinite trivially.
+    let floor = baseline.1.max(MIN_BASELINE_USD);
     let ok = informed.1 > 0.0 && informed.1 >= ratio * floor;
-    let multiple = if floor > 0.0 {
-        format!("{:.1}x", informed.1 / floor)
-    } else {
-        "unbounded".to_string()
-    };
+    let multiple = format!("{:.1}x", informed.1 / floor);
     Check::from(
         SOLVABLE,
         id,
         title,
         ok,
         format!(
-            "{} ${:.0} vs {} ${:.0}: {multiple}, need {ratio:.0}x ({} set{})",
+            "{} ${:.0} vs {} ${:.0} (floor ${MIN_BASELINE_USD:.0}): {multiple}, need {ratio:.0}x ({} set{})",
             informed.0,
             informed.1,
             baseline.0,
@@ -856,7 +954,44 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
 
 /// Why a fast set whose reference lost money can't settle the reference and
 /// order checks.
-const THIN_SAMPLE: &str = "The reference lost money on this small sample; the task's edge is too thin to judge in fast mode, and the full ladder decides";
+const THIN_SAMPLE: &str = "The reference lost money on this small sample, but not by enough to say its edge is gone; the full ladder decides";
+
+/// Whether `xs` (a reference's per-session PnL) lose money with confidence: a
+/// one-sided Student-t test at 5% (t under minus the critical value for n - 1
+/// degrees of freedom: 1.796 at 12 sessions). A short set's loss within its
+/// noise is no evidence against a thin edge.
+pub fn loses_confidently(xs: &[f64]) -> bool {
+    let n = xs.len() as f64;
+    if xs.len() < 2 {
+        return false;
+    }
+    let mean = xs.iter().sum::<f64>() / n;
+    let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0);
+    if var <= 0.0 {
+        return mean < 0.0;
+    }
+    mean / (var / n).sqrt() < -t_critical(xs.len() - 1)
+}
+
+/// The one-sided 5% critical value of Student's t at `df` degrees of freedom.
+fn t_critical(df: usize) -> f64 {
+    const TABLE: [f64; 30] = [
+        6.314, 2.920, 2.353, 2.132, 2.015, 1.943, 1.895, 1.860, 1.833, 1.812, 1.796, 1.782, 1.771,
+        1.761, 1.753, 1.746, 1.740, 1.734, 1.729, 1.725, 1.721, 1.717, 1.714, 1.711, 1.708, 1.706,
+        1.703, 1.701, 1.699, 1.697,
+    ];
+    match df {
+        0 => f64::INFINITY,
+        1..=30 => TABLE[df - 1],
+        _ => 1.645 + 1.56 / df as f64,
+    }
+}
+
+/// Whether a rule names the `reference` rung among its terms.
+fn rule_names_reference(rule: &str) -> bool {
+    rule.split(|c: char| c.is_whitespace() || "<>=(),".contains(c))
+        .any(|t| t == "reference")
+}
 
 /// The checks the ladder answers: the reference and nop anchors, the order,
 /// the signal gate, the exploit bots, clean runs.
@@ -868,9 +1003,14 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .iter()
         .filter_map(|s| s.get("reference").copied())
         .collect();
-    // A short set can lose money by chance for a task whose reference has a
-    // thin edge: that says nothing for or against the task.
-    let thin = fast && reference.iter().any(|r| *r <= 0.0);
+    // A short set can lose money by chance for a thin edge: fast mode fails a
+    // losing reference only when the loss is statistically confident.
+    let thin = fast
+        && reference.iter().any(|r| *r <= 0.0)
+        && !summary
+            .pnls
+            .iter()
+            .any(|set| set.get("reference").is_some_and(|xs| loses_confidently(xs)));
     let reference_pnl = format!(
         "reference total PnL per set: {}",
         reference
@@ -920,6 +1060,8 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .filter(|r| !r.ok)
         .map(|r| r.rule.as_str())
         .collect();
+    // A noisy reference loss makes inconclusive only the rules that name it.
+    let broken_other = broken.iter().any(|r| !rule_names_reference(r));
     let order_detail = if broken.is_empty() {
         format!(
             "{} rule{} hold on {sets} set{} of {} sessions",
@@ -942,7 +1084,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
             .collect::<Vec<_>>()
             .join("; ")
     };
-    checks.push(if thin && !broken.is_empty() {
+    checks.push(if thin && !broken.is_empty() && !broken_other {
         Check::new(
             SOLVABLE,
             "ladder-order",
@@ -961,6 +1103,7 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
     });
     checks.push(signal_gate(summary, gate));
     checks.push(exploit_check(summary, fast));
+    checks.push(probe_check(summary, fast));
     checks.push(Check::from(
         GRADED,
         "ladder-clean",
@@ -1008,6 +1151,11 @@ fn exploit_breaches(e: &ExploitResult, fast: bool) -> Vec<(bool, String)> {
         return e.reasons.iter().map(|r| (true, r.clone())).collect();
     };
     let mut out = Vec::new();
+    if let (Some(ratio), Some(max)) = (e.ratio, e.max_ratio)
+        && ratio > max
+    {
+        out.push((!fast, format!("{ratio:.2}x the reference, over {max}x")));
+    }
     if e.reached_bound == Some(true) {
         out.push((true, "reached the bound".to_string()));
     }
@@ -1049,6 +1197,19 @@ fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
             }
         }
     }
+    // A bot that was to move the mark and moved nothing proves nothing by
+    // losing: no power fails the gate, as a leak would.
+    for e in summary
+        .exploits
+        .iter()
+        .filter(|e| e.verdict.as_deref() == Some("no_power"))
+    {
+        failed.push(format!(
+            "{} (no power: {})",
+            e.bot,
+            e.no_power.as_deref().unwrap_or("it moved nothing")
+        ));
+    }
     if !failed.is_empty() {
         return Check::fail(GRADED, id, title, failed.join("; "));
     }
@@ -1078,6 +1239,87 @@ fn exploit_check(summary: &LadderSummary, fast: bool) -> Check {
             .collect::<Vec<_>>()
             .join(", "),
     )
+}
+
+/// The probe bots land where scoring v2's decisions say they must: gamblers
+/// at or under doing nothing, a breacher no better than its clipped twin,
+/// leverage held to its multiple, honest edge over doing nothing, a crash
+/// no better than the bot it wraps. The ladder fixes the rules and applies a
+/// bootstrap: a rule broken with confidence fails, one the sample can't
+/// confirm is inconclusive in a fast run and fails in the full one (as an
+/// exploit over its limit does), and a probe with no power fails. A task
+/// that says nothing about probes fails; one that opts out says why.
+fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
+    let (id, title) = ("probe-bots", "Probe bots land in their v2 bands");
+    if summary.probes_status.as_deref() == Some("exempt") {
+        return Check::not_run(
+            GRADED,
+            id,
+            title,
+            format!(
+                "exempt: {}",
+                summary
+                    .probes_exempt
+                    .as_deref()
+                    .unwrap_or("no reason given")
+            ),
+        );
+    }
+    let Some(probes) = summary.probes.as_ref().filter(|p| !p.is_empty()) else {
+        return Check::fail(
+            GRADED,
+            id,
+            title,
+            "the task's ladder file has no `probes` section: add one, or exempt the task with a reason (bench/checks/probes/README.md)",
+        );
+    };
+    let of = |keep: &dyn Fn(&ProbeResult) -> bool| -> Vec<String> {
+        probes
+            .iter()
+            .filter(|p| keep(p))
+            .map(|p| format!("{} ({})", p.id, p.detail))
+            .collect()
+    };
+    let failed =
+        of(&|p| p.verdict == "fail" || (!fast && p.verdict == "inconclusive" && p.point_violated));
+    let no_power = of(&|p| p.verdict == "no_power");
+    let unsure = of(&|p| p.verdict == "inconclusive" && (fast || !p.point_violated));
+    if !failed.is_empty() || !no_power.is_empty() {
+        let mut parts = Vec::new();
+        if !failed.is_empty() {
+            parts.push(format!("out of band: {}", failed.join("; ")));
+        }
+        if !no_power.is_empty() {
+            parts.push(format!("no power: {}", no_power.join("; ")));
+        }
+        return Check::fail(GRADED, id, title, parts.join(". "));
+    }
+    if !unsure.is_empty() {
+        return Check::new(
+            GRADED,
+            id,
+            title,
+            Status::Inconclusive,
+            format!("the sample can't confirm: {}", unsure.join("; ")),
+        );
+    }
+    // A rule the task can't exercise (the breacher's run cap where its reference
+    // rides the cap) is said, never counted as held.
+    let idle: Vec<&str> = probes
+        .iter()
+        .filter(|p| p.verdict == "not_exercised")
+        .map(|p| p.id.as_str())
+        .collect();
+    let held = probes.len() - idle.len();
+    let detail = if idle.is_empty() {
+        format!("{held} probe rules hold")
+    } else {
+        format!(
+            "{held} probe rules hold; not exercised on this task: {}",
+            idle.join(", ")
+        )
+    };
+    Check::pass(GRADED, id, title, detail)
 }
 
 /// The last lines of a command's output, joined.
@@ -1479,10 +1721,12 @@ fn calibration_check(root: &Path, exe: &Path, task: &str, family: &str) -> Check
                 .map_or(file.clone(), |n| n.to_string_lossy().into_owned());
             let status = realism_status(output.status.code(), &report);
             let detail = format!("{name}: {}", realism_summary(&report));
-            let detail = if status == Status::Inconclusive {
-                format!("not judged: {detail}")
-            } else {
-                detail
+            let detail = match (status, report["verdict"].as_str()) {
+                (Status::Inconclusive, Some("stylised")) => {
+                    format!("stylised paths, not a market: {detail}")
+                }
+                (Status::Inconclusive, _) => format!("not judged: {detail}"),
+                _ => detail,
             };
             Check::new(REALISTIC, id, title, status, detail)
         }
@@ -1492,14 +1736,15 @@ fn calibration_check(root: &Path, exe: &Path, task: &str, family: &str) -> Check
 
 /// What a realism report's exit code and verdict make of the check. A market
 /// not judged (exit 3, or verdict `not_judged`: the return checks didn't run)
-/// is neither a pass nor a failure; a failed check (exit 2) or any other
-/// error fails.
+/// and hand-set stress paths that miss the real asset's bands (exit 4,
+/// verdict `stylised`) are neither a pass nor a failure; a failed check
+/// (exit 2) or any other error fails.
 fn realism_status(code: Option<i32>, report: &Value) -> Status {
+    let inconclusive = |verdict: &str| report["verdict"] == verdict;
     match code {
-        Some(0) if report["passed"] == true && report["verdict"] != "not_judged" => Status::Pass,
-        Some(0) | Some(3) if report["verdict"] == "not_judged" || code == Some(3) => {
-            Status::Inconclusive
-        }
+        Some(0) if report["passed"] == true && !inconclusive("not_judged") => Status::Pass,
+        Some(0) | Some(3) if inconclusive("not_judged") || code == Some(3) => Status::Inconclusive,
+        Some(0) | Some(4) if inconclusive("stylised") || code == Some(4) => Status::Inconclusive,
         _ => Status::Fail,
     }
 }
@@ -1674,6 +1919,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let test = std::fs::read_to_string(root.join("bench/tasks").join(task).join("tests/test.sh"))
         .unwrap_or_default();
     checks.push(bot_told_nothing(&test));
+    checks.push(solution_exports_component(root, task));
     checks.push(practice_holds_no_latent(root, task, &family, headline));
     checks.extend(v2_checks(
         root,
@@ -1716,7 +1962,7 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         checks.push(full_only(
             GRADED,
             "keypair-probe",
-            "A bot can't read the grader's keypairs",
+            "A bot can't read the grader's secret, temp dirs or keypairs",
         ));
     } else {
         // Harbor adds a job directory per run and the checks read the last
@@ -1751,9 +1997,9 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
         checks.push(Check::from(
             GRADED,
             "keypair-probe",
-            "A bot can't read the grader's keypairs",
+            "A bot can't read the grader's secret, temp dirs or keypairs",
             ok,
-            if ok { "no keypair readable".into() } else { d },
+            if ok { "no surface readable".into() } else { d },
         ));
         if tasks::guarded(root, task) {
             let (ok, d) = run_in(root, "just", &["network-probe", task], false)?;
@@ -1802,6 +2048,42 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_feature_gated_export_is_not_a_component_in_the_starter() {
+        let src = |attrs: &str| {
+            vec![format!(
+                "fn x() {{}}\n{attrs}\nmtx_kit::export!(Reference);\n"
+            )]
+        };
+        assert!(export_problem(&src("#[cfg(target_arch = \"wasm32\")]")).is_none());
+        assert!(
+            export_problem(&src(
+                "#[cfg(all(target_arch = \"wasm32\", not(feature = \"embedded\")))]"
+            ))
+            .is_none()
+        );
+        assert!(
+            export_problem(&src(
+                "#[cfg(all(target_arch = \"wasm32\", feature = \"export\"))]"
+            ))
+            .is_some()
+        );
+        assert!(
+            export_problem(&src("#[cfg(feature = \"export\")]\n#[allow(dead_code)]")).is_some()
+        );
+        assert!(export_problem(&["fn x() {}".to_string()]).is_some());
+    }
+
+    #[test]
+    fn every_shipped_task_solution_exports() {
+        let root = authoring::repo_root();
+        for t in authoring::list(&root) {
+            let name = t["name"].as_str().unwrap();
+            let c = solution_exports_component(&root, name);
+            assert_eq!(c.status, Status::Pass, "{name}: {}", c.detail);
+        }
+    }
+
     fn summary(sets: &[&[(&str, f64)]]) -> LadderSummary {
         LadderSummary {
             sessions: 12,
@@ -1812,6 +2094,9 @@ mod tests {
             rules: vec![],
             exploits: vec![],
             disqualified: vec![],
+            probes: None,
+            probes_status: None,
+            probes_exempt: None,
             pnls: vec![],
         }
     }
@@ -1850,6 +2135,24 @@ mod tests {
 
     const REFERENCE: &[f64] = &[40.0, -10.0, 25.0, 60.0, 5.0, 15.0];
     const INFORMED: &[f64] = &[120.0, 30.0, 80.0, 90.0, -20.0, 60.0];
+
+    #[test]
+    fn a_reference_that_loses_money_confidently_fails_the_band_on_a_fast_set() {
+        let k = scoring_text::Settings::default();
+        // Twelve sessions all losing about the same: far from noise.
+        let sure: Vec<f64> = (0..12).map(|i| -10.0 - f64::from(i % 3)).collect();
+        let informed: Vec<f64> = (0..12).map(|i| 30.0 + f64::from(i % 4)).collect();
+        let losing = sessions(&[&[("reference", &sure[..]), ("informed", &informed[..])]]);
+        let check = strength_band(&losing, &anchors(), &k, true);
+        assert_eq!(check.status, Status::Fail, "{}", check.detail);
+        // A loss within the noise stays inconclusive in fast mode.
+        let noisy = [
+            -5.0, 20.0, -30.0, 12.0, -4.0, 9.0, -25.0, 15.0, -8.0, 6.0, -3.0, 7.0,
+        ];
+        let thin = sessions(&[&[("reference", &noisy[..]), ("informed", &informed[..])]]);
+        let check = strength_band(&thin, &anchors(), &k, true);
+        assert_ne!(check.status, Status::Fail, "{}", check.detail);
+    }
 
     #[test]
     fn a_reference_in_the_band_passes_and_one_outside_fails() {
@@ -2022,15 +2325,35 @@ mod tests {
     }
 
     #[test]
-    fn a_losing_baseline_is_unbounded_but_the_informed_policy_must_profit() {
+    fn a_losing_baseline_is_held_to_a_small_positive_floor_not_to_nothing() {
+        // Losing rungs make the ratio unbounded, so the informed policy must
+        // beat the floor instead: 2 x $25.
+        let s = summary(&[&[("told", 100.0), ("fade", -5.0)]]);
+        let check = signal_gate(&s, &gate(&["told"], &["fade"]));
+        assert_eq!(check.status, Status::Pass, "{}", check.detail);
+        // The actual PnL and the floor are in the detail.
+        assert!(check.detail.contains("-5"), "{}", check.detail);
+        assert!(check.detail.contains("floor $25"), "{}", check.detail);
         let s = summary(&[&[("told", 10.0), ("fade", -5.0)]]);
-        assert_eq!(
-            signal_gate(&s, &gate(&["told"], &["fade"])).status,
-            Status::Pass
-        );
+        let check = signal_gate(&s, &gate(&["told"], &["fade"]));
+        assert_eq!(check.status, Status::Fail, "{}", check.detail);
         let s = summary(&[&[("told", -1.0), ("fade", -5.0)]]);
         assert_eq!(
             signal_gate(&s, &gate(&["told"], &["fade"])).status,
+            Status::Fail
+        );
+    }
+
+    #[test]
+    fn a_baseline_over_the_floor_is_the_best_rungs_actual_pnl() {
+        let s = summary(&[&[("told", 90.0), ("fade", 40.0), ("follow", -300.0)]]);
+        assert_eq!(
+            signal_gate(&s, &gate(&["told"], &["fade", "follow"])).status,
+            Status::Pass
+        );
+        let s = summary(&[&[("told", 70.0), ("fade", 40.0), ("follow", -300.0)]]);
+        assert_eq!(
+            signal_gate(&s, &gate(&["told"], &["fade", "follow"])).status,
             Status::Fail
         );
     }
@@ -2081,6 +2404,7 @@ mod tests {
             below_total: Some(100.0),
             below_odds: Some(odds),
             reached_bound: Some(false),
+            ..Default::default()
         };
         let check = |e: ExploitResult, fast: bool| {
             let mut s = summary(&[]);
@@ -2120,6 +2444,138 @@ mod tests {
         let report = Report::new("t", "fast", "abc".into(), vec![exploit_check(&s, true)]);
         assert!(report.passed);
         assert!(report.markdown().contains("1 inconclusive"));
+    }
+
+    #[test]
+    fn an_exploit_over_its_multiple_of_the_reference_fails_the_exploit_check() {
+        let over = ExploitResult {
+            bot: "rich".into(),
+            ok: true,
+            ratio: Some(3.0),
+            max_ratio: Some(2.0),
+            profitable: 0.2,
+            sessions: Some(72),
+            profitable_sessions: Some(14),
+            max_profitable: Some(0.75),
+            reached_bound: Some(false),
+            ..Default::default()
+        };
+        let check = |e: ExploitResult, fast: bool| {
+            let mut s = summary(&[]);
+            s.exploits.push(e);
+            exploit_check(&s, fast)
+        };
+        let c = check(over.clone(), false);
+        assert_eq!(c.status, Status::Fail, "{}", c.detail);
+        assert!(
+            c.detail.contains("3.00x") && c.detail.contains("2x"),
+            "{}",
+            c.detail
+        );
+        // A fast set's ratio is noisy: the full ladder decides.
+        assert_eq!(check(over.clone(), true).status, Status::Inconclusive);
+        let within = ExploitResult {
+            ratio: Some(1.5),
+            ..over.clone()
+        };
+        assert_eq!(check(within, false).status, Status::Pass);
+        let none = ExploitResult {
+            ratio: None,
+            ..over
+        };
+        assert_eq!(check(none, false).status, Status::Pass);
+    }
+
+    #[test]
+    fn a_pusher_with_no_power_fails_the_exploit_check() {
+        let mut s = summary(&[]);
+        s.exploits.push(ExploitResult {
+            bot: "pusher".into(),
+            ok: true,
+            verdict: Some("no_power".into()),
+            no_power: Some("moved the mark 0.10 bp".into()),
+            ..Default::default()
+        });
+        let c = exploit_check(&s, false);
+        assert_eq!(c.status, Status::Fail);
+        assert!(
+            c.detail.contains("no power: moved the mark 0.10 bp"),
+            "{}",
+            c.detail
+        );
+        s.exploits[0].verdict = Some("pass".into());
+        assert_eq!(exploit_check(&s, false).status, Status::Pass);
+    }
+
+    fn probe(id: &str, verdict: &str) -> ProbeResult {
+        ProbeResult {
+            id: id.into(),
+            verdict: verdict.into(),
+            detail: "raw +0.100".into(),
+            point_violated: verdict != "pass",
+        }
+    }
+
+    #[test]
+    fn probe_rules_fail_the_gate_unless_the_sample_cannot_confirm_them() {
+        let check = |probes: Option<Vec<ProbeResult>>, fast: bool| {
+            let mut s = summary(&[]);
+            s.probes = probes;
+            probe_check(&s, fast)
+        };
+        // Nothing said about probes fails; an exemption says why and isn't run.
+        assert_eq!(check(None, true).status, Status::Fail);
+        assert_eq!(check(Some(vec![]), true).status, Status::Fail);
+        let mut s = summary(&[]);
+        s.probes_status = Some("exempt".into());
+        s.probes_exempt = Some("not wired".into());
+        let exempt = probe_check(&s, false);
+        assert_eq!(exempt.status, Status::NotRun);
+        assert!(exempt.detail.contains("not wired"));
+        let held = check(Some(vec![probe("a", "pass"), probe("b", "pass")]), true);
+        assert_eq!(held.status, Status::Pass);
+        assert!(held.detail.contains("2 probe rules"));
+        let idle = check(
+            Some(vec![
+                probe("a", "pass"),
+                probe("b:run_cap", "not_exercised"),
+            ]),
+            false,
+        );
+        assert_eq!(idle.status, Status::Pass);
+        assert!(idle.detail.contains("1 probe rules hold"));
+        assert!(
+            idle.detail
+                .contains("not exercised on this task: b:run_cap")
+        );
+        let unsure = vec![probe("a", "pass"), probe("b", "inconclusive")];
+        assert_eq!(check(Some(unsure), true).status, Status::Inconclusive);
+        let broken = vec![probe("zero_edge:coin", "fail"), probe("b", "pass")];
+        let c = check(Some(broken), true);
+        assert_eq!(c.status, Status::Fail);
+        assert!(
+            c.detail
+                .contains("out of band: zero_edge:coin (raw +0.100)")
+        );
+        let powerless = check(Some(vec![probe("breacher", "no_power")]), true);
+        assert_eq!(powerless.status, Status::Fail);
+        assert!(powerless.detail.contains("no power"));
+        let both = vec![probe("a", "inconclusive"), probe("b", "fail")];
+        assert_eq!(check(Some(both), true).status, Status::Fail);
+    }
+
+    #[test]
+    fn the_full_gate_fails_a_broken_point_estimate_the_fast_one_tolerates() {
+        let unsure = || Some(vec![probe("b", "inconclusive")]);
+        let mut s = summary(&[]);
+        s.probes = unsure();
+        assert_eq!(probe_check(&s, true).status, Status::Inconclusive);
+        assert_eq!(probe_check(&s, false).status, Status::Fail);
+        // An inconclusive rule whose point estimate holds is not a failure.
+        let mut fine = probe("c", "inconclusive");
+        fine.point_violated = false;
+        s.probes = Some(vec![fine]);
+        assert_eq!(probe_check(&s, false).status, Status::Inconclusive);
     }
 
     #[test]
@@ -2165,29 +2621,68 @@ mod tests {
     }
 
     #[test]
-    fn a_reference_that_lost_money_on_a_fast_sample_is_inconclusive_not_failed() {
-        let mut s = summary(&[&[
-            ("nop", 0.0),
-            ("reference", -38.0),
-            ("fade", 18.0),
-            ("told", 850.0),
-        ]]);
-        s.rules.push(RuleResult {
-            rule: "fade < reference".into(),
-            ok: false,
-            sets_holding: 0,
-            sets: 1,
-            odds: 0.16,
-        });
+    fn a_reference_that_lost_money_by_chance_is_inconclusive_in_fast_mode_and_a_sure_loss_fails() {
+        let rules = |s: &mut LadderSummary| {
+            s.rules.push(RuleResult {
+                rule: "fade < reference".into(),
+                ok: false,
+                sets_holding: 0,
+                sets: 1,
+                odds: 0.16,
+            });
+        };
         let g = gate(&["told"], &["fade"]);
         let status =
             |checks: &[Check], id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
+        // Market-making's: -$38 over twelve sessions, one session of -$34.
+        let noisy = [
+            -34.0, 5.0, -8.0, 12.0, -20.0, 9.0, -3.0, 15.0, -22.0, 6.0, 1.0, -1.0,
+        ];
+        let fade = [18.0; 12];
+        let told = [70.0; 12];
+        let mut s = sessions(&[&[
+            ("nop", &[0.0; 12][..]),
+            ("reference", &noisy[..]),
+            ("fade", &fade[..]),
+            ("told", &told[..]),
+        ]]);
+        rules(&mut s);
         let fast = ladder_checks(&s, &g, true);
         assert_eq!(status(&fast, "reference-scores-1"), Status::Inconclusive);
         assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
         let full = ladder_checks(&s, &g, false);
         assert_eq!(status(&full, "reference-scores-1"), Status::Fail);
         assert_eq!(status(&full, "ladder-order"), Status::Fail);
+        // Losing in nearly every session is not noise.
+        let sure: Vec<f64> = (0..12).map(|i| -10.0 - f64::from(i % 3)).collect();
+        let mut s = sessions(&[&[
+            ("nop", &[0.0; 12][..]),
+            ("reference", &sure[..]),
+            ("fade", &fade[..]),
+            ("told", &told[..]),
+        ]]);
+        rules(&mut s);
+        let fast = ladder_checks(&s, &g, true);
+        assert_eq!(status(&fast, "reference-scores-1"), Status::Fail);
+        assert_eq!(status(&fast, "ladder-order"), Status::Fail);
+    }
+
+    #[test]
+    fn a_rule_names_the_reference_only_as_a_term() {
+        assert!(rule_names_reference("reference < informed < hindsight"));
+        assert!(rule_names_reference("min(reference, fade) < informed"));
+        assert!(!rule_names_reference("fade < momentum"));
+        assert!(!rule_names_reference("fade < reference_like"));
+    }
+
+    #[test]
+    fn a_loss_is_confident_only_when_it_is_past_the_noise() {
+        assert!(loses_confidently(&[-10.0, -11.0, -12.0, -10.0]));
+        assert!(!loses_confidently(&[
+            -34.0, 5.0, -8.0, 12.0, -20.0, 9.0, -3.0, 15.0
+        ]));
+        assert!(!loses_confidently(&[5.0, 6.0, 7.0]));
+        assert!(!loses_confidently(&[-1.0]));
     }
 
     #[test]
@@ -2329,6 +2824,14 @@ mod tests {
         );
         assert_eq!(
             realism_status(Some(2), &report(true, "not_judged")),
+            Status::Fail
+        );
+        assert_eq!(
+            realism_status(Some(4), &report(false, "stylised")),
+            Status::Inconclusive
+        );
+        assert_eq!(
+            realism_status(Some(2), &report(false, "stylised")),
             Status::Fail
         );
         assert_eq!(realism_status(Some(1), &report(true, "pass")), Status::Fail);

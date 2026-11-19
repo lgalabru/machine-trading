@@ -598,7 +598,7 @@ impl LiquidationKeeper {
             position_before: episode.position_before,
             positions_before: Default::default(),
             orders: episode.orders,
-            flat: is_flat(episode.position_after),
+            flat: is_flat(episode.position_after, self.market.base_lots_decimals),
         });
     }
 }

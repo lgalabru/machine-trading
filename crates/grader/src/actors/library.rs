@@ -1216,7 +1216,7 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn wallet(seat: Book) -> (Wallet, Ledger) {
+    pub(crate) fn wallet(seat: impl Seat + 'static) -> (Wallet, Ledger) {
         let ledger = Ledger::new(true);
         let wallet = ledger
             .wallets(

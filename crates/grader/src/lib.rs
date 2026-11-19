@@ -36,6 +36,7 @@ pub mod spot;
 pub mod taking;
 pub mod txlayer;
 pub mod venue;
+pub mod versions;
 pub mod wasm;
 pub mod weekend;
 

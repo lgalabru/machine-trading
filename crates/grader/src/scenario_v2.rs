@@ -2090,7 +2090,11 @@ mod tests {
     use mtx_core::mandate::{Exposure, Hedge};
 
     use super::*;
-    use crate::{making::MakingFamily, scenario::ShockFamily, weekend::WeekendFamily};
+    use crate::{
+        making::MakingFamily,
+        scenario::{MarketStart, ShockFamily},
+        weekend::WeekendFamily,
+    };
 
     fn v2(scenario: &Scenario) -> ScenarioV2 {
         ScenarioV2::try_from(scenario).unwrap()
@@ -2513,11 +2517,19 @@ mod tests {
         assert_eq!(parse(&text).unwrap(), scenario);
         assert_eq!(scenario.validate(), Ok(()));
         // Each market's own cap, start mark and funding make its bound.
-        let marks = [("NVDA".to_string(), 180.0), ("SPCX".to_string(), 100.0)].into();
+        let start = |mark_usd| MarketStart {
+            mark_usd,
+            base_lots_decimals: 3,
+        };
+        let marks = [
+            ("NVDA".to_string(), start(180.0)),
+            ("SPCX".to_string(), start(100.0)),
+        ]
+        .into();
         let nvda =
-            scenario.markets[0].bound_usd(BoundOn::Path, 40.0, 180.0, scenario.duration_slots);
+            scenario.markets[0].bound_usd(BoundOn::Path, 40.0, 180.0, scenario.duration_slots, 3);
         let spcx =
-            scenario.markets[1].bound_usd(BoundOn::Path, 70.0, 100.0, scenario.duration_slots);
+            scenario.markets[1].bound_usd(BoundOn::Path, 70.0, 100.0, scenario.duration_slots, 3);
         assert!(nvda > 0.0 && spcx > 0.0);
         assert_eq!(scenario.markets_bound_usd(&marks), nvda + spcx);
         assert_eq!(scenario.max_position(), 40.0);
@@ -2752,6 +2764,7 @@ mod tests {
             scheduled: Vec::new(),
             regime_clock: 1.0,
             regime_set: None,
+            earnings_day: false,
             regimes: Vec::new(),
             sessions: Vec::new(),
             events: Vec::new(),

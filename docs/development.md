@@ -248,7 +248,7 @@ just ladder <task>                     # the skill ladder on fresh hidden sets
 just image && just harbor-checks       # oracle skill 1; nop, cheater, sneaky 0
 just leak-audit <task>                 # the agent's image holds no answer (a guarded task's mtx can't draw)
 just network-probe <task>              # a guarded task's agent can't reach ghcr.io or github.com
-just keypair-probe                     # a bot can't read the grader's keypairs
+just keypair-probe                     # a bot can't read the grader's secret, temp dirs, /tests or any keypair file
 harbor check bench/tasks/<task>        # LLM review against Harbor's rubric
 ```
 
@@ -257,6 +257,59 @@ reference into the task's `solution/`) and recalibrate the practice
 scenarios (`just calibrate bench/tasks/<task>/reference FILES`). Hidden sets need
 no calibration, because the verifier grades the reference on them every
 time. Record the change in [the changelog](../bench/tasks/CHANGELOG.md).
+
+**Versions.** Every grade report carries `versions`: the task's fingerprint
+(`mtx task fingerprint <task>`), a hash of the scoring spec (v1's, or v2's
+with its settings). The fingerprint hashes what changes what a task
+measures: `task.toml` without its cosmetic keys, `instruction.md`,
+`tests/test.sh`, the practice scenarios, the anchors' sources, the
+generator's parameters and a draw as large as the verifier's, every file of
+the snapshot (the files git lists, added or not: a gitignored `surfnet.json`
+never counts), `GRADER_VERSION` and `tests/anchor.digest`.
+
+It hashes the engine's behaviour, not its source. Most engine PRs (a new
+venue, a test, a comment, a refactor) leave every task as it was, and a
+fingerprint that moved with each would be overridden as routine. Instead
+`tests/anchor.digest` holds the SHA-256 of the sessions the task's reference
+(and its informed bot, when the task has one; the file says which) plays on a
+fixed public draw, without wall times, compute units and signatures: exactly
+the fields the identity proof below ignores. An engine, kit or dependency
+change that alters what the anchors do moves it, and so the fingerprint.
+
+- CI's `anchor-digests` job builds the anchors and plays them again for every
+  task, on a change under `crates/`, `snapshots/` or `.cargo/`, to the root
+  `Cargo.toml`, `Cargo.lock` or `rust-toolchain`, and for a task whose
+  `tests/anchor.digest` changed. It fails if a
+  digest differs from the committed one, or is `pending` (the log then shows
+  the file to commit). That is the signal that the change altered a task's
+  behaviour: run `mtx task sync --anchors`. The digest is in that task's
+  fingerprint, so only that task's fingerprint moves.
+- **`GRADER_VERSION`** (`crates/grader/src/versions.rs`) is bumped only for an
+  engine change the digests can't see (a guard's rule, a disqualification, a
+  cost only a bot meets), never because a digest differs: it moves every
+  task's fingerprint.
+- `mtx task sync` keeps a digest whose inputs (the anchors' sources, the
+  snapshot, the family's parameters, the draw's settings) are unchanged and
+  otherwise writes `pending` with a warning, so it works on a Mac and before
+  the references are built; the READMEs' tables, `solution/` and the
+  fingerprint are written either way. `mtx task sync --anchors` builds the
+  anchors (`just --justfile bench/tasks/<task>/reference/Justfile build`) and
+  plays the sessions, always: Linux, as root, `just` and Surfpool installed.
+  `mtx task anchor-digest [task] [--check]` plays them without writing.
+- `mtx task sync` also writes the fingerprint to `tests/task.fingerprint` (the
+  verifier reads it from `/tests`); `mtx task check` fails when either file is
+  stale or a digest is `pending`, and the "lists are current" test does too.
+  After editing anything above, run `mtx task sync` (`--anchors` on Linux) and
+  commit both files. The family parameters and `GRADER_VERSION` come from the
+  running `mtx`, so use one built from the checkout.
+
+When a scoring constant changes, bump `CODE_VERSION` (v2) or `V1_CODE_VERSION`
+and re-pin the spec hash test. `bench publish`, `review`, `compare` and
+`rescore` refuse to mix trials of one task with different versions, or with
+none, unless `--allow-version-mismatch` is given (the output then lists the
+mismatch); `bench rescore --scoring ...` puts the trials on one scoring spec,
+so it checks only the fingerprint. Not covered: the Surfpool or image build
+behind the grader beyond what `Cargo.lock` pins.
 
 The scenario file format, v1 and v2, is in [scenario-format.md](scenario-format.md).
 How bots are scored is in [grading.md](grading.md).
@@ -273,7 +326,7 @@ A task is one folder, `bench/tasks/<name>/`:
 
 | | |
 | --- | --- |
-| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator |
+| `task.toml` | Harbor's task, and `[metadata.mtx]`: the scenario `generator` (a name in `mtx_grader::generators`), the text of the README tables, the leak-audit needles, an `anchor` name if two tasks share a generator, and `component_anchors = true` for a task whose anchors must run as strategy components (requests for quotes reach only components), which the image then builds for `wasm32-wasip2` too |
 | `reference/` | The reference bot's crate (a workspace member): the verifier scores against it |
 | `solution/` | The oracle's copy of `reference/`, written by `mtx task sync` |
 | `checks/` | `ladder.json` (rungs, order rules, the `anchors` and `probes` a v2 task names), `rungs/` (rungs that run a bot), `bots/` (ladder bots' crates; `bots/informed` is a v2 task's informed bot) and `exploits/` (the frozen exploit bots) |
@@ -362,7 +415,8 @@ instruction. `mtx task status <name>` says which steps are done;
     which `mtx gates` runs), and a change to the grader or the CLI leaves
     the existing tasks' reports identical to `origin/main`'s on the same
     hidden set, but for wall times and the per-session keypair's
-    signatures.
+    signatures. If an identity proof differs, bump `GRADER_VERSION` and run
+    `mtx task sync --anchors` (CI's `anchor-digests` job fails until you do).
 
 ## Release
 

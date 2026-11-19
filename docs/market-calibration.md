@@ -198,7 +198,7 @@ out of bounds.
 measurement, with the source cited in the family's description and in
 `source`. Reference measurement (2026-11-17): Phoenix 1 m mark candles from
 the calibration archives (NVDA from 2026-06-09, TSLA from 06-16, SPCX from
-06-12, SPY and QQQ from 09-09, to mid-November), jumps by the calibration's
+06-12, SPY and QQQ from 09-09; the archives end 2026-11-12, SPCX's 11-10), jumps by the calibration's
 rule (a 1 m regular-hours return beyond 5 robust sigmas of the trailing
 hour). Event days (CPI, NFP, FOMC, witching, earnings) do not raise the
 jump count above ordinary days (0.3 to 0.8 an hour all-session, against
@@ -237,6 +237,18 @@ so treat as ranges, and cap at the largest observed):
 
 Earnings gaps are 3 to 10 times an ordinary overnight gap (n of 1 to 2 per
 name): use the calendar's gap field, not an event.
+
+These measured values are in `calibration/opening-windows.toml`, one
+table per asset (`per_hour`, the two sizes, `earnings_per_hour` where the data
+showed it, `measured_from`, `measured_through` and a `source`). The file is
+hand-maintained; the calibration files beside it stay as the fitter wrote them.
+The realism gate's `stated_regime_bound` check fails any session set whose
+spec states a `jump_rate_per_hour` above the opening rate, or a `jump_size`
+median or p90 above the opening window's. The TSLA earnings-reaction rate
+(6.7 an hour) is allowed only to a spec that sets `earnings_day = true`, which
+lifts the rate bound to `earnings_per_hour` and leaves the size bound where it
+is; the flag changes nothing for an asset with no allowance. An asset with no
+table is bounded by its calibration's own all-session rate and sizes.
 
 `mtx market-cal check --spec` draws with these fields like any other spec
 field. Jump events are not masked from the tail statistics, so it judges a
@@ -487,19 +499,42 @@ samples of a few hundred real windows (SOL's pooled kurtosis: about 6 to
 140), so they are reported (`info`), not gated.
 
 Windows holding a gap are left out of the return checks, and gaps are
-checked on their own. Round trips go through a market-making scenario's
-competing makers, or else the calibration's default book. A check with too
-little data is reported `skipped`: fewer than 30 windows, fewer than 20
-gaps, or sessions shorter than the reference window. SPCX's reference
-windows are 30 minutes of 1 m bars, so minutes-long task sessions can't be
-judged against them on returns.
+checked on their own. Round trips go through each scenario's own book where
+it sets one (a market-making scenario's competing makers, an off-hours
+scenario's makers); a scenario on the snapshot's own book isn't probed, and
+isn't judged against the calibration's default book. A check with too little
+data is reported `skipped`: fewer than 30 windows, or fewer than 20 gaps.
+
+**Short sessions.** SPCX's reference windows are 30 minutes of 1 m bars, so
+task sessions of 80 to 400 s can't be judged on returns. With 30 or more of
+them, the report is judged on statistics scaled to the sessions' own length
+(`short_sessions` is true):
+
+| Check | What it compares | Against |
+|---|---|---|
+| `short_vol_1s` | median over sessions of the sd of 1 s returns | the reference windows' volatility, scaled to a second (and 1.3x for the scaling itself) |
+| `short_jump_rate` | whole minutes that move more than 5 reference minute volatilities, per hour of session | the calibration's jumps per hour |
+| `short_jump_size` | the 90th percentile of those jumps (with at least 8 of them) | the calibration's jump 90th percentile |
+| `short_range_median`, `short_range_p90` | the high-to-low range of a session | the same quantiles of as many sessions of the calibration's own model, at the same lengths |
+| `book_spread` | the median half-spread of the books the scenarios set | the calibration's `book.half_spread_bps` (within 3x where the book is stated defaults, 1.5x where fitted) |
+
+Each band is the real statistic's sampling spread at the calibration's
+window count, combined with the generated one's at the sessions given. The
+calibrated model's own short sessions pass on every seed (the ignored
+`short_session_false_fail_rate` test measures it).
 
 **Verdict.** The report's `verdict` is one of:
 - `pass`: no check failed, and each required group (vol level, vol of
-  vol, a tail check) has a check that passed with power;
+  vol, a tail check; or, for short sessions, `short_vol_1s`,
+  `short_jump_rate` and `short_range_median`) has a check that passed with
+  power;
 - `fail`: a check failed;
-- `not_judged`: nothing failed, but the return checks didn't run, or a
-  required group had no power. It is not a pass.
+- `stylised`: the paths are hand-set (no market model drew them) and miss
+  the real asset's bands. They are stress paths, not a market: the report
+  lists every miss, and a task that uses them says so. A failed
+  `round_trips` is `fail`, however the path was made;
+- `not_judged`: nothing failed, but the return checks didn't run (too few
+  sessions), or a required group had no power. It is not a pass.
 
 `passed` is true only on `pass`.
 
@@ -514,8 +549,9 @@ mtx market-cal check bench/tasks/<task>/environment/practice --calibration <file
   come from), a task family (`flash-crash`, `market-making`,
   `funding-carry`, `weekend-gap`, drawn with `--count` and `--seed`), or
   scenario files.
-- **Output.** It prints a JSON report and exits 0 on `pass`, 2 on `fail`
-  and 3 on `not_judged`. `mtx gates` calls it.
+- **Output.** It prints a JSON report and exits 0 on `pass`, 2 on `fail`,
+  3 on `not_judged` and 4 on `stylised`. `mtx gates` calls it: `not_judged`
+  and `stylised` are inconclusive there, not failures.
 
 ### The joint check
 

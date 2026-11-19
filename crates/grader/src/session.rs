@@ -61,7 +61,7 @@ use crate::{
     error::io_error,
     guard::{CallLog, Guard},
     phoenix::SLOTS_BETWEEN_STEPS,
-    scenario::Scenario,
+    scenario::{MarketStart, Scenario},
     snapshot,
 };
 
@@ -149,6 +149,14 @@ pub struct Rules {
 pub struct SessionReport {
     pub scenario: String,
     pub start_mark_usd: f64,
+    /// The market's base lot is `10^-base_lots_decimals` base units: what the
+    /// scenario's funding cap is read against. Reports from before it was
+    /// written are read as 3 decimals, as every market then was.
+    #[serde(
+        default = "default_base_lots_decimals",
+        skip_serializing_if = "is_default_lots"
+    )]
+    pub base_lots_decimals: i8,
     pub end_mark_usd: f64,
     /// Collateral plus unrealized PnL plus wallet USDC, at the start and end.
     pub start_value_usd: f64,
@@ -243,6 +251,10 @@ pub struct SessionReport {
     /// Phoenix recorded them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub making_fills: Vec<crate::making::MakingFill>,
+    /// The meter's positions and `making_fills` didn't add up, and no jump
+    /// explained the difference: the takes can't be told.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub takes_unjudged: Vec<mtx_core::mandate::InstrumentRef>,
     /// A market-making session with quoting obligations: how the bot met
     /// them (see [`crate::obligations`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -295,6 +307,12 @@ pub struct MarketReport {
     /// Phoenix's mark at the start and the end, in USD: the start mark is
     /// what the market's path, its bound and its valuation count from.
     pub start_mark_usd: f64,
+    /// The market's lot size (see [`SessionReport::base_lots_decimals`]).
+    #[serde(
+        default = "default_base_lots_decimals",
+        skip_serializing_if = "is_default_lots"
+    )]
+    pub base_lots_decimals: i8,
     pub end_mark_usd: f64,
     /// The position at the start and the end, in base units.
     pub start_position: f64,
@@ -310,13 +328,31 @@ pub struct MarketReport {
     pub competitor: Option<CompeteReport>,
 }
 
+fn default_base_lots_decimals() -> i8 {
+    3
+}
+
+/// Reports leave the default out, so a report from before the field was
+/// written and the same session rescored today are the same JSON.
+fn is_default_lots(decimals: &i8) -> bool {
+    *decimals == default_base_lots_decimals()
+}
+
 impl SessionReport {
-    /// Each market's start mark, by symbol, for a session on several
-    /// markets; empty for one.
-    pub fn start_marks_usd(&self) -> BTreeMap<String, f64> {
+    /// Each market's start (mark and lot size), by symbol, for a session on
+    /// several markets; empty for one.
+    pub fn market_starts(&self) -> BTreeMap<String, MarketStart> {
         self.markets
             .iter()
-            .map(|m| (m.symbol.clone(), m.start_mark_usd))
+            .map(|m| {
+                (
+                    m.symbol.clone(),
+                    MarketStart {
+                        mark_usd: m.start_mark_usd,
+                        base_lots_decimals: m.base_lots_decimals,
+                    },
+                )
+            })
             .collect()
     }
 }
@@ -560,6 +596,7 @@ impl SessionReport {
         observed.term_start = self.term_start.clone();
         observed.takes =
             crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
+        observed.takes_unjudged = self.takes_unjudged.clone();
         observed
     }
 }
@@ -727,6 +764,15 @@ pub(crate) trait Account: Send + Sync {
     /// Between a step's slots, at `slot`: measure the account for the
     /// positions it held (see [`Rules::every_slot`]). Nothing by default.
     async fn sample(&mut self, _slot: u64) -> Result<()> {
+        Ok(())
+    }
+
+    /// Before `slot` closes, once everything the session lands in it has
+    /// landed: what the account holds as it closes, for an account that
+    /// reconciles it with fills listed at `confirmed`, which list a slot
+    /// only once it has closed. Called once a step, before its first slot
+    /// moves on. Nothing by default.
+    async fn slot_closing(&mut self, _slot: u64) -> Result<()> {
         Ok(())
     }
 
@@ -1046,6 +1092,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             slot = crate::lending::warp(surfnet, &rpc, warp.slots).await?;
         }
         let target = (slot + SLOTS_PER_STEP).min(end_slot);
+        let mut first = true;
         while slot < target {
             // Under the transaction layer, the slot's block: what its
             // builder picks, committed in order before the slot closes.
@@ -1055,6 +1102,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 for signature in engine.commit(slot + 1, picks).await {
                     guard.landed(&signature, k);
                 }
+            }
+            // The last step's slot, with the takers' trades and the bot's
+            // turn in it, is about to close.
+            if std::mem::take(&mut first) {
+                account.slot_closing(slot).await?;
             }
             surfnet.send_command(SimnetCommand::SlotForward(None))?;
             slot = wait_for_slot(&rpc, slot + 1).await?;
@@ -1171,7 +1223,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                 engine.forced_close_paid((-(change + closable)).max(0) as u64);
             }
             close.orders.extend(done.orders);
-            if crate::risk::is_flat(done.position) {
+            if done.flat {
                 close.flat = true;
                 session_end = slot;
                 break;
@@ -1365,11 +1417,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     let end_value_usd = report.end_value_usd;
     // Flat on every market: a session on several lists each in `markets`.
-    let flat = crate::risk::is_flat(report.end_position)
+    let flat = crate::risk::is_flat(report.end_position, report.base_lots_decimals)
         && report
             .markets
             .iter()
-            .all(|m| crate::risk::is_flat(m.end_position));
+            .all(|m| crate::risk::is_flat(m.end_position, m.base_lots_decimals));
     // A stop-out's close settles at the session's end; a liquidation's
     // is the keeper's own account of its stretch.
     for close in &mut report.forced_closes {

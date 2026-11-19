@@ -571,6 +571,25 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .flat_map(|m| m.scenario.overrides(perp_asset_map, m.start_mark_ticks))
             .collect()
     };
+    // Where the bot's market is uncrossed after a jump's steps, in slots:
+    // overrides count from the slot they are registered at. A market-making
+    // session reads them, and it never has an impact (a scenario with both
+    // is refused when it loads), so the uncrosses an impact's script makes
+    // after its own moves needn't be listed.
+    let uncross_slots: Vec<u64> = {
+        let registered_at = rpc.get_slot()?;
+        let symbol = own.scenario.symbol.as_str();
+        let mut slots: Vec<u64> = overrides
+            .iter()
+            .filter(|o| {
+                o.template_id == "phoenix-market-uncross"
+                    && o.values.get("symbol").and_then(|v| v.as_str()) == Some(symbol)
+            })
+            .map(|o| registered_at + o.slot)
+            .collect();
+        slots.sort_unstable();
+        slots
+    };
     // With an impact, a script plays the path instead of the schedule: each
     // slot it centres the makers on the path's book level plus what trades
     // walking the book left (see [`crate::impact`]).
@@ -579,6 +598,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             assert!(
                 scenario.markets.is_empty(),
                 "an impact plays one market's path: a scenario with several is refused when it loads"
+            );
+            assert!(
+                scenario.making.is_none(),
+                "an impact's script uncrosses on its own, in slots a market-making session's fills can't account for: a scenario with both is refused when it loads"
             );
             let state = opts.keys.keypair("impact", 0).pubkey();
             let script = impact.script(&crate::impact::ScriptSetup {
@@ -625,9 +648,12 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         let send_reader = (!library.front_runners.is_empty())
             .then(|| send_reader(own.market.clone(), internal.url().to_string()));
         if !library.front_runners.is_empty() {
-            cast.watch(FlowWatch::new(vec![
-                own.perp.seat(bot.insecure_clone(), internal.url()).await?,
-            ]));
+            cast.watch(
+                FlowWatch::new(vec![
+                    own.perp.seat(bot.insecure_clone(), internal.url()).await?,
+                ])
+                .starting_at(&[own.start_position]),
+            );
         }
         let built = library.build(
             seats,
@@ -708,6 +734,12 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             seen: HashSet::new(),
             fills: Vec::new(),
             keys: Vec::new(),
+            uncross_slots,
+            reconciled_scan: base_slot,
+            reconciled_len: 0,
+            unjudged: false,
+            closed: None,
+            stepped: base_slot,
         }),
         quotes: match scenario.making.as_ref().and_then(|m| m.obligations) {
             Some(obligations) => Some(QuoteSampler::new(
@@ -1122,6 +1154,85 @@ struct MakingFills {
     fills: Vec<MakingFill>,
     /// Each fill's key in `seen`, to find it again.
     keys: Vec<(u128, bool)>,
+    /// The slots the bot's market is uncrossed at, after each step of a
+    /// jump (absolute, sorted).
+    uncross_slots: Vec<u64>,
+    /// The slot and the fill count at the last reconciliation.
+    reconciled_scan: u64,
+    reconciled_len: usize,
+    /// A leftover appeared in a step with no uncross: takes can't be told.
+    unjudged: bool,
+    /// The bot's position as a step's first slot closed, reconciled once a
+    /// scan has listed that slot (see [`Self::reconcile`]).
+    closed: Option<ClosedSlot>,
+    /// The slot of the last step, whose price an uncross fill is recorded
+    /// at.
+    stepped: u64,
+}
+
+/// The bot's position as `slot` closed, with nothing more of the slot's to
+/// land, and the price an uncross fill up to it is recorded at.
+#[derive(Debug, Clone, Copy)]
+struct ClosedSlot {
+    slot: u64,
+    position: f64,
+    price: f64,
+}
+
+impl MakingFills {
+    /// Reconcile the fills that landed up to `through` with the bot's
+    /// `position` as that slot closed (see [`crate::making::reconcile`]).
+    /// Fills are listed at `confirmed`, so a slot's fills are only all
+    /// listed once it has closed: the fills after `through` are left for
+    /// the next reconciliation.
+    fn reconcile(
+        &mut self,
+        through: u64,
+        position: f64,
+        price: f64,
+        start: f64,
+        decimals: i8,
+        base_slot: u64,
+    ) {
+        // The window's last uncross: the fill lands at its slot, before any
+        // fill of the bot's that came after it.
+        let uncross = self
+            .uncross_slots
+            .iter()
+            .copied()
+            .rfind(|s| *s > self.reconciled_scan && *s <= through)
+            .map(|s| s.saturating_sub(base_slot));
+        let at = through.saturating_sub(base_slot);
+        let from = self.reconciled_len.min(self.fills.len());
+        let split = from + self.fills[from..].partition_point(|f| f.at <= at);
+        let later = self.fills.split_off(split);
+        let (result, at_index) = crate::making::reconcile(
+            start,
+            &mut self.fills,
+            from,
+            position,
+            decimals,
+            uncross,
+            price,
+        );
+        match (result, at_index) {
+            (crate::making::Reconciled::Inserted, Some(i)) => {
+                self.keys
+                    .insert(i, (u128::MAX - self.keys.len() as u128, false));
+            }
+            (crate::making::Reconciled::Unexplained, _) => {
+                tracing::warn!(
+                    slot = through,
+                    "the bot's position doesn't match its fills, with no jump in the step: its takes are not judged"
+                );
+                self.unjudged = true;
+            }
+            _ => {}
+        }
+        self.reconciled_scan = through;
+        self.reconciled_len = self.fills.len();
+        self.fills.extend(later);
+    }
 }
 
 /// A market-making session's samples of what the bot quotes, for its
@@ -1681,6 +1792,34 @@ impl PerpAccount {
         Ok(())
     }
 
+    /// Record what moved the bot's position with no fill event behind it:
+    /// a jump's uncross fills the orders the move crossed in an account
+    /// override, not in a transaction, so [`Self::scan_making`] never sees
+    /// it. The leftover is a maker fill of the uncross, so the fills still
+    /// add up to the position (the taking audit counts from them).
+    ///
+    /// A step's position includes what landed in its still-open slot, which
+    /// the step's scan doesn't list yet, so the step reconciles the position
+    /// its previous slot closed at instead (see [`Account::slot_closing`]).
+    fn reconcile_making(&mut self) {
+        let own = self.own();
+        let (decimals, start) = (own.market.base_lots_decimals, own.start_position);
+        let base_slot = self.base_slot;
+        let Some(read) = self.making_fills.as_mut() else {
+            return;
+        };
+        if let Some(closed) = read.closed.take() {
+            read.reconcile(
+                closed.slot,
+                closed.position,
+                closed.price,
+                start,
+                decimals,
+                base_slot,
+            );
+        }
+    }
+
     /// What the bot's wallet holds for its RFQ desk, and the asset's
     /// reference price, Phoenix's index for the perp. Nothing without a
     /// desk. The wallet holds what its token accounts of each mint hold, as
@@ -1901,6 +2040,26 @@ impl Account for PerpAccount {
         .unwrap_or(None))
     }
 
+    async fn slot_closing(&mut self, slot: u64) -> Result<()> {
+        let Some(stepped) = self.making_fills.as_ref().map(|read| read.stepped) else {
+            return Ok(());
+        };
+        let now = self.measure().await?;
+        let position = self.positions(&now)[self.primary];
+        let price = self
+            .own()
+            .moment(stepped.saturating_sub(self.base_slot))
+            .level_usd;
+        if let Some(read) = self.making_fills.as_mut() {
+            read.closed = Some(ClosedSlot {
+                slot,
+                position,
+                price,
+            });
+        }
+        Ok(())
+    }
+
     async fn sample_quotes(&mut self, slot: u64) -> Result<()> {
         let fair_usd = self.moment(slot.saturating_sub(self.base_slot)).level_usd;
         match self.quotes.as_mut() {
@@ -1920,6 +2079,10 @@ impl Account for PerpAccount {
         record(&mut self.observed, &now)?;
         self.record_notional(&now, slot)?;
         let positions = self.positions(&now);
+        self.reconcile_making();
+        if let Some(read) = self.making_fills.as_mut() {
+            read.stepped = slot;
+        }
         let position = positions[self.primary];
         self.positions_outside_universe = self.positions_outside_universe.max(now.outside_universe);
         let value_usd = self
@@ -2090,8 +2253,8 @@ impl Account for PerpAccount {
     /// [`MAX_CLOSE_ORDERS_PER_STEP`] orders go round the markets in symbol
     /// order, one order to each market still open per round, so one market
     /// can't take every order while another's exposure runs on; a market
-    /// whose book took nothing gets no more this step. The position it
-    /// reports is the largest one left; on several markets, each order names
+    /// whose book took nothing gets no more this step. It reports whether
+    /// every market is flat after them; on several markets, each order names
     /// its market.
     async fn force_close(
         &mut self,
@@ -2117,7 +2280,7 @@ impl Account for PerpAccount {
             let mut sent_any = false;
             for (i, (market, seat)) in self.markets.iter().zip(&seats).enumerate() {
                 let position = positions[i];
-                if is_flat(position) || stuck[i] {
+                if is_flat(position, market.market.base_lots_decimals) || stuck[i] {
                     continue;
                 }
                 if orders.len() >= MAX_CLOSE_ORDERS_PER_STEP {
@@ -2158,15 +2321,11 @@ impl Account for PerpAccount {
                 break;
             }
         }
-        let left =
-            positions.iter().copied().fold(
-                0.0_f64,
-                |left, p| if p.abs() > left.abs() { p } else { left },
-            );
-        Ok(Closing {
-            orders,
-            position: left,
-        })
+        let flat = positions
+            .iter()
+            .zip(&self.markets)
+            .all(|(p, m)| is_flat(*p, m.market.base_lots_decimals));
+        Ok(Closing { orders, flat })
     }
 
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
@@ -2176,6 +2335,25 @@ impl Account for PerpAccount {
         record(&mut self.observed, &end)?;
         self.record_notional(&end, done.end_slot)?;
         let end_positions = self.positions(&end);
+        // The session stepped a slot past its last, so its scan listed
+        // every fill: the end position is reconciled with all of them.
+        self.reconcile_making();
+        let own = self.own();
+        let (decimals, start) = (own.market.base_lots_decimals, own.start_position);
+        let price = own
+            .moment(done.end_slot.saturating_sub(self.base_slot))
+            .level_usd;
+        let base_slot = self.base_slot;
+        if let Some(read) = self.making_fills.as_mut() {
+            read.reconcile(
+                done.end_slot,
+                end_positions[self.primary],
+                price,
+                start,
+                decimals,
+                base_slot,
+            );
+        }
         let end_desk = self.desk_holdings().await?;
         let end_value_usd = self
             .value(grader_f64(end.value_usd), &end_positions, done.end_slot)
@@ -2219,8 +2397,14 @@ impl Account for PerpAccount {
         let making_fills = self
             .making_fills
             .take()
-            .map(|read| read.fills)
+            .map(|read| (read.fills, read.unjudged))
             .unwrap_or_default();
+        let (making_fills, takes_unjudged) = making_fills;
+        let takes_unjudged = if takes_unjudged {
+            vec![self.own().instrument.clone()]
+        } else {
+            Vec::new()
+        };
         let obligations = self.quotes.as_ref().map(|quotes| {
             quotes.report(
                 scenario
@@ -2258,6 +2442,7 @@ impl Account for PerpAccount {
                     MarketReport {
                         symbol: market.scenario.symbol.clone(),
                         start_mark_usd: market.start_mark_usd,
+                        base_lots_decimals: market.market.base_lots_decimals,
                         end_mark_usd: end_marks[i],
                         start_position: market.start_position,
                         end_position: end_positions[i],
@@ -2276,6 +2461,7 @@ impl Account for PerpAccount {
         Ok(SessionReport {
             scenario: scenario.name.clone(),
             start_mark_usd: own.start_mark_usd,
+            base_lots_decimals: own.market.base_lots_decimals,
             end_mark_usd: end_marks[self.primary],
             start_value_usd: self.start_value_usd,
             end_value_usd,
@@ -2328,6 +2514,7 @@ impl Account for PerpAccount {
             perp_fills: fills.fills,
             perp_open_orders: fills.open_orders,
             making_fills,
+            takes_unjudged,
             obligations,
             tx_layer: None,
             lending: None,
@@ -3124,5 +3311,118 @@ mod tests {
         assert_eq!(wallet_holds(&chain, &bot, &usdc).await.unwrap(), 2.5);
         chain.remove_account(&usdc.account(&bot));
         assert_eq!(wallet_holds(&chain, &bot, &usdc).await.unwrap(), 0.0);
+    }
+
+    /// A market-making session's fill record, at session slot 100.
+    fn making_read(uncross_slots: Vec<u64>) -> MakingFills {
+        MakingFills {
+            bot: Pubkey::new_unique(),
+            traders: Vec::new(),
+            parties: Parties::default(),
+            last_scan: 100,
+            seen: HashSet::new(),
+            fills: Vec::new(),
+            keys: Vec::new(),
+            uncross_slots,
+            reconciled_scan: 100,
+            reconciled_len: 0,
+            unjudged: false,
+            closed: None,
+            stepped: 100,
+        }
+    }
+
+    /// What a scan lists: the bot's fills, in slot order.
+    fn listed(read: &mut MakingFills, fills: &[(u64, CoreSide, f64)]) {
+        for &(at, side, base) in fills {
+            read.keys.push((read.fills.len() as u128, false));
+            read.fills.push(MakingFill {
+                at,
+                side,
+                role: "maker",
+                counterparty: crate::making::TAKER,
+                price: 100.0,
+                base,
+                fee_usd: 0.0,
+                forced: false,
+                self_match: false,
+            });
+        }
+    }
+
+    /// A taker hits the bot's ask in the step's slot (110), after the
+    /// slot's blocks and before the scan: the position the step measures
+    /// has it, the scan at `confirmed` doesn't list it yet. Reconciled as
+    /// its slot closed, once the next scan lists it, the fills add up.
+    #[test]
+    fn a_fill_in_the_steps_open_slot_is_reconciled_once_listed() {
+        // Long 1 from a fill at slot 104; the take at 110 leaves it flat.
+        let mut early = making_read(Vec::new());
+        listed(&mut early, &[(4, CoreSide::Buy, 1.0)]);
+        // Reconciled against the step's own measure, before it is listed,
+        // the sale looks like a move no fill explains.
+        early.reconcile(110, 0.0, 100.0, 0.0, 3, 100);
+        assert!(early.unjudged);
+
+        let mut read = making_read(Vec::new());
+        listed(&mut read, &[(4, CoreSide::Buy, 1.0)]);
+        // As slot 110 closes, the bot is flat. The next step's scan lists
+        // the sale at 110, and a buy at 111 that landed after it closed.
+        listed(
+            &mut read,
+            &[(10, CoreSide::Sell, 1.0), (11, CoreSide::Buy, 0.5)],
+        );
+        read.reconcile(110, 0.0, 100.0, 0.0, 3, 100);
+        assert!(!read.unjudged);
+        assert_eq!((read.reconciled_scan, read.reconciled_len), (110, 2));
+        assert_eq!(read.fills.len(), 3);
+        // The buy at 111 is the next window's: the session ends long 0.5.
+        read.reconcile(114, 0.5, 100.0, 0.0, 3, 100);
+        assert!(!read.unjudged);
+        assert_eq!(read.fills.len(), 3);
+    }
+
+    /// A jump's uncross at slot 108 fills the bot's resting bid for 1 (no
+    /// event), and a taker lifts 0.4 of its ask in the step's slot (110).
+    /// The uncross is recorded once, for what it filled, and the sale once.
+    #[test]
+    fn an_uncross_and_a_fill_in_the_open_slot_are_each_counted_once() {
+        use crate::making::{UNCROSS, position_after};
+        let mut read = making_read(vec![108]);
+        // As 110 closes the bot holds 0.6; the next scan lists the sale.
+        listed(&mut read, &[(10, CoreSide::Sell, 0.4)]);
+        read.reconcile(110, 0.6, 100.0, 0.0, 3, 100);
+        assert!(!read.unjudged);
+        let uncrosses: Vec<_> = read
+            .fills
+            .iter()
+            .filter(|f| f.counterparty == UNCROSS)
+            .collect();
+        assert_eq!(uncrosses.len(), 1);
+        assert_eq!((uncrosses[0].at, uncrosses[0].side), (8, CoreSide::Buy));
+        assert!((uncrosses[0].base - 1.0).abs() < 1e-9);
+        // In before the sale it explains.
+        assert_eq!(read.fills[0].counterparty, UNCROSS);
+        assert_eq!(read.keys.len(), read.fills.len());
+        assert!((position_after(0.0, &read.fills) - 0.6).abs() < 1e-9);
+        // The next window has nothing new: no second uncross, no leftover.
+        read.reconcile(114, 0.6, 100.0, 0.0, 3, 100);
+        assert_eq!(read.fills.len(), 2);
+        assert!(!read.unjudged);
+    }
+
+    /// A move no fill explains, with no jump, still leaves the takes
+    /// unjudged once every fill up to it is listed.
+    #[test]
+    fn a_leftover_no_listed_fill_explains_still_leaves_takes_unjudged() {
+        let mut read = making_read(Vec::new());
+        listed(
+            &mut read,
+            &[(4, CoreSide::Buy, 1.0), (11, CoreSide::Sell, 1.0)],
+        );
+        // Long 2 as 110 closes, with only a 1 bought listed up to it.
+        read.reconcile(110, 2.0, 100.0, 0.0, 3, 100);
+        assert!(read.unjudged);
+        assert_eq!(read.fills.len(), 2);
     }
 }

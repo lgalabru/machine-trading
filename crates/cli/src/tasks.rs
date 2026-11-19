@@ -21,6 +21,12 @@
 //! - the task tables in `README.md` and `bench/tasks/README.md`, between
 //!   their `mtx:tasks` markers;
 //! - each task's `solution/`: a copy of its reference, but `main.rs`;
+//! - each task's `tests/anchor.digest`, what the engine does to its anchors
+//!   (kept as committed while its inputs are unchanged; `mtx task sync`
+//!   plays the anchors when they changed, `--anchors` always:
+//!   [`crate::anchors`]);
+//! - each task's `tests/task.fingerprint`, the hash the verifier writes into
+//!   every report ([`crate::versions::fingerprint`]);
 //! - the scoring rules in a v2 task's `instruction.md`, between its
 //!   `mtx:scoring` markers ([`crate::scoring_text`]).
 
@@ -124,6 +130,13 @@ pub struct Mtx {
     /// task otherwise (GRADING_DECISIONS D1, "one reported score").
     #[serde(default)]
     pub headline: Headline,
+    /// The anchors run as strategy components: the image builds each
+    /// anchor's crate for `wasm32-wasip2` too and puts its `bot.wasm` beside
+    /// `bin/bot`, which the grader then loads instead. A task whose sessions
+    /// hand the bot what only a component sees (requests for quotes) needs
+    /// it; the others keep their process anchors.
+    #[serde(default)]
+    pub component_anchors: bool,
 }
 
 /// A task's headline score.
@@ -356,11 +369,16 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     files.insert(
         PathBuf::from("bench/image/anchors.txt"),
         format!(
-            "# {GENERATED}\n# <anchor> <package> <binary> <directory>, one per task.\n{}\n",
+            "# {GENERATED}\n# <anchor> <package> <binary> <directory> [component], one per task.\n{}\n",
             join(
                 &|t| {
+                    let kind = if t.mtx.component_anchors {
+                        " component"
+                    } else {
+                        ""
+                    };
                     let mut lines = format!(
-                        "{} {} {} {}",
+                        "{} {} {} {}{kind}",
                         t.mtx.anchor(),
                         t.reference.package,
                         t.reference.bin,
@@ -368,7 +386,7 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
                     );
                     if let Some(informed) = &t.informed {
                         lines += &format!(
-                            "\n{} {} {} {}",
+                            "\n{} {} {} {}{kind}",
                             t.informed_anchor(),
                             informed.package,
                             informed.bin,
@@ -448,6 +466,39 @@ fn render(root: &Path, tasks: &[Task]) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
                 with_practice_scoring(&text, &practice_scoring(&script)).into_bytes(),
             );
         }
+        // A task with no folder on disk (a test's made-up one) has no anchor
+        // digest or fingerprint.
+        if !root.join(folder.join("task.toml")).is_file() {
+            continue;
+        }
+        // The anchor digest stays as committed while its inputs are the
+        // ones it was played from; otherwise it is pending until `mtx task
+        // sync --anchors` plays them (it doesn't, here: no sessions).
+        let (inputs, informed) = crate::anchors::inputs(root, &task.dir, &|path| {
+            files
+                .get(path)
+                .cloned()
+                .or_else(|| std::fs::read(root.join(path)).ok())
+        })?;
+        let digest = match crate::anchors::committed(root, &task.dir) {
+            Some(d) if d.inputs == inputs && d.informed == informed => d,
+            _ => crate::anchors::Digest::pending(&inputs, informed),
+        };
+        files.insert(
+            folder.join(crate::anchors::DIGEST_FILE),
+            digest.text().into_bytes(),
+        );
+        // Last: it reads the files above as they will be.
+        let fingerprint = crate::versions::fingerprint(root, &task.dir, &|path| {
+            files
+                .get(path)
+                .cloned()
+                .or_else(|| std::fs::read(root.join(path)).ok())
+        })?;
+        files.insert(
+            folder.join(crate::versions::FINGERPRINT_FILE),
+            format!("{fingerprint}\n").into_bytes(),
+        );
     }
     Ok(files)
 }
@@ -666,6 +717,27 @@ fn dataset_with(text: &str, tasks: &[Task]) -> Result<String> {
     Ok(out)
 }
 
+/// Build and play the anchors of every task and write the digests. Slow,
+/// and Linux only: [`crate::anchors::compute`].
+pub fn play_anchor_digests(root: &Path) -> Result<()> {
+    for task in load(root)? {
+        eprintln!("{}: playing the anchors for tests/anchor.digest", task.dir);
+        let digest = crate::anchors::compute(root, &task.dir)?;
+        crate::anchors::write(root, &task.dir, &digest)?;
+    }
+    Ok(())
+}
+
+/// The tasks whose `tests/anchor.digest` isn't played yet (missing or
+/// `pending`).
+pub fn pending_digests(root: &Path) -> Result<Vec<String>> {
+    Ok(load(root)?
+        .into_iter()
+        .filter(|t| crate::anchors::committed(root, &t.dir).is_none_or(|d| d.is_pending()))
+        .map(|t| t.dir)
+        .collect())
+}
+
 /// Write every generated file. Returns the ones that changed.
 pub fn sync(root: &Path) -> Result<Vec<PathBuf>> {
     let mut changed = Vec::new();
@@ -726,6 +798,7 @@ mod tests {
                 skill: String::new(),
                 leak_needles: vec![],
                 headline: Headline::V1,
+                component_anchors: false,
             },
             reference: Reference {
                 package: "mtx-bot-x".into(),
@@ -741,6 +814,11 @@ mod tests {
         let root = crate::authoring::repo_root();
         let stale = stale(&root).unwrap();
         assert!(stale.is_empty(), "run `mtx task sync`: stale {stale:?}");
+        let pending = pending_digests(&root).unwrap();
+        assert!(
+            pending.is_empty(),
+            "run `mtx task sync --anchors` on Linux: pending digests {pending:?}"
+        );
     }
 
     #[test]
@@ -760,6 +838,40 @@ mod tests {
                 folder.join("reference/src/main.rs").is_file(),
                 "{}",
                 task.dir
+            );
+        }
+    }
+
+    /// The image builds a task's anchors as components exactly when its
+    /// task.toml asks: anchors.txt marks that task's lines, and only them.
+    #[test]
+    fn component_anchors_are_marked_and_only_theirs() {
+        let root = crate::authoring::repo_root();
+        let plain = task("plain-spcx");
+        let mut component = task("component-spcx");
+        component.mtx.generator = "weekend-gap".into();
+        component.mtx.component_anchors = true;
+        let files = render(&root, &[plain, component]).unwrap();
+        let listed =
+            String::from_utf8(files[Path::new("bench/image/anchors.txt")].clone()).unwrap();
+        let line = |anchor: &str| {
+            listed
+                .lines()
+                .find(|l| l.starts_with(&format!("{anchor} ")))
+                .unwrap()
+                .to_string()
+        };
+        assert!(!line("flash-crash").ends_with(" component"), "{listed}");
+        assert!(line("weekend-gap").ends_with(" component"), "{listed}");
+        // The repository's own list agrees with its tasks.
+        let listed = std::fs::read_to_string(root.join("bench/image/anchors.txt")).unwrap();
+        for task in load(&root).unwrap() {
+            let prefix = format!("{} ", task.mtx.anchor());
+            let line = listed.lines().find(|l| l.starts_with(&prefix)).unwrap();
+            assert_eq!(
+                line.ends_with(" component"),
+                task.mtx.component_anchors,
+                "{line}"
             );
         }
     }

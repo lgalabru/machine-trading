@@ -681,7 +681,7 @@ fn toml_string(s: &str) -> String {
     serde_json::to_string(s.trim()).unwrap_or_default()
 }
 
-fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path, skip: &[&str]) -> Result<()> {
     std::fs::create_dir_all(to).with_context(|| to.display().to_string())?;
     for entry in std::fs::read_dir(from).with_context(|| from.display().to_string())? {
         let entry = entry?;
@@ -1675,6 +1675,60 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// What the oracle does: the scaffolded solution's sources replace the
+    /// starter's, whose Cargo.toml enables no feature. The component export
+    /// has to survive that, for both bases.
+    #[test]
+    fn a_scaffolded_solution_exports_its_component_in_the_starter() {
+        for (base, name) in [
+            (Base::Shocks, "funding-squeeze-spcx"),
+            (Base::Making, "quote-skew-spcx"),
+        ] {
+            let root = scratch_repo();
+            let from = repo_root().join("bench/tasks").join(base.task());
+            if !root.join("bench/tasks").join(base.task()).exists() {
+                copy_dir(
+                    &from,
+                    &root.join("bench/tasks").join(base.task()),
+                    &["bin", "target", "practice", "checks"],
+                )
+                .unwrap();
+            }
+            let mut spec = spec();
+            spec.name = name.into();
+            spec.base = Some(base);
+            scaffold(&root, &spec).unwrap();
+            let check = crate::gates::solution_exports_component(&root, name);
+            assert_eq!(check.status, crate::gates::Status::Pass, "{}", check.detail);
+            let reference = read(
+                &root
+                    .join("bench/tasks")
+                    .join(name)
+                    .join("reference/src/lib.rs"),
+            );
+            let solution = read(
+                &root
+                    .join("bench/tasks")
+                    .join(name)
+                    .join("solution/src/lib.rs"),
+            );
+            assert_eq!(
+                reference, solution,
+                "the solution is the reference's source"
+            );
+            // The reference's own manifest declares no feature the export
+            // waits on: what the solution is built with is the starter's.
+            let manifest = read(
+                &root
+                    .join("bench/tasks")
+                    .join(name)
+                    .join("reference/Cargo.toml"),
+            );
+            assert!(!manifest.contains("[features]"), "{manifest}");
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+    }
+
     /// The template end to end: a dummy task scaffolded, checked step by
     /// step and gated, so the scaffold can't rot.
     #[test]
@@ -1958,12 +2012,26 @@ mod tests {
             [
                 PathBuf::from(format!("bench/tasks/{name}/environment/Dockerfile")),
                 PathBuf::from(format!("bench/tasks/{name}/instruction.md")),
+                // The informed bot was rewritten above: the digest of what
+                // the engine does to the anchors was played from the copy.
+                PathBuf::from(format!("bench/tasks/{name}/tests/anchor.digest")),
+                // The rules the grader reads changed, so the task did.
+                PathBuf::from(format!("bench/tasks/{name}/tests/task.fingerprint")),
             ]
         );
         let (scoring, detail) = state_of(&status(&root, name).unwrap(), "scoring");
         assert_eq!(scoring, "todo");
         assert!(detail.contains("stale"), "{detail}");
         tasks::sync(&root).unwrap();
+        // A sync that can't play the anchors leaves the digest pending, and
+        // says so; `mtx task check` and CI refuse it.
+        assert!(
+            tasks::pending_digests(&root)
+                .unwrap()
+                .contains(&name.to_string())
+        );
+        assert!(read(&task.join("tests/anchor.digest")).contains("digest: pending"));
+        assert!(read(&task.join("tests/task.fingerprint")).trim().len() == 64);
         assert!(read(&task.join("instruction.md")).contains("**Losses count 2 times.**"));
         assert!(read(&task.join("environment/Dockerfile")).contains(
             "ENV MTX_PRACTICE_SCORING=\"--scoring v2-headline --loss-weight 2 --v2-sessions\""

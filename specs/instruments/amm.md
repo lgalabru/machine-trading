@@ -1,7 +1,9 @@
 # Instrument profile: pool (`amm`), v0
 
-Status: draft, proposed (not yet agreed). The bot interface's `amm` market
-kind (`mtx:strategy@0.2.0`) needs a profile; this is the proposal.
+Status: draft, proposed (not yet agreed)
+
+The bot interface's `amm` market kind (`mtx:strategy@0.2.0`) needs a
+profile; this is the proposal.
 
 A pool trades an asset for another against a curve rather than an order
 book: constant product (Raydium CPMM), concentrated liquidity (Raydium

@@ -1383,9 +1383,11 @@ mod tests {
         // A move to +2% whose book holds a 1% premium over the index.
         let book = (START as f64 * 1.03).round() as u64;
         let index = (START as f64 * 1.02).round() as u64;
+        // As a path with a premium is laid out: the oracles go back to the
+        // index in the slot of the move's last step, before its uncross.
         let (mut overrides, at) = market_move(map, "SPCX", START, book, 4);
         let uncross = overrides.pop().unwrap();
-        overrides.push(oracle_move(map, "SPCX", index, at - 2));
+        overrides.push(oracle_move(map, "SPCX", index, at));
         overrides.push(uncross);
 
         let mut lab = Lab::new(&IMPACT, &overrides);

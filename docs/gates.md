@@ -23,14 +23,15 @@ finished ladder) adjust a run.
 | | a v2 task: both anchors named in its ladder file, the informed bot written; the verifier grades with `--scoring v2-headline` (v2 as the one score) and the instruction's scoring rules are current; it opts into the probe gate | `mtx task status` |
 | Solvable and fair | the reference makes money on every set (it is the 1.0 line); doing nothing scores 0 | ladder |
 | | the skill ladder keeps its order, on every set and in the bootstrap | ladder |
-| | the best informed policy makes at least 2x the best non-reading one | ladder rungs |
+| | the best informed policy makes at least 2x the best non-reading one's graded total, or a $25 floor when every non-reading rung does worse | ladder rungs |
 | | the oracle (the reference) scores skill 1.0, or under scoring v2 0.5 before the near-breach charge and any breach penalty (`score_v2_raw_before_charge`), with `reward` v2's score and no `skill` beside it; the charge, anchored on the informed bot's drawdowns, can take a reference that draws down deeper under 0.5 by design, and is reported beside it, not checked; nop scores 0 under Harbor | full: `just harbor-checks` |
-| | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive) | ladder, per-session PnL |
+| | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive, unless the reference loses money with confidence, which fails) | ladder, per-session PnL |
 | | no task's verifier tells the graded bot anything (`--tell-latent`, `--tell-regime`) | `tests/test.sh` |
 | | a v2 task's verifier runs its informed bot on the hidden set: `tests/test.sh` draws its set, grades only a component and passes `--informed /opt/mtx/anchors/<anchor>-informed`, which `bench/image/anchors.txt` builds from the ladder's informed anchor, and that bot is written (v2 doesn't fall back to the hindsight ceiling) | `tests/test.sh`, `anchors.txt` |
-| Graded correctly | the exploit bots stay inside their limits; no rung is refused or disqualified | ladder |
+| Graded correctly | the exploit bots stay inside their limits (a pushing bot that moved the mark too little is `no_power`, and fails); no rung is refused or disqualified | ladder |
+| | the probe bots land in their scoring v2 bands, graded with the task's own v2 settings (the verifier's `--loss-weight`, `--risk-weight`, `--anchor-floor` and `--informed`), and a probe with no power (a breacher that never breached) fails | ladder, when the task declares `probes` (`bench/checks/probes/README.md`) |
 | | the component cheater scores 0, the process cheaters and sneaky bot aren't graded | full: `just harbor-checks` |
-| | the agent's image holds no answer, and a guarded task's `mtx` offers only the allowlisted commands; a guarded task's agent can't reach ghcr.io or github.com; a bot can't read the grader's keypairs; `time-left` tracks the clock if the task opts in | full: `just leak-audit <task>`, `network-probe <task>`, `keypair-probe`, `clock-probe` |
+| | the agent's image holds no answer, and a guarded task's `mtx` offers only the allowlisted commands; a guarded task's agent can't reach ghcr.io or github.com; a bot can't read the grader's environment or `MTX_EVAL_SEED`, `/tests`, the grader's temp directories or any keypair file; `time-left` tracks the clock if the task opts in | full: `just leak-audit <task>`, `network-probe <task>`, `keypair-probe`, `clock-probe` |
 | | replays are byte-identical: the reference, graded again on the same fresh hidden set (fast: 2 sessions twice; full: 6 sessions three times on a loaded machine) | `mtx grade --replay`, when the build has it |
 | Realistic | the family's market matches its asset's latest `calibration/market/<asset>.*.toml` (its 300-session draw in both modes) | `mtx market-cal check <family>`, when the build has it |
 
@@ -42,10 +43,24 @@ every run grades the same sessions and a verdict doesn't flip with the draw.
 It is never a hidden set: hidden sets come from fresh 256-bit secrets, and
 `MTX_EVAL_SEED` is never used here.
 
-A task whose reference edge is thin (market-making's is about $3 a session
-against $15 of noise) can lose money on twelve sessions by chance. Then the
-reference and order checks are `inconclusive`, not failed: the edge is too
-thin to judge in fast mode, and the full ladder decides.
+A reference that loses money on a fast set fails only when the loss is
+confident (a one-sided Student-t test at 5%: t under minus the critical value at
+n - 1 degrees of freedom, 1.796 for twelve sessions); a loss within a short set's noise (market-making's -$38 over twelve
+sessions, t = -0.9) is `inconclusive`. The full ladder fails any set where it
+loses. The strength band follows the same rule. A zero-edge gambler's break of its band (the probe gate's `zero_edge`) is also `inconclusive` on a set under 36 sessions: twelve sessions can't tell a gambler's luck from edge (a martingale that made +0.11 on the fixed fast seed scored -0.13 over 60 sessions of another seed), and the full ladder fails it. A noisy reference loss makes
+inconclusive only the order rules that name `reference`; other broken rules
+still fail. A reference whose edge is a few large winning sessions can fail
+fast mode on its fixed public seed while passing the full ladder, because the
+12 sessions may miss the big wins; the full ladder's verdict is the remedy.
+
+Rungs are compared on the grade the task gives them: under v1 a rung with a
+disqualified (breached) session totals 0, under a v2 task the sum of its v2
+session values (loss-weighted, a breach floored; before the near-breach charge
+and the breach-rate penalty), with the hindsight bound as the sum of the
+reference's per-session bounds. The raw PnL (`raw_totals`) and the breach
+counts (`breaches`) are in the summary as information. An exploit bot's multiple
+of the reference is tested only when the ladder file sets `exploits.max_ratio`;
+otherwise exploits are bounded by the `below` oracle.
 
 Twelve sessions can't carry the full ladder's thresholds, so fast mode
 loosens two of them. The bootstrap floor drops to 0.5: the order must still
@@ -130,6 +145,12 @@ every bot has stopped; its sessions have their own keys and surfnets, so the
 bot's sessions are the same with or without it. The ladder's informed rung
 is told the same (`"tell_latent": true`). It costs one more bot run per
 session.
+
+The oracle installs `solution/src` into the agent's starter, which enables no
+cargo features, so the solution must export its strategy component there
+(`solution-exports`): `solution/src` holds an `mtx_kit::export!` call that no
+positive `feature` gate hides. `not(feature = …)` and target gates are fine.
+The check is static; it reads the source, not a build.
 
 Gates grade each task on its own snapshot: `[metadata] snapshot` in its
 `task.toml`, else the `MTX_SNAPSHOT` its verifier image sets, else the

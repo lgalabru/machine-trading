@@ -121,6 +121,10 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Tests
         run: cargo test --workspace
+      - name: Probe bots
+        # bench/checks/probes is outside the workspace: its format, lint and
+        # tests, and the calibration's, run here.
+        run: just probes-check
       - name: The agent's mtx
         # The agent image builds mtx with `--no-default-features` (no
         # generators, none of the host's commands): lint it and test it here,
@@ -255,6 +259,93 @@ jobs:
         with:
           name: gates-${{ matrix.task }}
           path: target/gates
+
+  # What `anchor-digests` has to check: every task when the engine could have
+  # changed what a task does (a change under `crates/` or `snapshots/`, to
+  # the root `Cargo.toml`, `.cargo/`, `Cargo.lock` or `rust-toolchain`; a
+  # manual run always), and a task whose `tests/anchor.digest` changed (an
+  # edited reference or a new task, whose digest `sync` rewrote, or one
+  # somebody committed by hand; the lists test forces the file to change
+  # whenever an input does). A pending or wrong digest can't merge.
+  engine-changed:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    outputs:
+      tasks: ${{ steps.engine.outputs.tasks }}
+      any: ${{ steps.engine.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Which tasks need their digest checked
+        id: engine
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          git config --global --add safe.directory "$PWD"
+          case "$EVENT" in
+            pull_request) range="origin/$BASE_REF...HEAD" ;;
+            push) git cat-file -e "$BEFORE^{commit}" 2>/dev/null && range="$BEFORE HEAD" || range=all ;;
+            *) range=all ;;
+          esac
+          all="$(find bench/tasks -mindepth 2 -maxdepth 2 -name task.toml | cut -d/ -f3 | sort)"
+          if [ "$range" = all ]; then
+            changed_files=""
+            engine=yes
+          else
+            # shellcheck disable=SC2086
+            changed_files="$(git diff --name-only $range)"
+            engine="$(printf '%s\n' "$changed_files" | grep -E '^(crates/|snapshots/|\.cargo/|Cargo\.toml$|Cargo\.lock$|rust-toolchain$)' || true)"
+          fi
+          if [ -n "$engine" ]; then
+            selected="$all"
+          else
+            selected="$(printf '%s\n' "$changed_files" | grep -E '^bench/tasks/[^/]+/tests/anchor\.digest$' | cut -d/ -f3 | sort -u | grep -Fxf <(printf '%s\n' "$all") || true)"
+          fi
+          echo "tasks=$(printf '%s\n' "$selected" | grep . | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+          if [ -n "$selected" ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+          echo "engine changed: ${engine:+yes}; tasks: $(printf '%s' "$selected" | tr '\n' ' ')"
+
+  # Hash behaviour, not source: each task's `tests/anchor.digest` is what the
+  # engine does to its reference (and informed bot) on a fixed public draw.
+  # An engine, kit or dependency change that alters it altered what the task
+  # does: run `mtx task sync --anchors`, which moves that task's fingerprint.
+  # A change that doesn't leaves the fingerprints alone. A pending digest
+  # fails, and the log has the one to commit. Reference-only sessions: 12 a
+  # task, minutes, not the ladder; one job a task. `mtx task anchor-digest`
+  # builds the anchors it plays.
+  anchor-digests:
+    name: anchor digest (${{ matrix.task }})
+    # Not after `rust`: a pending digest fails the lists test there, and this
+    # job is the one that prints the digest to commit.
+    needs: [ci-image, engine-changed]
+    if: needs.engine-changed.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJSON(needs.engine-changed.outputs.tasks) }}
+    container:
+      image: ${{ needs.ci-image.outputs.image }}
+      # Process anchors run as their own users; the grader switches to them.
+      options: --user root
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain and libraries
+        if: needs.ci-image.outputs.prebuilt != 'true'
+        run: bash bench/ci/setup.sh
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: gates
+      - name: Build mtx
+        run: |
+          rustup target add wasm32-wasip2
+          cargo build --release --locked -p mtx-cli
+      - name: The anchor digest is unchanged
+        run: target/release/mtx task anchor-digest --check "${{ matrix.task }}"
 
   # The expensive end-to-end check: build the task image from this commit and
   # run the oracle through Harbor. Weekly and on demand only.

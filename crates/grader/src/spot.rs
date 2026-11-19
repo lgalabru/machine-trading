@@ -1132,6 +1132,7 @@ impl Account for SpotAccount {
         Ok(SessionReport {
             scenario: scenario.name.clone(),
             start_mark_usd: start_price_usd,
+            base_lots_decimals: 3,
             end_mark_usd: end.wallet.price_usd,
             start_value_usd,
             end_value_usd,
@@ -1173,6 +1174,7 @@ impl Account for SpotAccount {
             perp_fills: Vec::new(),
             perp_open_orders: Vec::new(),
             making_fills: Vec::new(),
+            takes_unjudged: Vec::new(),
             obligations: None,
             tx_layer: None,
             lending: None,
@@ -1375,7 +1377,7 @@ mod tests {
         let ok = scenario();
         assert_eq!(ok.validate(), Ok(()));
         assert_eq!(ok.max_position(), 10.0);
-        assert_eq!(ok.bound_usd(150.0), 0.0);
+        assert_eq!(ok.bound_usd(150.0, 3), 0.0);
         let json = serde_json::to_string(&ok).unwrap();
         assert_eq!(serde_json::from_str::<Scenario>(&json).unwrap(), ok);
 

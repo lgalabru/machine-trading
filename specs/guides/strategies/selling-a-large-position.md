@@ -49,7 +49,7 @@ The treasury's ticket:
 | **Time** | 120 rounds | How long the sale may take; whatever is left after is sold later, at a discount. |
 
 The paper value is a number nobody can get: selling 30,000 SOL at once would
-walk far down the book, as the spot guide's 3,000 SOL did. What matters is
+walk far down the book, as the spot guide's 3,000 SPCX did. What matters is
 how close the sale comes.
 
 ### Implementation shortfall
@@ -193,7 +193,7 @@ negative means it sold above $100.
   ],
   "presets": [
     { "label": "Calm", "set": {}, "note": "In a calm market, evenly wins at 2 bp; all at once costs 300 bp." },
-    { "label": "Calm, being read", "set": { "reader": "on" }, "note": "A front-runner takes 30 bp a round from steady sellers: evenly falls to 30 bp, and adaptive, whose pace varies, wins at 18 bp." },
+    { "label": "Calm, being read", "set": { "reader": "on" }, "note": "From round 10, a front-runner takes 30 bp on every SOL a steady seller sells: evenly goes from 2 bp to 30 bp, and adaptive, whose pace varies, wins at 18 bp." },
     { "label": "A steady fall", "set": { "regime": "fall" }, "note": "SOL falls 8%. Front-loaded wins at 256 bp; evenly reaches the floor with 2,127 SOL unsold, and does worst." },
     { "label": "A climb", "set": { "regime": "climb" }, "note": "SOL climbs 6%. Adaptive slows down and sells high: 322 bp better than paper." },
     { "label": "A crash", "set": { "regime": "crash" }, "note": "SOL drops 10% in five rounds. Selling everything at once, at 300 bp, beats every schedule that waited." },

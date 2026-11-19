@@ -441,6 +441,17 @@ Also: open orders accounts, OpenOrders
 On OpenBook, the account that holds a trader's orders and balances on one
 market: what its fills paid it, and what its resting orders lock.
 
+### Event heap
+
+Also: event heaps
+
+On OpenBook, a market's queue of fills that have happened but aren't yet
+written to the maker's open orders account. A fill waits there as an event
+until a transaction consumes it.
+
+The trade itself is final when it matches: only the maker's account lags.
+An enforcer counts the fills still in the heap.
+
 ### Seat
 
 Also: seats
