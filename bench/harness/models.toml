@@ -58,6 +58,59 @@ reasoning = "openrouter"
 model = "openai/gpt-6-astra"
 key = "HERMES_API_KEY"
 
+# Added for 0.13.0, on the same route and key. On 2026-11-20 every one but
+# glm-5-3 answered HTTP 403 model_blocked_by_org_policy: the Nous
+# organization's model policy has to allow each before it can run.
+
+[gemini-4-carbon]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "google/gemini-4-carbon"
+key = "HERMES_API_KEY"
+
+[muse-wonder]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "meta/muse-wonder"
+key = "HERMES_API_KEY"
+
+[grok-4-7]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "x-ai/grok-4.7"
+key = "HERMES_API_KEY"
+
+[glm-5-3]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "z-ai/glm-5.3"
+key = "HERMES_API_KEY"
+
+[kimi-k3-1-pro]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "moonshotai/kimi-k3.1-pro"
+key = "HERMES_API_KEY"
+
+[inkling-2-small]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "thinkingmachines/inkling-2-small"
+key = "HERMES_API_KEY"
+
+[beam-1-0]
+api = "chat"
+upstream = "https://inference-api.nousresearch.com/v1"
+reasoning = "openrouter"
+model = "reflection/beam-1.0-501b-a23b"
+key = "HERMES_API_KEY"
+
 
 [gemini-3-1-pro]
 api = "chat"
@@ -79,12 +132,6 @@ reasoning = "openrouter"
 model = "moonshotai/kimi-k3"
 key = "OPENROUTER_API_KEY"
 
-[glm-5-3]
-api = "chat"
-upstream = "https://openrouter.ai/api/v1"
-reasoning = "openrouter"
-model = "z-ai/glm-5.3"
-key = "OPENROUTER_API_KEY"
 
 [nemotron-3-ultra]
 api = "chat"
