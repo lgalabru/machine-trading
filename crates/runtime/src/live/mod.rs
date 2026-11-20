@@ -240,7 +240,7 @@ fn record(
             slot,
             status,
             symbol: reader.symbol(),
-            read: match reader.read(cache) {
+            read: match reader.read(cache, slot) {
                 Ok(reading) => Read::Ok(reading),
                 Err(error) => Read::Failed { error },
             },
@@ -384,11 +384,12 @@ mod tests {
             assert!(line.get("mark").is_none(), "{line}");
         }
         assert!(lines[0]["error"].as_str().unwrap().contains("wasn't seen"));
+        // The asset map is seen now, and the next account a read needs isn't.
         assert!(
             lines[2]["error"]
                 .as_str()
                 .unwrap()
-                .contains("the trader account")
+                .contains("the global trader index")
         );
     }
 
