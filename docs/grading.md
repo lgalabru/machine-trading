@@ -233,6 +233,8 @@ A known residual: a coin-flip entry with a trailing stop has a weak but real edg
 - **The plain hindsight bound.** Never in the score. It is reported as the luck headroom above the ceiling.
 - **Sortino and annualised numbers.** Sessions are minutes long, and annualising would mean nothing.
 
+**What a strategy may be.** Anything that fits the sandbox. An agent may sample its task's public family with `mtx scenario generate`, train a model on the samples and embed it; `mtx-kit` ships helpers for it. The hidden set is drawn from a secret the agent never holds, so a model can be fitted to the family and never to the graded sessions. A task bounds a bot through its mandate (instruments, position cap, drawdown, what it may take liquidity for), the way a desk bounds a trader, and never through rules about the bot's code. [ADR 0003](adr/0003-free-strategies-bounded-by-the-mandate.md) has the reasons and what 0.12.0 taught us.
+
 **Why a ceiling that is not tied to the models.** A ceiling taken from the best model run would tie the scale to the models being graded. The informed bot, or failing that the hindsight bound, has no model run in it.
 
 **How this compares with common practice.**
@@ -259,7 +261,7 @@ Two honest limits. First, k is a choice, and it makes some profitable but noisy 
 
 - **Informed bots for the four existing tasks** (flash-crash, funding-carry, weekend-gap, market-making), planned for 0.13. Until then they use the hindsight ceiling and v2 is reported beside the old reward. New tasks are planned to ship with one from the start.
 - **The probe gate** as a blocking release check. The table above is a draft until it lands.
-- **Market making.** Its 0.5 does not hold yet, because the reference is too weak, so its scores are flagged `anchor_floored` and it is kept out of the v2 headline until it is redesigned. The redesign has the grader close out the position at the end of each session, limits market orders to reducing the position, adds quoting obligations, and replaces the reference with a real market maker.
+- **Market making.** Its 0.5 does not hold yet, because the reference is too weak, so its scores are flagged `anchor_floored` and it is kept out of the v2 headline until it is redesigned. The first part of the redesign is in 0.13.0: the mandate limits market orders to reducing the position ([ADR 0003](adr/0003-free-strategies-bounded-by-the-mandate.md)). Still planned: the grader closes out the position at the end of each session, quoting obligations, and a reference that is a real market maker.
 - **Reporting.** The interquartile mean across tasks is not yet in the code. The headline over a frozen common task set, with floored tasks left out, is also planned.
 - **The task prompts** will carry the scoring rule in plain words. The wording is to be added with each task.
 - **Not yet in v2:** a measured nop anchor for sessions that start holding something, a gap report that follows the informed bot step by step, and the optional tail-gap penalty.

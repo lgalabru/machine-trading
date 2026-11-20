@@ -1,0 +1,16 @@
+# A strategy that embeds a small neural network. `just train` trains it and
+# writes model.safetensors; `just build` builds the strategy, with those
+# weights inside, into bot.wasm, the component the grader loads.
+
+# Build the strategy into bot.wasm.
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    cp "$wasm" bot.wasm
+    echo "built bot.wasm from $wasm"
+
+# Train the network on synthetic prices and write model.safetensors.
+train:
+    cargo run --release --bin train

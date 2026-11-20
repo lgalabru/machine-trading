@@ -23,3 +23,10 @@ change the strategy, every line you touch says what it does and why:
 Sizes are in units of the market: 70 SPCX, 0.15 BTC. Size orders and
 thresholds from the cap (`market.cap`), never in whole units: a rule like
 "trade only when the change is at least 1 unit" never trades BTC.
+
+## A trained model
+
+A strategy may embed a model trained before the session: `mtx_kit::features`
+(rolling returns, volatility, bars), `mtx_kit::trees` (gradient-boosted trees
+from `include_bytes!`) and the `candle` feature (small neural networks) help.
+The guide: https://lgalabru.github.io/machine-trading/guides/bots/models.html

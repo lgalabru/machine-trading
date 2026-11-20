@@ -1,4 +1,4 @@
-# Instrument profile: money market (`money-market`), v0
+# Instrument profile: money market (`money-market`), v0.1.0
 
 Status: draft
 

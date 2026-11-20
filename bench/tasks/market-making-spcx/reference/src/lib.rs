@@ -1,5 +1,5 @@
 //! Reference: quote one tick inside the competing makers, skew against
-//! inventory, and trade with the flow when it turns toxic.
+//! inventory, and step out of the flow's way when it turns toxic.
 //!
 //! The competitors' half-spread is read once, from their spline account; the
 //! quotes sit that far less one tick either side of a reservation price:
@@ -7,9 +7,11 @@
 //! both quotes and sheds itself (Avellaneda-Stoikov's idea, with a linear
 //! skew). Holding a quarter of the cap, it stops quoting the side that would
 //! add to it. Fills that pile up one way in a few slots look like informed
-//! flow ahead of a jump: it buys (or sells) a few units the burst's way, pulls
-//! the quote the burst was hitting for a while, and lets the skew unwind the
-//! position after. Only fills that grow the inventory count toward a burst:
+//! flow ahead of a jump: it pulls the quote the burst was hitting for a
+//! while, and lets the side it keeps quoting and the skew unwind what the
+//! burst gave it. It never takes: its mandate allows taking only to reduce,
+//! and on 24 sessions shedding the inventory with a market order cost more
+//! in spread ($23) than it saved in jumps. Only fills that grow the inventory count toward a burst:
 //! the skew unwinding a lean is a run of one-sided fills too, and a maker
 //! that took it for one would lean back and forth on its own. And it leans
 //! with the drift: the further the oracle runs from its recent average, the
@@ -23,7 +25,7 @@
 //! Its PnL is a published baseline, not the reward's scale (that's the
 //! spread bound plus the hindsight bound). It reacts to its own fills only:
 //! it doesn't read the tape, doesn't tell a fake-out from a real burst, and
-//! leans the same few units whatever the burst's size.
+//! steps back the same way whatever the burst's size.
 //!
 //! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
 //! solution), and a process (`src/main.rs`), the anchor hidden sets are
@@ -46,7 +48,6 @@ const QUOTE_SIZE: f64 = 1.0;
 const INVENTORY_LIMIT: f64 = 0.25;
 const TOXIC_UNITS: f64 = 1.5;
 const TOXIC_WINDOW_SLOTS: u64 = 8;
-const LEAN_UNITS: f64 = 5.0;
 const TOXIC_SLOTS: u64 = 24;
 const REQUOTE_BPS: f64 = 1.5;
 const REQUOTE_SLOTS: u64 = 12;
@@ -56,10 +57,8 @@ const REQUOTE_SLOTS: u64 = 12;
 pub struct Maker {
     cap: f64,
     half_spread_bps: f64,
-    /// (slot, position, position from its quotes' fills) at each step.
-    history: VecDeque<(u64, f64, f64)>,
-    /// What its own market orders added to the position.
-    own: f64,
+    /// (slot, position) at each step of the toxic window.
+    history: VecDeque<(u64, f64)>,
     toxic_until: u64,
     /// Which way the toxic fills took the inventory: +1 long, -1 short.
     toxic_side: f64,
@@ -82,8 +81,8 @@ impl Strategy for Maker {
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         let (slot, mark, held, cap) = (market.slot, market.oracle, market.position.size, self.cap);
-        let filled = held - self.own;
-        self.history.push_back((slot, held, filled));
+        // It never takes, so its whole position came from its quotes' fills.
+        self.history.push_back((slot, held));
         while self
             .history
             .front()
@@ -91,26 +90,14 @@ impl Strategy for Maker {
         {
             self.history.pop_front();
         }
-        if let Some(&(_, held_then, then)) = self.history.front()
-            && (filled - then).abs() >= TOXIC_UNITS
+        if let Some(&(_, held_then)) = self.history.front()
+            && (held - held_then).abs() >= TOXIC_UNITS
             && held.abs() > held_then.abs()
             && self.toxic_until <= slot
         {
             log(&format!("slot {slot}: one-sided fills; backing off"));
             self.toxic_until = slot + TOXIC_SLOTS;
-            self.toxic_side = (filled - then).signum();
-            let lean = -self.toxic_side * LEAN_UNITS - held;
-            if lean.abs() >= 0.5 {
-                let size = lean.abs().min(cap);
-                orders.cancel_all();
-                if lean > 0.0 {
-                    orders.buy(size, round_cents(mark * 1.003));
-                } else {
-                    orders.sell(size, round_cents(mark * 0.997));
-                }
-                self.own += size.copysign(lean);
-                return Ok(());
-            }
+            self.toxic_side = (held - held_then).signum();
         }
         let toxic = slot < self.toxic_until;
 
@@ -128,6 +115,7 @@ impl Strategy for Maker {
         let half = self.half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
+        let (bid_size, ask_size) = (QUOTE_SIZE.min(cap - held), QUOTE_SIZE.min(cap + held));
         let moved = self.quoted.is_none_or(|(at, b, a)| {
             slot >= at + REQUOTE_SLOTS
                 || ((bid - b) / mark).abs() * 10_000.0 >= REQUOTE_BPS
@@ -138,8 +126,6 @@ impl Strategy for Maker {
         }
 
         orders.cancel_all();
-        let bid_size = QUOTE_SIZE.min(cap - held);
-        let ask_size = QUOTE_SIZE.min(cap + held);
         let mut quotes = [
             (
                 Side::Bid,
@@ -193,10 +179,6 @@ fn competitor_half_spread_bps(session: &Session) -> BotResult<f64> {
         .ok_or("no competing quotes")?;
     let tick_usd = venue.ticks_to_usd(market, 1);
     Ok(((inner.saturating_sub(1)) as f64 * tick_usd / session.start_oracle * 10_000.0).max(1.0))
-}
-
-fn round_cents(usd: f64) -> f64 {
-    (usd * 100.0).round() / 100.0
 }
 
 #[cfg(target_arch = "wasm32")]

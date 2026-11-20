@@ -39,6 +39,18 @@
     {
       "name": "market-making-fable-0.10",
       "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-fable-0.10"
+    },
+    {
+      "name": "market-making-astra-ring-0.12",
+      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-astra-ring-0.12"
+    },
+    {
+      "name": "market-making-astra-accounts-0.12",
+      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-astra-accounts-0.12"
+    },
+    {
+      "name": "market-making-astra-blocks-0.12",
+      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-astra-blocks-0.12"
     }
   ],
   "gates": {
@@ -60,7 +72,10 @@
       "market-making-opus",
       "market-making-fable",
       "market-making-opus-0.10",
-      "market-making-fable-0.10"
+      "market-making-fable-0.10",
+      "market-making-astra-ring-0.12",
+      "market-making-astra-accounts-0.12",
+      "market-making-astra-blocks-0.12"
     ],
     "max_profitable": 0.9,
     "below": "flow-oracle"

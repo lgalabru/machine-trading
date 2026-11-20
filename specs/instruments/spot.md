@@ -1,4 +1,4 @@
-# Instrument profile: spot (`spot`), v0
+# Instrument profile: spot (`spot`), v0.1.0
 
 Status: draft
 

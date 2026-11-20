@@ -238,7 +238,7 @@ sides:
 
 ```json
 {
-  "version": "v0",
+  "version": "v0.1.0",
   "universe": [
     { "instrument": "openbook:spot:SOL-USDC", "max_position": 100 },
     { "instrument": "phoenix:spot:SOL-USDC", "max_position": 100 }

@@ -2322,15 +2322,15 @@ mod tests {
 
         // A perp session checks notional limits; a spot session doesn't yet.
         let mut s = shock();
-        s.mandate.version = "v0.1".into();
+        s.mandate.version = mtx_kit::mandate::Version::V0_2_0;
         s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
         assert_eq!(s.validate(), Ok(()));
         let mut s = spot();
-        s.mandate.version = "v0.1".into();
+        s.mandate.version = mtx_kit::mandate::Version::V0_2_0;
         s.mandate.limits.max_gross_notional_usd = Some(10_000.0);
         assert!(s.validate().unwrap_err().contains("notional"));
         let mut s = shock();
-        s.mandate.version = "v0.1".into();
+        s.mandate.version = mtx_kit::mandate::Version::V0_2_0;
         s.mandate
             .limits
             .exposures
@@ -2344,13 +2344,13 @@ mod tests {
         s.mandate.limits.exposures[0].max_abs_usd = Some(1_000.0);
         assert_eq!(s.validate(), Ok(()));
         let mut s = shock();
-        s.mandate.version = "v0.1".into();
+        s.mandate.version = mtx_kit::mandate::Version::V0_2_0;
         s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
         assert!(s.validate().unwrap_err().contains("taking"));
         // Review probe: hedges and exposures across instruments validated,
         // and no session could enforce them. They're refused, and say why.
         let mut s = spot();
-        s.mandate.version = "v0.1".into();
+        s.mandate.version = mtx_kit::mandate::Version::V0_2_0;
         let both: Vec<_> = s
             .mandate
             .universe
@@ -2369,14 +2369,14 @@ mod tests {
                 .contains("an exposure across several instruments")
         );
         let mut s = spot();
-        s.mandate.version = "v0.1".into();
+        s.mandate.version = mtx_kit::mandate::Version::V0_2_0;
         let against = s.mandate.universe[0].instrument.clone();
         s.mandate.universe[1].hedge = Some(Hedge::new(against, 1.0));
         assert_eq!(s.mandate.validate(), Ok(()));
         assert!(s.validate().unwrap_err().contains("a hedge needs"));
         // A market-making session records taker fills: it may.
         let mut s = making();
-        s.mandate.version = "v0.1".into();
+        s.mandate.version = mtx_kit::mandate::Version::V0_2_0;
         s.mandate.universe[0].taking = Some(mtx_core::mandate::Taking::ReduceOnly);
         assert_eq!(s.validate(), Ok(()));
         s.venues.perp.get_or_insert_default().liquidator = Some(crate::keeper::Liquidator {

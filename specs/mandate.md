@@ -1,4 +1,4 @@
-# Mandate v0 and v0.1
+# Mandate v0.2.0
 
 Status: draft
 
@@ -10,13 +10,15 @@ the agent acts, handed to the agent, and checked by an enforcer that does not
 trust the agent. A mandate constrains *what* the agent does, never *why*:
 strategy, signals and sizing logic are out of scope.
 
-v0 is a draft, and grows as instruments are added: perpetuals, spot and
-money markets so far, on one venue or several. v0.1 extends v0 as it stands
-with limits on notional (a gross cap, net exposures that may start partway
-through the term, and hedge bounds) and reduce-only taking. v0 is still a
-draft while v0.1 exists, so both are; v0.1 will follow v0 when it is final.
-The reference implementation reads a subset of both, and the benchmark
-enforces a smaller one; see [Implementation status](#implementation-status).
+The specification is versioned with [semantic versioning](https://semver.org)
+(see [Versions](#versions) and the [Changelog](#changelog)). v0.1.0 covers
+perpetuals, spot and money markets, on one venue or several, with position
+bounds, sides, limit prices and a drawdown limit. v0.2.0 adds limits on
+notional (a gross cap, net exposures that may start partway through the
+term, and hedge bounds) and reduce-only taking. Both are drafts while the
+major version is 0. The reference implementation reads a subset of both,
+and the benchmark enforces a smaller one; see
+[Implementation status](#implementation-status).
 
 ## Conventions
 
@@ -46,7 +48,7 @@ A mandate is a JSON object with these members:
 
 | Member | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `version` | string | yes | `"v0"` or `"v0.1"`. See [Versions](#versions). |
+| `version` | string | yes | `"v0.1.0"` or `"v0.2.0"`. See [Versions](#versions). |
 | `term` | object | no | When the mandate ends. See [Term](#term). |
 | `universe` | array of allowances | yes | The instruments the account may hold, each with its own limits. MUST NOT be empty. |
 | `limits` | object | yes | Limits on the account as a whole. See [Limits](#limits). |
@@ -61,8 +63,8 @@ An **allowance** is an object:
 | `sides` | array of strings | no | The sides the agent may trade: `"buy"`, `"sell"`, or both. Absent means both. MUST NOT be empty or repeat a side. Not for `money-market` instruments. |
 | `min_sell_price` | number | no | The lowest price at which the account may sell, in the instrument's quote currency per base unit. MUST be positive. Not for `money-market` instruments. |
 | `max_buy_price` | number | no | The highest price at which the account may buy, in the same units. MUST be positive. Not for `money-market` instruments. |
-| `hedge` | object | no | v0.1. The position may be held only against another instrument's. See [Hedges](#hedges). |
-| `taking` | string | no | v0.1. `"reduce_only"`: a fill in which the account is the taker may only bring the position toward zero, never open it, add to it or take it past zero. Positions are then opened only by orders that rest and fill as a maker. Absent, taking is unrestricted. Not for `money-market` instruments. |
+| `hedge` | object | no | v0.2.0. The position may be held only against another instrument's. See [Hedges](#hedges). |
+| `taking` | string | no | v0.2.0. `"reduce_only"`: a fill in which the account is the taker may only bring the position toward zero, never open it, add to it or take it past zero. Positions are then opened only by orders that rest and fill as a maker. Absent, taking is unrestricted. Not for `money-market` instruments. |
 
 A reader MUST reject a mandate with a member it does not know, at any level.
 A limit a reader doesn't know is one it can't enforce, and a mandate read as
@@ -72,11 +74,28 @@ A reader MUST reject a `version` it does not implement.
 
 ### Versions
 
-v0.1 adds members to v0 and changes nothing v0 states. A reader of v0.1
-reads both versions. A `"v0"` document that uses a member marked v0.1 MUST
-be rejected: a v0 reader would not know the member, and would refuse it. A
-writer SHOULD write the lowest version a document needs, so a mandate that
-uses nothing v0.1 added reads the same to every reader.
+A version is `v<major>.<minor>.<patch>`, numbered with semantic
+versioning:
+
+- A **patch** changes no member a reader checks: wording, examples, or a
+  clarification that every reader already followed.
+- A **minor** version adds members, or values of a member, that an older
+  reader would refuse. While the major version is 0, it may also change
+  what a member means; the [Changelog](#changelog) says when it does.
+- A **major** version, from 1.0.0, changes or removes what an older version
+  states.
+
+v0.2.0 adds members to v0.1.0 and changes nothing v0.1.0 states. A reader
+of v0.2.0 reads both versions. A `"v0.1.0"` document that uses a member
+marked v0.2.0 MUST be rejected: a v0.1.0 reader would not know the member,
+and would refuse it. A writer SHOULD write the lowest version a document
+needs, so a mandate that uses nothing v0.2.0 added reads the same to every
+reader.
+
+Before semantic versioning, the two versions were written `"v0"` (now
+`"v0.1.0"`) and `"v0.1"` (now `"v0.2.0"`). A reader SHOULD read those
+spellings as the versions they name, so documents written before the
+change still load; a writer MUST write the new form.
 
 ### Instrument references
 
@@ -99,13 +118,13 @@ accounts its profile names to the account.
 
 | Member | Type | Required | Meaning |
 | --- | --- | --- | --- |
-| `from_slot` | integer | no | v0.1. The term's first slot. Limits that start partway through the term count from it. MUST NOT be after `until_slot`. |
+| `from_slot` | integer | no | v0.2.0. The term's first slot. Limits that start partway through the term count from it. MUST NOT be after `until_slot`. |
 | `until_slot` | integer | yes | The last slot the mandate covers. |
 
 A mandate without a term is a template: it describes the rules, but not yet
 when they apply. An enforcer that hands a mandate to an agent SHOULD set the
 term first, so the agent reads everything it is held to from one document.
-An enforcer that sets the term of a v0.1 mandate SHOULD set both ends.
+An enforcer that sets the term of a v0.2.0 mandate SHOULD set both ends.
 
 ### Limits
 
@@ -113,8 +132,8 @@ An enforcer that sets the term of a v0.1 mandate SHOULD set both ends.
 | --- | --- | --- | --- |
 | `max_drawdown_usd` | number | no | The most, in USD, the account's value may fall below its running peak during the term. MUST be positive. |
 | `min_health` | number | no | The lowest health any of the account's borrowing positions may reach, as the venue profile defines health. MUST be at least 1, the point at which the venue may liquidate. |
-| `max_gross_notional_usd` | number | no | v0.1. The most [notional](#notional), in USD, the account may hold across the universe, long and short alike: the sum of every position's absolute notional. MUST be positive. |
-| `exposures` | array of exposures | no | v0.1. Bounds on weighted sums of notionals. See [Exposures](#exposures). |
+| `max_gross_notional_usd` | number | no | v0.2.0. The most [notional](#notional), in USD, the account may hold across the universe, long and short alike: the sum of every position's absolute notional. MUST be positive. |
+| `exposures` | array of exposures | no | v0.2.0. Bounds on weighted sums of notionals. See [Exposures](#exposures). |
 
 A mandate MAY have no limits, `"limits": {}`, when its allowances bound
 everything the principal cares about. A mandate to sell a holding is an
@@ -287,11 +306,12 @@ specification can state.
 
 ## Implementation status
 
-The reference implementation, `mtx_core::mandate`, reads v0 and v0.1, and
+The reference implementation, `mtx_core::mandate`, reads v0.1.0 and v0.2.0,
+and their earlier spellings (`"v0"`, `"v0.1"`), and writes the new form. It
 checks the part of this specification the benchmark's tasks use today:
 `perp`, `spot` and `money-market` instruments, on one venue or several,
 `max_position`, `min_position`, `sides`, `min_sell_price`, `max_buy_price`,
-`max_drawdown_usd`, and v0.1's `from_slot`, `max_gross_notional_usd`,
+`max_drawdown_usd`, and v0.2.0's `from_slot`, `max_gross_notional_usd`,
 `exposures`, `hedge` and `taking`. Its audit judges rules 1 to 5 and 7 to 10
 from what an enforcer measured, including the priced measurements rules 7
 to 9 read. It rejects documents that use anything else, so the example of a
@@ -299,7 +319,7 @@ money-market mandate below, which limits `min_health`, lives here rather
 than in [`examples/`](examples/), which `cargo test` checks against it.
 
 The benchmark's grader enforces less than the reader checks. Its scenarios
-refuse a mandate that sets a v0.1 rule their session can't enforce:
+refuse a mandate that sets a v0.2.0 rule their session can't enforce:
 
 | Rule | Perp sessions | Spot sessions | Lending sessions |
 | --- | --- | --- | --- |
@@ -326,10 +346,48 @@ break a position cap or the drawdown limit, but does not check rules 7 to
 9: a raw send that takes the account over a notional limit is let through,
 and the session is disqualified by the audit.
 
+## Changelog
+
+Newest first. Every version reads every older one, as
+[Versions](#versions) states.
+
+### 2026-11-20: semantic versioning
+
+No member changed. The versions are numbered `v<major>.<minor>.<patch>`:
+`"v0"` is now `"v0.1.0"`, and `"v0.1"` is now `"v0.2.0"`. Readers still
+read the old spellings as the versions they name, and writers write the new
+ones. The instrument and venue profiles, which had been `v0`, are v0.1.0.
+
+### v0.2.0 (2026-11-16, written `"v0.1"` until 2026-11-20)
+
+Limits on notional and on taking, on top of v0.1.0, which is unchanged:
+
+- `limits.max_gross_notional_usd`: a cap on the sum of every position's
+  absolute notional (rule 7).
+- `limits.exposures`: bounds on weighted sums of notionals (rule 8).
+- `term.from_slot`: the term's first slot, from which exposures count.
+- An allowance's `hedge`: a position held only against another
+  instrument's (rule 9).
+- An allowance's `taking: "reduce_only"`: a taker fill may only bring the
+  position toward zero (rule 10). The benchmark's `market-making-spcx`
+  task states it from its 0.13.0 release.
+
+### v0.1.0 (2026-10-29, written `"v0"` until 2026-11-20)
+
+The first draft: a universe of instruments with position bounds, and a
+drawdown limit, for perpetuals on Phoenix. It grew in place while it was
+the only draft:
+
+- 2026-11-06: spot instruments, on OpenBook and Phoenix, and a universe
+  over several venues, with `sides`, `min_sell_price` and `max_buy_price`
+  (briefly numbered v1 that day, then folded back into v0).
+- 2026-11-06: money-market instruments, on Kamino, with `min_position` and
+  `limits.min_health`.
+
 ## Changes in later versions
 
 Each of these would change what a reader must enforce, so each will be a new
-version once v0 is final:
+minor version:
 
 - More limits: `max_leverage`, a participation cap (a share of a venue's
   traded volume), and order rate limits.
@@ -341,11 +399,11 @@ version once v0 is final:
 
 ## Examples
 
-A v0 template, as the `flash-crash-spcx` task carries it:
+A v0.1.0 template, as the `flash-crash-spcx` task carries it:
 
 ```json
 {
-  "version": "v0",
+  "version": "v0.1.0",
   "universe": [
     { "instrument": "phoenix:perp:SPCX", "max_position": 70.0 }
   ],
@@ -360,7 +418,7 @@ A mandate to sell a treasury's 30,000 SOL on two venues, never below $94:
 
 ```json
 {
-  "version": "v0",
+  "version": "v0.1.0",
   "term": { "until_slot": 412600 },
   "universe": [
     { "instrument": "openbook:spot:SOL-USDC", "max_position": 30000, "sides": ["sell"], "min_sell_price": 94.0 },
@@ -382,7 +440,7 @@ never borrowing more than $50,000, with a cushion above liquidation:
 
 ```json
 {
-  "version": "v0",
+  "version": "v0.1.0",
   "universe": [
     { "instrument": "kamino:money-market:SOL", "max_position": 1000, "min_position": 0 },
     { "instrument": "kamino:money-market:USDC", "max_position": 50000 }
@@ -396,13 +454,13 @@ never borrow it; the USDC allowance lets the position go to −50,000, a
 $50,000 borrow. `min_health: 1.25` keeps the borrow at least 25% away from
 the point where Kamino may liquidate it.
 
-A v0.1 book: up to 30 QQQ either way, hedged with SPY at up to 1.2 times
+A v0.2.0 book: up to 30 QQQ either way, hedged with SPY at up to 1.2 times
 its notional, and with the net of the two cut to a quarter of where it
 started 600 slots into the term:
 
 ```json
 {
-  "version": "v0.1",
+  "version": "v0.2.0",
   "universe": [
     { "instrument": "phoenix:perp:QQQ", "max_position": 30 },
     { "instrument": "phoenix:perp:SPY", "max_position": 30,

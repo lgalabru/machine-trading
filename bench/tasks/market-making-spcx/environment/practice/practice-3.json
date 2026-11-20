@@ -4,11 +4,12 @@
   "symbol": "SPCX",
   "duration_slots": 657,
   "mandate": {
-    "version": "v0",
+    "version": "v0.2.0",
     "universe": [
       {
         "instrument": "phoenix:perp:SPCX",
-        "max_position": 20.0
+        "max_position": 20.0,
+        "taking": "reduce_only"
       }
     ],
     "limits": {
@@ -1799,5 +1800,6 @@
       }
     ]
   },
-  "reference_pnl_usd": -17.91
+  "reference_pnl_usd": -16.01,
+  "reference_max_drawdown_usd": 17.96
 }

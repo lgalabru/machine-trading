@@ -9,7 +9,7 @@ Phoenix's own makers and grader-run taker flow.
 | Sessions | 72 hidden per grade (18 calm, 36 with jumps, 18 trending); 6 practice |
 | Mandate | 20 SPCX position cap (about 0.3× collateral); $250 loss limit |
 | Bound | Spread bound plus hindsight bound (see [Scoring](#scoring)) |
-| Reference | Reward ~0.01. It quotes a tick inside the competitor, skews against inventory, and backs off after one-sided fills. |
+| Reference | Reward ~0.01. It quotes a tick inside the competitor, skews against inventory, and after one-sided fills stops quoting the side they hit for a while. It never takes. |
 
 How every task is scored, and how risk is enforced, is in the
 [dataset README](../README.md#how-a-bot-is-judged).
@@ -74,7 +74,8 @@ fresh hidden sets. Naive and skewed quoters must score below the reference,
 and the reference below a flow oracle that is told which taker orders are
 informed. The frozen exploit bots must score below the flow oracle.
 
-On two fresh 72-session ladder sets the reference made $279 and $151, the
+These numbers are from before 0.13.0, when a bot could take to open, and
+are to be re-run. On two fresh 72-session ladder sets the reference made $279 and $151, the
 naive quoter lost $11 and $41, and the flow oracle made 14–30× the
 reference. Agents separate in that headroom: reading the tape beyond their
 own fills, sizing the lean, and telling bursts from noise.

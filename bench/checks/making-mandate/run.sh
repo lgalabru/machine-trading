@@ -45,7 +45,7 @@ for path in sorted(glob.glob(f"{out}/plain/*.json")):
         "max_half_spread_bps": round(1.5 * making["competitor_bps"], 2),
         "min_size": 1.0,
     }
-    s["mandate"]["version"] = "v0.1"
+    s["mandate"]["version"] = "v0.2.0"
     s["mandate"]["universe"][0]["taking"] = "reduce_only"
     json.dump(s, open(f"{out}/obliged/{os.path.basename(path)}", "w"), indent=2)
 PY

@@ -368,7 +368,7 @@ fn scenario_of(value: serde_json::Value) -> Scenario {
 
 fn mandate(symbol: &str, max_position: f64) -> serde_json::Value {
     json!({
-        "version": "v0",
+        "version": "v0.1.0",
         "universe": [{"instrument": format!("phoenix:perp:{symbol}"), "max_position": max_position}],
         "limits": {"max_drawdown_usd": 100000.0}
     })

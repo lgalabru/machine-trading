@@ -1,5 +1,5 @@
 {
-  "version": "v0.1",
+  "version": "v0.2.0",
   "universe": [
     {
       "instrument": "phoenix:perp:QQQ",

@@ -4,6 +4,58 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **0.13.0.** A market maker takes only to reduce, models in a bot get an
+  SDK, and the engine stops handing out two free trades. Written after
+  reading the twenty bots GPT-6 Astra shipped in 0.12.0, where it led every
+  task ([ADR 0003](../../docs/adr/0003-free-strategies-bounded-by-the-mandate.md)).
+  - **`market-making-spcx`: taking only to reduce.** In 0.12.0 its best
+    bots lost money on their quotes ($77 to $351 over 72 sessions) and made
+    $1,794 to $2,615 buying 16 to 19 SPCX with market orders ahead of each
+    jump, 16 to 25× the reference: the flash-crash task's skill. The
+    mandate now carries `taking: "reduce_only"`. A market order, an
+    immediate-or-cancel order or a limit through the other traders' touch
+    that would open, add to or flip the position is refused before it is
+    sent, and the bot is told; it is no breach. A position is built with
+    quotes and may be shed with a take. The reference no longer buys a
+    burst, or takes at all: it stops quoting the side the burst hit and
+    lets its skew unwind the rest. The ladder's flow oracle leans with a
+    quote at the oracle instead of taking the cap. The bound is unchanged,
+    so rewards are lower than 0.12.0's and don't compare with them.
+  - **The mandate is versioned with semantic versioning.** `"v0"` is now
+    `"v0.1.0"` and `"v0.1"` is `"v0.2.0"` (the version that adds `taking`,
+    which market-making's mandate states); readers still take the old
+    spellings. See the mandate spec's
+    [changelog](../../specs/mandate.md#changelog).
+  - **Three of Astra's market-making bots are exploit rungs**
+    (`market-making-astra-ring-0.12`, `-blocks-0.12`, `-accounts-0.12`).
+    The last one found the grader's eight takers by their collateral and
+    deposit slot and read their positions. It earned no more than the two
+    that read public data, and none of the three is paid for the trade any
+    more.
+  - **Models in a strategy.** Sampling the family with `mtx scenario
+    generate` and embedding a fitted model is a strategy we want, not an
+    exploit: the hidden set is drawn from a secret the agent never holds,
+    and none of the 1,136 sessions Astra's bots generated was a graded one.
+    `mtx-kit` now ships `features` (bars, returns, volatility), `trees`
+    (tree ensembles exported from scikit-learn or LightGBM) and a `candle`
+    feature (`candle-core`, `candle-nn`): see
+    `specs/guides/bots/models.md`.
+  - **No free look on jumps** (#125). Each step of a move settles the book
+    in its own slot, so quotes left behind are filled. A bot used to see a
+    crossed book for a turn and could cancel first. Market-making and
+    flash-crash move; funding-carry and weekend-gap are essentially
+    unchanged.
+  - **A session's seed no longer names it** (#113). Every drawn grade salts
+    the session keys with the batch's secret and shuffles the set after
+    stratifying, so neither `session.seed` nor a session's index says which
+    regime is playing.
+  - **Task fingerprints** (#117). Every report carries the task's
+    fingerprint, and `tests/anchor.digest` moves when an engine change
+    alters what the task's reference does.
+  - **Not in these four tasks yet:** scoring v2, quoting obligations, the
+    guarded agent image, the actor library, price impact and the
+    transaction layer are in the engine and opt-in, for tasks made with
+    `mtx task new`.
 - **0.12.0.** Bots are strategy components, and two new tasks on new
   scenario hooks in the engine (book premiums, a taker tape, per-session
   funding, off-hours markets; each opt-in, so flash-crash's and

@@ -36,7 +36,7 @@ const FOLDERS = [
 const GUIDE_FOLDERS = [
   { dir: "guides/instruments", title: "Instruments", order: ["perp", "spot", "money-market"] },
   { dir: "guides/strategies", title: "Strategies", order: ["arbitrage", "selling-a-large-position"] },
-  { dir: "guides/bots", title: "Bots", order: ["first-strategy", "writing-a-bot"] },
+  { dir: "guides/bots", title: "Bots", order: ["first-strategy", "writing-a-bot", "models"] },
   { dir: "guides", title: "Reference" },
 ];
 const GUIDES_INDEX = "guides/index.html";
@@ -316,7 +316,7 @@ function folderLink(page, dir) {
 
 /** The links under an index's title. */
 const headerLinks = (page) =>
-  `<p class="header-links"><a href="${SOURCE}">Source</a><span class="sep">·</span><a href="${link(page, "mandate.html")}">Mandate v0</a><span class="sep">·</span><a href="${link(page, "bench/")}">Benchmark</a><span class="sep">·</span><a href="${link(page, GUIDES_INDEX)}">Guides</a></p>`;
+  `<p class="header-links"><a href="${SOURCE}">Source</a><span class="sep">·</span><a href="${link(page, "mandate.html")}">Mandate v0.2.0</a><span class="sep">·</span><a href="${link(page, "bench/")}">Benchmark</a><span class="sep">·</span><a href="${link(page, GUIDES_INDEX)}">Guides</a></p>`;
 
 function layout({ page, title, head, body }) {
   const index = INDEX_PAGES.has(page);

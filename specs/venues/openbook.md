@@ -1,4 +1,4 @@
-# Venue profile: OpenBook (`openbook`), v0
+# Venue profile: OpenBook (`openbook`), v0.1.0
 
 Status: draft
 

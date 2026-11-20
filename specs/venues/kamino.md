@@ -1,4 +1,4 @@
-# Venue profile: Kamino (`kamino`), v0
+# Venue profile: Kamino (`kamino`), v0.1.0
 
 Status: draft
 

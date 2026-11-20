@@ -12,21 +12,85 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Holding, InstrumentId, Result, error::io_error, order::Side};
 
-/// The version the constructors write: a mandate that uses nothing newer is
-/// written at it, so it reads the same to every reader of v0.
-pub const VERSION: &str = "v0";
+/// A version of the mandate specification (`specs/mandate.md`), numbered
+/// with semantic versioning: a minor version adds members that an older
+/// reader refuses, a patch changes no member a reader checks. Written as
+/// its string (`"v0.1.0"`), and read from the spellings before semantic
+/// versioning too (`"v0"`, `"v0.1"`), so older documents still load.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "&'static str")]
+pub enum Version {
+    /// `"v0.1.0"` (was `"v0"`): perpetuals, spot and money markets, with
+    /// position bounds, sides, limit prices and a drawdown limit. The
+    /// constructors write it, so a mandate that uses nothing newer reads
+    /// the same to every reader.
+    V0_1_0,
+    /// `"v0.2.0"` (was `"v0.1"`): adds notional limits, net exposures from
+    /// a point in the term, hedge bounds and reduce-only taking.
+    V0_2_0,
+}
 
-/// v0.1: notional limits, net exposures from a point in the term, hedge
-/// bounds and reduce-only taking.
-pub const V0_1: &str = "v0.1";
+impl Version {
+    /// Every version this crate reads, oldest first.
+    pub const SUPPORTED: [Version; 2] = [Version::V0_1_0, Version::V0_2_0];
 
-/// The versions this crate reads.
-pub const SUPPORTED: &[&str] = &[VERSION, V0_1];
+    /// The version's name in a document: `"v0.1.0"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Version::V0_1_0 => "v0.1.0",
+            Version::V0_2_0 => "v0.2.0",
+        }
+    }
+
+    /// The version a name stands for: its own, or the spelling it had
+    /// before semantic versioning (`"v0"`, `"v0.1"`).
+    fn from_name(name: &str) -> Option<Version> {
+        match name {
+            "v0.1.0" | "v0" => Some(Version::V0_1_0),
+            "v0.2.0" | "v0.1" => Some(Version::V0_2_0),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Version {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl TryFrom<String> for Version {
+    type Error = String;
+
+    fn try_from(name: String) -> std::result::Result<Self, String> {
+        Version::from_name(&name).ok_or_else(|| {
+            let known = Version::SUPPORTED
+                .iter()
+                .map(|version| format!("{:?}", version.as_str()))
+                .collect::<Vec<_>>()
+                .join(" and ");
+            format!("version {name:?}, this reader knows {known}")
+        })
+    }
+}
+
+impl From<Version> for &'static str {
+    fn from(version: Version) -> Self {
+        version.as_str()
+    }
+}
+
+impl PartialEq<&str> for Version {
+    /// A version equals its name, not the spelling it had before.
+    fn eq(&self, name: &&str) -> bool {
+        self.as_str() == *name
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Mandate {
-    pub version: String,
+    pub version: Version,
     /// When the mandate ends. Absent in a template, such as a scenario's;
     /// set on the copy a session hands its bot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -45,7 +109,7 @@ pub struct Mandate {
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct Term {
-    /// The term's first slot (v0.1): limits that start partway through the
+    /// The term's first slot (v0.2.0): limits that start partway through the
     /// term count from it. No later than `until_slot`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from_slot: Option<u64>,
@@ -54,7 +118,7 @@ pub struct Term {
 }
 
 impl Term {
-    /// A term that ends at `until_slot`, with no first slot: v0's term.
+    /// A term that ends at `until_slot`, with no first slot: v0.1.0's term.
     pub fn until(until_slot: u64) -> Self {
         Self {
             from_slot: None,
@@ -62,7 +126,7 @@ impl Term {
         }
     }
 
-    /// A term from `from_slot` to `until_slot`, both included (v0.1).
+    /// A term from `from_slot` to `until_slot`, both included (v0.2.0).
     pub fn between(from_slot: u64, until_slot: u64) -> Self {
         Self {
             from_slot: Some(from_slot),
@@ -95,11 +159,11 @@ pub struct Allowance {
     /// The highest price a buy may fill at, in the same units.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_buy_price: Option<f64>,
-    /// v0.1: the position may only be held against another instrument's,
+    /// v0.2.0: the position may only be held against another instrument's,
     /// on the opposite side, up to a ratio of its notional.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hedge: Option<Hedge>,
-    /// v0.1: what a taker fill may do to the position. Absent, anything.
+    /// v0.2.0: what a taker fill may do to the position. Absent, anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub taking: Option<Taking>,
 }
@@ -265,11 +329,11 @@ pub struct Limits {
     /// holding, whose value falls with the market whatever the agent does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_drawdown_usd: Option<f64>,
-    /// v0.1: the most notional, in USD, the account may hold across the
+    /// v0.2.0: the most notional, in USD, the account may hold across the
     /// universe, long and short alike.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_gross_notional_usd: Option<f64>,
-    /// v0.1: bounds on weighted sums of the account's notionals.
+    /// v0.2.0: bounds on weighted sums of the account's notionals.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exposures: Vec<Exposure>,
 }
@@ -668,7 +732,7 @@ impl Mandate {
     /// A mandate for one perpetual on one venue.
     pub fn perp(venue: &str, symbol: &str, max_position: f64, max_drawdown_usd: f64) -> Self {
         Self {
-            version: VERSION.into(),
+            version: Version::V0_1_0,
             term: None,
             universe: vec![Allowance::new(
                 InstrumentRef {
@@ -690,7 +754,7 @@ impl Mandate {
     /// and limit prices.
     pub fn spot(venues: &[&str], symbol: &str, max_position: f64) -> Self {
         Self {
-            version: VERSION.into(),
+            version: Version::V0_1_0,
             term: None,
             universe: venues
                 .iter()
@@ -725,18 +789,18 @@ impl Mandate {
         std::fs::write(path, contents).map_err(io_error(path))
     }
 
-    /// The lowest version that can state this mandate: v0 unless it uses a
-    /// member v0.1 added. Writers write it, so a mandate that needs nothing
-    /// newer reads the same to a v0 reader.
-    pub fn minimal_version(&self) -> &'static str {
-        if self.first_v0_1_member().is_some() {
-            V0_1
+    /// The lowest version that can state this mandate: v0.1.0 unless it
+    /// uses a member v0.2.0 added. Writers write it, so a mandate that needs
+    /// nothing newer reads the same to a v0.1.0 reader.
+    pub fn minimal_version(&self) -> Version {
+        if self.first_v0_2_member().is_some() {
+            Version::V0_2_0
         } else {
-            VERSION
+            Version::V0_1_0
         }
     }
 
-    fn first_v0_1_member(&self) -> Option<&'static str> {
+    fn first_v0_2_member(&self) -> Option<&'static str> {
         if self.term.is_some_and(|term| term.from_slot.is_some()) {
             Some("term.from_slot")
         } else if self.limits.max_gross_notional_usd.is_some() {
@@ -753,10 +817,10 @@ impl Mandate {
     }
 
     /// This mandate with its term set: to `until_slot`, and from
-    /// `from_slot` where its version has a start (v0.1), so a v0 mandate
-    /// reads as it always has.
+    /// `from_slot` where its version has a start (v0.2.0), so a v0.1.0
+    /// mandate reads as it always has.
     pub fn with_term(self, from_slot: u64, until_slot: u64) -> Self {
-        let from_slot = (self.version != VERSION).then_some(from_slot);
+        let from_slot = (self.version >= Version::V0_2_0).then_some(from_slot);
         Self {
             term: Some(Term {
                 from_slot,
@@ -767,21 +831,12 @@ impl Mandate {
     }
 
     pub fn validate(&self) -> std::result::Result<(), String> {
-        if !SUPPORTED.contains(&self.version.as_str()) {
-            return Err(format!(
-                "version {:?}, this reader knows {}",
-                self.version,
-                SUPPORTED
-                    .iter()
-                    .map(|v| format!("{v:?}"))
-                    .collect::<Vec<_>>()
-                    .join(" and ")
-            ));
-        }
-        if self.version == VERSION
-            && let Some(member) = self.first_v0_1_member()
+        // An unknown version is refused when the document is read: the
+        // field is a `Version`, so every value here is one this reader knows.
+        if self.version < Version::V0_2_0
+            && let Some(member) = self.first_v0_2_member()
         {
-            return Err(format!("member {member} needs version {V0_1}"));
+            return Err(format!("member {member} needs version {}", Version::V0_2_0));
         }
         if let Some(Term {
             from_slot: Some(from),
@@ -1739,16 +1794,47 @@ mod tests {
         empty.universe.clear();
         assert!(empty.validate().is_err());
 
-        let mut future = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
-        future.version = "v1".into();
-        assert!(future.validate().is_err());
+        // A version this reader doesn't know is refused as it is read.
+        for future in ["v1", "v0.3.0", "v0.2", "0.1.0", ""] {
+            let json = format!(
+                r#"{{"version":"{future}","universe":[{{"instrument":"phoenix:perp:SPCX","max_position":70.0}}],"limits":{{}}}}"#
+            );
+            let error = serde_json::from_str::<Mandate>(&json)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains(r#"this reader knows "v0.1.0" and "v0.2.0""#),
+                "{future}: {error}"
+            );
+        }
+    }
+
+    /// The spellings before semantic versioning still read, as the
+    /// versions they were, and write back in the new form.
+    #[test]
+    fn versions_read_from_their_names_before_semantic_versioning() {
+        for (name, version) in [
+            ("v0.1.0", Version::V0_1_0),
+            ("v0", Version::V0_1_0),
+            ("v0.2.0", Version::V0_2_0),
+            ("v0.1", Version::V0_2_0),
+        ] {
+            let json = format!(
+                r#"{{"version":"{name}","universe":[{{"instrument":"phoenix:perp:SPCX","max_position":70.0}}],"limits":{{}}}}"#
+            );
+            let mandate: Mandate = serde_json::from_str(&json).unwrap();
+            assert_eq!(mandate.version, version, "{name}");
+            let written = serde_json::to_value(&mandate).unwrap();
+            assert_eq!(written["version"], version.as_str(), "{name}");
+        }
+        assert!(Version::V0_1_0 < Version::V0_2_0);
+        assert_eq!(Version::SUPPORTED.first(), Some(&Version::V0_1_0));
     }
 
     #[test]
     fn unknown_fields_are_refused() {
         // A limit this reader doesn't know is one it can't enforce.
-        let json =
-            r#"{"version":"v0","universe":[],"limits":{"max_drawdown_usd":1,"max_leverage":3}}"#;
+        let json = r#"{"version":"v0.1.0","universe":[],"limits":{"max_drawdown_usd":1,"max_leverage":3}}"#;
         assert!(serde_json::from_str::<Mandate>(json).is_err());
     }
 
@@ -1839,7 +1925,7 @@ mod tests {
     #[test]
     fn the_specs_sale_example_reads_as_written() {
         let json = r#"{
-          "version": "v0",
+          "version": "v0.1.0",
           "term": { "until_slot": 412600 },
           "universe": [
             { "instrument": "openbook:spot:SOL-USDC", "max_position": 30000, "sides": ["sell"], "min_sell_price": 94.0 },
@@ -1870,7 +1956,7 @@ mod tests {
         let json = serde_json::to_string(&Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0)).unwrap();
         assert_eq!(
             json,
-            r#"{"version":"v0","universe":[{"instrument":"phoenix:perp:SPCX","max_position":70.0}],"limits":{"max_drawdown_usd":1000.0}}"#
+            r#"{"version":"v0.1.0","universe":[{"instrument":"phoenix:perp:SPCX","max_position":70.0}],"limits":{"max_drawdown_usd":1000.0}}"#
         );
     }
 
@@ -2072,10 +2158,10 @@ mod tests {
         }
     }
 
-    /// The spec's v0.1 example: QQQ hedged with SPY, net down to a quarter
+    /// The spec's v0.2.0 example: QQQ hedged with SPY, net down to a quarter
     /// of the start 600 slots into a term that starts at slot 1000.
     const BOOK: &str = r#"{
-      "version": "v0.1",
+      "version": "v0.2.0",
       "term": { "from_slot": 1000, "until_slot": 2000 },
       "universe": [
         { "instrument": "phoenix:perp:QQQ", "max_position": 30 },
@@ -2108,18 +2194,18 @@ mod tests {
         Sample::new(slot, holdings).unwrap()
     }
 
-    /// A v0.1 mandate for SPCX alone, with a gross notional limit.
+    /// A v0.2.0 mandate for SPCX alone, with a gross notional limit.
     fn gross(limit: f64) -> Mandate {
         let mut mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
-        mandate.version = "v0.1".into();
+        mandate.version = Version::V0_2_0;
         mandate.limits.max_gross_notional_usd = Some(limit);
         mandate
     }
 
     #[test]
-    fn a_v0_mandate_with_a_v0_1_member_is_refused() {
+    fn a_v0_1_0_mandate_with_a_v0_2_0_member_is_refused() {
         let perp = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
-        assert_eq!(perp.minimal_version(), "v0");
+        assert_eq!(perp.minimal_version(), Version::V0_1_0);
         type Edit<'a> = (&'a str, &'a dyn Fn(&mut Mandate));
         let edits: [Edit; 5] = [
             ("term.from_slot", &|m: &mut Mandate| {
@@ -2147,17 +2233,14 @@ mod tests {
         for (member, edit) in edits {
             let mut mandate = perp.clone();
             edit(&mut mandate);
-            assert_eq!(mandate.minimal_version(), "v0.1", "{member}");
+            assert_eq!(mandate.minimal_version(), Version::V0_2_0, "{member}");
             assert_eq!(
                 mandate.validate(),
-                Err(format!("member {member} needs version v0.1"))
+                Err(format!("member {member} needs version v0.2.0"))
             );
-            mandate.version = "v0.1".into();
+            mandate.version = Version::V0_2_0;
             assert_eq!(mandate.validate(), Ok(()), "{member}");
         }
-        let mut later = perp;
-        later.version = "v0.2".into();
-        assert!(later.validate().unwrap_err().contains(r#""v0" and "v0.1""#));
     }
 
     #[test]
@@ -2166,9 +2249,9 @@ mod tests {
         assert_eq!(mandate.term, Some(Term::until(412_480)));
         assert_eq!(
             serde_json::to_string(&mandate).unwrap(),
-            r#"{"version":"v0","term":{"until_slot":412480},"universe":[{"instrument":"phoenix:perp:SPCX","max_position":70.0}],"limits":{"max_drawdown_usd":1000.0}}"#
+            r#"{"version":"v0.1.0","term":{"until_slot":412480},"universe":[{"instrument":"phoenix:perp:SPCX","max_position":70.0}],"limits":{"max_drawdown_usd":1000.0}}"#
         );
-        // A v0.1 mandate gets the start its exposures count from.
+        // A v0.2.0 mandate gets the start its exposures count from.
         let book = book().with_term(5, 9);
         assert_eq!(book.term, Some(Term::between(5, 9)));
         let json = serde_json::to_string(&book).unwrap();
@@ -2724,7 +2807,7 @@ mod tests {
     #[test]
     fn reduce_only_taking_never_opens_adds_or_flips() {
         let mut mandate = Mandate::perp("phoenix", "SPCX", 20.0, 250.0);
-        mandate.version = "v0.1".into();
+        mandate.version = Version::V0_2_0;
         let json =
             r#"{"instrument":"phoenix:perp:SPCX","max_position":20.0,"taking":"reduce_only"}"#;
         let allowance: Allowance = serde_json::from_str(json).unwrap();

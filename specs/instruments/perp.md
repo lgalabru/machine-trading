@@ -1,4 +1,4 @@
-# Instrument profile: perpetual (`perp`), v0
+# Instrument profile: perpetual (`perp`), v0.1.0
 
 Status: draft
 

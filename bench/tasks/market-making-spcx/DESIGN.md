@@ -30,12 +30,12 @@ and sometimes knows the next jump.
 | A tick inside, symmetric | most fills | informed bursts run it over before jumps |
 | Wide | safe | nothing fills, and the competitor takes the flow |
 | Join the competitor | queue priority | its price moves when it undercuts |
-| Trade with every burst | informed flow predicts jumps | fake-outs, and 40% of jumps come unannounced |
+| Trade with every burst | informed flow predicts jumps | the mandate allows taking only to reduce (0.13.0): a burst can be leaned into with a quote, not bought |
 
 **The calculation chain:** read the oracle and the book each turn → place
 the competitor's quotes and stay just inside them → skew by inventory → read
 the tape (its own fills, the trade ring, `getBlock`) for one-sided flow →
-widen or shrink when it turns → requote when the quotes would move.
+widen, shrink or pull a side when it turns → shed inventory with a take if it's worth the spread → requote when the quotes would move.
 
 **Nothing warns the agent.** A maker that never steps back still fills; the
 jumps take it back in the valuation.
@@ -52,7 +52,7 @@ jumps take it back in the valuation.
 | --- | --- |
 | tight and symmetric | jumps (adverse selection), trends (inventory) |
 | wide | calm (no fills) |
-| trading every burst | fake-outs, unannounced jumps |
+| taking to open | refused: the mandate allows taking only to reduce |
 
 ## Levers
 
@@ -93,7 +93,10 @@ resamples at 72 sessions, against 81% at 48.
   the scenario's oracle (`Trader::oracle_usd` reads it), and the flow's
   ranges and odds.
 - **Penalty twins:** as in flash-crash: at the cap passes, over it zeroes; a
-  send outside the turn is refused, not a violation.
+  send outside the turn is refused, not a violation. A take that would open,
+  add to or flip the position is refused before it is sent and the bot is
+  told: no penalty. Only a taker fill the grader couldn't refuse beforehand
+  is a breach.
 - A session where more than a tenth of the takers' orders fail is voided,
   not scored: the bot didn't see the flow its scenario describes.
 
@@ -121,3 +124,4 @@ sessions.
 | 0.8.0 | — | the grader's maker; per-order taker limits; ~60% of jumps announced; fake-outs; informed sizes closer to noise; bound = spread + hindsight |
 | 0.8.0 → 0.9.0 | on 0.8.0's flow a naive quoter beat the reference on fresh sets; the reference took its own unwinding for bursts | a lockstep world (the grader's maker no longer races the bot: grades replay); informed flow that bites; 72 hidden sessions drawn per batch from a secret; the reference graded alongside; `skill`; the ladder, with a flow oracle as the exploit bots' ceiling; a reference that counts only fills that grow its inventory |
 | 0.10.0 | informed orders still ran 2–4× noise sizes and limits, so each stood out as it traded: Opus took the cap with every burst (14–20×), Fable too but chased fake-outs (1.3–12×) | 0.11.0: informed orders drawn exactly like noise (size, limit, account), only their side and timing differ; fake-outs drawn exactly like bursts, 0–2 a session; renamed `market-making-spcx`; the 0.10.0 bots join the exploit checks |
+| 0.12.0 | every Astra bot lost on its quotes ($77 to $351 over 72 sessions) and made $1,794 to $2,615 buying 16 to 19 SPCX ahead of each jump, on bursts read from the trade ring, from `getBlock`, or from the takers' own accounts: 16–25× the reference. Within the rules, and not market making | 0.13.0: the mandate allows taking only to reduce ([ADR 0003](../../../docs/adr/0003-free-strategies-bounded-by-the-mandate.md)); a reference that never takes and stops quoting the side a burst hit; a flow oracle that leans with a quote; three Astra bots join the exploit checks |

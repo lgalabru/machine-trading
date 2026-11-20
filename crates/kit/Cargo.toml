@@ -80,6 +80,11 @@ spot-venue = ["dep:solana-pubkey", "solana-pubkey/curve25519", "dep:solana-instr
 pyth = ["chain"]
 # The deterministic in-memory chain client, for tests in dependent crates.
 test-util = ["chain"]
+# Small neural networks in a strategy: candle, re-exported as
+# `mtx_kit::candle` and `mtx_kit::candle_nn`, and `mtx_kit::nn`, which loads
+# weights embedded with `include_bytes!`. Builds for wasm32-wasip2 with
+# `component` and `venue`.
+candle = ["dep:candle-core", "dep:candle-nn"]
 
 [dependencies]
 mtx-core = { path = "../core" }
@@ -119,6 +124,10 @@ spl-associated-token-account-interface = { version = "2", optional = true }
 spl-token-interface = { version = "3", optional = true }
 
 phoenix-rise = { version = "=0.6.15", default-features = false, features = ["serde"], optional = true }
+
+# CPU only: no default features, so no BLAS, GPU or network crates.
+candle-core = { version = "0.9", default-features = false, optional = true }
+candle-nn = { version = "0.9", default-features = false, optional = true }
 
 [dev-dependencies]
 # Encodes Phoenix's market events, for tests that decode them.

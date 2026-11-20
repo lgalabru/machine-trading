@@ -307,6 +307,9 @@ can't show: fills, slippage, and the market moving.
 A component is the same file on any machine: what practises on your laptop
 is what the benchmark grades.
 
+A strategy may carry a model trained before the session, trees or a small
+neural network: [a strategy with a trained model](models.md) shows how.
+
 ## The rules underneath
 
 ### The component
