@@ -36,7 +36,7 @@ const FOLDERS = [
 const GUIDE_FOLDERS = [
   { dir: "guides/instruments", title: "Instruments", order: ["perp", "spot", "money-market"] },
   { dir: "guides/strategies", title: "Strategies", order: ["arbitrage", "selling-a-large-position"] },
-  { dir: "guides/bots", title: "Bots", order: ["first-strategy", "writing-a-bot"] },
+  { dir: "guides/bots", title: "Bots", order: ["first-strategy", "writing-a-bot", "models"] },
   { dir: "guides", title: "Reference" },
 ];
 const GUIDES_INDEX = "guides/index.html";

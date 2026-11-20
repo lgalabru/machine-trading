@@ -1,5 +1,8 @@
 [workspace]
-members = ["crates/*", "bots/*", "bench/tasks/*/reference", "bench/tasks/*/checks/bots/*"]
+members = ["crates/*", "bots/*", "bots/examples/candle-mlp", "bench/tasks/*/reference", "bench/tasks/*/checks/bots/*"]
+# `bots/*` also matches the folder of example bots, which is not a crate: its
+# crates are members by name.
+exclude = ["bots/examples"]
 default-members = ["crates/cli"]
 resolver = "3"
 
