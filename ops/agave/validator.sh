@@ -9,6 +9,8 @@
 #   index costs hundreds of GB of RAM.
 # - JSON-RPC on localhost only: the runtime and `solana catchup` are its only
 #   clients.
+# - v4.4 renamed --limit-ledger-size to --limit-blockstore-size, whose count
+#   is required: 200 million shreds, the old flag's default, a few days.
 # - `exec`, so the log reopens on USR1 (logrotate).
 exec agave-validator \
   --identity /home/sol/validator-keypair.json \
@@ -34,5 +36,5 @@ exec agave-validator \
   --entrypoint entrypoint5.mainnet-beta.solana.com:8001 \
   --expected-genesis-hash 5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d \
   --wal-recovery-mode skip_any_corrupted_record \
-  --limit-ledger-size \
+  --limit-blockstore-size 200000000 \
   --geyser-plugin-config /home/sol/mtx/geyser.json

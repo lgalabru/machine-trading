@@ -39,8 +39,10 @@ rebuilt against that version's interface and toolchain.
    sets the guide's sysctl and limits, creates `sol`, the directories, the
    systemd unit and log rotation, and opens SSH and ports 8000-8020 in ufw.
    JSON-RPC listens on localhost only.
-2. As `sol`: `~/bin/install-agave.sh`: Agave v4.4.1, and an unstaked
-   identity at `~/validator-keypair.json`.
+2. As `sol`: `~/bin/install-agave.sh`: Agave v4.4.1's CLI from Anza's
+   installer, its validator built from the release's source (the installer
+   no longer ships `agave-validator`; a few minutes on this machine), and
+   an unstaked identity at `~/validator-keypair.json`.
 3. Deploy the plugin (below), then as `sol`: `~/bin/build-plugin.sh`.
 4. As root: `systemctl enable --now sol`.
 
