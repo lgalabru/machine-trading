@@ -14,17 +14,17 @@ email = "ludo.galabru@solana.org"
 
 [[tasks]]
 name = "solana-foundation/flash-crash-spcx"
-digest = "sha256:bdfbc02d873089c8e0f1b957045db53e4bbaa65201b0756f89743d34b94ebc65"
+digest = "sha256:8b00095906e9f161c5d92b2b9c23921959d055ab70b660f4e9c163bf7a38605d"
 
 [[tasks]]
 name = "solana-foundation/funding-carry-spcx"
-digest = "sha256:6e3ed43826c0e818008369dbdcf3721c56df643a186e74dd81886c7e2d7175a8"
+digest = "sha256:808548f4d022facaec0f321318e0f54fc6346913657eda0dc9d827eadcfb98a7"
 
 [[tasks]]
 name = "solana-foundation/market-making-spcx"
-digest = "sha256:20de31a20da425b432f6355da213057a6774b3ff834bc4cfebe11ee465ede89b"
+digest = "sha256:8505d0669fed4c261e6ddff18655b0600fa2ed9276bece92951b8e2f83d0acbc"
 
 [[tasks]]
 name = "solana-foundation/weekend-gap-spcx"
-digest = "sha256:81ccee9686d199ff59f358dc99d7f8699a65c8b1343ac049eda88ecc78c90982"
+digest = "sha256:4049ff719899d8027327afc190e20c9974de1a7cf43ea6fd57453a01e2e2a17b"
 
