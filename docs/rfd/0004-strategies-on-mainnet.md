@@ -362,6 +362,15 @@ come out the same to the cent before and after.
   reports to what the accounts hold, which changes what is graded and is
   a new task version. The second costs nothing to start with and keeps
   the graded strategy unchanged.
+  The blocker is narrower than the three fields. A maker's position is
+  the trader account plus the fills seen since in the stream's
+  transactions, which the kit's meter decodes: no buffer needed. The mark
+  is a blend of the oracles and the book's mid. So the one thing missing
+  is how a spline's live quotes are computed. Native is the fastest by
+  far (a decode in memory against a simulation over HTTP, and it lets a
+  step answer a write), so: oracle and position natively now, mark and
+  top of book through Hawkeye until Phoenix's logic is in hand, and
+  Hawkeye kept afterwards as a sampled check on the decoders.
 - **A session with no end.** `steps`, `steps_left`, `slots_left` and `last`
   assume a term. A long-lived strategy needs either a rolling term (a
   mandate renewed each day, a restart at each renewal) or `u64::MAX`.
