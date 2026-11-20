@@ -65,6 +65,8 @@ pub struct FeedSender {
     events: SyncSender<FeedEvent>,
     watch: Arc<Watch>,
     dropped: Arc<AtomicU64>,
+    /// Events handed to the runtime so far.
+    sent: Arc<AtomicU64>,
 }
 
 impl FeedSender {
@@ -78,7 +80,10 @@ impl FeedSender {
     /// and that isn't a loss.
     pub fn send(&self, event: FeedEvent) {
         match self.events.try_send(event) {
-            Ok(()) | Err(TrySendError::Disconnected(_)) => {}
+            Ok(()) => {
+                self.sent.fetch_add(1, Ordering::Release);
+            }
+            Err(TrySendError::Disconnected(_)) => {}
             Err(TrySendError::Full(_)) => {
                 self.dropped.fetch_add(1, Ordering::Relaxed);
             }
@@ -91,6 +96,35 @@ impl FeedSender {
 pub struct FeedReceiver {
     events: Receiver<FeedEvent>,
     dropped: Arc<AtomicU64>,
+    progress: FeedProgress,
+}
+
+/// How far the runtime has got through what the feed was handed: what a
+/// step that must see every write so far waits on ([`FeedProgress::settle`]).
+#[derive(Debug, Clone)]
+pub struct FeedProgress {
+    sent: Arc<AtomicU64>,
+    applied: Arc<AtomicU64>,
+}
+
+/// How often [`FeedProgress::settle`] looks again.
+const SETTLE_LOOKS_EVERY: std::time::Duration = std::time::Duration::from_micros(200);
+
+impl FeedProgress {
+    /// Wait until the runtime has applied every event handed to the feed
+    /// before this call, for at most `within`: whether it did. Events sent
+    /// after the call aren't waited for, so a busy chain can't hold it.
+    pub fn settle(&self, within: std::time::Duration) -> bool {
+        let target = self.sent.load(Ordering::Acquire);
+        let deadline = std::time::Instant::now() + within;
+        while self.applied.load(Ordering::Acquire) < target {
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(SETTLE_LOOKS_EVERY);
+        }
+        true
+    }
 }
 
 impl FeedReceiver {
@@ -103,6 +137,16 @@ impl FeedReceiver {
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
+
+    /// Say the last event [`FeedReceiver::next`] gave is applied.
+    pub fn applied(&self) {
+        self.progress.applied.fetch_add(1, Ordering::Release);
+    }
+
+    /// A handle on how far the runtime has got, for another thread.
+    pub fn progress(&self) -> FeedProgress {
+        self.progress.clone()
+    }
 }
 
 /// A feed of at most [`FEED_EVENTS_MAX`] waiting events, for the accounts
@@ -110,15 +154,21 @@ impl FeedReceiver {
 pub fn channel(watch: Arc<Watch>) -> (FeedSender, FeedReceiver) {
     let (sender, receiver) = sync_channel(FEED_EVENTS_MAX);
     let dropped = Arc::new(AtomicU64::new(0));
+    let sent = Arc::new(AtomicU64::new(0));
     (
         FeedSender {
             events: sender,
             watch,
             dropped: dropped.clone(),
+            sent: sent.clone(),
         },
         FeedReceiver {
             events: receiver,
             dropped,
+            progress: FeedProgress {
+                sent,
+                applied: Arc::new(AtomicU64::new(0)),
+            },
         },
     )
 }
@@ -145,6 +195,13 @@ impl AccountCache {
     /// The account's data, if a write of it was seen.
     pub fn data(&self, address: &Address) -> Option<&[u8]> {
         self.accounts.get(address).map(|held| held.data.as_slice())
+    }
+
+    /// Keep every write of `other` that is the latest of its account.
+    pub fn merge(&mut self, other: AccountCache) {
+        for write in other.accounts.into_values() {
+            self.apply(write);
+        }
     }
 
     /// The slot of the account's latest write.
@@ -204,6 +261,30 @@ mod tests {
         assert!(!watch.has(&[1; 31]), "not an address");
         watch.add([2; 32]);
         assert!(watch.has(&[2; 32]));
+    }
+
+    #[test]
+    fn settling_waits_for_what_was_sent_before_and_nothing_after() {
+        let (sender, receiver) = channel(Arc::new(Watch::default()));
+        let progress = receiver.progress();
+        // Nothing sent: settled at once.
+        assert!(progress.settle(std::time::Duration::ZERO));
+        sender.send(FeedEvent::Account(write(1, 1, 0, 1)));
+        sender.send(FeedEvent::Account(write(1, 2, 0, 2)));
+        // Two sent, none applied: not settled.
+        assert!(!progress.settle(std::time::Duration::from_millis(5)));
+        let applier = std::thread::spawn(move || {
+            for _ in 0..2 {
+                receiver.next().unwrap();
+                receiver.applied();
+            }
+            receiver
+        });
+        assert!(progress.settle(std::time::Duration::from_secs(5)));
+        let _receiver = applier.join().unwrap();
+        // A third, not applied: not settled.
+        sender.send(FeedEvent::Account(write(1, 3, 0, 3)));
+        assert!(!progress.settle(std::time::Duration::from_millis(5)));
     }
 
     #[test]

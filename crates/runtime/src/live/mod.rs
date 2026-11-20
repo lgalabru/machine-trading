@@ -4,18 +4,22 @@
 //! it (a validator, through `mtx-geyser`; surfpool, in tests) on a thread
 //! of its own.
 //!
-//! So far it reads and writes down, and trades nothing: it keeps the
-//! watched accounts ([`feed::AccountCache`]), and at every slot event it
-//! reads each configured market from them ([`perp::PerpReader`]) and
-//! appends the reading to its journal.
+//! It keeps the watched accounts ([`feed::AccountCache`]), and at every
+//! slot event reads each configured market from them
+//! ([`perp::PerpReader`]) and appends the reading to its journal. With a
+//! [`session::SessionConfig`], it also plays sessions a grader hands it:
+//! it hosts the strategy component, reads its market from the cache, and
+//! sends its orders as the bot. Its steps come from the grader's turns;
+//! on mainnet they will come from the slots.
 
 pub mod feed;
 pub mod perp;
+pub mod session;
 
 use std::{
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     thread::JoinHandle,
     time::Duration,
 };
@@ -63,6 +67,10 @@ pub struct Config {
     #[serde(default)]
     pub journal_writes: bool,
     pub markets: Vec<MarketConfig>,
+    /// Play sessions for a grader, whose strategy the runtime hosts
+    /// ([`session`]): the bench's step 3 of `docs/rfd/0004`.
+    #[serde(default)]
+    pub session: Option<session::SessionConfig>,
 }
 
 /// One account on one market, to read.
@@ -154,20 +162,35 @@ impl Runtime {
         let addresses: Vec<Address> = readers.iter().flat_map(PerpReader::addresses).collect();
         let watch = Arc::new(Watch::new(addresses.iter().copied()));
         let (sender, receiver) = feed::channel(watch);
+        let cache = Arc::new(Mutex::new(AccountCache::default()));
+        // Set once the cache holds what the backfill found: a session that
+        // starts before would read a market the feed hasn't told of yet.
+        let ready = Arc::new(session::Ready::default());
+        if let Some(sessions) = config.session.clone() {
+            session::spawn(
+                sessions,
+                readers.clone(),
+                cache.clone(),
+                receiver.progress(),
+                ready.clone(),
+            )?;
+        }
         let thread = std::thread::Builder::new()
             .name("mtx-live".into())
             .spawn(move || {
-                let mut cache = AccountCache::default();
                 if let Some(url) = &config.backfill_rpc_url {
-                    match backfill_blocking(url, &addresses, &mut cache) {
+                    let mut backfilled = AccountCache::default();
+                    match backfill_blocking(url, &addresses, &mut backfilled) {
                         Ok(found) => tracing::info!(found, of = addresses.len(), "backfilled"),
                         Err(error) => tracing::warn!(%error, "the backfill failed"),
                     }
+                    lock(&cache).merge(backfilled);
                 }
+                ready.set();
                 run(
                     &receiver,
                     &readers,
-                    cache,
+                    &cache,
                     BufWriter::new(journal),
                     config.journal_writes,
                 );
@@ -195,21 +218,30 @@ pub const WRITE: &str = "write";
 fn run(
     events: &FeedReceiver,
     readers: &[PerpReader],
-    mut cache: AccountCache,
+    cache: &Mutex<AccountCache>,
     mut journal: impl Write,
     journal_writes: bool,
 ) {
     while let Some(event) = events.next() {
+        let mut cache = lock(cache);
         let (slot, status) = match event {
             FeedEvent::Account(write) => {
                 let slot = write.slot;
-                if !(cache.apply(write) && journal_writes) {
+                let kept = cache.apply(write);
+                events.applied();
+                if !(kept && journal_writes) {
                     continue;
                 }
                 (slot, WRITE)
             }
-            FeedEvent::Slot { slot, status, .. } => (slot, status.as_str()),
-            FeedEvent::Block { .. } => continue,
+            FeedEvent::Slot { slot, status, .. } => {
+                events.applied();
+                (slot, status.as_str())
+            }
+            FeedEvent::Block { .. } => {
+                events.applied();
+                continue;
+            }
         };
         if let Err(error) = record(
             &mut journal,
@@ -225,6 +257,14 @@ fn run(
             return;
         }
     }
+}
+
+/// The cache, locked. A thread that panicked holding it left it as its
+/// last whole write: each write replaces one account at once.
+fn lock(cache: &Mutex<AccountCache>) -> std::sync::MutexGuard<'_, AccountCache> {
+    cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn record(
@@ -360,13 +400,7 @@ mod tests {
         sender.send(slot(11));
         drop(sender);
         let mut journal = Vec::new();
-        run(
-            &receiver,
-            &readers,
-            AccountCache::default(),
-            &mut journal,
-            true,
-        );
+        run(&receiver, &readers, &Mutex::default(), &mut journal, true);
         let lines = lines(&journal);
         let seen: Vec<_> = lines
             .iter()
@@ -413,13 +447,7 @@ mod tests {
         });
         drop(sender);
         let mut journal = Vec::new();
-        run(
-            &receiver,
-            &readers,
-            AccountCache::default(),
-            &mut journal,
-            false,
-        );
+        run(&receiver, &readers, &Mutex::default(), &mut journal, false);
         assert!(journal.is_empty());
     }
 
@@ -501,6 +529,7 @@ mod tests {
             backfill_rpc_url: None,
             journal_writes: false,
             markets: vec![market; MARKETS_MAX + 1],
+            session: None,
         };
         assert!(config.readers().unwrap_err().contains("at most"));
     }

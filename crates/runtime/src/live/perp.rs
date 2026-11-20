@@ -16,8 +16,8 @@ use mtx_core::feed::Address;
 use mtx_kit::{
     phoenix_rise::types::exchange::{ExchangeMarketConfig, ExchangeResponse},
     venue::{
-        PerpBookAccounts, PhoenixVenue, key, perp_position, perp_position_live, perp_prices,
-        perp_top_of_book, ticks_to_usd,
+        PerpBookAccounts, PhoenixVenue, key, perp_index, perp_position, perp_position_live,
+        perp_prices, perp_top_of_book, ticks_to_usd,
     },
 };
 use serde::Serialize;
@@ -47,6 +47,8 @@ pub struct PerpReader {
 pub struct PerpReading {
     pub mark: f64,
     pub oracle: f64,
+    /// Hawkeye's index: the fresh spot oracles' median.
+    pub index: f64,
     /// The book's best bid and ask, if it has any.
     pub best_bid: Option<f64>,
     pub best_ask: Option<f64>,
@@ -93,6 +95,11 @@ impl PerpReader {
         &self.market.symbol
     }
 
+    /// The trader account whose position is read.
+    pub fn trader(&self) -> Address {
+        self.trader
+    }
+
     /// The accounts a read needs: what the feed has to watch.
     pub fn addresses(&self) -> Vec<Address> {
         [
@@ -136,6 +143,8 @@ impl PerpReader {
         };
         let prices =
             perp_prices(&self.market, asset_map).map_err(|e| format!("the perp asset map: {e}"))?;
+        let index =
+            perp_index(&self.market, asset_map, slot).map_err(|e| format!("the index: {e}"))?;
         let top = perp_top_of_book(&self.venue, &self.market.symbol, &book, slot)?;
         let live = perp_position_live(
             &self.market,
@@ -152,6 +161,7 @@ impl PerpReader {
         Ok(PerpReading {
             mark: prices.mark,
             oracle: prices.oracle,
+            index,
             best_bid: top.best_bid_ticks.map(usd),
             best_ask: top.best_ask_ticks.map(usd),
             position: position.size,
