@@ -324,11 +324,13 @@ come out the same to the cent before and after.
 5. **TPU.** The sender, against `solana-test-validator` and then devnet:
    leader tracking from geyser slots, warm connections, a transfer landed
    without RPC. Check: the slot a send lands in, against the slot it was
-   sent in.
+   sent in. Done against `solana-test-validator` (what we learned);
+   devnet is still to run.
 6. **Mainnet, shadow.** The plugin in a mainnet node. Steps run, sheets
    are planned and signed, nothing is sent. The journal says what it would
    have done. This measures the time from a slot notification to a signed
-   sheet, feed loss, and what the plugin costs the node.
+   sheet, feed loss, and what the plugin costs the node. The shadow mode
+   is built (`mtx live add --shadow`); the run needs a mainnet node.
 7. **Mainnet, small.** One strategy, a mandate with a tiny cap and
    drawdown, its own key.
 
@@ -380,9 +382,12 @@ come out the same to the cent before and after.
   on-chain account the plugin already sees, is the stronger form.
 - **Raw sends.** Off on mainnet until the audit has a backend that isn't
   surfpool's `simulateBundle`.
-- **Does Agave's plugin manager behave as surfpool's does?** This RFD read
-  surfpool's host, not Agave's. Check the admin RPC's reload, the threads
-  callbacks arrive on, and startup notifications, against Agave 4.x.
+- **Does Agave's plugin manager behave as surfpool's does?** At boot, yes:
+  `solana-test-validator` 4.3.1 loads the plugin from
+  `--geyser-plugin-config`, and its runtime is fed the validator's slots
+  with nothing dropped (`crates/grader/tests/agave.rs`). Not checked yet:
+  the admin RPC's reload, and how many threads callbacks arrive on under
+  a mainnet load.
 
 ## Risks
 
@@ -650,3 +655,38 @@ come out the same to the cent before and after.
   added paused. The plugin is then unloaded and loaded again, and both
   come back as they were. Then the kill switch pauses both, and a removed
   strategy stays gone after another restart.
+- 2026-11-20: the enforcer, the TPU, and shadow runs (astra).
+  - **The enforcer.** Every step, the position and the resting sides go
+    into an `Observed` with the drawdown, and `Mandate::audit` judges it
+    all: a breach pauses the strategy and cancels its orders, and with
+    `close_on_breach` (the mandate's owner's choice, `mtx live add
+    --close-on-breach`) closes the position too. A runtime more than 4
+    slots behind what the chain told it, or whose feed dropped an event,
+    pauses every strategy. Each of a strategy's calls has a wall deadline
+    (250 ms by default, `step_deadline_ms`), by wasmtime's epoch
+    interruption: past it the call traps and the strategy stops. A grade
+    sets none, so grades are unchanged. Not judged yet: fills. A live
+    strategy has no tape, since the runtime doesn't decode transactions
+    yet, so the sides and limit-price rules see resting orders only.
+  - **The TPU.** Anza's `solana-tpu-client-next`, already in the tree, does
+    what bifrost's sender does and more: it connects to the next leaders
+    ahead of their slots, and takes a staked identity. Its leader tracker
+    takes a stream of slot starts and ends, which the feed hands it from
+    the geyser's `FirstShredReceived` and `Completed`, and reads the
+    schedule and the cluster's TPU addresses from the node's RPC. A
+    strategy's desk trades through `TpuChainClient`: reads from the RPC,
+    sends to the TPU, the RPC as the fallback. Against
+    `solana-test-validator`, transfers sent over it land in the slot after
+    the one they were sent in (`crates/runtime/tests/tpu.rs`). The very
+    first send after a fresh validator boots once took 32 slots.
+  - **Agave.** `solana-test-validator` 4.3.1 loads the plugin, built
+    against interface 4.3.2, and feeds it (`crates/grader/tests/agave.rs`;
+    `just agave` runs both, since CI has no validator).
+  - **Shadow runs.** `mtx live add --shadow` gives a strategy a chain that
+    writes each transaction it would have sent to `<name>.shadow.jsonl`
+    (slot, time, signature, size) and sends nothing. Each strategy's
+    status carries how long its last step took, from its slot reaching
+    the runtime to its sheet sent: the number step 6 measures.
+  Left for the operator: step 6's run in a mainnet node, step 5's devnet
+  run with a staked identity, and step 7, which needs a funded key and a
+  mandate to risk it under.
