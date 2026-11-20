@@ -351,30 +351,16 @@ come out the same to the cent before and after.
   rolled back. A position read at processed and a fill reported only once
   confirmed is one option. Measure on mainnet how often a processed fill
   of ours doesn't confirm.
-- **How is a Phoenix perp read without a simulation?** Step 2 answered
-  the first half: the accounts alone don't give the mark, the top of the
-  book or a maker's position (what we learned, 2026-11-20). Three ways
-  on. Ask Phoenix for the view's logic, or for decoders of the splines'
-  live quotes and of the active trader buffer, and read natively. Or keep
-  Hawkeye, simulated on the node's local RPC: a round trip of a
-  millisecond or two a step on the same machine, to be measured in the
-  shadow run against a 400 ms slot. Or change what a perp `Market`
-  reports to what the accounts hold, which changes what is graded and is
-  a new task version. The second costs nothing to start with and keeps
-  the graded strategy unchanged.
-  The blocker is narrower than the three fields. A maker's position is
-  the trader account plus the fills seen since in the stream's
-  transactions, which the kit's meter decodes: no buffer needed. The mark
-  is a blend of the oracles and the book's mid. So the one thing missing
-  is how a spline's live quotes are computed. Native is the fastest by
-  far (a decode in memory against a simulation over HTTP, and it lets a
-  step answer a write), so: oracle and position natively now, mark and
-  top of book through Hawkeye until Phoenix's logic is in hand, and
-  Hawkeye kept afterwards as a sampled check on the decoders.
-  Narrower again after sampling mainnet (the last entry below): the
-  position is in the active trader buffer, which has a public decoder,
-  and the top of book follows from the splines except when two of them
-  lock or cross.
+- **How is a Phoenix perp read without a simulation?** Answered
+  (what we learned, the last two entries): the top of the book and a
+  maker's position are native, and equal Hawkeye's views. What is left
+  is the mark between cranks: the view blends the book as it stands,
+  the perp asset map holds the last crank's blend. Mainnet cranks every
+  slot, where the stored mark is the view's, in every sample taken; a
+  bench session whose takers don't crank is where they part. The blend's
+  weights and EMA are in the asset map (`book_price_component`,
+  `spot_price_component`), and the samples to fit it against are the
+  same ones; until then the plugin reads the stored mark.
 - **A session with no end.** `steps`, `steps_left`, `slots_left` and `last`
   assume a term. A long-lived strategy needs either a rolling term (a
   mandate renewed each day, a restart at each renewal) or `u64::MAX`.
@@ -558,3 +544,53 @@ come out the same to the cent before and after.
   the older by update slot, the one further from the mark, match the two
   sizes off. Next is the surfnet, where one input can be changed at a
   time and the view asked again.
+- 2026-11-20: the uncrossing rule, and why it was missed (astra). Two
+  things, both found on a surfnet forked from mainnet by changing one
+  input of a sample at a time and asking `view_bbo` again
+  (`crates/grader/examples/phoenix_probe.rs`; the probe reproduces the
+  view on every sample loaded unedited, once every stored slot is moved
+  to the fork's clock):
+  - **The 0.6 decoders don't know the base widths.** `phoenix-rise`
+    0.10.2's spline has `bid_base_width` and `ask_base_width` at bytes
+    1112 and 1120, which 0.6.15 reads as padding. A region's tick `t`
+    quotes at `mid - (t + bid_base_width)` and `mid + (t +
+    ask_base_width)`. DUG runs with widths of 0, 1 and 6 on SOL; on the
+    bench, spline D's width of 2 puts its `(4, 5)` bid at mid minus 6,
+    the second bench puzzle. Nothing else on a spline moved the view:
+    not its update slot, its sequence number, its place in the
+    collection, its sizes alone, its lifespans, its hidden sizes or its
+    trader.
+  - **Makers' quotes that lock or cross match.** With the widths in, 16
+    samples still lock or cross. The best bid and the best ask each lose
+    the smaller of their two sizes, until the book doesn't cross: DUG's
+    ten thousand lots a tick take 4UN's 1,900, which looked like 4UN's
+    quote moving a tick out. Netting was ruled out before only because
+    the widths were missing.
+  - **A maker's margin sizes its spline.** Found when the plugin's
+    reader first ran against a flash-crash session: once the strategy
+    had taken the best maker's asks, the view's next ask was eight ticks
+    out where ours was two. The maker at two ticks (3t7LR) holds $0.08
+    of collateral, and the probe showed the cause was its trader, not
+    its spline. It quoted 8 lots while flat, which is what $0.08 margins
+    at 15x on SPCX, and sold exactly those 8; after that, the side that
+    would add to its position is gone from the view, and the side that
+    reduces it stays. So a side that adds risk quotes no more than the
+    maker's free collateral margins: the collateral (in the global
+    trader index), plus every position's unrealized PnL at its mark,
+    less every position's value over its leverage tier's maximum. That
+    is fitted to this one maker; Phoenix's exact rounding, funding and
+    limit-order risk factors aren't in it, and only a maker near the
+    edge of its margin can tell the difference.
+  `mtx_kit::venue::perp_top_of_book` is the rule: the orderbook's
+  resting orders and every live spline region tick by tick, each
+  maker's side stopped at its position limit and its margin (its
+  position from the active trader buffer), then matched until
+  uncrossed. It equals the view on 153 of 153 mainnet samples and on
+  the bench sessions (`crates/kit/tests/perp_book.rs`: nine as
+  fixtures, every sample with `MTX_PHOENIX_SAMPLES`;
+  `crates/grader/tests/geyser_parity.rs`). The workspace is on
+  `phoenix-rise` 0.10.2, which also decodes the trader index and the
+  active trader buffer, so `cosmic-phoenix-eternal-types` isn't needed.
+  The plugin's reader (`mtx_runtime::live::perp::PerpReader`) now reads
+  the best bid and ask, and the position from the buffer, falling back
+  to the trader account while the trader isn't active in the market.
