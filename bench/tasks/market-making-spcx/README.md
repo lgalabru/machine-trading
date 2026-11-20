@@ -74,7 +74,8 @@ fresh hidden sets. Naive and skewed quoters must score below the reference,
 and the reference below a flow oracle that is told which taker orders are
 informed. The frozen exploit bots must score below the flow oracle.
 
-On two fresh 72-session ladder sets the reference made $279 and $151, the
+These numbers are from before 0.13.0, when a bot could take to open, and
+are to be re-run. On two fresh 72-session ladder sets the reference made $279 and $151, the
 naive quoter lost $11 and $41, and the flow oracle made 14–30× the
 reference. Agents separate in that headroom: reading the tape beyond their
 own fills, sizing the lean, and telling bursts from noise.

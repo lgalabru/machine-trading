@@ -11,7 +11,7 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
   - **`market-making-spcx`: taking only to reduce.** In 0.12.0 its best
     bots lost money on their quotes ($77 to $351 over 72 sessions) and made
     $1,794 to $2,615 buying 16 to 19 SPCX with market orders ahead of each
-    jump, up to 22× the reference: the flash-crash task's skill. The
+    jump, 16 to 25× the reference: the flash-crash task's skill. The
     mandate now carries `taking: "reduce_only"`. A market order, an
     immediate-or-cancel order or a limit through the other traders' touch
     that would open, add to or flip the position is refused before it is
