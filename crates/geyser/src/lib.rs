@@ -27,7 +27,14 @@ use std::{
     path::Path,
 };
 
-use agave_geyser_plugin_interface::geyser_plugin_interface::{
+// The host's interface, as the build chose it (see Cargo.toml's features).
+#[cfg(all(feature = "agave-4-3", feature = "agave-4-4"))]
+compile_error!("one host interface a build: agave-4-3 or agave-4-4");
+#[cfg(not(feature = "agave-4-4"))]
+use agave_geyser_plugin_interface as host;
+#[cfg(feature = "agave-4-4")]
+use agave_geyser_plugin_interface_5 as host;
+use host::geyser_plugin_interface::{
     GeyserPlugin, GeyserPluginError, ReplicaAccountInfoVersions, ReplicaBlockInfoVersions,
     Result as PluginResult, SlotStatus as HostSlotStatus,
 };
@@ -131,11 +138,16 @@ impl GeyserPlugin for MtxGeyser {
 
     fn notify_block_metadata(&self, block: ReplicaBlockInfoVersions) -> PluginResult<()> {
         guarded(|| {
+            // 0.0.4 through Agave v4.3 (surfpool's), 0.0.5 from v4.4: the
+            // fields the runtime reads are the same in both.
+            #[cfg(not(feature = "agave-4-4"))]
             let ReplicaBlockInfoVersions::V0_0_4(block) = block else {
                 return Err(custom(
                     "the host's block notifications are older than 0.0.4",
                 ));
             };
+            #[cfg(feature = "agave-4-4")]
+            let ReplicaBlockInfoVersions::V0_0_5(block) = block;
             self.feed()?.send(FeedEvent::Block {
                 slot: block.slot,
                 blockhash: block.blockhash.to_string(),

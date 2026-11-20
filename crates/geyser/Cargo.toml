@@ -10,10 +10,18 @@ publish = false
 # The plugin a validator (or surfpool) loads, and a library for its tests.
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# The plugin's ABI: a trait object crosses it, so the interface's version
+# and the Rust toolchain must be the host's. One interface a build:
+# surfpool, as the workspace pins it, is on 4.3.2 (the default, for the
+# bench's tests); Agave v4.4 validators on 5.0.0, built with rustc 1.98.1
+# (ops/agave).
+default = ["agave-4-3"]
+agave-4-3 = ["dep:agave-geyser-plugin-interface"]
+agave-4-4 = ["dep:agave-geyser-plugin-interface-5"]
+
 [dependencies]
-# The plugin's ABI: a trait object crosses it, so this version and the Rust
-# toolchain must be the host's. Surfpool, as the workspace pins it, is on
-# this one.
-agave-geyser-plugin-interface = { version = "=4.3.2", default-features = false }
+agave-geyser-plugin-interface = { version = "=4.3.2", default-features = false, optional = true }
+agave-geyser-plugin-interface-5 = { package = "agave-geyser-plugin-interface", version = "=5.0.0", default-features = false, optional = true }
 mtx-core.workspace = true
 mtx-runtime = { workspace = true, features = ["live"] }

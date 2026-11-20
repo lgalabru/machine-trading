@@ -73,7 +73,7 @@ dependencies = [
  "bitvec",
  "qualifier_attr",
  "rayon",
- "solana-bls-signatures",
+ "solana-bls-signatures 3.4.0",
  "solana-signer-store",
  "thiserror 2.0.21",
  "wincode",
@@ -133,6 +133,25 @@ dependencies = [
  "solana-signature",
  "solana-transaction 4.3.0",
  "solana-transaction-status",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "agave-geyser-plugin-interface"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71a938d2ff613006f35792369d7a85e8a2905b19d5c69e50814c4472d8269e24"
+dependencies = [
+ "log",
+ "solana-bls-signatures 4.0.2",
+ "solana-clock 4.0.0",
+ "solana-hash 4.6.0",
+ "solana-message 5.0.0",
+ "solana-pubkey 4.3.0",
+ "solana-reward-info",
+ "solana-signature",
+ "solana-transaction 5.0.0",
+ "solana-transaction-error 4.1.0",
  "thiserror 2.0.21",
 ]
 
@@ -252,7 +271,7 @@ dependencies = [
  "serde",
  "smallvec",
  "solana-address 2.7.0",
- "solana-bls-signatures",
+ "solana-bls-signatures 3.4.0",
  "solana-clock 3.2.1",
  "solana-epoch-schedule 3.3.0",
  "solana-hash 4.6.0",
@@ -433,6 +452,22 @@ name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
+
+[[package]]
+name = "anza-blstrs"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a69a28fa945b11b8e1c16d00dbd675bf9aaa16202afc0771fad3e2890077125"
+dependencies = [
+ "blst",
+ "byte-slice-cast",
+ "ff 0.13.1",
+ "group 0.13.0",
+ "pairing",
+ "rand_core 0.6.4",
+ "serde",
+ "subtle",
+]
 
 [[package]]
 name = "anza-quinn"
@@ -4791,7 +4826,7 @@ dependencies = [
  "solana-fee-structure",
  "solana-hash 4.6.0",
  "solana-instruction 3.5.1",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-instructions-sysvar 4.0.0",
  "solana-keypair",
  "solana-last-restart-slot 3.2.0",
@@ -5441,7 +5476,8 @@ dependencies = [
 name = "mtx-geyser"
 version = "0.1.0"
 dependencies = [
- "agave-geyser-plugin-interface",
+ "agave-geyser-plugin-interface 4.3.2",
+ "agave-geyser-plugin-interface 5.0.0",
  "mtx-core",
  "mtx-runtime",
 ]
@@ -7800,7 +7836,7 @@ dependencies = [
  "serde_derive",
  "solana-account-info 3.1.1",
  "solana-clock 3.2.1",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids 3.1.0",
  "solana-sysvar 4.2.0",
@@ -8004,7 +8040,7 @@ dependencies = [
  "serde_derive",
  "solana-clock 3.2.1",
  "solana-instruction 3.5.1",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-sdk-ids 3.1.0",
  "solana-slot-hashes 3.2.0",
@@ -8068,7 +8104,7 @@ checksum = "278a1a5bad62cd9da89ac8d4b7ec444e83caa8ae96aa656dfc27684b28d49a5d"
 dependencies = [
  "bincode",
  "serde_core",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
 ]
 
 [[package]]
@@ -8116,6 +8152,28 @@ dependencies = [
  "solana-signature",
  "solana-signer",
  "subtle",
+ "thiserror 2.0.21",
+ "wincode",
+ "zeroize",
+]
+
+[[package]]
+name = "solana-bls-signatures"
+version = "4.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a38a9005b7cdc84aa3caaf03babfc4b48901549a1c7867d12bc9cfde38da6de4"
+dependencies = [
+ "anza-blstrs",
+ "base64 0.22.1",
+ "blst",
+ "cfg_eval",
+ "ff 0.13.1",
+ "group 0.13.0",
+ "pairing",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "serde_with",
  "thiserror 2.0.21",
  "wincode",
  "zeroize",
@@ -8615,7 +8673,7 @@ dependencies = [
  "rayon",
  "smallvec",
  "solana-address 2.7.0",
- "solana-bls-signatures",
+ "solana-bls-signatures 3.4.0",
  "solana-clock 3.2.1",
  "solana-cost-model",
  "solana-hash 4.6.0",
@@ -8974,7 +9032,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d8f113d1312870e2d8698033e9d153d3329c520e1065f05145a55a889e21c91"
 dependencies = [
  "solana-instruction 4.0.0",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
 ]
 
 [[package]]
@@ -9004,6 +9062,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-instruction-error"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eeeac4481edb1cbb17aa417bc0945687ac959e3ca26f4541f0ee085a1831b5a1"
+dependencies = [
+ "solana-program-error 3.0.1",
+]
+
+[[package]]
 name = "solana-instructions-sysvar"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9029,7 +9096,7 @@ dependencies = [
  "bitflags 2.13.2",
  "solana-account-info 3.1.1",
  "solana-instruction 3.5.1",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-program-error 3.0.1",
  "solana-sanitize 3.0.1",
  "solana-sdk-ids 3.1.0",
@@ -9046,7 +9113,7 @@ dependencies = [
  "bitflags 2.13.2",
  "solana-account-info 3.1.1",
  "solana-instruction 3.5.1",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-program-error 3.0.1",
  "solana-sanitize 3.0.1",
  "solana-sdk-ids 3.1.0",
@@ -9342,6 +9409,20 @@ dependencies = [
  "solana-short-vec 3.3.0",
  "solana-transaction-error 3.4.0",
  "wincode",
+]
+
+[[package]]
+name = "solana-message"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "904166464d72cad48c4767e0317463a1662a54f9a113071554b083dc2ae12ebe"
+dependencies = [
+ "solana-address 2.7.0",
+ "solana-hash 4.6.0",
+ "solana-instruction 4.0.0",
+ "solana-sanitize 3.0.1",
+ "solana-sdk-ids 3.1.0",
+ "solana-transaction-error 4.1.0",
 ]
 
 [[package]]
@@ -9952,7 +10033,7 @@ dependencies = [
  "solana-account 4.7.0",
  "solana-account-decoder",
  "solana-account-decoder-client-types",
- "solana-bls-signatures",
+ "solana-bls-signatures 3.4.0",
  "solana-clock 3.2.1",
  "solana-commitment-config",
  "solana-epoch-info",
@@ -10082,7 +10163,7 @@ dependencies = [
  "solana-account-info 3.1.1",
  "solana-accounts-db",
  "solana-address-lookup-table-interface 3.2.0",
- "solana-bls-signatures",
+ "solana-bls-signatures 3.4.0",
  "solana-builtins",
  "solana-client-traits",
  "solana-clock 3.2.1",
@@ -10374,7 +10455,7 @@ version = "3.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "761357b0853c9623bf12c1d2314b3d6160a85b087b84c45224fb85766d22616b"
 dependencies = [
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-sanitize 3.0.1",
 ]
@@ -11058,7 +11139,7 @@ dependencies = [
  "solana-address 2.7.0",
  "solana-hash 4.6.0",
  "solana-instruction 3.5.1",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-message 3.1.0",
  "solana-sanitize 3.0.1",
  "solana-sdk-ids 3.1.0",
@@ -11079,7 +11160,7 @@ dependencies = [
  "solana-address 2.7.0",
  "solana-hash 4.6.0",
  "solana-instruction 3.5.1",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-message 4.6.0",
  "solana-sanitize 3.0.1",
  "solana-sdk-ids 3.1.0",
@@ -11088,6 +11169,23 @@ dependencies = [
  "solana-signer",
  "solana-transaction-error 3.4.0",
  "wincode",
+]
+
+[[package]]
+name = "solana-transaction"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29242fe2ba04e84aa298c431f5aa687e89e42d27e85aea4a5c39c467f0f47799"
+dependencies = [
+ "solana-address 2.7.0",
+ "solana-hash 4.6.0",
+ "solana-instruction 4.0.0",
+ "solana-instruction-error 3.1.0",
+ "solana-message 5.0.0",
+ "solana-sanitize 3.0.1",
+ "solana-sdk-ids 3.1.0",
+ "solana-signature",
+ "solana-transaction-error 4.1.0",
 ]
 
 [[package]]
@@ -11126,7 +11224,17 @@ checksum = "8a37cf28c58b03878d38c38411f0414d3a99a9e3b7e5ebb0f83f3317b2796d18"
 dependencies = [
  "serde",
  "serde_derive",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
+ "solana-sanitize 3.0.1",
+]
+
+[[package]]
+name = "solana-transaction-error"
+version = "4.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c60ac567002dcffafed3230769fa41bc57bd8aaa9d61f81a5eb7f83b0f25d94c"
+dependencies = [
+ "solana-instruction-error 3.1.0",
  "solana-sanitize 3.0.1",
 ]
 
@@ -11311,7 +11419,7 @@ dependencies = [
  "solana-clock 3.2.1",
  "solana-hash 4.6.0",
  "solana-instruction 3.5.1",
- "solana-instruction-error",
+ "solana-instruction-error 2.5.0",
  "solana-pubkey 4.3.0",
  "solana-rent 4.4.0",
  "solana-sdk-ids 3.1.0",
@@ -11334,7 +11442,7 @@ dependencies = [
  "log",
  "solana-account 4.7.0",
  "solana-bincode 3.1.0",
- "solana-bls-signatures",
+ "solana-bls-signatures 3.4.0",
  "solana-clock 3.2.1",
  "solana-epoch-schedule 3.3.0",
  "solana-hash 4.6.0",
@@ -11934,7 +12042,7 @@ version = "1.7.0"
 source = "git+https://github.com/solana-foundation/surfpool?branch=feat%2Fscenario-scripts#a72b166d960a24c6a51a9ffdb5125d101e774d36"
 dependencies = [
  "agave-feature-set",
- "agave-geyser-plugin-interface",
+ "agave-geyser-plugin-interface 4.3.2",
  "agave-reserved-account-keys",
  "anchor-lang-idl",
  "async-trait",
