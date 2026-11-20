@@ -9,3 +9,4 @@ change a decision, supersede its record rather than editing it.
 | --- | --- | --- |
 | [0001](0001-public-and-held-out-scenarios.md) | Public scenarios for development, a private held-out set for rankings | Accepted |
 | [0002](0002-bench-machine-over-ssh.md) | GitHub reaches the bench machine over SSH, through one command | Accepted |
+| [0003](0003-free-strategies-bounded-by-the-mandate.md) | A strategy is free in form, and bounded only by its mandate | Accepted |
