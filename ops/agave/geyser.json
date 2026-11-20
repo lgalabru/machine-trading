@@ -1,0 +1,14 @@
+{
+  "libpath": "/home/sol/mtx/libmtx_geyser.so",
+  "mtx": {
+    "journal": "/home/sol/mtx/journal.jsonl",
+    "backfill_rpc_url": "http://127.0.0.1:8899",
+    "markets": [],
+    "control": {
+      "socket": "/home/sol/mtx/control.sock",
+      "state": "/home/sol/mtx/strategies.json",
+      "rpc_url": "http://127.0.0.1:8899",
+      "logs": "/home/sol/mtx/logs"
+    }
+  }
+}
