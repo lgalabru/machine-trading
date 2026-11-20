@@ -120,6 +120,14 @@ pub struct StrategyStatus {
     /// How long its last step took, from its slot reaching the runtime to
     /// its sheet signed and sent, in milliseconds.
     pub last_step_ms: Option<u64>,
+    /// Its orders so far: landed (in a shadow run, written down), and
+    /// failed or not sent, with the latest reason.
+    #[serde(default)]
+    pub sends_landed: u64,
+    #[serde(default)]
+    pub sends_failed: u64,
+    #[serde(default)]
+    pub last_send_error: Option<String>,
     /// The slot of its last step, and what it read there.
     pub last_slot: Option<u64>,
     pub position: Option<f64>,

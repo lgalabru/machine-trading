@@ -301,6 +301,9 @@ struct Stats {
     /// The slot its next step is due at.
     due: u64,
     last_step_ms: Option<u64>,
+    sends_landed: u64,
+    sends_failed: u64,
+    last_send_error: Option<String>,
     last_slot: Option<u64>,
     position: Option<f64>,
     pnl: Option<f64>,
@@ -458,6 +461,19 @@ impl Manager {
                     stats.steps += u64::from(answered);
                     stats.last_step_ms = Some(took_ms);
                     if let Some(market) = &market {
+                        // What became of the step before's orders, as this
+                        // step's market reports them.
+                        for send in &market.sends {
+                            match &send.state {
+                                mtx_kit::SendState::Landed(_) => stats.sends_landed += 1,
+                                mtx_kit::SendState::Failed { reason, .. }
+                                | mtx_kit::SendState::NotSent(reason) => {
+                                    stats.sends_failed += 1;
+                                    stats.last_send_error = Some(reason.clone());
+                                }
+                                mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => {}
+                            }
+                        }
                         stats.last_slot = Some(market.slot);
                         stats.position = Some(market.position.size);
                         stats.pnl = Some(market.pnl);
@@ -673,6 +689,9 @@ impl Manager {
                 skipped: 0,
                 due: 0,
                 last_step_ms: None,
+                sends_landed: 0,
+                sends_failed: 0,
+                last_send_error: None,
                 last_slot: None,
                 position: None,
                 pnl: None,
@@ -817,6 +836,9 @@ impl Manager {
                     max_drawdown: strategy.max_drawdown,
                     shadow: strategy.spec.shadow,
                     last_step_ms: stats.last_step_ms,
+                    sends_landed: stats.sends_landed,
+                    sends_failed: stats.sends_failed,
+                    last_send_error: stats.last_send_error,
                     steps: stats.steps,
                     skipped: stats.skipped,
                     last_slot: stats.last_slot,
