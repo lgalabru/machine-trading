@@ -12,6 +12,7 @@ use mtx_grader::{
     grade::{self, GradeOptions},
     keys::SessionKeys,
     scenario::Scenario,
+    session,
     wasm::{StepObserver, StepTrace},
 };
 use serde_json::{Value, json};
@@ -80,6 +81,8 @@ struct Watcher {
     /// Each step's slot, how many orders the strategy sent in it, and what
     /// the grader read for it.
     steps: Mutex<Vec<(u64, usize, Read)>>,
+    /// The runtime's `session` member, where the plugin plays the session.
+    session: Option<Value>,
 }
 
 impl Watcher {
@@ -102,6 +105,7 @@ impl StepObserver for Watcher {
                     "symbol": self.symbol,
                     "authority": authority,
                 }],
+                "session": self.session,
             },
         });
         std::fs::write(&config, manifest.to_string()).unwrap();
@@ -239,6 +243,7 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, trades: Trades) {
         symbol: scenario.symbol.clone(),
         trades,
         steps: Mutex::new(Vec::new()),
+        session: None,
     });
     grade::grade(GradeOptions {
         snapshot_dir: &snapshot,
@@ -259,6 +264,7 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, trades: Trades) {
         observer: Some(watcher.clone()),
         keys: &SessionKeys::random(),
         v2_sessions: false,
+        host: None,
     })
     .await
     .unwrap();
@@ -319,4 +325,139 @@ async fn the_plugin_reads_market_making_as_the_grader_does() {
         Trades::Makes,
     )
     .await;
+}
+
+/// Plays a session's turns through the plugin's runtime: connects to the
+/// socket it listens on and hands it the session's variables.
+struct PluginHost {
+    socket: PathBuf,
+}
+
+impl session::TurnHost for PluginHost {
+    fn connect(
+        &self,
+        env: &mtx_kit::BotEnv,
+        vars: &[(String, String)],
+    ) -> std::io::Result<std::os::unix::net::UnixStream> {
+        let mut stream = std::os::unix::net::UnixStream::connect(&self.socket)?;
+        let all: Vec<(String, String)> = env
+            .vars()
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), value))
+            .chain(vars.iter().cloned())
+            .collect();
+        mtx_core::turns::write_variables(&mut stream, &all)?;
+        Ok(stream)
+    }
+}
+
+/// Step 3 of `docs/rfd/0004`: the plugin's runtime hosts a reference in a
+/// session the grader only scores. It reads the market from
+/// its account cache, and sends through the bot's endpoint, as the grader
+/// would for the component. With the same keys, so the same world and the
+/// same seed, it makes what the grader makes hosting it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the built plugin and components"]
+async fn the_plugin_trades_a_flash_crash_as_the_grader_does() {
+    trades_as_the_grader_does(
+        "bench/tasks/flash-crash-spcx/reference",
+        "bench/tasks/flash-crash-spcx/environment/practice/practice-1.json",
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the built plugin and components"]
+async fn the_plugin_trades_market_making_as_the_grader_does() {
+    trades_as_the_grader_does(
+        "bench/tasks/market-making-spcx/reference",
+        "bench/tasks/market-making-spcx/environment/practice/practice-1.json",
+    )
+    .await;
+}
+
+async fn trades_as_the_grader_does(bot: &str, scenario: &str) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let plugin = PathBuf::from(
+        std::env::var("MTX_TEST_GEYSER_PLUGIN").expect("MTX_TEST_GEYSER_PLUGIN: the built plugin"),
+    );
+    let bot = root.join(bot);
+    let scenario = Scenario::load(&root.join(scenario)).unwrap();
+    let snapshot = root.join("snapshots/phoenix-spcx-2026-10-29");
+    let dir = std::env::temp_dir().join(format!(
+        "mtx-geyser-trades-{}-{}",
+        scenario.name,
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let keys = SessionKeys::random();
+    let grade = |observer: Option<Arc<dyn StepObserver>>,
+                 host: Option<Arc<dyn session::TurnHost>>,
+                 logs: PathBuf| {
+        let (snapshot, bot, scenario, keys) = (&snapshot, &bot, &scenario, &keys);
+        async move {
+            grade::grade(GradeOptions {
+                snapshot_dir: snapshot,
+                bot_dir: bot,
+                scenarios: std::slice::from_ref(scenario),
+                log_dir: &logs,
+                jobs: 1,
+                first_bot_user: 0,
+                reference_dir: None,
+                informed: None,
+                anchor_jobs: 1,
+                regimes: None,
+                stop_on_disqualify: false,
+                detail_dir: None,
+                annotations: None,
+                components_only: true,
+                trusted: true,
+                observer,
+                keys,
+                v2_sessions: false,
+                host,
+            })
+            .await
+            .unwrap()
+        }
+    };
+    let by_grader = grade(None, None, dir.join("grader")).await;
+    let socket = dir.join("sessions.sock");
+    let watcher = Arc::new(Watcher {
+        plugin,
+        dir: dir.clone(),
+        exchange: snapshot.join("exchange.json"),
+        symbol: scenario.symbol.clone(),
+        trades: Trades::Takes,
+        steps: Mutex::new(Vec::new()),
+        session: Some(json!({
+            "socket": socket,
+            "component": mtx_grader::wasm::component_in(&bot).expect("the built reference"),
+            "log": dir.join("strategy.log"),
+        })),
+    });
+    let by_plugin = grade(
+        Some(watcher),
+        Some(Arc::new(PluginHost { socket })),
+        dir.join("plugin"),
+    )
+    .await;
+    let (graded, hosted) = (
+        &by_grader.scenarios[0].session,
+        &by_plugin.scenarios[0].session,
+    );
+    assert!(!hosted.turns.legacy, "the runtime answered the hello");
+    assert_eq!(hosted.turns.overran, 0, "the runtime answered every turn");
+    assert!(graded.peak_position > 0.0, "the reference traded");
+    assert!(
+        hosted.refused_calls.is_empty(),
+        "{:?}",
+        hosted.refused_calls
+    );
+    assert_eq!(
+        (hosted.pnl_usd, hosted.peak_position, hosted.end_position),
+        (graded.pnl_usd, graded.peak_position, graded.end_position),
+        "the plugin's session against the grader's"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
 }
