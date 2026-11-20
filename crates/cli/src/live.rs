@@ -62,6 +62,14 @@ pub enum LiveCommand {
         /// Start stepping at once.
         #[arg(long)]
         run: bool,
+        /// When the enforcer finds the mandate broken, close the position
+        /// too, not only cancel the orders.
+        #[arg(long)]
+        close_on_breach: bool,
+        /// Step, plan and sign, and send nothing: what it would have sent
+        /// goes to `<name>.shadow.jsonl` in the runtime's logs.
+        #[arg(long)]
+        shadow: bool,
     },
     /// Pause a strategy, cancel its orders, end it and forget it.
     Remove { name: String },
@@ -75,10 +83,15 @@ pub fn run(socket: &Path, command: LiveCommand, json: bool) -> Result<()> {
     let reply = mtx_core::control::request(socket, &request)
         .with_context(|| format!("the runtime at {}", socket.display()))?;
     match reply {
-        Reply::Ok { strategies } => {
+        Reply::Ok { feed, strategies } => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&strategies)?);
+                let both = serde_json::json!({ "feed": feed, "strategies": strategies });
+                println!("{}", serde_json::to_string_pretty(&both)?);
             } else {
+                println!(
+                    "feed: slot {}, {} behind, {} dropped",
+                    feed.slot, feed.behind, feed.dropped
+                );
                 print!("{}", table(&strategies));
             }
             Ok(())
@@ -116,6 +129,8 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             symbol,
             slots_per_step,
             run,
+            close_on_breach,
+            shadow,
         } => Command::Add(AddStrategy {
             name,
             // The runtime reads these files itself, from its own directory.
@@ -126,6 +141,8 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             symbol,
             slots_per_step,
             run,
+            close_on_breach,
+            shadow,
         }),
         LiveCommand::Remove { name } => Command::Remove { name },
         LiveCommand::Kill => Command::Kill,
@@ -148,17 +165,19 @@ fn table(strategies: &[StrategyStatus]) -> String {
     }
     let number = |value: Option<f64>| value.map_or("-".to_string(), |v| format!("{v:.4}"));
     let mut out = format!(
-        "{:<16} {:<10} {:<8} {:>12} {:>12} {:>10} {:>8} {:>8}  why\n",
-        "name", "state", "market", "position", "pnl", "drawdown", "steps", "skipped"
+        "{:<16} {:<10} {:<8} {:>12} {:>12} {:>10} {:>8} {:>8} {:>8}  why\n",
+        "name", "state", "market", "position", "pnl", "drawdown", "steps", "skipped", "step ms"
     );
     for s in strategies {
-        let (state, why) = match &s.state {
-            StrategyState::Running => ("running", ""),
-            StrategyState::Paused { why } => ("paused", why.as_str()),
-            StrategyState::Stopped { why } => ("stopped", why.as_str()),
+        let (state, why) = match (&s.state, s.shadow) {
+            (StrategyState::Running, false) => ("running", ""),
+            (StrategyState::Running, true) => ("shadow", ""),
+            (StrategyState::Paused { why }, _) => ("paused", why.as_str()),
+            (StrategyState::Stopped { why }, _) => ("stopped", why.as_str()),
         };
+        let step_ms = s.last_step_ms.map_or("-".to_string(), |ms| ms.to_string());
         out.push_str(&format!(
-            "{:<16} {:<10} {:<8} {:>12} {:>12} {:>10} {:>8} {:>8}  {why}\n",
+            "{:<16} {:<10} {:<8} {:>12} {:>12} {:>10} {:>8} {:>8} {step_ms:>8}  {why}\n",
             s.name,
             state,
             s.symbol,
@@ -206,6 +225,8 @@ mod tests {
             authority: "k".into(),
             cap: 1.0,
             max_drawdown: 10.0,
+            shadow: false,
+            last_step_ms: Some(12),
             steps: 3,
             skipped: 1,
             last_slot: Some(9),
