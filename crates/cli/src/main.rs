@@ -42,6 +42,8 @@ mod charts;
 mod compact;
 #[cfg(feature = "generate")]
 mod gates;
+#[cfg(all(feature = "host", unix))]
+mod live;
 #[cfg(feature = "generate")]
 mod market_cal;
 #[cfg(feature = "generate")]
@@ -166,6 +168,20 @@ enum Command {
     )]
     #[command(subcommand)]
     Bot(BotCommand),
+    /// Control a live runtime while it runs: add, pause, resume and remove
+    /// strategies, change a mandate, or stop everything (`docs/rfd/0004`).
+    #[cfg(all(feature = "host", unix))]
+    Live {
+        /// The runtime's control socket (its configuration's
+        /// `control.socket`).
+        #[arg(long, env = "MTX_LIVE_SOCKET")]
+        socket: PathBuf,
+        /// Print the strategies as JSON.
+        #[arg(long)]
+        json: bool,
+        #[command(subcommand)]
+        command: live::LiveCommand,
+    },
     /// A workbench for a strategy and its scenarios, in the browser: edit
     /// the strategy, ask an agent to change it or the scenario, play it step
     /// by step against the market's chart.
@@ -1873,6 +1889,15 @@ async fn run() -> Result<()> {
                 open: !no_open,
             })
             .await?;
+            String::new()
+        }
+        #[cfg(all(feature = "host", unix))]
+        Command::Live {
+            socket,
+            json,
+            command,
+        } => {
+            live::run(&socket, command, json)?;
             String::new()
         }
         Command::Bot(command) => match command {
