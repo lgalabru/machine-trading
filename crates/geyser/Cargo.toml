@@ -1,0 +1,19 @@
+[package]
+name = "mtx-geyser"
+description = "The mtx runtime as a geyser plugin: what a validator sees, copied to the runtime's own thread (docs/rfd/0004-strategies-on-mainnet.md)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+# The plugin a validator (or surfpool) loads, and a library for its tests.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The plugin's ABI: a trait object crosses it, so this version and the Rust
+# toolchain must be the host's. Surfpool, as the workspace pins it, is on
+# this one.
+agave-geyser-plugin-interface = { version = "=4.3.2", default-features = false }
+mtx-core.workspace = true
+mtx-runtime = { workspace = true, features = ["live"] }
