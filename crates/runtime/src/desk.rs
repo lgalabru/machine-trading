@@ -117,6 +117,11 @@ pub trait StepObserver: Send + Sync {
     fn started(&self, session: &mtx_kit::Session, printed: &[String], failed: Option<&str>);
     /// After each step's orders are sent.
     fn step(&self, trace: &StepTrace);
+    /// Before the session locks its chain's cheatcodes, which is before the
+    /// bot starts: the chain's own RPC (its secret path included) and the
+    /// bot's key, base58. The last moment a tool can load a geyser plugin
+    /// into a session's surfnet.
+    fn before_lock(&self, _url: &str, _authority: &str) {}
     /// Before the bot starts: the session's own RPC (its secret path
     /// included), for a tool that shows its transactions in an explorer.
     fn rpc(&self, _url: &str) {}
