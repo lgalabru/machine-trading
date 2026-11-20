@@ -283,6 +283,7 @@
   .quote:not(.multi) { align-items: baseline; padding-top: 22px; }
   .quote .big { font: 600 42px/1 Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
   .quote .chg { font: 600 15px var(--mono); }
+  .quote .unit { font: 500 15px Inter, ui-sans-serif, system-ui, sans-serif; color: var(--text-3); }
   .quote .chg.up { color: var(--up); } .quote .chg.down { color: var(--down); }
   .quote-sub { color: var(--text-3); font-size: 12px; height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .quote-sub .key { display: inline-flex; align-items: center; gap: 6px; margin-left: 14px; }
@@ -734,6 +735,25 @@ const ci90 = (xs) => {
 };
 const ciText = (ci) => ci ? `${fix(ci[0], 1)}–${fix(ci[1], 1)}×` : "";
 const sum = (xs) => xs.filter(isNum).reduce((a, b) => a + b, 0);
+// The value at quantile `q` of numbers already sorted, between neighbours.
+const quantile = (sorted, q) => {
+  if (!sorted.length) return null;
+  const at = (sorted.length - 1) * q, lo = Math.floor(at), hi = Math.ceil(at);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (at - lo);
+};
+// How a bot's PnL is spread over its scenarios: a total grows with the
+// number of scenarios and hides whether it came from many small wins or two
+// large ones, so the page leads with the mean and shows the spread.
+const spread = (xs) => {
+  const v = xs.filter(isNum).sort((a, b) => a - b);
+  if (!v.length) return null;
+  return {
+    n: v.length, mean: mean(v), total: sum(v), won: v.filter((x) => x > 0).length,
+    min: v[0], p10: quantile(v, 0.1), p25: quantile(v, 0.25), median: quantile(v, 0.5),
+    p75: quantile(v, 0.75), p90: quantile(v, 0.9), max: v.at(-1),
+  };
+};
+const perScenario = (x, d = 0) => isNum(x) ? `${susd(x, d)} a scenario` : "–";
 
 // ---------- tooltip ----------
 const tip = document.getElementById("tip");
@@ -1208,10 +1228,9 @@ function equity(taskName) {
   for (const t of graded) { const k = t.eval_seed_sha256 || "?"; bySeed.set(k, [...(bySeed.get(k) || []), t]); }
   let set = []; for (const v of bySeed.values()) if (v.length > set.length) set = v;
   const sessions = [...new Set(set.flatMap((t) => Object.keys(t.pnls)))].sort(naturalCmp);
-  const curve = (ts, key) => {
-    let acc = 0;
-    return [0, ...sessions.map((s) => { acc += mean(ts.map((t) => t[key]?.[s])) ?? 0; return acc; })];
-  };
+  // Each scenario's PnL, the mean over the runs given; and its running total.
+  const each = (ts, key) => sessions.map((s) => mean(ts.map((t) => t[key]?.[s])) ?? 0);
+  const curve = (per) => { let acc = 0; return [0, ...per.map((y) => (acc += y))]; };
   const models = modelOrder.map((m) => {
     const all = index.trials.filter((t) => t.task === taskName && t.model === m);
     const mine = set.filter((t) => t.model === m);
@@ -1221,10 +1240,12 @@ function equity(taskName) {
       skill: mean(mine.map(scoreOf)),
       ci: ci90(mine.map(scoreOf)),
       cost: fullCost(all),
-      curve: mine.length ? curve(mine, "pnls") : null,
+      per: mine.length ? each(mine, "pnls") : null,
+      curve: mine.length ? curve(each(mine, "pnls")) : null,
     };
   }).filter((r) => r.trials);
-  return { sessions, models, reference: set.length ? curve(set, "reference_pnls") : null };
+  const referencePer = set.length ? each(set, "reference_pnls") : null;
+  return { sessions, models, referencePer, reference: referencePer ? curve(referencePer) : null };
 }
 const compactUsd = (x) => (x > 0 ? "+" : x < 0 ? "−" : "") + "$" + compact(Math.abs(x));
 const trend = (x) => isNum(x) ? (x >= 0 ? "up" : "down") : "";
@@ -1271,10 +1292,10 @@ function renderHero() {
       ${ranked.map((m) => {
         const last = m.curve?.at(-1);
         return `<div class="row ${picked.includes(m.model) ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}" title="Click to show; ⌘-click to add or remove">
-          <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `${susd(last, 0)} · cost ${usd(m.cost, 0)}` : m.running ? `${m.running} running` : "not graded"}</div></div>
+          <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `<span title="total ${susd(last, 0)} over ${eq.sessions.length} scenarios">${perScenario(last / (eq.sessions.length || 1))}</span> · cost ${usd(m.cost, 0)}` : m.running ? `${m.running} running` : "not graded"}</div></div>
           ${sparkline(m.curve)}
           ${isNum(m.skill) ? `<div class="chip ${atRef(m.skill, v2) ? "up" : "down"}" title="${v2 ? "score (scoring v2): 0 doing nothing, 0.5 the reference, 1 the informed bot" : "skill: PnL over the reference's"}, mean of ${m.graded} attempt${m.graded > 1 ? "s" : ""}${m.ci ? `; 90% interval ${ciText(m.ci)}` : ""}">${fmtScore(m.skill, v2)}</div>`
-            : `<div class="chip ${trend(last)}" title="PnL">${isNum(last) ? compactUsd(last) : "–"}</div>`}
+            : `<div class="chip ${trend(last)}" title="mean PnL a scenario">${isNum(last) ? compactUsd(last / (eq.sessions.length || 1)) : "–"}</div>`}
         </div>`;
       }).join("") || `<div class="muted">No trials yet.</div>`}
       <div class="watch-hint">⌘-click to compare models</div>
@@ -1301,19 +1322,23 @@ function renderHero() {
   const last = eq.sessions.length;
   const legendRef = eq.reference ? `<span class="key"><svg width="18" height="6"><line x1="0" x2="18" y1="3" y2="3" stroke="#8e8e93" stroke-dasharray="4 3"/></svg>reference</span>` : "";
   const where = (i) => i === last ? `over ${last} hidden scenario${last > 1 ? "s" : ""}` : i === 0 ? "before the first scenario" : `after <b>${esc(eq.sessions[i - 1])}</b> (${i} of ${last})`;
-  // The quote: one model's PnL so far, large; several side by side.
+  // The quote: one model's mean PnL a scenario so far, large; several side
+  // by side. The mean reads the same whatever the set's size; the total is
+  // beside it, smaller.
+  const soFar = (y, i) => i ? y / i : 0;
   const quote = (i) => {
     const r = eq.reference?.[i];
-    const vs = (y) => { const d = isNum(r) ? y - r : null; return !isNum(d) ? "" : Math.abs(d) < 0.5 ? `<span class="chg">matches the reference</span>` : `<span class="chg ${trend(d)}">${susd(d, 0)} vs reference</span>`; };
+    const vs = (y) => { const d = isNum(r) ? soFar(y - r, i) : null; return !isNum(d) ? "" : Math.abs(d) < 0.5 ? `<span class="chg">matches the reference</span>` : `<span class="chg ${trend(d)}">${susd(d, 0)} vs reference</span>`; };
+    const won = (m) => i === last && m.per ? ` · made money in <b>${m.per.filter((y) => y > 0).length} of ${last}</b>` : "";
     if (shown.length === 1) {
       const m = shown[0];
       quoteEl.className = "quote";
-      quoteEl.innerHTML = `<span class="big">${susd(m.curve[i], 0)}</span>${vs(m.curve[i])}`;
-      sub.innerHTML = `<b>${esc(shortModel(m.model))}</b> · cumulative PnL ${where(i)}${i === last && isNum(m.skill) ? ` · skill <b>${times(m.skill)}</b>` : ""}${i !== last && isNum(r) ? ` · reference ${susd(r, 0)}` : ""}${legendRef}`;
+      quoteEl.innerHTML = `<span class="big">${susd(soFar(m.curve[i], i), 0)}</span><span class="unit">a scenario</span>${vs(m.curve[i])}`;
+      sub.innerHTML = `<b>${esc(shortModel(m.model))}</b> · mean PnL ${where(i)}${won(m)} · total ${susd(m.curve[i], 0)}${i === last && isNum(m.skill) ? ` · skill <b>${times(m.skill)}</b>` : ""}${i !== last && isNum(r) ? ` · reference ${perScenario(soFar(r, i))}` : ""}${legendRef}`;
     } else {
       quoteEl.className = "quote multi";
-      quoteEl.innerHTML = shown.map((m) => `<div class="q"><div class="qn"><span class="sw" style="background:${modelColor(m.model)}"></span>${esc(shortModel(m.model))}</div><span class="mid">${susd(m.curve[i], 0)}</span>${vs(m.curve[i])}</div>`).join("");
-      sub.innerHTML = `cumulative PnL ${where(i)}${isNum(r) ? ` · reference ${susd(r, 0)}` : ""}${legendRef}`;
+      quoteEl.innerHTML = shown.map((m) => `<div class="q"><div class="qn"><span class="sw" style="background:${modelColor(m.model)}"></span>${esc(shortModel(m.model))}</div><span class="mid">${susd(soFar(m.curve[i], i), 0)}</span>${vs(m.curve[i])}</div>`).join("");
+      sub.innerHTML = `mean PnL a scenario ${where(i)}${isNum(r) ? ` · reference ${perScenario(soFar(r, i))}` : ""} · the chart is the running total${legendRef}`;
     }
   };
   quote(last);
@@ -1482,6 +1507,17 @@ function renderOverview() {
   const chipFor = (v, ci, v2) => isNum(v) ? `<span class="delta ${atRef(v, v2) ? "up" : "down"}">${fmtScore(v, v2)}</span>${ci ? `<div class="muted ci">${ciText(ci)}</div>` : ""}` : `<span class="muted">–</span>`;
   div(`<table class="cmp-table lb"><thead><tr><th>Model</th>${index.tasks.map((t) => `<th class="num">${esc(taskTitle(t.short))}</th>`).join("")}<th class="num">Mean</th></tr></thead><tbody>${rows.map((r) => `<tr><td><span class="sw" style="background:${modelColor(r.model)}"></span>${esc(shortModel(r.model))}</td>${r.per.map((v, i) => `<td class="num cell" data-task="${esc(index.tasks[i].name)}">${chipFor(v, r.cis[i], v2s[i])}</td>`).join("")}<td class="num">${chipFor(r.mean, null, v2s[0])}</td></tr>`).join("")}</tbody></table>`, "cmp-card");
   app.querySelectorAll("td.cell").forEach((td) => td.addEventListener("click", () => { location.hash = taskHref(td.dataset.task); }));
+  // Each model's PnL scenario by scenario, per task: a box per model, in
+  // dollars on the task's own axis. Dollars never compare across tasks.
+  section("Scenario by scenario", "each model's PnL on a hidden scenario, the mean over its attempts: the box holds the middle half of its scenarios, the tick is the median, the dot the mean, the whiskers the 10th to 90th percentile");
+  const strips = div("", "pareto");
+  for (const t of index.tasks) {
+    const eq = equity(t.name);
+    const cardEl = div(`<div class="k">${esc(taskTitle(t.short))}<span class="muted">${eq.sessions.length} scenarios · USD a scenario</span></div>`, "ins-card", strips);
+    cardEl.style.cursor = "pointer";
+    cardEl.addEventListener("click", () => { location.hash = taskHref(t.name); });
+    spreadChart(cardEl, eq);
+  }
   // Cost against skill, per task: which models are worth what they cost.
   section("Skill for the money", "each model's mean skill against its mean agent cost per run; the line is the frontier: no model is both cheaper and better");
   // A model is drawn only with a cost for every one of its runs; a frontier
@@ -1505,10 +1541,49 @@ function renderOverview() {
   }
   section("How bots are judged");
   div([
-    `<div class="card"><div class="k">The score is PnL</div><p><b>skill</b> is a bot's total PnL over the hidden set divided by the reference bot's on the same scenarios. <b>reward</b> divides it by a hindsight bound no bot reaches.</p></div>`,
+    `<div class="card"><div class="k">The score is PnL</div><p><b>skill</b> is a bot's total PnL over the hidden set divided by the reference bot's on the same scenarios. <b>reward</b> divides it by a hindsight bound no bot reaches. Dollar figures on these pages are the mean a scenario; totals are in the tooltips.</p></div>`,
     `<div class="card"><div class="k">Risk is a set of limits</div><p>One market, a position cap and a loss limit, checked every step, plus standard RPC only and no liquidation at the end. One breach in any scenario scores 0.</p></div>`,
     `<div class="card"><div class="k">Reported, not scored</div><p>Worst scenario, tail loss, max drawdown, profitable share and Sharpe, per run. Too noisy over a few dozen scenarios to weigh into a score.</p></div>`,
   ].join(""), "ov-judge");
+}
+
+// A box per model of its PnL over a task's scenarios, best mean first, the
+// reference last: who is steadily good, who is lucky, who has a bad tail.
+// Whiskers stop at the 10th and 90th percentile, so two extreme scenarios
+// don't squash every box; the tooltip has the worst and the best.
+function spreadChart(host, eq) {
+  const rows = eq.models.filter((m) => m.per).map((m) => ({ label: shortModel(m.model), color: modelColor(m.model), s: spread(m.per) }))
+    .filter((r) => r.s).sort((a, b) => b.s.mean - a.s.mean);
+  if (!rows.length) { host.insertAdjacentHTML("beforeend", `<div class="muted">Nothing graded yet.</div>`); return; }
+  const ref = eq.referencePer && spread(eq.referencePer);
+  if (ref) rows.push({ label: "reference", color: "#8e8e93", s: ref, reference: true });
+  const W = 420, ROW = 26, L = 118, R = 62, T = 6, B = 22, H = T + rows.length * ROW + B;
+  let x0 = Math.min(0, ...rows.map((r) => r.s.p10)), x1 = Math.max(0, ...rows.map((r) => r.s.p90));
+  const pad = (x1 - x0) * 0.06 || 1; x0 -= pad; x1 += pad;
+  const sx = (x) => L + (x - x0) / (x1 - x0) * (W - L - R);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "pareto-svg" }, host);
+  for (const v of ticks(x0, x1, 4)) {
+    if (v < x0 || v > x1) continue;
+    el("line", { x1: sx(v), x2: sx(v), y1: T, y2: H - B, stroke: v === 0 ? "#8e8e93" : "#2c2c2e", "stroke-dasharray": v === 0 ? "4 4" : null, opacity: v === 0 ? 0.7 : 1 }, svg);
+    el("text", { x: sx(v), y: H - 7, "text-anchor": "middle", class: "ylab" }, svg).textContent = usd(v, 0);
+  }
+  rows.forEach((r, i) => {
+    const y = T + i * ROW + ROW / 2, s = r.s;
+    el("text", { x: 0, y: y + 4, class: "plab", opacity: r.reference ? 0.7 : 1 }, svg).textContent = r.label;
+    el("line", { x1: sx(s.p10), x2: sx(s.p90), y1: y, y2: y, stroke: r.color, "stroke-width": 1.5, opacity: 0.8 }, svg);
+    el("rect", { x: sx(s.p25), y: y - 6, width: Math.max(2, sx(s.p75) - sx(s.p25)), height: 12, rx: 3, fill: r.color, "fill-opacity": 0.28, stroke: r.color, "stroke-width": 1.2, "stroke-dasharray": r.reference ? "3 2" : null }, svg);
+    el("line", { x1: sx(s.median), x2: sx(s.median), y1: y - 7, y2: y + 7, stroke: "#fff", "stroke-width": 2 }, svg);
+    el("circle", { cx: sx(s.mean), cy: y, r: 3, fill: r.color, stroke: "#000", "stroke-width": 1 }, svg);
+    el("text", { x: W, y: y + 4, "text-anchor": "end", class: "ylab" }, svg).textContent = susd(s.mean, 0);
+    // The whole row answers the pointer, not only its thin marks.
+    const hit = el("rect", { x: 0, y: y - ROW / 2, width: W, height: ROW, fill: "transparent" }, svg);
+    hit.addEventListener("mousemove", (ev) => showTip(`<b>${esc(r.label)}</b>
+      <div>mean ${perScenario(s.mean, 2)} · median ${susd(s.median, 2)}</div>
+      <div>middle half ${susd(s.p25, 0)} to ${susd(s.p75, 0)} · 10th to 90th ${susd(s.p10, 0)} to ${susd(s.p90, 0)}</div>
+      <div>worst ${susd(s.min, 0)} · best ${susd(s.max, 0)}</div>
+      <div class="muted">made money in ${s.won} of ${s.n} scenarios · total ${susd(s.total, 0)}</div>`, ev));
+    hit.addEventListener("mouseleave", hideTip);
+  });
 }
 
 // Points by cost (x) and skill (y), the frontier stepped through the ones
@@ -1606,7 +1681,8 @@ function renderGrid(host, task, trials, eq, sel) {
     const style = kind === "ref" ? (gridMode === "vs" ? (isNum(v) ? "background:#3a3a3c" : "") : paint(v)) : paint(value(v, i));
     return `<i data-c="${i}" data-k="${kind}"${id !== undefined ? ` data-t="${id}"` : ""} class="${names[i] === sel ? "sel" : ""} ${isNum(v) ? "" : "na"}" style="${style}"></i>`;
   }).join("")}</div>`;
-  const nums = (skill, pnl, cost, time) => `<span class="num">${times(skill)}</span><span class="num ${cls(pnl)}">${susd(pnl, 0)}</span><span class="num muted">${usd(cost, 0)}</span><span class="num muted">${dur(time)}</span>`;
+  // PnL is the mean a scenario, with the total in its tooltip.
+  const nums = (skill, pnl, cost, time, count = n) => `<span class="num">${times(skill)}</span><span class="num ${cls(pnl)}" title="${isNum(pnl) ? `total ${susd(pnl, 0)} over ${count} scenarios` : ""}">${isNum(pnl) && count ? susd(pnl / count, 0) : "–"}</span><span class="num muted">${usd(cost, 0)}</span><span class="num muted">${dur(time)}</span>`;
   let prev = null;
   const rows = runs.map((t) => {
     const first = t.model !== prev; prev = t.model;
@@ -1616,7 +1692,7 @@ function renderGrid(host, task, trials, eq, sel) {
       : strip(names.map((s) => t.pnls?.[s]), "run", t.id);
     return `<div class="g-row run ${first ? "first" : ""} ${picked.has(t.model) ? "picked" : ""}" data-run="${t.id}" style="--mc:${modelColor(t.model)}">
       <a class="g-name" href="${link({ task: task.name, run: t.id, session: sel })}"><span class="sw"></span><b>${esc(shortModel(t.model))}</b><span class="run-n">#${attemptOf(t)}</span>${t.status === "pending" ? light("pending", "running") : ""}${t.disqualified ? `<span class="badge bad">DQ</span>` : ""}${t.exception?.type === "AgentTimeoutError" ? `<span class="limit" title="The agent used its whole time limit; the bot in /app/bot when time ran out was graded.">⏱</span>` : ""}</a>
-      ${nums(t.skill, t.pnl_usd, t.cost_usd, span(t.agent_execution))}${state}</div>`;
+      ${nums(t.skill, t.pnl_usd, t.cost_usd, span(t.agent_execution), Object.keys(t.pnls || {}).length)}${state}</div>`;
   }).join("") + queued.map((r) => `<div class="g-row run queued" style="--mc:${modelColor(r.model)}"><span class="g-name"><span class="sw"></span><b>${esc(shortModel(r.model))}</b><span class="run-n">#${r.k}</span></span><span></span><span></span><span></span><span></span><div class="strip-note">queued</div></div>`).join("");
   const refRow = set.size ? `<div class="g-row ref"><span class="g-name"><span class="sw dash"></span>reference</span>${nums(1, sum(ref), null, null)}${strip(ref, "ref")}</div>` : "";
   // Session numbers along the top: a few, and the one under the pointer.
@@ -1626,7 +1702,7 @@ function renderGrid(host, task, trials, eq, sel) {
     <div class="g-top"><div><h2>Runs × scenarios</h2><div class="muted">A run is one model's attempt at the task: its agent writes a bot once, and the bot is graded on each of the ${n} hidden scenarios every run shares.</div></div>
       <div class="seg sm" title="what a cell's color shows">${[["vs", "vs reference"], ["pnl", "PnL"]].map(([k, l]) => `<a href="javascript:void 0" data-mode="${k}" class="${gridMode === k ? "on" : ""}">${l}</a>`).join("")}</div></div>
     <div class="g-grid">
-      <div class="g-row g-head"><span class="g-name">Run</span><span>Skill</span><span>PnL</span><span>Cost</span><span>Time</span>${n ? axis : `<span class="muted">no graded scenarios yet</span>`}</div>
+      <div class="g-row g-head"><span class="g-name">Run</span><span>Skill</span><span title="mean PnL a scenario">PnL / scn</span><span>Cost</span><span>Time</span>${n ? axis : `<span class="muted">no graded scenarios yet</span>`}</div>
       ${rows}${refRow}
     </div>
     <div class="g-foot"><span><i class="lg up"></i>${gridMode === "vs" ? "beat the reference" : "made money"}</span><span><i class="lg down"></i>${gridMode === "vs" ? "trailed it" : "lost money"}</span>${runs.some((t) => t.exception?.type === "AgentTimeoutError") ? `<span class="limit">⏱ used its whole time limit; its bot was graded as it stood</span>` : ""}<span class="muted">a row opens the run · a column replays the scenario for every run · a cell, one run's scenario</span></div>
@@ -2143,11 +2219,14 @@ function highlight(text, lang) {
 // The run's numbers in one line under its title.
 function runStats(t, trial) {
   const item = (k, v, d) => `<div class="rs"><div class="rs-k">${esc(k)}</div><div class="rs-v">${v}</div>${d ? `<div class="rs-d">${d}</div>` : ""}</div>`;
-  const vsRef = isNum(t.pnl_usd) && isNum(t.reference_pnl_usd) ? t.pnl_usd - t.reference_pnl_usd : null;
+  // PnL is the mean a scenario: a total grows with the set's size.
+  const won = spread(Object.values(t.pnls || {}));
+  const scenarios = won?.n || t.sessions || 0;
+  const vsRef = isNum(t.pnl_usd) && isNum(t.reference_pnl_usd) && scenarios ? (t.pnl_usd - t.reference_pnl_usd) / scenarios : null;
   const r = t.risk || {};
   return `<div class="runstats">
     ${item("Skill", `<span class="${isNum(t.skill) ? (Math.round(t.skill * 100) >= 100 ? "pos" : "neg") : ""}">${times(t.skill)}</span>`, `reward ${fix(t.reward, 4)}`)}
-    ${item("PnL", `<span class="${cls(t.pnl_usd)}">${susd(t.pnl_usd)}</span>`, t.disqualified ? `<span class="neg">${t.disqualified} disqualifying</span>` : isNum(vsRef) ? `vs ref <span class="${Math.abs(vsRef) < 0.005 ? "" : cls(vsRef)}">${Math.abs(vsRef) < 0.005 ? "even" : susd(vsRef)}</span>` : "")}
+    ${item("PnL a scenario", `<span class="${cls(t.pnl_usd)}" title="total ${susd(t.pnl_usd)} over ${scenarios} scenarios">${scenarios ? susd(t.pnl_usd / scenarios) : susd(t.pnl_usd)}</span>`, t.disqualified ? `<span class="neg">${t.disqualified} disqualifying</span>` : isNum(vsRef) ? `vs ref <span class="${Math.abs(vsRef) < 0.005 ? "" : cls(vsRef)}">${Math.abs(vsRef) < 0.005 ? "even" : susd(vsRef)}</span>${won ? ` · won ${won.won} of ${won.n}` : ""}` : "")}
     ${item("Worst scenario", susd(r.worst_pnl_usd), `drawdown ${usd(r.max_drawdown_usd, 0)} · Sharpe ${fix(r.sharpe)}`)}
     ${item("Agent", dur(span(t.agent_execution)), `${usd(t.cost_usd)} · ${compact(t.tokens?.output)} tokens out`)}
   </div>`;
