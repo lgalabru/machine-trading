@@ -67,6 +67,8 @@ pub struct FeedSender {
     dropped: Arc<AtomicU64>,
     /// Events handed to the runtime so far.
     sent: Arc<AtomicU64>,
+    /// The newest slot the chain told of.
+    notified_slot: Arc<AtomicU64>,
 }
 
 impl FeedSender {
@@ -79,6 +81,9 @@ impl FeedSender {
     /// event is dropped and counted. A runtime that stopped takes nothing,
     /// and that isn't a loss.
     pub fn send(&self, event: FeedEvent) {
+        if let FeedEvent::Slot { slot, .. } = &event {
+            self.notified_slot.fetch_max(*slot, Ordering::Release);
+        }
         match self.events.try_send(event) {
             Ok(()) => {
                 self.sent.fetch_add(1, Ordering::Release);
@@ -106,6 +111,10 @@ pub struct FeedProgress {
     sent: Arc<AtomicU64>,
     applied: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
+    /// The newest slot the chain told of, and the newest the runtime has
+    /// applied.
+    notified_slot: Arc<AtomicU64>,
+    applied_slot: Arc<AtomicU64>,
 }
 
 /// How often [`FeedProgress::settle`] looks again.
@@ -116,6 +125,15 @@ impl FeedProgress {
     /// be stale, and nothing read from it should be traded on.
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// How many slots the runtime is behind what the chain told of: the
+    /// slots still waiting in the feed. A runtime that far behind reads a
+    /// market that has moved on.
+    pub fn slots_behind(&self) -> u64 {
+        self.notified_slot
+            .load(Ordering::Acquire)
+            .saturating_sub(self.applied_slot.load(Ordering::Acquire))
     }
 
     /// Wait until the runtime has applied every event handed to the feed
@@ -150,6 +168,14 @@ impl FeedReceiver {
         self.progress.applied.fetch_add(1, Ordering::Release);
     }
 
+    /// Say a slot event for `slot` is applied: the runtime has caught up
+    /// with the chain that far.
+    pub fn applied_slot(&self, slot: u64) {
+        self.progress
+            .applied_slot
+            .fetch_max(slot, Ordering::Release);
+    }
+
     /// A handle on how far the runtime has got, for another thread.
     pub fn progress(&self) -> FeedProgress {
         self.progress.clone()
@@ -162,12 +188,14 @@ pub fn channel(watch: Arc<Watch>) -> (FeedSender, FeedReceiver) {
     let (sender, receiver) = sync_channel(FEED_EVENTS_MAX);
     let dropped = Arc::new(AtomicU64::new(0));
     let sent = Arc::new(AtomicU64::new(0));
+    let notified_slot = Arc::new(AtomicU64::new(0));
     (
         FeedSender {
             events: sender,
             watch,
             dropped: dropped.clone(),
             sent: sent.clone(),
+            notified_slot: notified_slot.clone(),
         },
         FeedReceiver {
             events: receiver,
@@ -176,6 +204,8 @@ pub fn channel(watch: Arc<Watch>) -> (FeedSender, FeedReceiver) {
                 sent,
                 applied: Arc::new(AtomicU64::new(0)),
                 dropped,
+                notified_slot,
+                applied_slot: Arc::new(AtomicU64::new(0)),
             },
         },
     )
@@ -293,6 +323,24 @@ mod tests {
         // A third, not applied: not settled.
         sender.send(FeedEvent::Account(write(1, 3, 0, 3)));
         assert!(!progress.settle(std::time::Duration::from_millis(5)));
+    }
+
+    #[test]
+    fn a_runtime_behind_the_chain_knows_by_how_many_slots() {
+        let (sender, receiver) = channel(Arc::new(Watch::default()));
+        let progress = receiver.progress();
+        let slot = |slot| FeedEvent::Slot {
+            slot,
+            parent: None,
+            status: SlotStatus::Processed,
+        };
+        sender.send(slot(10));
+        sender.send(slot(14));
+        assert_eq!(progress.slots_behind(), 14);
+        receiver.applied_slot(10);
+        assert_eq!(progress.slots_behind(), 4);
+        receiver.applied_slot(14);
+        assert_eq!(progress.slots_behind(), 0);
     }
 
     #[test]

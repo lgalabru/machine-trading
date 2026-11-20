@@ -5543,6 +5543,7 @@ name = "mtx-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes 1.12.1",
  "mtx-core",
  "mtx-kit",
  "phoenix-rise",
@@ -5552,16 +5553,23 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "solana-account 4.7.0",
+ "solana-commitment-config",
  "solana-keypair",
  "solana-pubkey 4.3.0",
+ "solana-rpc-client",
  "solana-rpc-client-api",
  "solana-signer",
+ "solana-system-interface 3.3.0",
+ "solana-tpu-client-next",
  "solana-transaction 4.3.0",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-stream",
+ "tokio-util 0.7.20",
  "tracing",
  "wasmtime",
  "wasmtime-wasi",
+ "wincode",
 ]
 
 [[package]]
@@ -11035,6 +11043,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-util 0.7.20",
+ "tracing",
 ]
 
 [[package]]
