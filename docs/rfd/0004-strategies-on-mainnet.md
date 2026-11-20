@@ -371,6 +371,10 @@ come out the same to the cent before and after.
   step answer a write), so: oracle and position natively now, mark and
   top of book through Hawkeye until Phoenix's logic is in hand, and
   Hawkeye kept afterwards as a sampled check on the decoders.
+  Narrower again after sampling mainnet (the last entry below): the
+  position is in the active trader buffer, which has a public decoder,
+  and the top of book follows from the splines except when two of them
+  lock or cross.
 - **A session with no end.** `steps`, `steps_left`, `slots_left` and `last`
   assume a term. A long-lived strategy needs either a rolling term (a
   mandate renewed each day, a restart at each renewal) or `u64::MAX`.
@@ -500,3 +504,35 @@ come out the same to the cent before and after.
   (`crates/runtime/src/venue`), through `ChainClient::get_account`: a
   `ChainClient` over the cache serves them, and is step 3's first piece.
   Not checked: the plugin on Linux (CI will), and in a real validator.
+- 2026-11-20: the perp's inputs, on mainnet. Hawkeye's `view_bbo` names
+  every account it reads: the global config, the global trader index, the
+  active trader buffer, the perp asset map, the orderbook and the spline
+  collection. No trader account: a maker's live position is in the active
+  trader buffer, keyed by its node in the trader index. So the function we
+  are after has six inputs, and the plugin can watch all six.
+  `crates/grader/examples/phoenix_sample.rs` takes samples from a node:
+  one simulation returns the view and those accounts as the same bank
+  held them. Three things from 87 samples of SOL on mainnet:
+  - **The two accounts have public decoders.**
+    `cosmic-phoenix-eternal-types` 0.1.4 (Apache-2.0, vendored from
+    Phoenix's types for the Cinder terminal,
+    `github.com/cosmic-markets/cinder`) reads the trader index and the
+    active trader buffer as red-black trees. It gave every maker's
+    position in every sample. So a maker's position is native after all,
+    from the buffer, and the fill events are a second source.
+    `phoenix-rise` is at 0.10.2 on crates.io; we are on 0.6.15.
+  - **Mid plus or minus the region's start offset is right when the
+    splines don't meet.** Taking each live region's first tick, the best
+    bid and ask over the splines and the orderbook equal the view in 58
+    samples of 87. On mainnet the makers' mids differ by a tick or two,
+    unlike the bench's, where every spline sits on the oracle.
+  - **All 29 misses are two splines locked (25) or crossed (4).** One
+    maker's best bid is at or above another's best ask. The view then
+    shows a book one tick wide, hiding one of the two quotes: the ask in
+    most, the bid in some. Which one isn't the smaller, the older or the
+    one further from the mark, as far as these samples say. Cinder trims
+    such books by a heuristic of its own, on depth.
+  What is left to find is that one rule. Next: more samples with every
+  region kept, `view_order_quote` for the price a small order would get on
+  each side, and the same on a surfnet where a spline can be edited and
+  the view asked again.
