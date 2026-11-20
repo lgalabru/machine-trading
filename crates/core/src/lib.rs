@@ -31,8 +31,10 @@
 //! | [`turns`] | The `mtx-turn-1` protocol |
 //! | [`feed`] | What a chain tells a host as it happens: account writes, slots, blocks |
 //! | [`session`] | What a host measures of a session: the account, the trades, each send's fate |
+//! | [`control`] | The commands a live runtime takes while it runs, and its answers |
 
 pub mod asset;
+pub mod control;
 mod error;
 pub mod feed;
 pub mod fill;
