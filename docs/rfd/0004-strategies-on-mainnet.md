@@ -319,7 +319,8 @@ come out the same to the cent before and after.
    what it earns when the grader hosts it. Done (what we learned).
 4. **Control.** The socket, `mtx live`, persistence, the enforcer's pause.
    Check on a surfnet forked from mainnet, running in real time: add,
-   pause, change a mandate, kill, restart.
+   pause, change a mandate, kill, restart. Done on the bench's snapshot
+   in real time (what we learned); a fork of mainnet is step 6's.
 5. **TPU.** The sender, against `solana-test-validator` and then devnet:
    leader tracking from geyser slots, warm connections, a transfer landed
    without RPC. Check: the slot a send lands in, against the slot it was
@@ -619,3 +620,33 @@ come out the same to the cent before and after.
   the cent in both. Steps come from the grader's turns here; on mainnet
   they come from the slots, which is step 4's scheduler with the control
   socket.
+- 2026-11-20: step 4, control (astra). With a `control` member in its
+  configuration the runtime runs strategies on its own
+  (`mtx_runtime::live::strategies`):
+  - **Steps on slots.** The feed's loop reports each new slot on a
+    channel. A running strategy steps once `slots_per_step` slots have
+    passed since its last step. If its previous step still holds it, the
+    step is skipped and counted, never queued.
+  - **Commands.** `mtx live status | pause [--keep-orders | --flatten] |
+    resume | mandate | add | remove | kill` sends one JSON line to the
+    runtime's Unix socket and prints every strategy after the command
+    (`mtx_core::control`). A command that needs a strategy waits for its
+    step to end. A new mandate restarts the strategy (`end`, then
+    `start`), paused or running as it was, as decided above.
+  - **The desired state** (each strategy's spec, its component's SHA-256,
+    and whether it runs) is rewritten on every change, beside the file
+    and renamed over it. At load the runtime restarts each one; one whose
+    component changed since is kept stopped, with the reason.
+  - **The enforcer**, so far: a drawdown past the mandate's limit pauses
+    the strategy and cancels its orders, and a feed that dropped events
+    pauses every strategy. Not yet: `Mandate::audit` over the fills, the
+    forced close, a wall deadline for a step, and pausing on a feed that
+    fell behind the tip.
+  `crates/grader/tests/live_control.rs` loads the plugin into the bench
+  snapshot's surfnet with its clock running, the market kept moving by a
+  scenario, and drives it through `mtx_core::control`. A strategy is
+  added running and steps; paused, it takes no step; a new mandate
+  restarts it with the new cap; resumed, it steps again; a second is
+  added paused. The plugin is then unloaded and loaded again, and both
+  come back as they were. Then the kill switch pauses both, and a removed
+  strategy stays gone after another restart.
