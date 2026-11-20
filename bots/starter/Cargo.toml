@@ -13,5 +13,8 @@ publish = false
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
+# `mtx_kit::features` and `mtx_kit::trees` need no feature. Add "candle" for
+# small neural networks (`mtx_kit::candle`, `mtx_kit::nn`); it is off here
+# because it adds about 1 MB to the component.
 [dependencies]
 mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component", "venue"] }
