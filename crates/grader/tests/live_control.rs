@@ -41,7 +41,7 @@ const SYMBOL: &str = "SPCX";
 
 fn ask(socket: &Path, command: Command) -> Vec<StrategyStatus> {
     match control::request(socket, &command).expect("the runtime answers") {
-        Reply::Ok { strategies } => strategies,
+        Reply::Ok { strategies, .. } => strategies,
         Reply::Error { error } => panic!("{command:?} refused: {error}"),
     }
 }
@@ -178,6 +178,8 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
             symbol: SYMBOL.into(),
             slots_per_step: 2,
             run,
+            close_on_breach: false,
+            shadow: false,
         })
     };
 
