@@ -105,12 +105,19 @@ pub struct FeedReceiver {
 pub struct FeedProgress {
     sent: Arc<AtomicU64>,
     applied: Arc<AtomicU64>,
+    dropped: Arc<AtomicU64>,
 }
 
 /// How often [`FeedProgress::settle`] looks again.
 const SETTLE_LOOKS_EVERY: std::time::Duration = std::time::Duration::from_micros(200);
 
 impl FeedProgress {
+    /// How many events the senders dropped so far: above 0, the cache may
+    /// be stale, and nothing read from it should be traded on.
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
+    }
+
     /// Wait until the runtime has applied every event handed to the feed
     /// before this call, for at most `within`: whether it did. Events sent
     /// after the call aren't waited for, so a busy chain can't hold it.
@@ -164,10 +171,11 @@ pub fn channel(watch: Arc<Watch>) -> (FeedSender, FeedReceiver) {
         },
         FeedReceiver {
             events: receiver,
-            dropped,
+            dropped: dropped.clone(),
             progress: FeedProgress {
                 sent,
                 applied: Arc::new(AtomicU64::new(0)),
+                dropped,
             },
         },
     )

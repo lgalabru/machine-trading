@@ -9,12 +9,16 @@
 //! ([`perp::PerpReader`]) and appends the reading to its journal. With a
 //! [`session::SessionConfig`], it also plays sessions a grader hands it:
 //! it hosts the strategy component, reads its market from the cache, and
-//! sends its orders as the bot. Its steps come from the grader's turns;
-//! on mainnet they will come from the slots.
+//! sends its orders as the bot, its steps coming from the grader's turns.
+//! With a [`strategies::ControlConfig`], it runs strategies on its own:
+//! each stepped on the chain's slots, controlled through a Unix socket
+//! (`mtx live`), and kept on disk across restarts.
 
+pub mod bot;
 pub mod feed;
 pub mod perp;
 pub mod session;
+pub mod strategies;
 
 use std::{
     io::{BufWriter, Write},
@@ -71,6 +75,10 @@ pub struct Config {
     /// ([`session`]): the bench's step 3 of `docs/rfd/0004`.
     #[serde(default)]
     pub session: Option<session::SessionConfig>,
+    /// Run strategies on its own, stepped on the chain's slots and
+    /// controlled through a socket ([`strategies`]): step 4.
+    #[serde(default)]
+    pub control: Option<strategies::ControlConfig>,
 }
 
 /// One account on one market, to read.
@@ -161,7 +169,7 @@ impl Runtime {
             .map_err(|e| format!("{}: {e}", config.journal.display()))?;
         let addresses: Vec<Address> = readers.iter().flat_map(PerpReader::addresses).collect();
         let watch = Arc::new(Watch::new(addresses.iter().copied()));
-        let (sender, receiver) = feed::channel(watch);
+        let (sender, receiver) = feed::channel(watch.clone());
         let cache = Arc::new(Mutex::new(AccountCache::default()));
         // Set once the cache holds what the backfill found: a session that
         // starts before would read a market the feed hasn't told of yet.
@@ -173,6 +181,19 @@ impl Runtime {
                 cache.clone(),
                 receiver.progress(),
                 ready.clone(),
+            )?;
+        }
+        // The latest slot the feed reported, for the strategies' steps.
+        let (slots, slots_seen) = tokio::sync::watch::channel(0u64);
+        if let Some(control) = config.control.clone() {
+            strategies::spawn(
+                control,
+                strategies::Shared {
+                    cache: cache.clone(),
+                    watch,
+                    progress: receiver.progress(),
+                },
+                slots_seen,
             )?;
         }
         let thread = std::thread::Builder::new()
@@ -193,6 +214,7 @@ impl Runtime {
                     &cache,
                     BufWriter::new(journal),
                     config.journal_writes,
+                    &slots,
                 );
             })
             .map_err(|e| format!("the runtime's thread: {e}"))?;
@@ -221,6 +243,7 @@ fn run(
     cache: &Mutex<AccountCache>,
     mut journal: impl Write,
     journal_writes: bool,
+    slots: &tokio::sync::watch::Sender<u64>,
 ) {
     while let Some(event) = events.next() {
         let mut cache = lock(cache);
@@ -236,6 +259,13 @@ fn run(
             }
             FeedEvent::Slot { slot, status, .. } => {
                 events.applied();
+                // Strategies step on the newest slot seen, whatever its
+                // status: a slot is due once it exists.
+                slots.send_if_modified(|seen| {
+                    let newer = slot > *seen;
+                    *seen = (*seen).max(slot);
+                    newer
+                });
                 (slot, status.as_str())
             }
             FeedEvent::Block { .. } => {
@@ -400,7 +430,14 @@ mod tests {
         sender.send(slot(11));
         drop(sender);
         let mut journal = Vec::new();
-        run(&receiver, &readers, &Mutex::default(), &mut journal, true);
+        run(
+            &receiver,
+            &readers,
+            &Mutex::default(),
+            &mut journal,
+            true,
+            &tokio::sync::watch::channel(0).0,
+        );
         let lines = lines(&journal);
         let seen: Vec<_> = lines
             .iter()
@@ -447,7 +484,14 @@ mod tests {
         });
         drop(sender);
         let mut journal = Vec::new();
-        run(&receiver, &readers, &Mutex::default(), &mut journal, false);
+        run(
+            &receiver,
+            &readers,
+            &Mutex::default(),
+            &mut journal,
+            false,
+            &tokio::sync::watch::channel(0).0,
+        );
         assert!(journal.is_empty());
     }
 
@@ -530,6 +574,7 @@ mod tests {
             journal_writes: false,
             markets: vec![market; MARKETS_MAX + 1],
             session: None,
+            control: None,
         };
         assert!(config.readers().unwrap_err().contains("at most"));
     }
