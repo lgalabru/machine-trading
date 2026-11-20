@@ -1,0 +1,23 @@
+[package]
+name = "mtx-runtime"
+description = "What runs a strategy component: the wasm host the grader and the mainnet runtime share (docs/rfd/0004-strategies-on-mainnet.md)."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+mtx-core.workspace = true
+# The kit's strategy types, which the host converts to and from the WIT
+# world's; no chain code.
+mtx-kit = { workspace = true }
+reqwest.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Strategies built as wasm components (docs/rfd/0002-wasm-strategies.md).
+wasmtime = "50.0.1"
+wasmtime-wasi = "50.0.1"
+# Seeds the strategies' WASI randomness.
+rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }
+tokio.workspace = true

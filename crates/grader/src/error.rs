@@ -20,8 +20,9 @@ pub enum Error {
     TxBuilder(#[from] phoenix_rise::core::PhoenixTxBuilderError),
     #[error("hawkeye: {0}")]
     Hawkeye(#[from] phoenix_rise::core::PhoenixHawkeyeClientError),
-    #[error("wasm strategy {0}")]
-    Wasm(String),
+    /// A strategy component's host (`mtx_runtime`).
+    #[error(transparent)]
+    Runtime(#[from] mtx_runtime::Error),
     #[error("meter: {0}")]
     Meter(#[from] mtx_core::MeterError),
     #[error("{}: {source}", path.display())]
