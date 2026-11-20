@@ -12,13 +12,16 @@
 //! sends its orders as the bot, its steps coming from the grader's turns.
 //! With a [`strategies::ControlConfig`], it runs strategies on its own:
 //! each stepped on the chain's slots, controlled through a Unix socket
-//! (`mtx live`), and kept on disk across restarts.
+//! (`mtx live`), and kept on disk across restarts. Their orders go to the
+//! leaders' TPU ([`tpu`]) or, in a shadow run, nowhere ([`shadow`]).
 
 pub mod bot;
 pub mod feed;
 pub mod perp;
 pub mod session;
+pub mod shadow;
 pub mod strategies;
+pub mod tpu;
 
 use std::{
     io::{BufWriter, Write},
@@ -185,15 +188,27 @@ impl Runtime {
         }
         // The latest slot the feed reported, for the strategies' steps.
         let (slots, slots_seen) = tokio::sync::watch::channel(0u64);
+        let mut slot_events = None;
         if let Some(control) = config.control.clone() {
+            let (events, received) = match control.tpu {
+                Some(_) => {
+                    let (events, received) = tpu::slot_events();
+                    (Some(events), Some(received))
+                }
+                None => (None, None),
+            };
+            slot_events = events;
             strategies::spawn(
                 control,
-                strategies::Shared {
-                    cache: cache.clone(),
-                    watch,
-                    progress: receiver.progress(),
+                strategies::Inputs {
+                    shared: strategies::Shared {
+                        cache: cache.clone(),
+                        watch,
+                        progress: receiver.progress(),
+                    },
+                    slots: slots_seen,
+                    slot_events: received,
                 },
-                slots_seen,
             )?;
         }
         let thread = std::thread::Builder::new()
@@ -214,7 +229,10 @@ impl Runtime {
                     &cache,
                     BufWriter::new(journal),
                     config.journal_writes,
-                    &slots,
+                    &Slots {
+                        newest: slots,
+                        events: slot_events,
+                    },
                 );
             })
             .map_err(|e| format!("the runtime's thread: {e}"))?;
@@ -243,7 +261,7 @@ fn run(
     cache: &Mutex<AccountCache>,
     mut journal: impl Write,
     journal_writes: bool,
-    slots: &tokio::sync::watch::Sender<u64>,
+    slots: &Slots,
 ) {
     while let Some(event) = events.next() {
         let mut cache = lock(cache);
@@ -259,13 +277,17 @@ fn run(
             }
             FeedEvent::Slot { slot, status, .. } => {
                 events.applied();
+                events.applied_slot(slot);
                 // Strategies step on the newest slot seen, whatever its
                 // status: a slot is due once it exists.
-                slots.send_if_modified(|seen| {
+                slots.newest.send_if_modified(|seen| {
                     let newer = slot > *seen;
                     *seen = (*seen).max(slot);
                     newer
                 });
+                if let Some(events) = &slots.events {
+                    events.offer(slot, status);
+                }
                 (slot, status.as_str())
             }
             FeedEvent::Block { .. } => {
@@ -285,6 +307,23 @@ fn run(
             // audited: stop rather than run unseen.
             tracing::error!(%error, "the journal can't be written; the runtime stops");
             return;
+        }
+    }
+}
+
+/// Where the feed's loop reports slots: the newest, for the strategies'
+/// steps, and each start and end, for the TPU's leader tracker.
+struct Slots {
+    newest: tokio::sync::watch::Sender<u64>,
+    events: Option<tpu::SlotEvents>,
+}
+
+impl Slots {
+    #[cfg(test)]
+    fn none() -> Self {
+        Self {
+            newest: tokio::sync::watch::channel(0).0,
+            events: None,
         }
     }
 }
@@ -436,7 +475,7 @@ mod tests {
             &Mutex::default(),
             &mut journal,
             true,
-            &tokio::sync::watch::channel(0).0,
+            &Slots::none(),
         );
         let lines = lines(&journal);
         let seen: Vec<_> = lines
@@ -490,7 +529,7 @@ mod tests {
             &Mutex::default(),
             &mut journal,
             false,
-            &tokio::sync::watch::channel(0).0,
+            &Slots::none(),
         );
         assert!(journal.is_empty());
     }

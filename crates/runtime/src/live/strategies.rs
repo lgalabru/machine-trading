@@ -32,9 +32,10 @@ use std::{
 use mtx_core::{
     Mandate,
     control::{
-        AddStrategy, Command, MESSAGE_BYTES_MAX, OnPause, Reply, StrategyState, StrategyStatus,
+        AddStrategy, Command, FeedStatus, MESSAGE_BYTES_MAX, OnPause, Reply, StrategyState,
+        StrategyStatus,
     },
-    mandate::InstrumentRef,
+    mandate::{InstrumentRef, Observed},
 };
 use mtx_kit::chain::RpcChainClient;
 use serde::{Deserialize, Serialize};
@@ -65,7 +66,22 @@ pub struct ControlConfig {
     pub rpc_url: String,
     /// A directory for each strategy's prints, `<name>.log`.
     pub logs: PathBuf,
+    /// How long one of a strategy's calls may run: past it the call is
+    /// interrupted and the strategy stops. Under a slot by default.
+    #[serde(default = "default_step_deadline_ms")]
+    pub step_deadline_ms: u64,
+    /// Send over the leaders' TPU rather than the node's RPC.
+    #[serde(default)]
+    pub tpu: Option<super::tpu::TpuConfig>,
 }
+
+fn default_step_deadline_ms() -> u64 {
+    DEFAULT_STEP_DEADLINE_MS
+}
+
+/// A step's deadline unless the configuration says otherwise: most of a
+/// 400 ms slot, leaving the rest to plan, sign and send.
+const DEFAULT_STEP_DEADLINE_MS: u64 = 250;
 
 /// The most strategies one runtime runs.
 pub const STRATEGIES_MAX: usize = 32;
@@ -81,6 +97,11 @@ const ACCEPT_LOOKS_EVERY: Duration = Duration::from_millis(50);
 /// How long a step waits for the feed to apply what the chain wrote
 /// before its slot: past it, the strategy steps on what the cache holds.
 const SETTLE_WITHIN: Duration = Duration::from_secs(1);
+
+/// How many slots the runtime may lag what the chain told of before every
+/// strategy is paused: a little more than a step, so a busy slot doesn't
+/// stop anything, and well under a second of a market moving on.
+const FEED_SLOTS_BEHIND_MAX: u64 = 4;
 
 /// How far past the touch a flattening market order may fill.
 const FLATTEN_SLIPPAGE: f64 = 0.05;
@@ -116,13 +137,25 @@ pub struct Shared {
     pub progress: FeedProgress,
 }
 
+/// What the strategies' thread starts with besides the configuration.
+pub struct Inputs {
+    pub shared: Shared,
+    /// The newest slot the feed reported.
+    pub slots: watch::Receiver<u64>,
+    /// The slots' starts and ends, for the TPU's leader tracker, when the
+    /// configuration sends over the TPU.
+    pub slot_events:
+        Option<mpsc::Receiver<solana_tpu_client_next::node_address_service::SlotEvent>>,
+}
+
 /// Start the strategies' thread: restore the desired state, then step the
 /// running strategies on `slots`, and serve commands on the socket.
-pub fn spawn(
-    config: ControlConfig,
-    shared: Shared,
-    slots: watch::Receiver<u64>,
-) -> Result<(), String> {
+pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
+    let Inputs {
+        shared,
+        slots,
+        slot_events,
+    } = inputs;
     std::fs::create_dir_all(&config.logs).map_err(|e| format!("{}: {e}", config.logs.display()))?;
     let (commands, received) = mpsc::channel(COMMANDS_WAITING_MAX);
     listen(&config.socket, commands)?;
@@ -141,7 +174,20 @@ pub fn spawn(
                 }
             };
             runtime.block_on(async move {
-                let mut manager = Manager::new(config, shared);
+                let tpu = match (&config.tpu, slot_events) {
+                    (Some(tpu), Some(events)) => {
+                        match super::tpu::Tpu::start(tpu, &config.rpc_url, events).await {
+                            Ok(tpu) => Some(Arc::new(tpu)),
+                            Err(error) => {
+                                // Strategies still run, sending through the RPC.
+                                tracing::error!(%error, "the TPU client didn't start; sends go through the RPC");
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                };
+                let mut manager = Manager::new(config, shared, tpu);
                 manager.restore().await;
                 manager.serve(slots, received).await;
             });
@@ -243,6 +289,8 @@ struct Inner {
     bot: Option<WasmBot>,
     /// Its next step's number.
     k: u64,
+    /// What the enforcer has seen of it under its current mandate.
+    observed: Observed,
 }
 
 #[derive(Debug, Clone)]
@@ -252,6 +300,7 @@ struct Stats {
     skipped: u64,
     /// The slot its next step is due at.
     due: u64,
+    last_step_ms: Option<u64>,
     last_slot: Option<u64>,
     position: Option<f64>,
     pnl: Option<f64>,
@@ -261,16 +310,19 @@ struct Stats {
 struct Manager {
     config: ControlConfig,
     shared: Shared,
+    /// The TPU client strategies send through, if the runtime sends so.
+    tpu: Option<Arc<super::tpu::Tpu>>,
     strategies: BTreeMap<String, Strategy>,
     /// The latest slot the feed reported.
     slot: u64,
 }
 
 impl Manager {
-    fn new(config: ControlConfig, shared: Shared) -> Self {
+    fn new(config: ControlConfig, shared: Shared, tpu: Option<Arc<super::tpu::Tpu>>) -> Self {
         Self {
             config,
             shared,
+            tpu,
             strategies: BTreeMap::new(),
             slot: 0,
         }
@@ -329,16 +381,23 @@ impl Manager {
 
     /// Step every running strategy whose step is due at `slot`.
     async fn step(&mut self, slot: u64) {
-        if self.shared.progress.dropped() > 0 {
-            let lossy: Vec<String> = self
+        let progress = &self.shared.progress;
+        let stale = match (progress.dropped(), progress.slots_behind()) {
+            (0, behind) if behind <= FEED_SLOTS_BEHIND_MAX => None,
+            (0, behind) => Some(format!("the feed is {behind} slots behind the chain")),
+            (dropped, _) => Some(format!(
+                "the feed dropped {dropped} events: the cache may be stale"
+            )),
+        };
+        if let Some(why) = stale {
+            let running: Vec<String> = self
                 .strategies
                 .iter()
                 .filter(|(_, s)| lock(&s.stats).state == StrategyState::Running)
                 .map(|(name, _)| name.clone())
                 .collect();
-            for name in lossy {
-                let why = "the feed dropped events: the cache may be stale".to_string();
-                if let Err(error) = self.pause(&name, OnPause::Cancel, why).await {
+            for name in running {
+                if let Err(error) = self.pause(&name, OnPause::Cancel, why.clone()).await {
                     tracing::warn!(name, %error, "a strategy couldn't be paused");
                 }
             }
@@ -356,11 +415,12 @@ impl Manager {
             };
             drop(stats);
             let (name, progress) = (name.clone(), self.shared.progress.clone());
-            let (slot_cell, stats, max_drawdown) = (
-                strategy.slot.clone(),
-                strategy.stats.clone(),
-                strategy.max_drawdown,
-            );
+            let (slot_cell, stats) = (strategy.slot.clone(), strategy.stats.clone());
+            let (mandate, close_on_breach) =
+                (strategy.spec.mandate.clone(), strategy.spec.close_on_breach);
+            let instrument = instrument_of(&strategy.spec.symbol);
+            // The step's clock starts as its slot reaches the strategies.
+            let started = std::time::Instant::now();
             tokio::spawn(async move {
                 let inner = &mut *inner;
                 let Some(bot) = inner.bot.as_mut() else {
@@ -376,11 +436,27 @@ impl Manager {
                 slot_cell.store(slot, Ordering::Release);
                 let step = mtx_core::Step::new(inner.k, slot, false);
                 let answered = bot.turn(&step, None).await;
+                let took_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                 inner.k += 1;
                 let market = bot.last_market().cloned();
-                let breach = {
+                // After the trade: what the step left, into what the
+                // enforcer has seen, and the mandate's audit of it all.
+                if let Some(market) = &market {
+                    let observed = &mut inner.observed;
+                    observed.record(&instrument, market.position.size);
+                    observed.max_drawdown_usd = observed.max_drawdown_usd.max(market.drawdown);
+                    if market.resting_bids > 0.0 {
+                        observed.record_open_order(&instrument, mtx_core::Side::Buy);
+                    }
+                    if market.resting_asks > 0.0 {
+                        observed.record_open_order(&instrument, mtx_core::Side::Sell);
+                    }
+                }
+                let breach = mandate.audit(&inner.observed);
+                let paused = {
                     let mut stats = lock(&stats);
                     stats.steps += u64::from(answered);
+                    stats.last_step_ms = Some(took_ms);
                     if let Some(market) = &market {
                         stats.last_slot = Some(market.slot);
                         stats.position = Some(market.position.size);
@@ -390,20 +466,22 @@ impl Manager {
                     if let Some(why) = &bot.stopped {
                         stats.state = StrategyState::Stopped { why: why.clone() };
                     }
-                    let breach = market.as_ref().is_some_and(|m| m.drawdown > max_drawdown);
-                    if breach && stats.state == StrategyState::Running {
-                        stats.state = StrategyState::Paused {
-                            why: format!(
-                                "the enforcer: drawdown {:.2} past the limit {max_drawdown:.2}",
-                                market.as_ref().map_or(0.0, |m| m.drawdown)
-                            ),
-                        };
+                    match (&breach, &stats.state) {
+                        (Some(breach), StrategyState::Running) => {
+                            stats.state = StrategyState::Paused {
+                                why: format!("the enforcer: {breach}"),
+                            };
+                            true
+                        }
+                        _ => false,
                     }
-                    breach
                 };
-                if breach {
+                if paused {
                     for failed in bot.cancel_all().await {
                         tracing::warn!(name, failed, "an order couldn't be cancelled");
+                    }
+                    if close_on_breach && let Err(error) = bot.flatten(FLATTEN_SLIPPAGE).await {
+                        tracing::warn!(name, %error, "the position couldn't be closed");
                     }
                 }
             });
@@ -430,6 +508,11 @@ impl Manager {
         };
         match done.and_then(|()| self.persist()) {
             Ok(()) => Reply::Ok {
+                feed: FeedStatus {
+                    slot: self.slot,
+                    behind: self.shared.progress.slots_behind(),
+                    dropped: self.shared.progress.dropped(),
+                },
                 strategies: self.status(),
             },
             Err(error) => Reply::Error { error },
@@ -519,6 +602,8 @@ impl Manager {
         let stopped = bot.as_ref().err().cloned();
         inner.bot = bot.ok();
         inner.k = 0;
+        // A new mandate audits from here on.
+        inner.observed = Observed::default();
         drop(inner);
         let strategy = self
             .strategies
@@ -569,7 +654,11 @@ impl Manager {
             slot: Arc::new(AtomicU64::new(self.slot)),
             cap,
             max_drawdown,
-            inner: Arc::new(tokio::sync::Mutex::new(Inner { bot: None, k: 0 })),
+            inner: Arc::new(tokio::sync::Mutex::new(Inner {
+                bot: None,
+                k: 0,
+                observed: Observed::default(),
+            })),
             stats: Arc::new(Mutex::new(Stats {
                 state: StrategyState::Paused {
                     why: "added".into(),
@@ -577,6 +666,7 @@ impl Manager {
                 steps: 0,
                 skipped: 0,
                 due: 0,
+                last_step_ms: None,
                 last_slot: None,
                 position: None,
                 pnl: None,
@@ -653,6 +743,7 @@ impl Manager {
                 start_slot,
                 vars: Vec::new(),
                 reports: mtx_kit::Reports::default(),
+                step_deadline: Some(Duration::from_millis(self.config.step_deadline_ms)),
             },
             end_slot,
             cap: strategy.cap,
@@ -661,8 +752,29 @@ impl Manager {
             cache: self.shared.cache.clone(),
             slot: strategy.slot.clone(),
             log: Box::new(log),
+            sends: self.sends(spec)?,
         })
         .await
+    }
+
+    /// The chain a strategy's orders go through: nowhere in a shadow run,
+    /// the leaders' TPU when the runtime sends so, else the node's RPC.
+    fn sends(
+        &self,
+        spec: &AddStrategy,
+    ) -> Result<Option<Arc<dyn mtx_kit::chain::ChainClient>>, String> {
+        let rpc = || RpcChainClient::new(self.config.rpc_url.clone());
+        if spec.shadow {
+            let journal = self.config.logs.join(format!("{}.shadow.jsonl", spec.name));
+            return Ok(Some(Arc::new(super::shadow::ShadowChain::new(
+                rpc(),
+                &journal,
+            )?)));
+        }
+        Ok(self.tpu.as_ref().map(|tpu| {
+            Arc::new(super::tpu::TpuChainClient::new(rpc(), tpu.clone()))
+                as Arc<dyn mtx_kit::chain::ChainClient>
+        }))
     }
 
     /// Watch a new strategy's accounts, and read them once from the node:
@@ -697,6 +809,8 @@ impl Manager {
                     authority: strategy.authority.to_string(),
                     cap: strategy.cap,
                     max_drawdown: strategy.max_drawdown,
+                    shadow: strategy.spec.shadow,
+                    last_step_ms: stats.last_step_ms,
                     steps: stats.steps,
                     skipped: stats.skipped,
                     last_slot: stats.last_slot,
@@ -736,11 +850,7 @@ impl Manager {
 /// The mandate's position cap on `symbol`'s perpetual, and its drawdown
 /// limit (none is no limit).
 fn limits(mandate: &Mandate, symbol: &str) -> Result<(f64, f64), String> {
-    let instrument = InstrumentRef {
-        venue: crate::venue::perps::VENUE.into(),
-        kind: mtx_core::mandate::Kind::Perp,
-        symbol: symbol.into(),
-    };
+    let instrument = instrument_of(symbol);
     let allowance = mandate
         .allowance(&instrument)
         .ok_or_else(|| format!("the mandate doesn't allow {instrument}"))?;
@@ -748,6 +858,15 @@ fn limits(mandate: &Mandate, symbol: &str) -> Result<(f64, f64), String> {
         allowance.max_position,
         mandate.limits.max_drawdown_usd.unwrap_or(f64::INFINITY),
     ))
+}
+
+/// `symbol`'s perpetual, as mandates name it.
+fn instrument_of(symbol: &str) -> InstrumentRef {
+    InstrumentRef {
+        venue: crate::venue::perps::VENUE.into(),
+        kind: mtx_core::mandate::Kind::Perp,
+        symbol: symbol.into(),
+    }
 }
 
 fn read_keypair(path: &Path) -> Result<Keypair, String> {
@@ -801,6 +920,8 @@ mod tests {
                     symbol: "SOL".into(),
                     slots_per_step: 2,
                     run: true,
+                    close_on_breach: false,
+                    shadow: false,
                 },
                 component_sha256: "ab".into(),
             }],

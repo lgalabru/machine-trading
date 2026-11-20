@@ -51,6 +51,9 @@ pub struct BotSpec<'a> {
     pub slot: Arc<AtomicU64>,
     /// Where its prints go.
     pub log: Box<dyn Write + Send>,
+    /// The chain its orders go through, if not the node's RPC at
+    /// `rpc_url`: the leaders' TPU ([`super::tpu::TpuChainClient`]).
+    pub sends: Option<Arc<dyn mtx_kit::chain::ChainClient>>,
 }
 
 /// Load the component and call its `start`.
@@ -73,11 +76,16 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
         authority,
     )
     .map_err(|e| e.to_string())?;
-    let trader = Arc::new(
-        market
-            .trader(spec.keypair.insecure_clone(), spec.rpc_url)
-            .map_err(|e| e.to_string())?,
-    );
+    let trader = market
+        .trader(spec.keypair.insecure_clone(), spec.rpc_url)
+        .map_err(|e| e.to_string())?;
+    let trader = Arc::new(match spec.sends {
+        Some(chain) => mtx_kit::Trader {
+            inner: trader.inner.with_chain(chain),
+            ..trader
+        },
+        None => trader,
+    });
     let seats: Vec<Box<dyn Seat>> = vec![Box::new(PerpSeat::new(
         market.instrument().to_string(),
         trader,
