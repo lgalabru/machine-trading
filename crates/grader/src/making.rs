@@ -830,7 +830,11 @@ impl MakingFamily {
                     self.max_position,
                     self.max_drawdown_usd,
                 );
-                assert_eq!(mandate.universe.len(), 1, "a perp mandate has one allowance");
+                assert_eq!(
+                    mandate.universe.len(),
+                    1,
+                    "a perp mandate has one allowance"
+                );
                 mandate.universe[0].taking = self.taking;
                 // A taking rule is a v0.1 member: a file that states it
                 // under v0 doesn't validate.

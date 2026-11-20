@@ -110,9 +110,8 @@ async fn main() -> Result<()> {
                 continue;
             }
             let room = ((cap - held.abs()) * 1000.0).floor() / 1000.0;
-            let leaning = leaning_quote.is_some_and(|at: f64| {
-                ((oracle - at) / oracle).abs() * 10_000.0 < REQUOTE_BPS
-            });
+            let leaning = leaning_quote
+                .is_some_and(|at: f64| ((oracle - at) / oracle).abs() * 10_000.0 < REQUOTE_BPS);
             if room >= 0.01 && !leaning {
                 if let Err(e) = trader.cancel_all() {
                     warn!(%e, "cancel failed");
@@ -150,12 +149,16 @@ async fn main() -> Result<()> {
             continue;
         }
         if held < INVENTORY_LIMIT * cap
-            && let Err(e) = trader.place_limit(Side::Bid, bid, SIZE.min(cap - held)).await
+            && let Err(e) = trader
+                .place_limit(Side::Bid, bid, SIZE.min(cap - held))
+                .await
         {
             warn!(%e, "bid failed");
         }
         if held > -INVENTORY_LIMIT * cap
-            && let Err(e) = trader.place_limit(Side::Ask, ask, SIZE.min(cap + held)).await
+            && let Err(e) = trader
+                .place_limit(Side::Ask, ask, SIZE.min(cap + held))
+                .await
         {
             warn!(%e, "ask failed");
         }
