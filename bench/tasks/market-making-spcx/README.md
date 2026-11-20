@@ -9,7 +9,7 @@ Phoenix's own makers and grader-run taker flow.
 | Sessions | 72 hidden per grade (18 calm, 36 with jumps, 18 trending); 6 practice |
 | Mandate | 20 SPCX position cap (about 0.3× collateral); $250 loss limit |
 | Bound | Spread bound plus hindsight bound (see [Scoring](#scoring)) |
-| Reference | Reward ~0.01. It quotes a tick inside the competitor, skews against inventory, and backs off after one-sided fills. |
+| Reference | Reward ~0.01. It quotes a tick inside the competitor, skews against inventory, and after one-sided fills stops quoting the side they hit for a while. It never takes. |
 
 How every task is scored, and how risk is enforced, is in the
 [dataset README](../README.md#how-a-bot-is-judged).

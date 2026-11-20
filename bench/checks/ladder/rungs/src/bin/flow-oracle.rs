@@ -7,8 +7,10 @@
 //! size or its slot.
 //!
 //! Between bursts it quotes as the skewed quoter does. Once an informed order
-//! has traded, a jump its way is certain: it pulls its quotes, takes the cap
-//! the burst's way, holds until the oracle has jumped, and flattens.
+//! has traded, a jump its way is certain. The mandate allows taking only to
+//! reduce, so it can't buy the burst: it pulls its quotes, sheds what the
+//! burst gave it, rests the cap's room at the oracle on the burst's side,
+//! holds what fills until the oracle has jumped, and flattens.
 //!
 //! Its lead over the reference is what reading the flow perfectly is worth.
 //! An exploit bot above it reads something no honest trader could.
@@ -60,6 +62,8 @@ async fn main() -> Result<()> {
     let mut seen = 0usize;
     let mut lean: Option<Lean> = None;
     let mut quoted: Option<(f64, f64)> = None;
+    // The oracle its leaning quote rests at, while a burst is on.
+    let mut leaning_quote: Option<f64> = None;
     while let Some(step) = turns.next()? {
         let (Ok(oracle), Ok(position)) = (trader.oracle_usd().await, trader.position().await)
         else {
@@ -91,19 +95,45 @@ async fn main() -> Result<()> {
             }
         }
 
-        let target = match &lean {
-            Some(l) => Some(l.dir * cap),
-            // Flatten what a lean left before quoting again.
-            None if held.abs() > INVENTORY_LIMIT * cap => Some(0.0),
-            None => None,
-        };
-        if let Some(target) = target {
+        if let Some(l) = &lean {
             if quoted.take().is_some()
                 && let Err(e) = trader.cancel_all()
             {
                 warn!(%e, "cancel failed");
             }
-            trade_toward(&trader, held, target, oracle).await;
+            // Its mandate allows taking only to reduce. It sheds what the
+            // burst gave it, then rests at the oracle on the burst's side:
+            // the tightest quote in the book, for the noise that trades
+            // against the burst before the jump.
+            if held * l.dir < 0.0 {
+                trade_toward(&trader, held, 0.0, oracle).await;
+                continue;
+            }
+            let room = ((cap - held.abs()) * 1000.0).floor() / 1000.0;
+            let leaning = leaning_quote.is_some_and(|at: f64| {
+                ((oracle - at) / oracle).abs() * 10_000.0 < REQUOTE_BPS
+            });
+            if room >= 0.01 && !leaning {
+                if let Err(e) = trader.cancel_all() {
+                    warn!(%e, "cancel failed");
+                    continue;
+                }
+                let side = if l.dir > 0.0 { Side::Bid } else { Side::Ask };
+                match trader.place_post_only(side, oracle, room).await {
+                    Ok(_) => leaning_quote = Some(oracle),
+                    Err(e) => warn!(%e, "leaning quote failed"),
+                }
+            }
+            continue;
+        }
+        if leaning_quote.take().is_some()
+            && let Err(e) = trader.cancel_all()
+        {
+            warn!(%e, "cancel failed");
+        }
+        // Flatten what a lean left before quoting again.
+        if held.abs() > INVENTORY_LIMIT * cap {
+            trade_toward(&trader, held, 0.0, oracle).await;
             continue;
         }
 

@@ -562,6 +562,12 @@ pub struct MakingFamily {
     pub noise_limit_clamp: (f64, f64),
     pub max_position: f64,
     pub max_drawdown_usd: f64,
+    /// What the mandate lets the bot take liquidity for. A market maker's
+    /// desk takes only to reduce its inventory: in 0.12.0 the best bots
+    /// lost money on their quotes and made all of it buying the cap ahead
+    /// of each jump, which is the flash-crash task's skill, not this one's
+    /// (`docs/adr/0003-free-strategies-bounded-by-the-mandate.md`).
+    pub taking: Option<mtx_core::mandate::Taking>,
 }
 
 impl MakingFamily {
@@ -601,6 +607,7 @@ impl MakingFamily {
             // costs ~$70, so only a maker that keeps adding into a move gets
             // near it.
             max_drawdown_usd: 250.0,
+            taking: Some(mtx_core::mandate::Taking::ReduceOnly),
         }
     }
 
@@ -816,12 +823,20 @@ impl MakingFamily {
             description,
             symbol: self.symbol.clone(),
             duration_slots: duration,
-            mandate: mtx_core::Mandate::perp(
-                VENUE,
-                &self.symbol,
-                self.max_position,
-                self.max_drawdown_usd,
-            ),
+            mandate: {
+                let mut mandate = mtx_core::Mandate::perp(
+                    VENUE,
+                    &self.symbol,
+                    self.max_position,
+                    self.max_drawdown_usd,
+                );
+                assert_eq!(mandate.universe.len(), 1, "a perp mandate has one allowance");
+                mandate.universe[0].taking = self.taking;
+                // A taking rule is a v0.1 member: a file that states it
+                // under v0 doesn't validate.
+                mandate.version = mandate.minimal_version().into();
+                mandate
+            },
             path,
             making: Some(Making {
                 competitor_bps,

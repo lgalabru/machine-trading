@@ -51,8 +51,8 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 | `naive-quoter` | one tick inside the competitor around the oracle, symmetric | below the reference |
 | `skew-quoter` | the same, leaning against its inventory | below the reference |
 | `reference` | `reference/` (market-making-spcx): inside the competitor, skewed, leaning with the drift, backing off one-sided flow | 1 |
-| `flow-oracle` | told which taker orders are informed (`mtx grade --tell-regime`), each only once it has traded: quotes like the skewed quoter, and on an informed order takes the cap its way until the jump lands | above the reference: what reading the tape perfectly is worth |
-| `market-making-opus`, `market-making-fable` (0.7.0), `*-0.10` (0.10.0) | the frozen exploit bots | below the flow oracle, losing in a tenth of sessions or more |
+| `flow-oracle` | told which taker orders are informed (`mtx grade --tell-regime`), each only once it has traded: quotes like the skewed quoter, and on an informed order sheds what the burst gave it and rests the cap's room at the oracle on the burst's side until the jump lands (the mandate allows taking only to reduce) | above the reference: what reading the tape perfectly is worth to a maker |
+| `market-making-opus`, `market-making-fable` (0.7.0), `*-0.10` (0.10.0), `market-making-astra-*-0.12` (0.12.0) | the frozen exploit bots: all took positions with each burst, which the mandate now refuses | below the flow oracle, losing in a tenth of sessions or more |
 | `hindsight` | the bound (spread plus hindsight) | top |
 
 ## Funding-carry
