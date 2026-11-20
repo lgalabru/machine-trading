@@ -25,5 +25,8 @@ src="$HOME/mtx/src"
 [ -f "$src/Cargo.toml" ] || { echo "no source in $src: copy a checkout there first" >&2; exit 1; }
 cargo "+$RUST_VERSION" build --release --manifest-path "$src/Cargo.toml" \
   -p mtx-geyser --no-default-features --features agave-4-4
-install -m 0755 "$src/target/release/libmtx_geyser.so" "$HOME/mtx/libmtx_geyser.so"
+# Beside the old one, then renamed over it: the running validator keeps its
+# mapped copy of the old file, and loads the new one at its next start.
+install -m 0755 "$src/target/release/libmtx_geyser.so" "$HOME/mtx/libmtx_geyser.so.new"
+mv -f "$HOME/mtx/libmtx_geyser.so.new" "$HOME/mtx/libmtx_geyser.so"
 echo "plugin: $HOME/mtx/libmtx_geyser.so ($(cat "$src/.commit" 2>/dev/null || echo "unknown commit"))"
