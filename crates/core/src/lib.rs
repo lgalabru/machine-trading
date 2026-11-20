@@ -29,6 +29,7 @@
 //! | [`meter`] | The [`AccountMeter`] trait: what an enforcer reads from a venue |
 //! | [`mandate`] | The mandate: universe, limits, and the audit |
 //! | [`turns`] | The `mtx-turn-1` protocol |
+//! | [`session`] | What a host measures of a session: the account, the trades, each send's fate |
 
 pub mod asset;
 mod error;
@@ -39,6 +40,7 @@ pub mod mandate;
 pub mod meter;
 pub mod order;
 pub mod position;
+pub mod session;
 pub mod turns;
 pub mod venue;
 
