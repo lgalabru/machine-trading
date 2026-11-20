@@ -121,6 +121,20 @@ pub struct SessionOptions<'a> {
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
     /// Scoring v2's session rules, if the grade runs under them.
     pub rules: Rules,
+    /// Who plays the bot's turns, if not the grader: the session neither
+    /// loads its component nor starts a process, and plays the turn
+    /// protocol with the host instead (`docs/rfd/0004`, step 3).
+    pub host: Option<std::sync::Arc<dyn TurnHost>>,
+}
+
+/// What plays a session's turns outside the grader: the live runtime, run
+/// by a geyser plugin in the session's surfnet. Its strategy trades as the
+/// bot, through the bot's guarded endpoint; the grader moves the world,
+/// says each turn, and scores.
+pub trait TurnHost: Send + Sync {
+    /// The host's end of a turn socket for the session `env` describes,
+    /// whose strategy is told `vars`: the grader sends its hello there.
+    fn connect(&self, env: &BotEnv, vars: &[(String, String)]) -> std::io::Result<StdUnixStream>;
 }
 
 /// Scoring v2's session rules (`mtx grade --v2-sessions`). Off by
@@ -886,11 +900,34 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     };
     // A bot is a process speaking the turn protocol, or a component the
     // grader calls (`crate::wasm`, RFD 0002).
-    let mut process = None;
+    let mut process: Option<(Option<Child>, _, _)> = None;
     let mut wasm_bot = None;
     let mut take_gate: Option<std::sync::Arc<crate::taking::TakeGate>> = None;
     let legacy;
-    if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
+    // What a component is told beyond the task's variables.
+    let component_vars: Vec<(String, String)> = told
+        .iter()
+        .cloned()
+        // The risk desk closes on a breach instead of disqualifying (the
+        // scenario's `stop_out`).
+        .chain(
+            scenario
+                .stop_out
+                .as_ref()
+                .map(|_| ("MTX_STOP_OUT".to_string(), "1".to_string())),
+        )
+        // The book stays where trades leave it (the scenario's `impact`).
+        .chain(
+            scenario
+                .impact
+                .as_ref()
+                .map(|_| ("MTX_IMPACT".to_string(), "1".to_string())),
+        )
+        .collect();
+    let hosted = opts.host.clone();
+    if hosted.is_none()
+        && let Some(component) = crate::wasm::component_in(opts.bot_dir)
+    {
         let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
         // A scenario that enables raw sends lists their programs: checked
         // when it loaded.
@@ -919,25 +956,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     steps,
                     slots_per_step: SLOTS_PER_STEP,
                     start_slot,
-                    vars: told
+                    vars: component_vars
                         .iter()
                         .cloned()
-                        // The risk desk closes on a breach instead of
-                        // disqualifying (the scenario's `stop_out`).
-                        .chain(
-                            scenario
-                                .stop_out
-                                .as_ref()
-                                .map(|_| ("MTX_STOP_OUT".to_string(), "1".to_string())),
-                        )
-                        // The book stays where trades leave it (the
-                        // scenario's `impact`).
-                        .chain(
-                            scenario
-                                .impact
-                                .as_ref()
-                                .map(|_| ("MTX_IMPACT".to_string(), "1".to_string())),
-                        )
                         .chain(raw_programs.as_ref().map(|programs| {
                             let programs: Vec<String> =
                                 programs.iter().map(ToString::to_string).collect();
@@ -973,16 +994,28 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot, end_slot, steps, "strategy component loaded"
         );
     } else {
-        if user.is_none() {
+        if hosted.is_none() && user.is_none() {
             return Err(Error::NoBotUser);
         }
         take_gate = account.take_gate();
         if let Some(gate) = &take_gate {
             guard.set_send_gate(gate.clone());
         }
-        let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
-        let told: Vec<(String, String)> = told.into_iter().chain(vars).collect();
-        let child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs, &told)?;
+        let (ours, child) = match &hosted {
+            Some(host) => {
+                let told: Vec<(String, String)> = component_vars.into_iter().chain(vars).collect();
+                (
+                    host.connect(&env, &told).map_err(io_error("turn host"))?,
+                    None,
+                )
+            }
+            None => {
+                let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+                let told: Vec<(String, String)> = told.into_iter().chain(vars).collect();
+                let child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs, &told)?;
+                (ours, Some(child))
+            }
+        };
         ours.set_nonblocking(true)
             .map_err(io_error("turn socket"))?;
         let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
@@ -1121,9 +1154,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             // The bot is stopped before the desk sends anything, so it
             // can't race the close: a process is ended, a component isn't
             // called again.
-            if let Some((mut child, mut writer, _)) = process.take() {
+            if let Some((child, mut writer, _)) = process.take() {
                 let _ = send(&mut writer, &Message::End).await;
-                stop_bot(&mut child, workdir.bot_user.and(user)).await;
+                if let Some(mut child) = child {
+                    stop_bot(&mut child, workdir.bot_user.and(user)).await;
+                }
             }
             // Sends the faults still hold would land during the close, and
             // could reopen the position or rest quotes: they never land.
@@ -1187,7 +1222,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             continue;
         }
         if bot_exit.is_none()
-            && let Some((child, _, _)) = process.as_mut()
+            && let Some((Some(child), _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
             if status.success() {
@@ -1278,9 +1313,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     guard.set_turn(false);
     cast.end().await;
-    if let Some((mut child, mut writer, _)) = process {
+    if let Some((child, mut writer, _)) = process {
         let _ = send(&mut writer, &Message::End).await;
-        stop_bot(&mut child, workdir.bot_user.and(user)).await;
+        if let Some(mut child) = child {
+            stop_bot(&mut child, workdir.bot_user.and(user)).await;
+        }
     }
     if let Some(gate) = &take_gate {
         turns.refused_takes = Some(gate.refused());

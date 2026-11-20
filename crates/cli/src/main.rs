@@ -1766,6 +1766,7 @@ async fn run() -> Result<()> {
                 observer: None,
                 keys: &keys,
                 v2_sessions,
+                host: None,
             };
             let load = (replay > 1 && replay_load > 0).then(|| replay::Load::start(replay_load));
             let mut graded = grade::grade(options(sessions.jobs, anchor_jobs)).await?;

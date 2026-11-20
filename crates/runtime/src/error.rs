@@ -26,6 +26,10 @@ pub enum Error {
     InvalidExchangeKey(String),
     #[error("unknown market {0}")]
     UnknownMarket(String),
+    /// A market read some other way than through Hawkeye's views (the live
+    /// runtime's account cache) that couldn't be read.
+    #[error("market read: {0}")]
+    Live(String),
     #[error("transaction {label} failed: {reason}")]
     Transaction { label: String, reason: String },
 }

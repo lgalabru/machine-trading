@@ -613,6 +613,9 @@ pub struct GradeOptions<'a> {
     /// there. Off, the grade runs as it always has. (The bot's seeds are
     /// salted through `keys`: see [`SessionKeys::salt_strategy_seeds`].)
     pub v2_sessions: bool,
+    /// Who plays the bot's turns, if not the grader
+    /// ([`session::TurnHost`]): the grade then only scores.
+    pub host: Option<std::sync::Arc<dyn session::TurnHost>>,
 }
 
 /// The task's informed bot as a grade runs it (see
@@ -772,6 +775,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
                 false,
                 true,
                 None,
+                None,
                 opts.keys.role("reference"),
                 // The anchor's drawdown at the bot's granularity.
                 session::Rules {
@@ -809,6 +813,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
                 informed.latent,
                 false,
                 true,
+                None,
                 None,
                 opts.keys.role("informed"),
                 session::Rules {
@@ -870,6 +875,7 @@ pub async fn grade(opts: GradeOptions<'_>) -> Result<GradeReport> {
         opts.stop_on_disqualify,
         opts.trusted,
         opts.observer.clone(),
+        opts.host.clone(),
         opts.keys.role("bot"),
         session::Rules {
             every_slot: opts.v2_sessions,
@@ -977,6 +983,7 @@ async fn run_nop(opts: &GradeOptions<'_>, scenarios: &[Scenario]) -> Result<Vec<
         None,
         false,
         true,
+        None,
         None,
         opts.keys.role("nop"),
         session::Rules {
@@ -1485,6 +1492,7 @@ pub async fn calibrate(
         false,
         true,
         None,
+        None,
         opts.keys.role(if opts.informed {
             "informed"
         } else {
@@ -1551,6 +1559,7 @@ async fn run_sessions(
     stop_on_disqualify: bool,
     trusted: bool,
     observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
+    host: Option<std::sync::Arc<dyn session::TurnHost>>,
     keys: RoleKeys<'_>,
     rules: session::Rules,
 ) -> Result<Vec<SessionReport>> {
@@ -1600,6 +1609,7 @@ async fn run_sessions(
     let sessions = futures::stream::iter(scenarios.iter().enumerate())
         .map(|(index, scenario)| {
             let observer = observer.clone();
+            let host = host.clone();
             let free = &free;
             async move {
             let bot_log = log_dir.join(format!("{}.log", scenario.name));
@@ -1617,6 +1627,7 @@ async fn run_sessions(
                     observer: observer.clone(),
                     keys: keys.session(index, &scenario.name),
                     rules,
+                    host: host.clone(),
                 })
             };
             // Another grade on this machine may use the same bot user, and
@@ -1842,6 +1853,7 @@ mod tests {
             observer: None,
             keys: &SessionKeys::random(),
             v2_sessions: false,
+            host: None,
         })
         .await
         .unwrap();
@@ -3219,6 +3231,7 @@ mod tests {
                 false,
                 false,
                 None,
+                None,
                 keys.role("bot"),
                 session::Rules::default(),
             )
@@ -3254,6 +3267,7 @@ mod tests {
                 None,
                 false,
                 false,
+                None,
                 None,
                 keys.role("bot"),
                 session::Rules::default(),

@@ -184,6 +184,10 @@ pub enum Reader {
     /// venue's mark, oracle and index, the position there, and a PnL
     /// estimated from the mark's moves.
     Perp(std::sync::Arc<mtx_kit::Trader>),
+    /// A Phoenix perp account read some other way than through Hawkeye's
+    /// views (the live runtime's account cache): the same numbers, the
+    /// same PnL estimate.
+    Live(std::sync::Arc<dyn PerpReads>),
     /// A wallet the session measures (a spot session): its reading at each
     /// turn ([`Wallet`]), valued at the oracle, and each market's top as
     /// its seat reads it.
@@ -198,6 +202,16 @@ pub enum Reader {
         /// The account when the session starts.
         start: Wallet,
     },
+}
+
+/// A perp market and an account's position on it, as [`Reader::Live`]
+/// reads them.
+#[async_trait]
+pub trait PerpReads: Send + Sync {
+    /// The mark, the index and the book's best bid and ask.
+    async fn top(&self) -> Result<mtx_kit::Top, String>;
+    async fn oracle_usd(&self) -> Result<f64, String>;
+    async fn position(&self) -> Result<mtx_kit::Position, String>;
 }
 
 /// A component playing one session: the strategy, and the markets the
@@ -259,6 +273,11 @@ impl<R: RawDesk> WasmBot<R> {
         } = clock;
         let (start_mark, start_oracle) = match &desk.reader {
             Reader::Perp(trader) => (trader.mark_usd().await?, trader.oracle_usd().await?),
+            Reader::Live(reads) => {
+                let read =
+                    async { Ok::<_, String>((reads.top().await?.mark, reads.oracle_usd().await?)) };
+                read.await.map_err(crate::Error::Live)?
+            }
             Reader::Wallet { start } | Reader::Lending { start } => {
                 (start.price_usd, start.price_usd)
             }
@@ -372,12 +391,21 @@ impl<R: RawDesk> WasmBot<R> {
         let (k, slot, last) = (step.k, step.slot, step.last);
         self.resolve();
         let (mark, oracle, index, best_bid, best_ask, position) = match &self.desk.reader {
-            Reader::Perp(trader) => {
-                let (top, oracle, position) = match (
-                    trader.top().await,
-                    trader.oracle_usd().await,
-                    trader.position().await,
-                ) {
+            Reader::Perp(_) | Reader::Live(_) => {
+                let read = match &self.desk.reader {
+                    Reader::Perp(trader) => (
+                        trader.top().await.map_err(|e| e.to_string()),
+                        trader.oracle_usd().await.map_err(|e| e.to_string()),
+                        trader.position().await.map_err(|e| e.to_string()),
+                    ),
+                    Reader::Live(reads) => (
+                        reads.top().await,
+                        reads.oracle_usd().await,
+                        reads.position().await,
+                    ),
+                    _ => unreachable!("the arm matched a perp reader"),
+                };
+                let (top, oracle, position) = match read {
                     (Ok(top), Ok(oracle), Ok(position)) => (top, oracle, position),
                     (top, oracle, position) => {
                         tracing::warn!(step = k, mark = ?top.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
@@ -448,7 +476,7 @@ impl<R: RawDesk> WasmBot<R> {
         }
         // A perp account's other markets (a session on several): each
         // seat's own position and top.
-        if matches!(self.desk.reader, Reader::Perp(_)) {
+        if matches!(self.desk.reader, Reader::Perp(_) | Reader::Live(_)) {
             for view in venues.iter_mut().skip(1) {
                 let Some(seat) = self
                     .desk

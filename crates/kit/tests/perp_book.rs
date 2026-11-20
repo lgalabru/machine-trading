@@ -20,7 +20,8 @@ use std::{
 };
 
 use mtx_kit::venue::{
-    PerpBookAccounts, PhoenixVenue, TopOfBook, perp_position_live, perp_top_of_book,
+    PerpBookAccounts, PhoenixVenue, TopOfBook, perp_index, perp_position_live, perp_top_of_book,
+    ticks_to_usd,
 };
 use serde::Deserialize;
 
@@ -32,6 +33,9 @@ struct View {
     slot: u64,
     best_bid_ticks: Option<u64>,
     best_ask_ticks: Option<u64>,
+    /// The bench's fixtures don't record it.
+    #[serde(default)]
+    index_price_ticks: Option<u64>,
 }
 
 fn fixtures(name: &str) -> PathBuf {
@@ -130,15 +134,30 @@ fn samples(dir: &Path) -> Vec<PathBuf> {
     samples
 }
 
-/// How many samples `dir` holds, and each whose book isn't the view's.
+/// Our index for one sample, and the view's, where the sample has it.
+fn index(venue: &PhoenixVenue, symbol: &str, sample: &Path) -> Option<(f64, f64)> {
+    let view: View = serde_json::from_slice(&file(sample, "view.json")).expect("a view");
+    let market = venue.market(symbol).expect("the market");
+    let asset_map = account(sample, &venue.exchange().keys.perp_asset_map);
+    let ours = perp_index(market, &asset_map, view.slot).expect("an index");
+    Some((ours, ticks_to_usd(market, view.index_price_ticks?)))
+}
+
+/// How many samples `dir` holds, and each whose book or index isn't the
+/// view's.
 fn misses(dir: &Path, symbol: &str) -> (usize, Vec<String>) {
     let venue = venue(dir);
     let samples = samples(dir);
     let misses = samples
         .iter()
-        .filter_map(|sample| {
+        .flat_map(|sample| {
             let (ours, theirs) = check(&venue, symbol, sample);
-            (ours != theirs).then(|| format!("{}: {ours:?} != {theirs:?}", sample.display()))
+            let book =
+                (ours != theirs).then(|| format!("{}: {ours:?} != {theirs:?}", sample.display()));
+            let index = index(&venue, symbol, sample)
+                .filter(|(ours, theirs)| ours != theirs)
+                .map(|(ours, theirs)| format!("{}: index {ours} != {theirs}", sample.display()));
+            book.into_iter().chain(index)
         })
         .collect();
     (samples.len(), misses)

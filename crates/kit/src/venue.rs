@@ -154,6 +154,48 @@ pub fn perp_prices(market: &ExchangeMarketConfig, asset_map: &[u8]) -> Result<Pe
     })
 }
 
+/// `market`'s index price at `current_slot`, in USD, as Hawkeye's
+/// `view_bbo` reports it: the median of the spot oracles' reports no older
+/// than the perp asset map's spot staleness threshold, the two middle ones
+/// averaged (rounded down) when their number is even. The same as the view
+/// on 153 of 153 mainnet SOL samples (`crates/kit/tests/perp_book.rs`).
+pub fn perp_index(
+    market: &ExchangeMarketConfig,
+    asset_map: &[u8],
+    current_slot: u64,
+) -> Result<f64, String> {
+    use phoenix_rise::accounts::perp_asset_map::PerpAssetMap;
+    let map = PerpAssetMap::try_from_account_bytes(asset_map).map_err(|e| e.to_string())?;
+    let entry = map
+        .find_by_symbol(&market.symbol)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no market {} in the perp asset map", market.symbol))?;
+    let spot = &entry
+        .metadata
+        .oracle_price()
+        .mark_price
+        .spot_price_component;
+    let mut fresh: Vec<u64> = spot
+        .last_exchange_spot_price
+        .iter()
+        .filter(|report| report.ticks.as_inner() > 0 && report.ticks.as_inner() != u64::MAX)
+        .filter(|report| report.slot.saturating_add(spot.stale_threshold) >= current_slot)
+        .map(|report| report.ticks.as_inner())
+        .collect();
+    fresh.sort_unstable();
+    let middle = fresh.len() / 2;
+    let ticks = match fresh.len() {
+        0 => return Err(format!("no fresh oracle report for {}", market.symbol)),
+        n if n % 2 == 1 => fresh[middle],
+        _ => {
+            fresh[middle - 1] / 2
+                + fresh[middle] / 2
+                + (fresh[middle - 1] % 2 + fresh[middle] % 2) / 2
+        }
+    };
+    Ok(ticks_to_usd(market, ticks))
+}
+
 /// The position in `market` a trader account holds, from the account's
 /// bytes: flat if it holds none. The entry is Phoenix's own: the position's
 /// quote lots per base lot, rounded down to a whole number.

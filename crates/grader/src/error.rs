@@ -47,6 +47,9 @@ pub enum Error {
     },
     #[error("transaction {label} failed: {reason}")]
     Transaction { label: String, reason: String },
+    /// A market read some other way than through Hawkeye's views.
+    #[error("market read: {0}")]
+    MarketRead(String),
     #[error("spline collection {account}: {reason}")]
     Splines { account: String, reason: String },
     #[error("stop-out: {0}")]
@@ -147,6 +150,7 @@ impl From<mtx_runtime::Error> for Error {
             Runtime::InvalidExchangeKey(e) => Self::InvalidExchangeKey(e),
             Runtime::UnknownMarket(e) => Self::UnknownMarket(e),
             Runtime::Transaction { label, reason } => Self::Transaction { label, reason },
+            Runtime::Live(reason) => Self::MarketRead(reason),
         }
     }
 }

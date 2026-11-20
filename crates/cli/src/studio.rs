@@ -950,6 +950,7 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
                     observer: Some(control.clone() as Arc<dyn StepObserver>),
                     keys: &keys,
                     v2_sessions: false,
+                    host: None,
                 }) => Some(report),
             }
         });
