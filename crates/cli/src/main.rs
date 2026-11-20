@@ -2405,6 +2405,7 @@ mod tests {
             &["snapshot", "create"],
             &["claude-acp"],
             &["codex-acp"],
+            &["live", "status"],
         ] {
             let args = [&["mtx"][..], gone].concat();
             assert!(super::Cli::try_parse_from(args).is_err(), "{gone:?}");
@@ -2425,6 +2426,7 @@ mod tests {
                 "claude-acp",
                 "codex-acp",
                 "grade",
+                "live",
                 "rescore",
                 "scenario",
                 "snapshot",
