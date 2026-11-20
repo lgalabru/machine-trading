@@ -22,23 +22,16 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use mtx_core::turns::{Turns, read_variables};
-use mtx_kit::{BotEnv, venue::PhoenixVenue};
+use mtx_kit::BotEnv;
 use serde::Deserialize;
 
 use super::{
+    bot::{self, BotSpec},
     feed::{AccountCache, FeedProgress},
-    perp::{PerpReader, PerpReading},
+    perp::PerpReader,
 };
-use crate::{
-    desk::{Clock, Desk, PerpReads, Reader, Terms, WasmBot},
-    host::{HttpReads, NoRawSends},
-    venue::{
-        Market as _, Seat,
-        perps::{PerpMarket, PerpSeat},
-    },
-};
+use crate::desk::Clock;
 
 /// Where the runtime takes sessions, and the strategy it plays them with:
 /// the `session` member of the runtime's configuration.
@@ -181,60 +174,25 @@ async fn play(
     })
     .map_err(|e| e.to_string())?;
     let keypair = env.keypair().map_err(|e| e.to_string())?;
-    let authority = solana_signer::Signer::pubkey(&keypair);
-    let exchange_json = std::fs::read_to_string(&env.exchange_path)
-        .map_err(|e| format!("{}: {e}", env.exchange_path.display()))?;
-    let venue = PhoenixVenue::from_json(&exchange_json)?;
     let reader = readers
         .iter()
         .find(|reader| reader.symbol() == env.symbol)
         .ok_or_else(|| format!("the runtime doesn't watch {}", env.symbol))?;
-    if reader.trader() != venue.trader_account(&authority).to_bytes() {
-        return Err(format!(
-            "the runtime reads {} for another account than {authority}",
-            env.symbol
-        ));
-    }
     let mandate = env.mandate().map_err(|e| e.to_string())?;
-    let market = PerpMarket::new(
-        venue.exchange().clone(),
-        env.exchange_path.clone(),
-        &env.symbol,
-        &env.rpc_url,
-        authority,
-    )
-    .map_err(|e| e.to_string())?;
-    let trader = Arc::new(
-        market
-            .trader(keypair.insecure_clone(), &env.rpc_url)
-            .map_err(|e| e.to_string())?,
-    );
-    let seats: Vec<Box<dyn Seat>> = vec![Box::new(PerpSeat::new(
-        market.instrument().to_string(),
-        trader,
-    ))];
-    let markets = mtx_kit::VenueInfo::of_perp_markets(
-        &mandate,
-        [(
-            market.instrument().clone(),
-            Some(market.address().to_string()),
-        )],
-    );
     let mut turns = tokio::task::block_in_place(|| Turns::over(stream))
         .map_err(|e| format!("the grader's hello: {e}"))?;
     let hello = turns.hello().clone();
     let slot = Arc::new(AtomicU64::new(hello.start_slot));
-    let reads = CacheReads {
-        reader: reader.clone(),
-        cache,
-        slot: slot.clone(),
-    };
     let log =
         std::fs::File::create(&config.log).map_err(|e| format!("{}: {e}", config.log.display()))?;
-    let mut bot = WasmBot::<NoRawSends>::start(
-        &config.component,
-        HttpReads::boxed(&env.rpc_url),
-        Clock {
+    let mut bot = bot::start(BotSpec {
+        component: &config.component,
+        rpc_url: &env.rpc_url,
+        keypair: &keypair,
+        exchange_path: &env.exchange_path,
+        symbol: &env.symbol,
+        mandate: &mandate,
+        clock: Clock {
             seed: hello.seed.unwrap_or_default(),
             steps: hello.steps,
             slots_per_step: hello.slots_per_step,
@@ -242,28 +200,15 @@ async fn play(
             vars: task_variables(&vars),
             reports: hello.reports.into(),
         },
-        Terms {
-            end_slot: hello.end_slot,
-            mandate: &mandate,
-            cap: env.max_position,
-            max_drawdown: env.max_drawdown_usd,
-        },
-        Desk {
-            markets,
-            seats,
-            symbol: env.symbol.clone(),
-            venue: exchange_json,
-            authority: authority.to_string(),
-            reader: Reader::Live(Arc::new(reads)),
-            sends: None,
-            rfqs: None,
-        },
-        Box::new(log),
-        None,
-        None,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+        end_slot: hello.end_slot,
+        cap: env.max_position,
+        max_drawdown: env.max_drawdown_usd,
+        reader: reader.clone(),
+        cache,
+        slot: slot.clone(),
+        log: Box::new(log),
+    })
+    .await?;
     let mut played = 0;
     loop {
         let next = tokio::task::block_in_place(|| turns.next())
@@ -284,48 +229,6 @@ async fn play(
     }
     bot.end().await;
     Ok(played)
-}
-
-/// A session's market, as the account cache holds it at the step's slot.
-struct CacheReads {
-    reader: PerpReader,
-    cache: Arc<Mutex<AccountCache>>,
-    slot: Arc<AtomicU64>,
-}
-
-impl CacheReads {
-    fn read(&self) -> Result<PerpReading, String> {
-        let cache = self
-            .cache
-            .lock()
-            .map_err(|_| "the account cache was poisoned".to_string())?;
-        self.reader.read(&cache, self.slot.load(Ordering::Acquire))
-    }
-}
-
-#[async_trait]
-impl PerpReads for CacheReads {
-    async fn top(&self) -> Result<mtx_kit::Top, String> {
-        let reading = self.read()?;
-        Ok(mtx_kit::Top {
-            mark: reading.mark,
-            index: reading.index,
-            best_bid: reading.best_bid,
-            best_ask: reading.best_ask,
-        })
-    }
-
-    async fn oracle_usd(&self) -> Result<f64, String> {
-        Ok(self.read()?.oracle)
-    }
-
-    async fn position(&self) -> Result<mtx_kit::Position, String> {
-        let reading = self.read()?;
-        Ok(mtx_kit::Position {
-            size: reading.position,
-            entry_usd: reading.entry_usd,
-        })
-    }
 }
 
 #[cfg(test)]

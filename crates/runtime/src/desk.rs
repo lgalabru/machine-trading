@@ -860,6 +860,50 @@ impl<R: RawDesk> WasmBot<R> {
         }
     }
 
+    /// The market the last turn handed the strategy, if it had one.
+    pub fn last_market(&self) -> Option<&mtx_kit::Market> {
+        self.last.as_ref()
+    }
+
+    /// Cancel every order the strategy's seats have resting: what a host
+    /// does when it stops stepping it. Each seat that fails says why.
+    pub async fn cancel_all(&mut self) -> Vec<String> {
+        let mut failed = Vec::new();
+        for seat in &self.desk.seats {
+            if let Err(error) = seat.cancel_all().await {
+                failed.push(format!("{}: {error}", seat.market()));
+            }
+        }
+        failed
+    }
+
+    /// Close the position on the strategy's own market with a market
+    /// order, no worse than `slippage` (a fraction) past the touch:
+    /// what a host does when a strategy is paused flat. Why it couldn't,
+    /// if it couldn't.
+    pub async fn flatten(&mut self, slippage: f64) -> Result<(), String> {
+        assert!((0.0..1.0).contains(&slippage), "a slippage under 100%");
+        let Some(seat) = self.desk.seats.first() else {
+            return Err("no seat".into());
+        };
+        let position = seat.position().await.map_err(|e| e.to_string())?;
+        if position == 0.0 {
+            return Ok(());
+        }
+        let (bid, ask) = seat.top().await.map_err(|e| e.to_string())?;
+        let (side, limit) = if position > 0.0 {
+            let bid = bid.ok_or("no bid to sell into")?;
+            (mtx_kit::Side::Ask, bid * (1.0 - slippage))
+        } else {
+            let ask = ask.ok_or("no ask to buy from")?;
+            (mtx_kit::Side::Bid, ask * (1.0 + slippage))
+        };
+        seat.take(side, position.abs(), limit)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+
     /// The fuel the session spent, and the most one call spent.
     pub fn fuel(&self) -> (u64, u64) {
         self.strategy
