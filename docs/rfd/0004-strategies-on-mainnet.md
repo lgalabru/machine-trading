@@ -1,0 +1,418 @@
+# RFD 0004: Strategies on mainnet, run by a geyser plugin
+
+State: idea
+Authors: fable, for Ludo Galabru  ·  Started: 2026-11-20
+
+## Problem
+
+A strategy that grades well has nowhere to go. It is a wasm component
+(`crates/kit/wit/strategy.wit`, [RFD 0002](0002-wasm-strategies.md)) that
+only the grader can call, against a surfnet the grader pauses. To trade it
+for real, someone has to rewrite it as a process with its own reads, sends
+and risk checks, and what runs is then no longer what was graded.
+
+The question: can the component that was graded run unchanged against
+mainnet, under the same mandate, with a host that reads the chain from a
+validator's geyser stream? One host should run several strategies, and take
+changes while it runs: pause one or all, change a strategy's mandate, add a
+strategy.
+
+Short answer: yes. The component boundary already separates what a strategy
+decides from how the chain is read and written. What is missing is a host
+that isn't a session, and a crate layout that lets two hosts share the
+code. Nothing in the WIT world has to change for a first version.
+
+## What we have
+
+- **The strategy is a function.** `start(session)`, `step(market) ->
+  intents`, `end`. It imports `log`, a read-only `rpc`, and a host-signed
+  `send`. It holds no key and opens no socket.
+- **The host is already two layers.** In `crates/grader/src/wasm.rs`,
+  `WasmStrategy` is wasmtime, fuel, memory limits and the WIT conversions.
+  `WasmBot` is the loop: read a `Market` through a `Reader`, call `step`,
+  plan the sheet (`mtx_kit::plan_sheet_under`), check it
+  (`taking::TakingGuard`), send each order through a `venue::Seat`. Neither
+  layer names surfpool. `wasm.rs`, `venue.rs`, `venue/*`, `taking.rs`,
+  `risk.rs` and `orders.rs` have no surfpool import.
+- **The mandate and its audit are in `mtx-core`** (`Mandate::audit`,
+  `check_sample`, `Observed`). The enforcer is whoever feeds them.
+- **The chain is behind traits in `mtx-kit`**: `ChainClient` for reads,
+  `TransactionSigner` for keys.
+- **Send status already has the mainnet states**: `landed`, `failed`,
+  `not-sent`, `delayed`, `expired`, with slot, fee and tip. Transaction
+  options (priority fee, tip, route, retries) are in 0.2.0.
+
+What is the grader's alone: scenarios and generators, actors, the snapshot
+and its recipe, the RPC guard, keys derived from the grade's secret, the
+simulated transaction layer, faults, scoring.
+
+## What a geyser plugin is
+
+Read from `~/Coding/surfpool` (`examples/hello-geyser`,
+`crates/core/src/runloops/mod.rs`, and `crates/subgraph` at `v1.0.0`, the
+embedded subgraph plugin, gone from `main`).
+
+- A `cdylib` that exports `_create_plugin() -> *mut dyn GeyserPlugin`
+  (`agave-geyser-plugin-interface`, 4.3.2 in surfpool). The host reads a
+  JSON config with a `libpath`, opens the library, and calls
+  `on_load(config_file, is_reload)`.
+- The host then calls, on its own threads: `update_account` (pubkey,
+  owner, lamports, data, and the transaction that wrote it),
+  `notify_transaction` (message, status meta with logs and inner
+  instructions), `update_slot_status` (processed, confirmed, rooted),
+  `notify_block_metadata` (blockhash, height, time) and `notify_entry`.
+- **It only reads.** There is no call back into the validator. A plugin
+  that wants to write sends a transaction like anyone else.
+- Account notifications are all or nothing: the plugin sees every account
+  write on the chain and filters them itself.
+- Plugins load, unload and reload at run time: surfpool's `loadPlugin`,
+  `unloadPlugin`, `reloadPlugin` and `listPlugins` RPC, and Agave's admin
+  RPC has the same four. A reload is an unload and a fresh load, so the
+  plugin's memory is lost.
+- The subgraph plugin shows the usual shape: do almost nothing in the
+  callback, filter by owner, copy the bytes and push them to a channel
+  (`ipc-channel` there), with the work done elsewhere. It also shows the
+  backfill problem: an account whose meaning arrives later sits in a
+  "purgatory" until a transaction names it.
+
+Surfpool loads the same `cdylib` a validator does (`surfpool start -g
+plugin.json`). That gives us a test bed: the plugin can run against a
+surfnet, including a bench session, before it ever sees mainnet.
+
+## Sketch
+
+### The pieces
+
+Everything runs in the validator's process (decided 2026-11-20: speed
+first). Nothing on the path from an account write to a transaction on the
+wire leaves the process or makes an RPC call.
+
+```
+validator (or surfpool, in tests)
+        │  account, transaction, slot, block     callbacks, validator threads
+        ▼
+  mtx-geyser (cdylib)      filter, copy, try_send. Nothing else.
+        │  bounded channel
+        ▼
+  mtx-runtime, `live` (its own threads, same process)
+    feed       account cache, tape, own fills, blockhash, slot clock
+    desks      one per strategy: Reader + Seats + signer + mandate
+    strategies one wasmtime Store per strategy
+    enforcer   pre-trade checks, post-trade audit, pause on breach
+    tpu        leader tracking, warm QUIC connections to the next leaders
+    control    local socket: pause, resume, mandate, add, remove, status
+    journal    every step, sheet, send and fill, appended to disk
+        │  signed transactions, QUIC
+        ▼
+  the leaders' TPU
+```
+
+The runtime still takes its events from a `Feed` trait, because tests feed
+it recorded events and surfpool feeds it a bench session. A remote stream
+is not a target.
+
+### The step
+
+The bench pauses the world for a step. Mainnet doesn't wait.
+
+- **Clock.** A strategy is stepped every `slots_per_step` slots, on the
+  slot notification. If its previous step is still running, the step is
+  skipped and counted, never queued.
+- **Market.** Built from the feed's cache by decoding accounts natively,
+  with no RPC and no simulation: mark, oracle and top of book from the
+  venue's accounts, the position from the trader account, the tape and
+  own fills from `notify_transaction` (the kit's `protocols/fills.rs` and
+  Phoenix meter already decode the events), fees from the blocks seen.
+  The bench reads a perp's mark and top through Hawkeye's simulated views,
+  so the native decoding has to be shown equal to them (step 2).
+- **`rpc` import.** The same allowlist (`mtx_kit::RPC_METHODS`). Account
+  reads are answered from the cache, in memory. A read the cache can't
+  answer (`getBlock`, `simulateTransaction`, an account nobody watches)
+  goes to the node's local RPC: it works, it is slow, and it is counted
+  per step so a strategy's owner can see it. An account read once this way
+  joins the watch set. Reads are no longer of a paused chain, so two reads
+  in one step may see different slots.
+- **Budget.** Fuel stays, per step, as in the bench. A wall deadline is
+  added with wasmtime's epoch interruption, since here a slow step costs
+  the strategy the market, not the grader its time.
+- **Sends.** The planner and the seats are the bench's. The blockhash
+  comes from `notify_block_metadata`, the bytes go to the leaders over
+  QUIC (see [Sending](#sending-straight-to-the-leaders)). A send's fate is
+  read from the stream: our signature in `notify_transaction` is `landed`
+  or `failed`, a blockhash too old is `expired`. No polling.
+- **Where the time goes.** The component is compiled when it is added,
+  not when it is stepped. Each strategy steps on its own thread, so one
+  slow strategy doesn't delay another. Signing is in process. The budget
+  we should hold ourselves to, from the slot notification to the last
+  byte on the wire, is a few milliseconds plus the strategy's own time,
+  and step 6 measures it.
+- **Session.** `start` gets the mandate, the venues and the authority as
+  today. `steps` and `end_slot` come from the mandate's term. A mandate
+  without a term needs a decision (see open questions).
+
+### Many strategies
+
+Each strategy has its own wasmtime `Store`, fuel, memory cap, log, journal
+and authority (its own key, so its position is its own and the mandate
+audits one account). They share the `Engine`, the feed and the cache. A
+trap stops that strategy, as in the bench, and nothing else. The watch set
+is the union of what the desks need, and grows when a strategy is added.
+New accounts are backfilled once from the local RPC, then kept fresh from
+the stream.
+
+### Control while running
+
+A geyser reload loses every strategy's state, so control can't go through
+the plugin's config. The runtime listens on a Unix socket, and `mtx live`
+is its client:
+
+| Command | Effect, at the strategy's next step boundary |
+|---|---|
+| `mtx live status` | each strategy: state, position, PnL, last step, fuel, skipped steps, sends |
+| `mtx live pause <name>` / `--all` | no more `step` calls. By default resting orders are cancelled and the position is kept. `--keep-orders` and `--flatten` are the other two choices |
+| `mtx live resume <name>` / `--all` | steps again, with a `Market` that shows what happened meanwhile |
+| `mtx live mandate <name> <file>` | validates (`Mandate::validate`), then swaps the enforcer's mandate. See below |
+| `mtx live add <name> <bot.wasm> <mandate> --key …` | compiles off the hot path, backfills its accounts, calls `start`, begins paused unless `--run` |
+| `mtx live remove <name>` | pause, cancel, `end`, drop |
+
+The desired state (strategies, component hashes, mandates, paused or not)
+is written to disk on every change, so a validator restart or a plugin
+reload brings the same set back. A restarted strategy gets a fresh `start`
+with a position it didn't open. Strategies have to cope with that.
+
+**A mandate update** takes effect in the enforcer at once. `cap` and
+`max_drawdown` are in every `Market`, so a strategy sees those change with
+no new interface. The rest of the mandate is only in `session`, given at
+`start`. Two ways to tell the strategy: restart it (`end`, then `start`,
+state lost), or add an optional `mandate-changed` export in a 0.3.0 world.
+A first version restarts. When the new mandate is tighter than the
+position held, the desk goes reduce-only until the position fits.
+
+### The enforcer
+
+On the bench a breach costs a score. Here the enforcer is the last thing
+between a strategy and the principal's money, so it acts.
+
+- Before the trade: the planner cuts the sheet to the cap, the taking
+  guard refuses forbidden takes, a raw send is simulated and audited
+  (`raw.rs`) before it is signed.
+- After the trade: fills and positions from the feed go into `Observed`,
+  and `Mandate::audit` and `check_sample` run every step.
+- On a breach, or a drawdown past the limit: the strategy is paused, its
+  orders cancelled, and, if the mandate's owner chose so, the position is
+  closed by the host (`risk.rs` already has the forced close).
+- A global kill switch pauses everything. A feed that dropped events, or
+  fell behind the tip by more than a few slots, pauses everything too:
+  a strategy must not trade on a stale `Market`.
+
+### Sending, straight to the leaders
+
+A send through RPC costs a hop and a queue. The runtime sends to the
+leaders' TPU itself, after `~/Coding/bifrost` (`src/tpu_client`), which
+does this for browsers:
+
+- **Connections** (`manager.rs`). One `quinn` endpoint, ALPN `solana-tpu`,
+  a client certificate from `solana_tls_utils::QuicClientCertificate`,
+  0-RTT, a 4 s keep-alive under a 5 s idle timeout. A transaction is one
+  unidirectional stream: open, write, finish. It goes to the current
+  leader and the next.
+- **Leaders** (`tracker/`). Three things tracked apart, so a slow one
+  never blocks a fast one: the current slot, estimated from first-shred
+  and completed events with outliers dropped (`slots_tracker.rs`); the
+  epoch's schedule by slot index, rotated at the epoch boundary
+  (`schedule_tracking.rs`); and each identity's TPU address, refreshed
+  every minute (`leader_tracker.rs`).
+
+What we change:
+
+- **The slot comes from geyser**, not a websocket: `update_slot_status`
+  gives `FirstShredReceived` and `Completed` in the interface we build on.
+  The schedule and the cluster's addresses come from the node's local RPC,
+  once an epoch and once a minute, off the hot path.
+- **Connections are opened ahead.** Bifrost's send path only reuses a
+  connection that exists. We connect to the leaders of the next few
+  leader windows as the schedule advances, so a send never waits for a
+  handshake.
+- **Stake.** Leaders give most of their QUIC streams to staked peers. A
+  certificate made from no key, as bifrost's is, is an unstaked peer, and
+  on mainnet under load its transactions are the first dropped. Built from
+  the validator's identity, the certificate gets the validator's stake.
+  The geyser interface doesn't hand a plugin the identity, so the operator
+  has to give the runtime the keypair's path. This is the largest open
+  point of the design (see open questions).
+- **Routes.** `mtx_kit::Route` already names `Rpc`, `Staked` and `Jito`.
+  The default becomes the direct QUIC send, `Jito` stays a line's choice
+  for bundles, and `Rpc` is the fallback when no leader connection is up.
+- **Retries.** A transaction not seen landed is sent again to each new
+  leader until its blockhash expires, up to the line's `retries`.
+
+The leader maths (slot estimate, schedule index, who leads the next *n*
+slots) is pure, and goes in `mtx-core` beside the simulated layer's
+vocabulary, where the bench's synthetic leaders
+(`crates/grader/src/txlayer/leader.rs`) can share its types.
+
+### Inside the validator
+
+The runtime shares the validator's process, so it must never hurt it.
+
+- A callback filters against a set of pubkeys and owners, copies the
+  bytes and does a `try_send` on a bounded channel. On a full channel it
+  drops, counts, and marks the feed lossy. It never blocks, allocates
+  little, and never calls wasm.
+- A panic on a validator thread would take the validator down. Callbacks
+  are wrapped in `catch_unwind`. The runtime's threads are its own, with
+  its own tokio runtime, and a panic there stops the runtime and pauses
+  every strategy, not the node.
+- wasmtime's memory is capped per strategy (1 GiB today, to be lowered),
+  and the cache, the journal's buffer and every channel have a size.
+- The `cdylib` must be built with the validator's Rust toolchain and the
+  same `agave-geyser-plugin-interface` version: the trait object crosses
+  the boundary with no stable ABI.
+- **Keys are in the process.** Signing elsewhere costs a round trip on
+  every send. Each strategy's key is loaded from a file the operator
+  names, and funded with no more than its mandate lets it lose. The
+  desks sign through `TransactionSigner`, so a remote signer stays
+  possible for a strategy that would rather be slow than exposed.
+
+### Splitting the grader
+
+`mtx-grader` is 40 modules in one crate. We add two crates, not four, and
+put what is vocabulary or pure logic in `mtx-core`.
+
+| Crate | Gains | From |
+|---|---|---|
+| `mtx-core` | The live vocabulary and its pure logic: a strategy's lifecycle (running, paused, stopped, and why), the control commands and their answers, journal records, feed events, the step clock (which slots are steps, what a skipped step is), leader and slot tracking, forced closes (`ForcedClose`), and the enforcer's verdicts over `Observed` | new, `risk.rs`, and types `wasm.rs` and `session.rs` share (`Account`, `StepTrades`) |
+| `mtx-runtime` (new) | **host**: `WasmStrategy`, both WIT worlds and their conversions, fuel, limits, the stopped WASI. **desk**: `WasmBot`, `Desk`, `Reader`, `Seat` and the venues' seats, the taking guard, the raw-send audit. **live**, behind a feature: feed, cache, scheduler, enforcer loop, TPU sender, control socket, journal | `wasm.rs`, `venue.rs`, `venue/*`, `taking.rs`, `raw.rs`; `live` is new |
+| `mtx-geyser` (new) | The `cdylib`: `_create_plugin`, the callbacks, the channel. A hundred lines, and the only crate that names `agave-geyser-plugin-interface` | new |
+| `mtx-grader` | Keeps scenarios, generators, actors, sessions, snapshots, the guard, the simulated transaction layer, keys, faults, scoring. Depends on `mtx-runtime` without `live` | |
+
+`mtx-core` has to keep building for `wasm32-wasip2` and shipping in the
+task image, so nothing with a socket, a thread or wasmtime goes there. That
+is the line: what the grader and the live runtime must agree on goes in
+`mtx-core`, what touches a chain or a sandbox goes in `mtx-runtime`.
+
+What ties the desk's modules to the grader today is small:
+`session::INTERNAL_RPC_TIMEOUT` and `session::grader_f64` in the seats,
+`making::MakingFill` in `taking.rs`, `session::StepTrades` and
+`spot::Wallet` in `WasmBot`, `actors::library::RfqBoard` and
+`txlayer::client::PoolClient` in `Desk`. The first five move with the
+code or into `mtx-core`. The last two become traits the grader
+implements. The `rpc` and `send` imports go through a trait as well, where
+`WasmStrategy` holds a URL today. `raw.rs` uses surfpool's
+`simulateBundle`, which mainnet doesn't have: its audit needs a second
+backend.
+
+The split is worth doing on its own. It is step 1 below, and a grade must
+come out the same to the cent before and after.
+
+### Order of work
+
+1. **Split.** `mtx-runtime` out of `mtx-grader`, and the shared types
+   into `mtx-core`, no behaviour change. Check: every reference's practice PnL equal, twice.
+2. **Plugin on a surfnet, read only.** `mtx-geyser` and the feed, loaded
+   into surfpool during a bench session. The plugin builds a `Market`
+   each step and we compare it with the one the grader built. Check: equal
+   on every step of flash-crash and market-making practice.
+3. **Plugin trades on a surfnet.** The plugin steps the component and
+   sends, in a session the grader only scores. Check: the reference earns
+   what it earns when the grader hosts it.
+4. **Control.** The socket, `mtx live`, persistence, the enforcer's pause.
+   Check on a surfnet forked from mainnet, running in real time: add,
+   pause, change a mandate, kill, restart.
+5. **TPU.** The sender, against `solana-test-validator` and then devnet:
+   leader tracking from geyser slots, warm connections, a transfer landed
+   without RPC. Check: the slot a send lands in, against the slot it was
+   sent in.
+6. **Mainnet, shadow.** The plugin in a mainnet node. Steps run, sheets
+   are planned and signed, nothing is sent. The journal says what it would
+   have done. This measures the time from a slot notification to a signed
+   sheet, feed loss, and what the plugin costs the node.
+7. **Mainnet, small.** One strategy, a mandate with a tiny cap and
+   drawdown, its own key.
+
+## Open questions
+
+- **Whose stake do the sends carry?** Unstaked QUIC is throttled. The
+  choices: the validator's identity in the runtime's certificate (fastest,
+  and the identity key is then read by code that runs strategies), the
+  node's own forwarding through its local TPU (one hop, staked, no key),
+  or a peering arrangement with a staked node. Step 5 measures the first
+  two on devnet. Who operates the node decides the rest.
+- **Which node?** An unstaked RPC node gives the feed and none of the
+  stake. A voting validator gives both, and a plugin bug then costs votes.
+- **Should a step be a slot, or an event?** The fastest strategy reacts
+  to a write, not to the next slot boundary: geyser delivers an oracle
+  update or a fill while the slot is still being replayed. The interface
+  allows it (`k` counts steps, `slot` may repeat), the bench doesn't model
+  it. Leave steps on slots first, and measure in the shadow run how old
+  the `Market` is when `step` is called.
+- **Which commitment does a step read?** Processed is freshest and can be
+  rolled back. A position read at processed and a fill reported only once
+  confirmed is one option. Measure on mainnet how often a processed fill
+  of ours doesn't confirm.
+- **Does native decoding match Hawkeye's views?** The bench reads
+  Phoenix's mark and top through simulated views, and the live `Market`
+  can't afford a simulation per step. Step 2 compares the two on every
+  step of a session. If they differ, the bench moves to the native read
+  too, as a new task version.
+- **A session with no end.** `steps`, `steps_left`, `slots_left` and `last`
+  assume a term. A long-lived strategy needs either a rolling term (a
+  mandate renewed each day, a restart at each renewal) or `u64::MAX`.
+  Check how the references use `steps_left`.
+- **State across restarts.** A strategy's memory is lost when the host
+  restarts. Is a fresh `start` with a position enough, or do strategies
+  need a `save`/`restore` pair? Ask the references first: how much do
+  they hold that the `Market` doesn't give back?
+- **Does a graded strategy survive a chain that doesn't pause?** Sends
+  land a slot or more later, some don't land, the book moves during the
+  step. The simulated transaction layer (`docs/tx-layer.md`) is the
+  bench's model of this. Step 6's journal against the layer's reports is
+  the calibration.
+- **Who may use the control socket?** File permissions on a Unix socket
+  for a first version. A mandate signed by the principal, or held in an
+  on-chain account the plugin already sees, is the stronger form.
+- **Raw sends.** Off on mainnet until the audit has a backend that isn't
+  surfpool's `simulateBundle`.
+- **Does Agave's plugin manager behave as surfpool's does?** This RFD read
+  surfpool's host, not Agave's. Check the admin RPC's reload, the threads
+  callbacks arrive on, and startup notifications, against Agave 4.x.
+
+## Risks
+
+- **Real money.** A planner or seat bug that costs a score on the bench
+  costs capital here. The enforcer has to be simple enough to review
+  line by line, and independent of the strategy's own view.
+- **The validator.** A plugin that blocks, leaks or panics degrades or
+  kills the node, and in process there is no wall between them. We accept
+  that for speed. What bounds it: callbacks that only copy, limits on
+  every buffer, the shadow run's measure of what the plugin costs the
+  node, and a node that isn't one anybody else depends on.
+- **Two hosts drift.** If the grader and the live runtime read a market
+  differently, a grade stops predicting live behaviour. Steps 2 and 3 are
+  parity tests and should stay in CI.
+- **The bench bends to mainnet.** Sharing the desk means a live need
+  (a new send state, a reconnect) can change what is graded. The WIT
+  world stays the contract, and the ladder is rerun when the desk changes.
+- **Keys.** One key per strategy, in the validator's memory, funded with
+  no more than the mandate allows it to lose. If sends carry the
+  validator's stake, its identity key is in reach of the same code.
+- **Operations.** A mainnet node, monitoring, and someone to answer when
+  the enforcer pauses everything at night.
+
+## What we learned
+
+- 2026-11-20: the study. The component boundary, `WasmStrategy`, `WasmBot`,
+  the seats and the mandate audit carry over. The session, the guard, the
+  keys and the simulated transaction layer don't. Surfpool loads the same
+  `cdylib` a validator does, so the plugin can be tested against a bench
+  session before mainnet. A geyser reload drops the plugin's memory, so
+  control needs its own channel.
+
+- 2026-11-20: in process, and TPU (Ludo). Speed comes first, so the
+  runtime lives in the validator and sends to the leaders over QUIC, after
+  `~/Coding/bifrost`'s `tpu_client`. That removes the out-of-process and
+  remote-stream layouts, puts keys in the process, makes the `Market` a
+  native decode of cached accounts, and raises the question of whose
+  stake the sends carry. Fewer crates: shared vocabulary and pure logic go
+  in `mtx-core`, and one new library, `mtx-runtime`, holds the host, the
+  desk and the live runtime, with a thin `mtx-geyser` `cdylib`.
