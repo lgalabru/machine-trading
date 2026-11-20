@@ -37,7 +37,7 @@ rebuilt against that version's interface and toolchain.
 
 1. As root, once: `./setup-root.sh`. It installs the build dependencies,
    sets the guide's sysctl and limits, creates `sol`, the directories, the
-   systemd unit and log rotation, and opens SSH and ports 8000-8020 in ufw.
+   systemd unit and log rotation, and opens SSH and ports 8000-8030 in ufw.
    JSON-RPC listens on localhost only.
 2. As `sol`: `~/bin/install-agave.sh`: Agave v4.4.1's CLI from Anza's
    installer, its validator built from the release's source (the installer

@@ -11,6 +11,10 @@
 #   clients.
 # - v4.4 renamed --limit-ledger-size to --limit-blockstore-size, whose count
 #   is required: 200 million shreds, the old flag's default, a few days.
+# - v4.4 needs at least 27 dynamic ports: 8000-8030, as the guide opens.
+# - --no-xdp: v4.4 sends retransmits over XDP by default, which needs
+#   CAP_NET_ADMIN and CAP_NET_RAW. UDP sockets until sol.service grants them
+#   (AmbientCapabilities), an optimization a non-voting node can wait for.
 # - `exec`, so the log reopens on USR1 (logrotate).
 exec agave-validator \
   --identity /home/sol/validator-keypair.json \
@@ -28,7 +32,7 @@ exec agave-validator \
   --accounts /mnt/accounts \
   --snapshots /mnt/snapshots \
   --log /home/sol/agave-validator.log \
-  --dynamic-port-range 8000-8020 \
+  --dynamic-port-range 8000-8030 \
   --entrypoint entrypoint.mainnet-beta.solana.com:8001 \
   --entrypoint entrypoint2.mainnet-beta.solana.com:8001 \
   --entrypoint entrypoint3.mainnet-beta.solana.com:8001 \
@@ -37,4 +41,5 @@ exec agave-validator \
   --expected-genesis-hash 5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d \
   --wal-recovery-mode skip_any_corrupted_record \
   --limit-blockstore-size 200000000 \
+  --no-xdp \
   --geyser-plugin-config /home/sol/mtx/geyser.json

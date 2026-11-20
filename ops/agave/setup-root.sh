@@ -16,7 +16,7 @@ set -euo pipefail
 # The ports gossip, turbine and repair use: --dynamic-port-range in
 # validator.sh. JSON-RPC stays on localhost (--private-rpc and
 # --rpc-bind-address 127.0.0.1), so it isn't opened.
-DYNAMIC_PORTS="8000:8020"
+DYNAMIC_PORTS="8000:8030"
 
 [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
 here="$(cd "$(dirname "$0")" && pwd)"
