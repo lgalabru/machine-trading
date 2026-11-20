@@ -645,6 +645,12 @@ impl Manager {
         let exchange = serde_json::from_str(&exchange)
             .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
         let reader = PerpReader::new(exchange, &spec.symbol, &authority)?;
+        // A shadow run's key may have no account on the venue: flat, since
+        // it sends nothing.
+        let reader = match spec.shadow {
+            true => reader.flat_without_account(),
+            false => reader,
+        };
         self.backfill(&reader).await?;
         let strategy = Strategy {
             component_sha256: component_sha256.clone(),
