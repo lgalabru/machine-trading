@@ -5428,6 +5428,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-geyser"
+version = "0.1.0"
+dependencies = [
+ "agave-geyser-plugin-interface",
+ "mtx-core",
+ "mtx-runtime",
+]
+
+[[package]]
 name = "mtx-grader"
 version = "0.1.0"
 dependencies = [
@@ -5530,6 +5539,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "solana-account 4.7.0",
  "solana-keypair",
  "solana-pubkey 4.3.0",
  "solana-rpc-client-api",
