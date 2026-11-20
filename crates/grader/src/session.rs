@@ -36,7 +36,6 @@ use std::{
 
 use async_trait::async_trait;
 use mtx_core::{
-    Decimal,
     mandate::{InstrumentRef, Mandate, Observed, ObservedFill, PositionRange, SampleLog},
     turns::{self, Hello, Message, Step},
 };
@@ -80,14 +79,8 @@ pub(crate) const TRUSTED_WALL: Duration = Duration::from_secs(120);
 /// the world stops waiting.
 pub(crate) const TURN_BUDGET_PER_STEP: Duration = Duration::from_millis(500);
 
-/// How long each of the grader's own requests to its surfnet may take (the
-/// clients' default is 30 s). The world doesn't move while the grader waits,
-/// so a starved machine makes a request slow, never different: it is waited
-/// out, not failed. The bound is only for a surfnet that died.
-pub const INTERNAL_RPC_TIMEOUT: Duration = Duration::from_secs(600);
-/// How many times the grader makes one of its reads through a client it
-/// can't give a longer wait (Phoenix's Hawkeye simulations), before failing.
-const READ_ATTEMPTS: u32 = 5;
+pub use mtx_runtime::desk::StepTrades;
+pub(crate) use mtx_runtime::reads::{INTERNAL_RPC_TIMEOUT, decimal_f64 as grader_f64, patiently};
 
 /// Collateral each session's trader starts with.
 pub const DEPOSIT_USDC: f64 = 10_000.0;
@@ -128,6 +121,20 @@ pub struct SessionOptions<'a> {
     pub observer: Option<std::sync::Arc<dyn crate::wasm::StepObserver>>,
     /// Scoring v2's session rules, if the grade runs under them.
     pub rules: Rules,
+    /// Who plays the bot's turns, if not the grader: the session neither
+    /// loads its component nor starts a process, and plays the turn
+    /// protocol with the host instead (`docs/rfd/0004`, step 3).
+    pub host: Option<std::sync::Arc<dyn TurnHost>>,
+}
+
+/// What plays a session's turns outside the grader: the live runtime, run
+/// by a geyser plugin in the session's surfnet. Its strategy trades as the
+/// bot, through the bot's guarded endpoint; the grader moves the world,
+/// says each turn, and scores.
+pub trait TurnHost: Send + Sync {
+    /// The host's end of a turn socket for the session `env` describes,
+    /// whose strategy is told `vars`: the grader sends its hello there.
+    fn connect(&self, env: &BotEnv, vars: &[(String, String)]) -> std::io::Result<StdUnixStream>;
 }
 
 /// Scoring v2's session rules (`mtx grade --v2-sessions`). Off by
@@ -380,44 +387,6 @@ pub struct Timeline {
     /// the primary, by symbol.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub market_taker_orders: BTreeMap<String, Vec<TakerRecord>>,
-}
-
-/// What traded on the session's market in a step, between anyone: read from
-/// the fills the market's transactions recorded, each match once. A chart's
-/// candles take their highs, lows and volume from it.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
-pub struct StepTrades {
-    /// Matches.
-    pub count: u64,
-    /// Base units traded, and what they traded for, in USD.
-    pub base: f64,
-    pub quote_usd: f64,
-    /// Of `base`, what takers bought; the rest they sold.
-    pub bought_base: f64,
-    /// The first and last match's price, and the highest and lowest. All 0
-    /// when nothing traded.
-    pub open_usd: f64,
-    pub high_usd: f64,
-    pub low_usd: f64,
-    pub close_usd: f64,
-}
-
-impl StepTrades {
-    /// Count one match: `base` units at `price`, the taker buying or not.
-    pub fn add(&mut self, price: f64, base: f64, taker_bought: bool) {
-        if self.count == 0 {
-            (self.open_usd, self.high_usd, self.low_usd) = (price, price, price);
-        }
-        self.count += 1;
-        self.base += base;
-        self.quote_usd += base * price;
-        if taker_bought {
-            self.bought_base += base;
-        }
-        self.high_usd = self.high_usd.max(price);
-        self.low_usd = self.low_usd.min(price);
-        self.close_usd = price;
-    }
 }
 
 /// The world and the account after a step's blocks landed, before the bot's
@@ -931,11 +900,34 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     };
     // A bot is a process speaking the turn protocol, or a component the
     // grader calls (`crate::wasm`, RFD 0002).
-    let mut process = None;
+    let mut process: Option<(Option<Child>, _, _)> = None;
     let mut wasm_bot = None;
     let mut take_gate: Option<std::sync::Arc<crate::taking::TakeGate>> = None;
     let legacy;
-    if let Some(component) = crate::wasm::component_in(opts.bot_dir) {
+    // What a component is told beyond the task's variables.
+    let component_vars: Vec<(String, String)> = told
+        .iter()
+        .cloned()
+        // The risk desk closes on a breach instead of disqualifying (the
+        // scenario's `stop_out`).
+        .chain(
+            scenario
+                .stop_out
+                .as_ref()
+                .map(|_| ("MTX_STOP_OUT".to_string(), "1".to_string())),
+        )
+        // The book stays where trades leave it (the scenario's `impact`).
+        .chain(
+            scenario
+                .impact
+                .as_ref()
+                .map(|_| ("MTX_IMPACT".to_string(), "1".to_string())),
+        )
+        .collect();
+    let hosted = opts.host.clone();
+    if hosted.is_none()
+        && let Some(component) = crate::wasm::component_in(opts.bot_dir)
+    {
         let log = std::fs::File::create(opts.bot_log).map_err(io_error(opts.bot_log))?;
         // A scenario that enables raw sends lists their programs: checked
         // when it loaded.
@@ -956,7 +948,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             )
             .await?;
         wasm_bot = Some(
-            crate::wasm::WasmBot::start(
+            crate::wasm::start(
                 &component,
                 &env.rpc_url,
                 crate::wasm::Clock {
@@ -964,25 +956,9 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     steps,
                     slots_per_step: SLOTS_PER_STEP,
                     start_slot,
-                    vars: told
+                    vars: component_vars
                         .iter()
                         .cloned()
-                        // The risk desk closes on a breach instead of
-                        // disqualifying (the scenario's `stop_out`).
-                        .chain(
-                            scenario
-                                .stop_out
-                                .as_ref()
-                                .map(|_| ("MTX_STOP_OUT".to_string(), "1".to_string())),
-                        )
-                        // The book stays where trades leave it (the
-                        // scenario's `impact`).
-                        .chain(
-                            scenario
-                                .impact
-                                .as_ref()
-                                .map(|_| ("MTX_IMPACT".to_string(), "1".to_string())),
-                        )
                         .chain(raw_programs.as_ref().map(|programs| {
                             let programs: Vec<String> =
                                 programs.iter().map(ToString::to_string).collect();
@@ -1018,16 +994,28 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             start_slot, end_slot, steps, "strategy component loaded"
         );
     } else {
-        if user.is_none() {
+        if hosted.is_none() && user.is_none() {
             return Err(Error::NoBotUser);
         }
         take_gate = account.take_gate();
         if let Some(gate) = &take_gate {
             guard.set_send_gate(gate.clone());
         }
-        let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
-        let told: Vec<(String, String)> = told.into_iter().chain(vars).collect();
-        let child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs, &told)?;
+        let (ours, child) = match &hosted {
+            Some(host) => {
+                let told: Vec<(String, String)> = component_vars.into_iter().chain(vars).collect();
+                (
+                    host.connect(&env, &told).map_err(io_error("turn host"))?,
+                    None,
+                )
+            }
+            None => {
+                let (ours, theirs) = StdUnixStream::pair().map_err(io_error("turn socket"))?;
+                let told: Vec<(String, String)> = told.into_iter().chain(vars).collect();
+                let child = spawn_bot(opts.bot_dir, &env, &workdir, opts.bot_log, theirs, &told)?;
+                (ours, Some(child))
+            }
+        };
         ours.set_nonblocking(true)
             .map_err(io_error("turn socket"))?;
         let socket = UnixStream::from_std(ours).map_err(io_error("turn socket"))?;
@@ -1166,9 +1154,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             // The bot is stopped before the desk sends anything, so it
             // can't race the close: a process is ended, a component isn't
             // called again.
-            if let Some((mut child, mut writer, _)) = process.take() {
+            if let Some((child, mut writer, _)) = process.take() {
                 let _ = send(&mut writer, &Message::End).await;
-                stop_bot(&mut child, workdir.bot_user.and(user)).await;
+                if let Some(mut child) = child {
+                    stop_bot(&mut child, workdir.bot_user.and(user)).await;
+                }
             }
             // Sends the faults still hold would land during the close, and
             // could reopen the position or rest quotes: they never land.
@@ -1232,7 +1222,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             continue;
         }
         if bot_exit.is_none()
-            && let Some((child, _, _)) = process.as_mut()
+            && let Some((Some(child), _, _)) = process.as_mut()
             && let Some(status) = child.try_wait().map_err(io_error(opts.bot_dir))?
         {
             if status.success() {
@@ -1323,9 +1313,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
     }
     guard.set_turn(false);
     cast.end().await;
-    if let Some((mut child, mut writer, _)) = process {
+    if let Some((child, mut writer, _)) = process {
         let _ = send(&mut writer, &Message::End).await;
-        stop_bot(&mut child, workdir.bot_user.and(user)).await;
+        if let Some(mut child) = child {
+            stop_bot(&mut child, workdir.bot_user.and(user)).await;
+        }
     }
     if let Some(gate) = &take_gate {
         turns.refused_takes = Some(gate.refused());
@@ -1586,59 +1578,6 @@ pub(crate) fn transactions(
         .collect()
 }
 
-/// The grader's own read, made again if it fails for want of an answer (a
-/// timeout, a lost connection: see [`is_transport`]), up to
-/// [`READ_ATTEMPTS`] times. On a starved machine a read can time out on the
-/// client's side, and reading again changes nothing, since nothing moves
-/// while the grader reads. Any other error is the answer, and comes back at
-/// once.
-pub(crate) async fn patiently<T, E: std::error::Error + 'static, F>(
-    what: &str,
-    mut read: impl FnMut() -> F,
-) -> std::result::Result<T, E>
-where
-    F: std::future::Future<Output = std::result::Result<T, E>>,
-{
-    let mut attempt = 1;
-    loop {
-        match read().await {
-            Ok(value) => return Ok(value),
-            Err(error) if attempt < READ_ATTEMPTS && is_transport(&error) => {
-                warn!(what, attempt, %error, "a grader read got no answer; reading again");
-                attempt += 1;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-/// Whether `error` is a request that got no answer (it timed out, or its
-/// connection failed) rather than an answer. Errors that keep their source
-/// say so through reqwest's; some clients flatten theirs into text.
-pub(crate) fn is_transport(error: &(dyn std::error::Error + 'static)) -> bool {
-    const NO_ANSWER: [&str; 5] = [
-        "timed out",
-        "error sending request",
-        "connection refused",
-        "connection reset",
-        "connection closed",
-    ];
-    let mut next = Some(error);
-    while let Some(error) = next {
-        if let Some(http) = error.downcast_ref::<reqwest::Error>()
-            && (http.is_timeout() || http.is_connect() || http.is_request())
-        {
-            return true;
-        }
-        let text = error.to_string().to_lowercase();
-        if NO_ANSWER.iter().any(|sign| text.contains(sign)) {
-            return true;
-        }
-        next = error.source();
-    }
-    false
-}
-
 /// How long the world waits for a process bot: its hello, and each turn.
 pub(crate) struct Walls {
     trusted: bool,
@@ -1741,15 +1680,6 @@ pub(crate) async fn next_message(
             return Some(message);
         }
     }
-}
-
-/// A meter's amount as the grader's `f64`: the nearest double to the exact
-/// decimal, which is what dividing Phoenix's integer lots in `f64` gave.
-pub(crate) fn grader_f64(amount: Decimal) -> f64 {
-    amount
-        .to_string()
-        .parse()
-        .expect("a decimal's digits parse as f64")
 }
 
 /// A private directory for the bot: its keypair and its `HOME`.
@@ -2038,45 +1968,6 @@ mod tests {
 
     fn mode(path: &Path) -> u32 {
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777
-    }
-
-    #[derive(Debug, thiserror::Error)]
-    #[error("{0}")]
-    struct Failed(String);
-
-    #[tokio::test]
-    async fn only_unanswered_reads_are_made_again() {
-        let mut calls = 0;
-        let timed_out = patiently("x", || {
-            calls += 1;
-            std::future::ready(Err::<(), _>(Failed(
-                "error sending request: operation timed out".into(),
-            )))
-        })
-        .await;
-        assert!(timed_out.is_err());
-        assert_eq!(calls, READ_ATTEMPTS);
-
-        let mut calls = 0;
-        let answered = patiently("x", || {
-            calls += 1;
-            std::future::ready(Err::<(), _>(Failed("no market SPCX".into())))
-        })
-        .await;
-        assert!(answered.is_err());
-        assert_eq!(calls, 1);
-
-        let mut calls = 0;
-        let second = patiently("x", || {
-            calls += 1;
-            std::future::ready(if calls == 1 {
-                Err(Failed("Connection refused (os error 111)".into()))
-            } else {
-                Ok(7)
-            })
-        })
-        .await;
-        assert_eq!(second.unwrap(), 7);
     }
 
     /// Two grades on one machine never hold a bot user at once: the second

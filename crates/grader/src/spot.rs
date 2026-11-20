@@ -63,11 +63,10 @@ use crate::{
     venue::{Market, books, price_usd, spot_venue, value_usd},
     wasm::{Desk, Reader},
 };
-
-/// The pair every spot session trades: the one market each profile names.
-pub const SYMBOL: &str = "SOL-USDC";
-/// Venues a spot session can trade on.
-pub const VENUES: [&str; 2] = ["phoenix", "openbook"];
+pub use crate::{
+    venue::books::{SYMBOL, VENUES},
+    wasm::{VenueReading, Wallet},
+};
 /// SOL the bot's wallet holds for fees and account rent, on top of the
 /// scenario's wrapped SOL. The profiles don't count it.
 const FEE_SOL: f64 = 1.0;
@@ -164,43 +163,6 @@ impl SpotReport {
                 worst_price: fill.price,
             })
             .collect()
-    }
-}
-
-/// What the account holds, and what it's worth.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct Wallet {
-    /// SOL and USDC, in the wallet and on every venue, free or locked.
-    pub base: f64,
-    pub quote: f64,
-    /// The Pyth SOL/USD price it was valued at, and its value.
-    pub price_usd: f64,
-    pub value_usd: f64,
-    /// A lending session's reserves, as a component's step shows them.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub venues: Vec<VenueReading>,
-}
-
-/// One reserve of a measured account, as a component's step shows it: the
-/// supply and debt there, and the reserve's numbers.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
-pub struct VenueReading {
-    pub id: String,
-    pub supplied: f64,
-    pub borrowed: f64,
-    pub health: Option<f64>,
-    pub stats: Vec<(String, f64)>,
-}
-
-impl Wallet {
-    /// Value the wallet at `price` if it is one, as the valuation feed's
-    /// anchor makes the start: the held SOL is worth what the feed will say
-    /// from the first slot, so the shift isn't PnL.
-    fn reprice(&mut self, price: Option<f64>) {
-        if let Some(price) = price {
-            self.value_usd += self.base * (price - self.price_usd);
-            self.price_usd = price;
-        }
     }
 }
 
@@ -780,6 +742,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         start
             .wallet
             .reprice(valuation_anchor(oracles, &oracle_starts));
+    }
+    if let Some(observer) = &opts.observer {
+        observer.before_lock(surfnet.rpc_url(), &bot.pubkey().to_string());
     }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let base_slot = rpc.get_slot()?;

@@ -53,7 +53,7 @@ phoenix = [
 # What a strategy reads of Phoenix without the chain: the market metadata a
 # session hands it (Session::venue), tick and lot conversions, account
 # addresses, and Phoenix's account decoding. Builds for wasm32-wasip2.
-venue = ["dep:phoenix-rise", "phoenix-rise/sdk", "dep:solana-pubkey", "solana-pubkey/curve25519"]
+venue = ["dep:phoenix-rise", "dep:bytemuck", "phoenix-rise/sdk", "dep:solana-pubkey", "solana-pubkey/curve25519"]
 # Phoenix v1 spot order books, as the Phoenix venue profile's spot markets:
 # market and seat decoding, exact tick/lot conversions, the trader's
 # instructions, its holdings, a trader and an ExecutionDriver.
@@ -123,7 +123,9 @@ solana-transaction-status-client-types = { version = "4.3", optional = true }
 spl-associated-token-account-interface = { version = "2", optional = true }
 spl-token-interface = { version = "3", optional = true }
 
-phoenix-rise = { version = "=0.6.15", default-features = false, features = ["serde"], optional = true }
+phoenix-rise = { version = "=0.10.2", default-features = false, features = ["serde"], optional = true }
+# Already in the tree through phoenix-rise: aligns an account's bytes for its decoder.
+bytemuck = { version = "1", optional = true }
 
 # CPU only: no default features, so no BLAS, GPU or network crates.
 candle-core = { version = "0.9", default-features = false, optional = true }
@@ -134,6 +136,8 @@ candle-nn = { version = "0.9", default-features = false, optional = true }
 borsh = "1.7"
 rust_decimal_macros = "1.39"
 serde_json = "1"
+# Reads the gzipped account fixtures (already in the tree, through the grader).
+flate2 = "1"
 # Signature verification, for tests that check what was signed.
 solana-transaction = { version = "4.3", features = ["wincode", "verify"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }

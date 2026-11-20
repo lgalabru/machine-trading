@@ -14,7 +14,7 @@ use mtx_kit::{
 };
 
 use super::{Market, Venue, books::BookMarket, not_offered};
-use crate::{Result, session::INTERNAL_RPC_TIMEOUT};
+use crate::{Result, reads::INTERNAL_RPC_TIMEOUT};
 
 /// OpenBook, read and traded through one endpoint.
 pub struct OpenBook {

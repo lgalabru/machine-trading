@@ -637,6 +637,9 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         None => Default::default(),
     };
     let base_slot = rpc.get_slot()?;
+    if let Some(observer) = &opts.observer {
+        observer.before_lock(surfnet.rpc_url(), &bot.pubkey().to_string());
+    }
     surfnet.cheatcodes().lock(CheatcodeFilter::all())?;
     let end_slot = base_slot + scenario.duration_slots;
     let mut rfqs = None;
@@ -880,7 +883,7 @@ async fn onboard_unique(
     .await?;
     keypairs
         .into_iter()
-        .map(|keypair| perp.unique_seat(keypair, rpc_url))
+        .map(|keypair| Ok(perp.unique_seat(keypair, rpc_url)?))
         .collect()
 }
 

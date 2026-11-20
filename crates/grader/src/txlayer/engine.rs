@@ -73,21 +73,7 @@ const INVALID_PARAMS: i64 = -32602;
 /// processed.
 const PREFLIGHT_FAILED: i64 = -32002;
 
-/// What became of a send, as a status reads it.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Fate {
-    Pending,
-    Landed {
-        slot: u64,
-        ok: bool,
-        fee: u64,
-        tip: u64,
-        error: Option<String>,
-        signature: String,
-    },
-    Failed(String),
-    Expired,
-}
+pub use mtx_runtime::desk::Fate;
 
 pub struct TxEngine {
     rpc_url: String,

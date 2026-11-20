@@ -47,6 +47,9 @@ pub enum Error {
     },
     #[error("transaction {label} failed: {reason}")]
     Transaction { label: String, reason: String },
+    /// A market read some other way than through Hawkeye's views.
+    #[error("market read: {0}")]
+    MarketRead(String),
     #[error("spline collection {account}: {reason}")]
     Splines { account: String, reason: String },
     #[error("stop-out: {0}")]
@@ -127,6 +130,28 @@ pub enum Error {
 impl From<solana_rpc_client_api::client_error::Error> for Error {
     fn from(error: solana_rpc_client_api::client_error::Error) -> Self {
         Self::Rpc(Box::new(error))
+    }
+}
+
+/// The runtime's errors are the grader's own, variant for variant: a seat's
+/// failure reads and matches as it did when the seats were the grader's.
+impl From<mtx_runtime::Error> for Error {
+    fn from(error: mtx_runtime::Error) -> Self {
+        use mtx_runtime::Error as Runtime;
+        match error {
+            Runtime::Kit(e) => Self::Kit(e),
+            Runtime::Core(e) => Self::Core(e),
+            Runtime::Rpc(e) => Self::Rpc(e),
+            Runtime::Ix(e) => Self::Ix(e),
+            Runtime::TxBuilder(e) => Self::TxBuilder(e),
+            Runtime::Hawkeye(e) => Self::Hawkeye(e),
+            Runtime::Meter(e) => Self::Meter(e),
+            Runtime::Wasm(e) => Self::Wasm(e),
+            Runtime::InvalidExchangeKey(e) => Self::InvalidExchangeKey(e),
+            Runtime::UnknownMarket(e) => Self::UnknownMarket(e),
+            Runtime::Transaction { label, reason } => Self::Transaction { label, reason },
+            Runtime::Live(reason) => Self::MarketRead(reason),
+        }
     }
 }
 

@@ -36,7 +36,7 @@ use solana_transaction::{Instruction, versioned::VersionedTransaction};
 
 use self::klend::{Obligation, Reserve, ReserveKeys};
 use super::{Market, Seat, SeatResult, Venue, not_offered};
-use crate::{Error, Result, session::INTERNAL_RPC_TIMEOUT};
+use crate::{Error, Result, reads::INTERNAL_RPC_TIMEOUT};
 
 /// A reserve the profile names, its lending market, and the market's lookup
 /// table.

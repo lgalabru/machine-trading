@@ -79,6 +79,7 @@ async fn run(
         observer: None,
         keys,
         v2_sessions: true,
+        host: None,
     })
     .await
     .unwrap();

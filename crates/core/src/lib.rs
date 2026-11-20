@@ -29,9 +29,14 @@
 //! | [`meter`] | The [`AccountMeter`] trait: what an enforcer reads from a venue |
 //! | [`mandate`] | The mandate: universe, limits, and the audit |
 //! | [`turns`] | The `mtx-turn-1` protocol |
+//! | [`feed`] | What a chain tells a host as it happens: account writes, slots, blocks |
+//! | [`session`] | What a host measures of a session: the account, the trades, each send's fate |
+//! | [`control`] | The commands a live runtime takes while it runs, and its answers |
 
 pub mod asset;
+pub mod control;
 mod error;
+pub mod feed;
 pub mod fill;
 pub mod holding;
 pub mod instrument;
@@ -39,6 +44,7 @@ pub mod mandate;
 pub mod meter;
 pub mod order;
 pub mod position;
+pub mod session;
 pub mod turns;
 pub mod venue;
 

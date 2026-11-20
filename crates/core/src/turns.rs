@@ -33,9 +33,10 @@
 //! # }
 //! ```
 
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::{
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
     os::{fd::FromRawFd, unix::net::UnixStream},
 };
 
@@ -192,6 +193,42 @@ pub enum Message {
     Step(Step),
     Done { k: u64 },
     End,
+}
+
+/// The most bytes of variables a session may be handed ahead of its turns:
+/// a few dozen variables of a path or a number each.
+pub const VARIABLES_BYTES_MAX: usize = 64 * 1024;
+
+/// Write a session's variables as one line of JSON: what a grader hands a
+/// host outside it (the live runtime) ahead of the hello, where a process
+/// bot gets them in its environment.
+pub fn write_variables(stream: &mut impl Write, vars: &[(String, String)]) -> std::io::Result<()> {
+    let mut line = serde_json::to_string(vars).map_err(std::io::Error::other)?;
+    assert!(!line.contains('\n'), "JSON with no newline in it");
+    line.push('\n');
+    stream.write_all(line.as_bytes())
+}
+
+/// Read what [`write_variables`] wrote, a byte at a time so that nothing
+/// after it (the turn protocol) is taken from the stream.
+pub fn read_variables(stream: &mut impl Read) -> std::io::Result<Vec<(String, String)>> {
+    let mut line = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        if stream.read(&mut byte)? == 0 {
+            return Err(std::io::ErrorKind::UnexpectedEof.into());
+        }
+        if byte[0] == b'\n' {
+            break;
+        }
+        if line.len() == VARIABLES_BYTES_MAX {
+            return Err(std::io::Error::other(format!(
+                "more than {VARIABLES_BYTES_MAX} bytes"
+            )));
+        }
+        line.push(byte[0]);
+    }
+    serde_json::from_slice(&line).map_err(std::io::Error::other)
 }
 
 /// The bot's end of the turn socket. Unix only: a component has no socket,
@@ -511,5 +548,34 @@ mod tests {
         assert_eq!(seen[1], (1, vec![], vec![], None));
         let json = serde_json::to_string(&first).unwrap();
         assert_eq!(serde_json::from_str::<Step>(&json).unwrap(), first);
+    }
+}
+
+/// The variables' tests run everywhere; the socket's need Unix.
+#[cfg(test)]
+mod variables_tests {
+    use super::*;
+
+    #[test]
+    fn variables_go_ahead_of_the_turn_protocol_and_leave_it_whole() {
+        let vars = vec![
+            ("MTX_SYMBOL".to_string(), "SPCX".to_string()),
+            ("MTX_STOP_OUT".to_string(), "1".to_string()),
+        ];
+        let mut wire = Vec::new();
+        write_variables(&mut wire, &vars).unwrap();
+        wire.extend_from_slice(b"{\"t\":\"ready\"}\n");
+        let mut stream = wire.as_slice();
+        assert_eq!(read_variables(&mut stream).unwrap(), vars);
+        assert_eq!(stream, b"{\"t\":\"ready\"}\n");
+    }
+
+    #[test]
+    fn variables_past_the_limit_or_cut_short_are_refused() {
+        let long = vec![b'x'; VARIABLES_BYTES_MAX + 1];
+        let error = read_variables(&mut long.as_slice()).unwrap_err();
+        assert!(error.to_string().contains("more than"), "{error}");
+        let cut = read_variables(&mut &b"[[\"a\",\"b\"]]"[..]).unwrap_err();
+        assert_eq!(cut.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 }

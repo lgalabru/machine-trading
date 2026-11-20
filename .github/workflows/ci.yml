@@ -166,13 +166,25 @@ jobs:
           just --justfile bots/wit-probe/Justfile build
           just --justfile bots/raw-probe/Justfile build
           MTX_TEST_WASM="$PWD/bench/tasks/flash-crash-spcx/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
-            cargo test -p mtx-grader wasm::tests -- --ignored
-          MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-grader the_spot_smoke_component -- --ignored
+            cargo test -p mtx-runtime host::tests -- --ignored
+          MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-runtime the_spot_smoke_component -- --ignored
           MTX_TEST_RAW_PROBE_WASM="$PWD/bots/raw-probe/bot.wasm" \
             cargo test -p mtx-grader raw::tests -- --ignored
           just --justfile bots/tx-probe/Justfile build
           MTX_TEST_TX_PROBE_WASM="$PWD/bots/tx-probe/bot.wasm" \
             cargo test -p mtx-grader txlayer::live -- --ignored
+      - name: Geyser plugin
+        # The plugin a validator loads (docs/rfd/0004-strategies-on-mainnet.md)
+        # is loaded into a flash-crash and a market-making session's surfnet:
+        # it reads the market from the accounts it is fed as the grader reads
+        # it through Phoenix's views, and trades both references as the
+        # grader does. On a surfnet in real time it runs a strategy on its own
+        # and takes `mtx live`'s commands.
+        run: |
+          just --justfile bench/tasks/market-making-spcx/reference/Justfile build
+          cargo build -p mtx-geyser
+          MTX_TEST_GEYSER_PLUGIN="$PWD/target/debug/libmtx_geyser.so" \
+            cargo test -p mtx-grader --test geyser_parity --test live_control -- --ignored
 
   # The tasks `gates` checks: those a pull request or a push to main
   # changes, or the one (or every task) a manual run names. A JSON array, for

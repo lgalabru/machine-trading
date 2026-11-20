@@ -1353,6 +1353,12 @@ fn encode(wire: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(wire)
 }
 
+impl mtx_runtime::host::RawSend for RawSender {
+    async fn take(&mut self, tx: RawTransaction) -> Result<RawReceipt, String> {
+        RawSender::take(self, tx).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use mtx_core::Mandate;
@@ -2834,6 +2840,7 @@ mod tests {
                 keys: keys.role("bot").session(0, &scenario.name),
                 observer: None,
                 rules: crate::session::Rules::default(),
+                host: None,
             })
             .await
             .unwrap();
