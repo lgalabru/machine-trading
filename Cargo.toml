@@ -22,7 +22,7 @@ anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "ws"] }
 clap = { version = "4", features = ["derive"] }
 futures = "0.3"
-phoenix-rise = { version = "=0.6.15", default-features = false, features = ["api", "sdk", "tx-builder", "serde"] }
+phoenix-rise = { version = "=0.10.2", default-features = false, features = ["api", "sdk", "tx-builder", "serde"] }
 serde = { version = "1", features = ["derive"] }
 # Floats parse back to the exact value written: a grade scored again from
 # its reports (`mtx rescore`) must come out the same, to the last bit.
