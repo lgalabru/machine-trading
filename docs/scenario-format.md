@@ -266,7 +266,8 @@ took (`making_fills`, `role` `taker`), so only one, without a
   of a touch the session couldn't read.
 
 The code is `crates/grader/src/obligations.rs`, `crates/grader/src/taking.rs`
-and the perp session.
+(the check before an order goes out is `crates/runtime/src/taking.rs`) and
+the perp session.
 
 A market-making scenario is on one market, so both terms apply to the
 primary market of a session that lists several.

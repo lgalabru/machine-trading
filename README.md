@@ -137,7 +137,7 @@ the score. The details are in the [dataset README](bench/tasks/README.md).
 
 ```
 bench/      📊 tasks (the Harbor dataset), checks, images, published results
-crates/     🦀 mtx (CLI), mtx-grader, mtx-kit (trading and the bot SDK), mtx-core (shared types and the mandate)
+crates/     🦀 mtx (CLI), mtx-grader, mtx-runtime (the strategy host and its desk), mtx-kit (trading and the bot SDK), mtx-core (shared types and the mandate)
 bots/       🤖 starter, reference and baseline bots
 snapshots/  📸 pinned mainnet state
 specs/      📜 the mandate: what an agent may trade, and its limits
