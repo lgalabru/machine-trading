@@ -316,7 +316,7 @@ come out the same to the cent before and after.
    on every step of flash-crash and market-making practice.
 3. **Plugin trades on a surfnet.** The plugin steps the component and
    sends, in a session the grader only scores. Check: the reference earns
-   what it earns when the grader hosts it.
+   what it earns when the grader hosts it. Done (what we learned).
 4. **Control.** The socket, `mtx live`, persistence, the enforcer's pause.
    Check on a surfnet forked from mainnet, running in real time: add,
    pause, change a mandate, kill, restart.
@@ -594,3 +594,28 @@ come out the same to the cent before and after.
   The plugin's reader (`mtx_runtime::live::perp::PerpReader`) now reads
   the best bid and ask, and the position from the buffer, falling back
   to the trader account while the trader isn't active in the market.
+- 2026-11-20: step 3, the plugin trades on a surfnet (astra). The
+  runtime takes sessions on a Unix socket (`mtx_runtime::live::session`):
+  a grader whose `GradeOptions::host` is set neither loads the component
+  nor starts a process, and plays the turn protocol it already speaks
+  with process bots against the runtime instead, after one line of the
+  session's variables (`mtx_core::turns::write_variables`). The runtime
+  hosts the component with the desk the grader would build, its market
+  read from the account cache (`Reader::Live`), its orders sent as the
+  bot through the bot's guarded endpoint, and the grader moves the world
+  and scores. Two things it needed:
+  - **Every write first.** A turn reaches the runtime over the socket and
+    the chain's writes over the feed: before a step the runtime waits
+    until the feed has applied every event handed to it so far
+    (`FeedProgress::settle`), so it reads what the grader's turn found.
+    And a session waits for the backfill, which a grader can outrun.
+  - **The index, natively.** Hawkeye's index is the median of the spot
+    oracles' reports no older than the asset map's staleness threshold,
+    the middle two averaged when even (`mtx_kit::venue::perp_index`, 153
+    of 153 samples).
+  `geyser_parity`'s two trading tests grade the flash-crash and the
+  market-making references twice with the same keys, once hosted by the
+  grader and once by the plugin: PnL, peak and end position are equal to
+  the cent in both. Steps come from the grader's turns here; on mainnet
+  they come from the slots, which is step 4's scheduler with the control
+  socket.
