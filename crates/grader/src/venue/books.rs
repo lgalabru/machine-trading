@@ -808,7 +808,7 @@ mod tests {
         let path = std::path::PathBuf::from(std::env::var("MTX_TEST_SPOT_WASM").unwrap());
         let mut strategy = crate::wasm::WasmStrategy::load(
             &path,
-            "http://127.0.0.1:1",
+            crate::wasm::HttpReads::boxed("http://127.0.0.1:1"),
             Box::new(std::io::sink()),
             7,
             100 * crate::wasm::FUEL_PER_CALL,

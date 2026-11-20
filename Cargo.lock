@@ -5442,8 +5442,8 @@ dependencies = [
  "libc",
  "mtx-core",
  "mtx-kit",
+ "mtx-runtime",
  "phoenix-rise",
- "rand 0.10.3",
  "reqwest",
  "serde",
  "serde_json",
@@ -5467,8 +5467,6 @@ dependencies = [
  "toml 1.2.1+spec-1.1.0",
  "tracing",
  "uuid",
- "wasmtime",
- "wasmtime-wasi",
  "wincode",
 ]
 
@@ -5517,6 +5515,22 @@ dependencies = [
  "uuid",
  "wincode",
  "wit-bindgen 0.63.0",
+]
+
+[[package]]
+name = "mtx-runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "mtx-core",
+ "mtx-kit",
+ "rand 0.10.3",
+ "reqwest",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "wasmtime",
+ "wasmtime-wasi",
 ]
 
 [[package]]
