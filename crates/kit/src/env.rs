@@ -50,6 +50,19 @@ impl BotEnv {
     pub const MANDATE: &str = "MTX_MANDATE";
 
     pub fn from_env() -> Result<Self> {
+        Self::from_vars(|name| std::env::var(name).ok())
+    }
+
+    /// The environment `lookup` holds, by the variables [`BotEnv::vars`]
+    /// sets: a bot process's own environment ([`BotEnv::from_env`]), or
+    /// the variables a host outside the grader is handed for a session.
+    pub fn from_vars(lookup: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        let var = |name: &'static str| {
+            lookup(name).ok_or_else(|| Error::Env {
+                name,
+                reason: "not set".into(),
+            })
+        };
         let end_slot = var(Self::END_SLOT)?;
         let max_position = var(Self::MAX_POSITION)?;
         let max_drawdown = var(Self::MAX_DRAWDOWN)?;
@@ -70,7 +83,7 @@ impl BotEnv {
                 name: Self::MAX_DRAWDOWN,
                 reason: format!("not a number: {max_drawdown}"),
             })?,
-            mandate_path: std::env::var_os(Self::MANDATE).map(PathBuf::from),
+            mandate_path: lookup(Self::MANDATE).map(PathBuf::from),
         })
     }
 
@@ -137,13 +150,6 @@ impl BotEnv {
             Some(decimal(Self::MAX_DRAWDOWN, self.max_drawdown_usd)?),
         ))
     }
-}
-
-fn var(name: &'static str) -> Result<String> {
-    std::env::var(name).map_err(|e| Error::Env {
-        name,
-        reason: e.to_string(),
-    })
 }
 
 #[cfg(test)]
