@@ -84,6 +84,19 @@ bots:
       just --justfile "$bot/Justfile" build
     done
 
+# The geyser plugin against a grade (docs/rfd/0004-strategies-on-mainnet.md):
+# loaded into a flash-crash and a market-making session's surfnet, it reads
+# the market from the accounts it is fed as the grader reads it.
+geyser-parity:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
+    just --justfile bench/tasks/market-making-spcx/reference/Justfile build
+    cargo build -p mtx-geyser
+    case "$(uname -s)" in Darwin) lib=libmtx_geyser.dylib ;; *) lib=libmtx_geyser.so ;; esac
+    MTX_TEST_GEYSER_PLUGIN="$PWD/${CARGO_TARGET_DIR:-target}/debug/$lib" \
+      cargo test -p mtx-grader --test geyser_parity -- --ignored
+
 # A spot session end to end: the smoke component sells on SOL/USDC and passes
 # the mandate's audit; the buyer breaches it; the order smokes; OpenBook
 # alone; and the same smoke as a process bot, which spot sessions still run.
