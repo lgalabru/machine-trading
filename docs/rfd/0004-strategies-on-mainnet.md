@@ -118,13 +118,14 @@ The bench pauses the world for a step. Mainnet doesn't wait.
 - **Clock.** A strategy is stepped every `slots_per_step` slots, on the
   slot notification. If its previous step is still running, the step is
   skipped and counted, never queued.
-- **Market.** Built from the feed's cache by decoding accounts natively,
-  with no RPC and no simulation: mark, oracle and top of book from the
-  venue's accounts, the position from the trader account, the tape and
-  own fills from `notify_transaction` (the kit's `protocols/fills.rs` and
-  Phoenix meter already decode the events), fees from the blocks seen.
-  The bench reads a perp's mark and top through Hawkeye's simulated views,
-  so the native decoding has to be shown equal to them (step 2).
+- **Market.** Built from the feed's cache wherever the venue's accounts
+  say enough: the oracle, the tape and own fills from
+  `notify_transaction` (the kit's `protocols/fills.rs` and Phoenix meter
+  already decode the events), fees from the blocks seen, and the spot
+  venues' books, which the kit decodes. A Phoenix perp's mark, top of
+  book and a maker's position are not in what its public decoders give
+  (step 2, in what we learned): until they are, those three come from
+  Phoenix's Hawkeye views, simulated on the node's local RPC.
 - **`rpc` import.** The same allowlist (`mtx_kit::RPC_METHODS`). Account
   reads are answered from the cache, in memory. A read the cache can't
   answer (`getBlock`, `simulateTransaction`, an account nobody watches)
@@ -350,11 +351,17 @@ come out the same to the cent before and after.
   rolled back. A position read at processed and a fill reported only once
   confirmed is one option. Measure on mainnet how often a processed fill
   of ours doesn't confirm.
-- **Does native decoding match Hawkeye's views?** The bench reads
-  Phoenix's mark and top through simulated views, and the live `Market`
-  can't afford a simulation per step. Step 2 compares the two on every
-  step of a session. If they differ, the bench moves to the native read
-  too, as a new task version.
+- **How is a Phoenix perp read without a simulation?** Step 2 answered
+  the first half: the accounts alone don't give the mark, the top of the
+  book or a maker's position (what we learned, 2026-11-20). Three ways
+  on. Ask Phoenix for the view's logic, or for decoders of the splines'
+  live quotes and of the active trader buffer, and read natively. Or keep
+  Hawkeye, simulated on the node's local RPC: a round trip of a
+  millisecond or two a step on the same machine, to be measured in the
+  shadow run against a 400 ms slot. Or change what a perp `Market`
+  reports to what the accounts hold, which changes what is graded and is
+  a new task version. The second costs nothing to start with and keeps
+  the graded strategy unchanged.
 - **A session with no end.** `steps`, `steps_left`, `slots_left` and `last`
   assume a term. A long-lived strategy needs either a rolling term (a
   mandate renewed each day, a restart at each renewal) or `u64::MAX`.
@@ -435,3 +442,52 @@ come out the same to the cent before and after.
   layer's probe; and the flash-crash and market-making references graded
   on their practice sets before and after, whose reports are equal in
   every field but wall time.
+- 2026-11-20: step 2, the plugin on a surfnet, read only. `mtx-geyser` is
+  the `cdylib`: callbacks that drop what isn't watched, copy the rest and
+  `try_send` it, each inside `catch_unwind`. `mtx_runtime::live` (feature
+  `live`) is the runtime on its own thread: the feed (65,536 events at
+  most, dropped and counted past that), the account cache, a backfill of
+  the watched accounts from the node's RPC at start, and a journal. The
+  feed's events are `mtx_core::feed`. `crates/grader/tests/geyser_parity.rs`
+  (`just geyser-parity`, and in CI) loads the plugin into a session's
+  surfnet with `loadPlugin` and compares what it journals with what the
+  grader handed the strategy at every step. What it showed:
+  - **The plugin has to load before the session locks its surfnet.**
+    `CheatcodeFilter::all()` locks `loadPlugin` too. `StepObserver` gained
+    `before_lock`, called with the chain's RPC and the bot's key.
+  - **A slot has a beginning and an end, and the grader reads in
+    between.** `created_bank` comes before the slot's scenario moves,
+    `processed` after everything the slot ran, the strategy's own orders
+    included. The grader's read falls between the moves and the orders,
+    where no slot event does. So the test asserts that the grader's read
+    is one of the states the plugin saw the slot pass through, and the
+    last of them when the strategy sent nothing. `rooted` trails by about
+    30 slots.
+  - **Flash-crash: equal.** On the reference's 280 steps, the mark, the
+    oracle, the position and its entry price, decoded from the perp asset
+    map and the trader account (`mtx_kit::venue::perp_prices`,
+    `perp_position`), are what Hawkeye's views gave the grader. The entry
+    is the position's quote lots per base lot, rounded down, as the view
+    reports it.
+  - **Market-making: only the oracle.** The view computes the mark from
+    the book as it stands; the account holds the mark of the last crank
+    (143.05 against the view's 143.20 once takers had moved the book). The
+    view counts a maker's fills at once; the trader account still said
+    -0.74 SPCX when the view said -0.445. Active traders' state lives in
+    Phoenix's active trader buffer, which `phoenix-rise` 0.6.15 doesn't
+    decode.
+  - **The top of the book isn't in the orderbook account.** The snapshot's
+    makers quote through splines, and their live prices aren't the regions'
+    offsets from the spline's mid: with the same regions, the view's best
+    bid was 2 ticks under the mid early in a session and 6 later, while the
+    best ask stayed 1 above. Whatever moves it (the makers' positions
+    against their limits is the likely cause) isn't in the public decoders.
+  - **A lead for TPU.** The plugin interface the workspace is on (4.3.2)
+    can notify a plugin of validators' gossip contact info, which would
+    give the leaders' TPU addresses without `getClusterNodes`.
+  So a Phoenix perp's `Market` can't be read from accounts with what is
+  public today, and the open question above has three ways on. The spot
+  venues and Kamino are read from accounts by the kit already
+  (`crates/runtime/src/venue`), through `ChainClient::get_account`: a
+  `ChainClient` over the cache serves them, and is step 3's first piece.
+  Not checked: the plugin on Linux (CI will), and in a real validator.
