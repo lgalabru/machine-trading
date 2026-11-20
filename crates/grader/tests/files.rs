@@ -48,12 +48,15 @@ fn every_spec_example_is_a_valid_mandate() {
     }
 }
 
-/// Every mandate the tasks ship needs nothing newer than v0, and writes
-/// back with the same members and values; every spec example writes back as
-/// the same bytes. A v0 reader reads them as before.
+/// Every mandate the tasks ship states the oldest version that holds its
+/// members (v0 unless it uses a v0.1 member, as market-making's taking rule
+/// is), and writes back with the same members and values; every spec
+/// example writes back as the same bytes. A v0 reader reads the v0 ones as
+/// before, and refuses a v0.1 one rather than misreading it.
 #[test]
-fn every_shipped_mandate_is_still_v0() {
+fn every_shipped_mandate_states_its_minimal_version() {
     let mut count = 0;
+    let mut versions = std::collections::BTreeSet::new();
     for task in std::fs::read_dir(root().join("bench/tasks")).unwrap() {
         let task = task.unwrap().path();
         for dir in ["environment/practice", "tests/scenarios"] {
@@ -66,8 +69,13 @@ fn every_shipped_mandate_is_still_v0() {
                     serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
                 let scenario = Scenario::load(&file).unwrap();
                 let mandate = &scenario.mandate;
-                assert_eq!(mandate.minimal_version(), "v0", "{}", file.display());
-                assert_eq!(mandate.version, "v0", "{}", file.display());
+                assert_eq!(
+                    mandate.version,
+                    mandate.minimal_version(),
+                    "{}",
+                    file.display()
+                );
+                versions.insert(mandate.version.clone());
                 assert_eq!(
                     serde_json::to_value(mandate).unwrap(),
                     raw["mandate"],
@@ -79,6 +87,11 @@ fn every_shipped_mandate_is_still_v0() {
         }
     }
     assert!(count > 0, "no task scenarios found");
+    // Market-making takes only to reduce (v0.1); the other tasks are v0.
+    assert_eq!(
+        versions,
+        std::collections::BTreeSet::from(["v0".to_string(), "v0.1".to_string()])
+    );
     for file in json_files(&root().join("specs/examples")) {
         let mandate = Mandate::load(&file).unwrap();
         if mandate.version == "v0" {

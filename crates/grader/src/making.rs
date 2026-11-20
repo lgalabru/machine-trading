@@ -1090,6 +1090,33 @@ mod tests {
         }
     }
 
+    /// The family's mandate allows taking only to reduce, which is a v0.1
+    /// member: the scenario file must say v0.1 and read back the same. A
+    /// family without the rule stays on v0, so older scenarios are unchanged.
+    #[test]
+    fn the_mandate_takes_only_to_reduce_and_says_v0_1() {
+        use mtx_core::mandate::Taking;
+
+        let family = MakingFamily::spcx();
+        let s = family.sample("m", 7);
+        assert_eq!(s.mandate.universe.len(), 1);
+        assert_eq!(s.mandate.universe[0].taking, Some(Taking::ReduceOnly));
+        assert_eq!(s.mandate.version, "v0.1");
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains(r#""taking":"reduce_only""#), "{json}");
+        let read: Scenario = serde_json::from_str(&json).unwrap();
+        assert_eq!(read, s);
+        assert_eq!(read.validate(), Ok(()));
+
+        let free = MakingFamily {
+            taking: None,
+            ..MakingFamily::spcx()
+        };
+        let s = free.sample("m", 7);
+        assert_eq!(s.mandate.universe[0].taking, None);
+        assert_eq!(s.mandate.version, "v0");
+    }
+
     #[test]
     fn labels_mark_informed_orders_only_where_there_are_jumps() {
         let family = MakingFamily::spcx();
