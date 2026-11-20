@@ -80,6 +80,7 @@ pub mod raw;
 mod strategy;
 #[cfg(any(feature = "chain", feature = "spot-venue"))]
 pub mod token;
+pub mod trees;
 #[cfg(feature = "venue")]
 pub mod venue;
 
