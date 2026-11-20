@@ -10,9 +10,19 @@ publish = false
 async-trait = "0.1"
 mtx-core.workspace = true
 # The kit's strategy types, which the host converts to and from the WIT
-# world's; no chain code.
-mtx-kit = { workspace = true }
+# world's, and its venues, which the seats trade on.
+mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2"] }
+phoenix-rise.workspace = true
+solana-keypair.workspace = true
+solana-pubkey = { workspace = true, features = ["curve25519"] }
+solana-rpc-client-api.workspace = true
+solana-signer.workspace = true
+solana-transaction.workspace = true
+tracing.workspace = true
 reqwest.workspace = true
+serde.workspace = true
+# Anchor's account and instruction discriminators (src/venue/kamino).
+sha2 = "0.10"
 serde_json.workspace = true
 thiserror.workspace = true
 # Strategies built as wasm components (docs/rfd/0002-wasm-strategies.md).

@@ -35,7 +35,7 @@ pub mod snapshot;
 pub mod spot;
 pub mod taking;
 pub mod txlayer;
-pub mod venue;
+pub use mtx_runtime::venue;
 pub mod versions;
 pub mod wasm;
 pub mod weekend;

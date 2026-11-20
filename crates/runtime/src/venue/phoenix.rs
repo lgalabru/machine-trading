@@ -18,7 +18,7 @@ use mtx_kit::{
 use solana_pubkey::Pubkey;
 
 use super::{Market, Venue, books::BookMarket, not_offered, perps::PerpMarket};
-use crate::{Result, session::INTERNAL_RPC_TIMEOUT};
+use crate::{Result, reads::INTERNAL_RPC_TIMEOUT};
 
 /// Phoenix, read and traded through one endpoint.
 pub struct Phoenix {
@@ -33,7 +33,7 @@ impl Phoenix {
     /// Phoenix's spot books, read through `rpc_url`.
     pub fn new(rpc_url: &str) -> Self {
         Self {
-            id: VenueId::new(crate::scenario::VENUE),
+            id: VenueId::new(super::perps::VENUE),
             rpc_url: rpc_url.into(),
             exchange: None,
         }

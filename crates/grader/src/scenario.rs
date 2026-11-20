@@ -469,8 +469,7 @@ pub(crate) const MIN_LEVEL_PCT: f64 = -40.0;
 /// funding reads.
 pub const SLOT_SECONDS: f64 = 0.25;
 
-/// The venue every scenario trades on.
-pub const VENUE: &str = "phoenix";
+pub use crate::venue::perps::VENUE;
 
 impl Scenario {
     /// Whether a bot that does nothing makes or loses money that no rule

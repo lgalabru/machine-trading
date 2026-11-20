@@ -7,5 +7,7 @@
 
 mod error;
 pub mod host;
+pub mod reads;
+pub mod venue;
 
 pub use error::{Error, Result};
