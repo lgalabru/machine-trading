@@ -70,6 +70,7 @@
 #[cfg(feature = "chain")]
 pub mod chain;
 pub mod core;
+pub mod features;
 mod inputs;
 #[cfg(feature = "chain")]
 pub mod lending;
