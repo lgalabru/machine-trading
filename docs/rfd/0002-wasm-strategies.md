@@ -142,10 +142,10 @@ run in parallel.
 
 A spot session runs a component the same way, in the same session loop
 and through the same host as a perp session (`crates/grader/src/session.rs`,
-`crates/grader/src/wasm.rs`), so a spot grade passes `--components-only`.
+`crates/runtime/src/host.rs` and `desk.rs`), so a spot grade passes `--components-only`.
 The grader trades each line of the sheet on the market the line names
 (`venue`; the scenario's first venue if it names none) with a seat on that
-venue (`crates/grader/src/venue/books.rs`): its Phoenix v1 or OpenBook v2
+venue (`crates/runtime/src/venue/books.rs`): its Phoenix v1 or OpenBook v2
 trader holds the bot's key and sends through the bot's guard. The first
 resting order also sends the setup it needs: a Phoenix seat, or an
 OpenBook open orders account. The grader sends that setup again on later
@@ -467,3 +467,9 @@ defend, no bot users, no keypair files.
   ends as a trader account other than the main one. A writable token
   account may hold at most 4 KiB. A duplicate is a send that compiles to
   the same message.
+- 2026-11-20: the host leaves the grader. `crates/runtime` (`mtx-runtime`)
+  holds the host (`host.rs`), the desk that plays a session (`desk.rs`),
+  the check before a take (`taking.rs`) and the venues' seats (`venue/`),
+  so that a second host can run a component
+  ([RFD 0004](0004-strategies-on-mainnet.md)). The grader's `wasm` module
+  is what a grade hands them. Grades are unchanged.

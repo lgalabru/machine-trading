@@ -1,6 +1,6 @@
 # RFD 0004: Strategies on mainnet, run by a geyser plugin
 
-State: idea
+State: discussion
 Authors: fable, for Ludo Galabru  ·  Started: 2026-11-20
 
 ## Problem
@@ -416,3 +416,22 @@ come out the same to the cent before and after.
   stake the sends carry. Fewer crates: shared vocabulary and pure logic go
   in `mtx-core`, and one new library, `mtx-runtime`, holds the host, the
   desk and the live runtime, with a thin `mtx-geyser` `cdylib`.
+- 2026-11-20: step 1, the split. `mtx-runtime` holds the host (`host.rs`),
+  the desk (`desk.rs`), the taking guard (`taking.rs`), the seats
+  (`venue/`) and the read helpers (`reads.rs`). What the grader keeps for
+  itself reaches the desk through four traits. `host::Reads` answers the
+  `rpc` import: `HttpReads` in a grade, the account cache later.
+  `host::RawSend` and `desk::RawDesk` take raw sends: the grader's
+  `RawSender`, and `NoRawSends` for a host that has none. `desk::Sends` is
+  where sends land later than they are sent: the simulated transaction
+  layer's pool and engine in a grade, the TPU sender and the geyser stream
+  later. `desk::Rfqs` is the clients' board. The grader keeps a `Desk` of
+  its own concrete parts and converts it in `wasm::start`. Nothing moved
+  to `mtx-core` yet: `Account`, `StepTrades`, `Wallet` and `Fate` are in
+  `desk.rs`, since only hosts read them. They go to `mtx-core` when the
+  journal and the control client need them without Wasmtime. Checked:
+  the workspace's tests; the component tests on the flash-crash reference,
+  the interface probe, the spot smoke, the raw probe and the transaction
+  layer's probe; and the flash-crash and market-making references graded
+  on their practice sets before and after, whose reports are equal in
+  every field but wall time.
