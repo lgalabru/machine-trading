@@ -1,0 +1,26 @@
+# No workspace inheritance: like the other bots, this crate builds on its
+# own against crates/kit.
+[package]
+name = "mtx-bot-candle-mlp"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# A strategy component: `just build` builds it for wasm32-wasip2 into bot.wasm,
+# which the grader loads and calls (docs/rfd/0002-wasm-strategies.md).
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+# Trains the network on this machine and writes model.safetensors, which the
+# strategy embeds: `just train`. It compiles src/model.rs itself and doesn't
+# link the strategy, so it builds before model.safetensors exists. It is
+# src/train.rs, not src/bin/: bots/.gitignore ignores every bin/, where
+# process bots are built.
+[[bin]]
+name = "train"
+path = "src/train.rs"
+
+[dependencies]
+mtx-kit = { path = "../../../crates/kit", default-features = false, features = ["component", "venue", "candle"] }
