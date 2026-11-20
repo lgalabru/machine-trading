@@ -68,6 +68,13 @@ install -o sol -g sol -m 0755 "$here/validator.sh" /home/sol/bin/validator.sh
 install -o sol -g sol -m 0755 "$here/install-agave.sh" /home/sol/bin/install-agave.sh
 install -o sol -g sol -m 0755 "$here/build-plugin.sh" /home/sol/bin/build-plugin.sh
 [ -f /home/sol/mtx/geyser.json ] || install -o sol -g sol -m 0644 "$here/geyser.json" /home/sol/mtx/geyser.json
+# The plugin's source, if a checkout was copied next to this directory
+# (README.md's "Deploy the plugin"): `sol` builds it.
+if [ -f "$here/../mtx-src/Cargo.toml" ]; then
+  rm -rf /home/sol/mtx/src
+  cp -a "$here/../mtx-src" /home/sol/mtx/src
+  chown -R sol:sol /home/sol/mtx/src
+fi
 
 # systemd, as the guide writes the unit.
 install -m 0644 "$here/sol.service" /etc/systemd/system/sol.service
