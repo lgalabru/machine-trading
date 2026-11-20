@@ -86,7 +86,9 @@ bots:
 
 # The geyser plugin against a grade (docs/rfd/0004-strategies-on-mainnet.md):
 # loaded into a flash-crash and a market-making session's surfnet, it reads
-# the market from the accounts it is fed as the grader reads it.
+# the market from the accounts it is fed as the grader reads it, and trades
+# both references as the grader does; on a surfnet in real time, it runs a
+# strategy on its own and takes `mtx live`'s commands.
 geyser-parity:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -95,7 +97,7 @@ geyser-parity:
     cargo build -p mtx-geyser
     case "$(uname -s)" in Darwin) lib=libmtx_geyser.dylib ;; *) lib=libmtx_geyser.so ;; esac
     MTX_TEST_GEYSER_PLUGIN="$PWD/${CARGO_TARGET_DIR:-target}/debug/$lib" \
-      cargo test -p mtx-grader --test geyser_parity -- --ignored
+      cargo test -p mtx-grader --test geyser_parity --test live_control -- --ignored
 
 # A spot session end to end: the smoke component sells on SOL/USDC and passes
 # the mandate's audit; the buyer breaches it; the order smokes; OpenBook
