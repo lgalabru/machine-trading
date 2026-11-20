@@ -967,6 +967,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                         .chain(vars.iter().cloned())
                         .collect(),
                     reports: reports.into(),
+                    step_deadline: None,
                 },
                 crate::wasm::Terms {
                     end_slot,

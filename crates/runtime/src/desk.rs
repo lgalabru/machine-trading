@@ -141,6 +141,11 @@ pub struct Clock {
     pub vars: Vec<(String, String)>,
     /// What the session's steps report beyond prices.
     pub reports: mtx_kit::Reports,
+    /// A wall deadline for each of the strategy's calls: past it the call
+    /// is interrupted, as a trap. A grade has none (fuel alone bounds a
+    /// step there); the live runtime does, since a slow step costs the
+    /// market.
+    pub step_deadline: Option<std::time::Duration>,
 }
 
 /// The mandate a component's session runs under, as its `start` sees it.
@@ -270,6 +275,7 @@ impl<R: RawDesk> WasmBot<R> {
             start_slot,
             vars,
             reports,
+            step_deadline,
         } = clock;
         let (start_mark, start_oracle) = match &desk.reader {
             Reader::Perp(trader) => (trader.mark_usd().await?, trader.oracle_usd().await?),
@@ -284,7 +290,16 @@ impl<R: RawDesk> WasmBot<R> {
         };
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
-        let mut strategy = match WasmStrategy::load(path, reads, log, seed, session_fuel).await {
+        let mut strategy = match WasmStrategy::load(
+            path,
+            reads,
+            log,
+            seed,
+            session_fuel,
+            step_deadline,
+        )
+        .await
+        {
             Ok(strategy) => {
                 tracing::info!(interface = strategy.interface(), "strategy component");
                 Some(strategy)
