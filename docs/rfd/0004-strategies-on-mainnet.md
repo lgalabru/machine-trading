@@ -536,3 +536,25 @@ come out the same to the cent before and after.
   region kept, `view_order_quote` for the price a small order would get on
   each side, and the same on a surfnet where a spline can be edited and
   the view asked again.
+- 2026-11-20: Phoenix's own spline rule, checked (astra found it). The
+  rule was in a crate we already build on:
+  `phoenix_rise::accounts::owned::Spline::liquidity_at_slot_with_position_limits`
+  walks a spline's live regions tick by tick, mid minus the offset for
+  bids and plus for asks, and stops a side when the maker's position
+  reaches its limit (`max_long - position` lots of bids, `max_short +
+  position` of asks). Run on the full set of 153 mainnet samples, with
+  each maker's position from the active trader buffer, it gives the
+  view's best bid and ask in 105. The limits bind for no maker there, so
+  it agrees with the plain rule above sample for sample. The 48 misses
+  are again exactly the samples where two makers lock or cross, and in
+  every one the view's book is one tick wide. The program computes the
+  same thing itself: the perp asset map's `last_best_bid` and
+  `last_best_ask`, written at each crank, are one tick apart in those
+  samples too. On the bench, a maker at its long limit would explain the
+  bid two ticks under the mid; not yet rerun there. So the published rule
+  is right as far as it goes, and what the program adds is how it
+  uncrosses. Tried and ruled out on these samples, each with a
+  counter-example: hide the smaller quote, the older by sequence number,
+  the older by update slot, the one further from the mark, match the two
+  sizes off. Next is the surfnet, where one input can be changed at a
+  time and the view asked again.
