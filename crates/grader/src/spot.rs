@@ -47,6 +47,7 @@ use solana_signer::Signer;
 use surfpool_sdk::{CheatcodeFilter, SimnetCommand, Surfnet};
 use tracing::warn;
 
+pub use crate::venue::books::{SYMBOL, VENUES};
 use crate::{
     Error, Result,
     actors::{Cast, Moment, Pricing, Takers},
@@ -63,11 +64,6 @@ use crate::{
     venue::{Market, books, price_usd, spot_venue, value_usd},
     wasm::{Desk, Reader},
 };
-
-/// The pair every spot session trades: the one market each profile names.
-pub const SYMBOL: &str = "SOL-USDC";
-/// Venues a spot session can trade on.
-pub const VENUES: [&str; 2] = ["phoenix", "openbook"];
 /// SOL the bot's wallet holds for fees and account rent, on top of the
 /// scenario's wrapped SOL. The profiles don't count it.
 const FEE_SOL: f64 = 1.0;

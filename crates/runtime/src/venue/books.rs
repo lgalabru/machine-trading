@@ -43,9 +43,12 @@ use solana_pubkey::Pubkey;
 use solana_signer::Signer;
 
 use super::{Market, Seat, SeatResult};
+use crate::{Error, Result, reads::decimal_f64};
+
+/// The pair every spot session trades: the one market each profile names.
+pub const SYMBOL: &str = "SOL-USDC";
 /// The book venues a spot session can trade on.
-pub use crate::spot::VENUES;
-use crate::{Error, Result, session::grader_f64};
+pub const VENUES: [&str; 2] = ["phoenix", "openbook"];
 
 /// One spot book's market, decoded once.
 enum Decoded {
@@ -164,7 +167,7 @@ impl Market for BookMarket {
 
     async fn top(&self) -> Result<(Option<f64>, Option<f64>)> {
         let book = self.book(None).await?;
-        let best = |levels: &[PriceLevel]| levels.first().map(|l| grader_f64(l.price));
+        let best = |levels: &[PriceLevel]| levels.first().map(|l| decimal_f64(l.price));
         Ok((best(&book.bids), best(&book.asks)))
     }
 
@@ -179,8 +182,8 @@ impl Market for BookMarket {
             side.into_iter()
                 .take(levels)
                 .map(|l| Level {
-                    price: grader_f64(l.price),
-                    base: l.quantity.map_or(0.0, grader_f64),
+                    price: decimal_f64(l.price),
+                    base: l.quantity.map_or(0.0, decimal_f64),
                 })
                 .collect()
         };
@@ -619,7 +622,7 @@ impl Seat for BookSeat {
                     .map_err(|e| e.to_string())?
             }
         };
-        let best = |levels: &[PriceLevel]| levels.first().map(|l| grader_f64(l.price));
+        let best = |levels: &[PriceLevel]| levels.first().map(|l| decimal_f64(l.price));
         Ok((best(&book.bids), best(&book.asks)))
     }
 
@@ -633,7 +636,7 @@ impl Seat for BookSeat {
                     .map_err(|e| e.to_string())?
             }
         };
-        Ok(grader_f64(
+        Ok(decimal_f64(
             held.base.wallet + held.base.free + held.base.locked,
         ))
     }
@@ -806,32 +809,31 @@ mod tests {
     #[ignore = "needs a built component"]
     async fn the_spot_smoke_component_sells_and_buys_once() {
         let path = std::path::PathBuf::from(std::env::var("MTX_TEST_SPOT_WASM").unwrap());
-        let mut strategy = crate::wasm::WasmStrategy::load(
+        let mut strategy = crate::host::WasmStrategy::<crate::host::NoRawSends>::load(
             &path,
-            crate::wasm::HttpReads::boxed("http://127.0.0.1:1"),
+            crate::host::HttpReads::boxed("http://127.0.0.1:1"),
             Box::new(std::io::sink()),
             7,
-            100 * crate::wasm::FUEL_PER_CALL,
+            100 * crate::host::FUEL_PER_CALL,
         )
         .await
         .unwrap();
         let venues: Vec<String> = vec!["phoenix".into(), "openbook".into()];
-        let mandate = mtx_core::Mandate::spot(&VENUES, crate::spot::SYMBOL, 10.0);
+        let mandate = mtx_core::Mandate::spot(&VENUES, SYMBOL, 10.0);
         let own = mandate.universe[0].instrument.clone();
         let session = Session {
             steps: 20,
             slots_per_step: 2,
             start_slot: 100,
             end_slot: 140,
-            symbol: crate::spot::SYMBOL.into(),
+            symbol: SYMBOL.into(),
             start_mark: 150.0,
             start_oracle: 150.0,
             cap: 10.0,
             max_drawdown: 1_500.0,
             venues: VenueInfo::of_mandate(&mandate, &own, |_| true),
             mandate,
-            venue: serde_json::to_string(&SessionVenues::of(&venues, crate::spot::SYMBOL).unwrap())
-                .unwrap(),
+            venue: serde_json::to_string(&SessionVenues::of(&venues, SYMBOL).unwrap()).unwrap(),
             authority: String::new(),
             vars: Vec::new(),
             seed: 7,
@@ -840,7 +842,7 @@ mod tests {
         };
         assert!(matches!(
             strategy.start(&session).await,
-            crate::wasm::Outcome::Done(())
+            crate::host::Outcome::Done(())
         ));
         let market = |k| Market {
             best_bid: Some(149.9),
@@ -861,7 +863,7 @@ mod tests {
         };
         // It reads the books through rpc, which this test doesn't answer,
         // and trades anyway: a sell, and the buyer's buy.
-        let crate::wasm::Outcome::Done(first) = strategy.step(&market(0)).await else {
+        let crate::host::Outcome::Done(first) = strategy.step(&market(0)).await else {
             panic!()
         };
         let sides: Vec<Side> = first
@@ -872,7 +874,7 @@ mod tests {
             })
             .collect();
         assert_eq!(sides, [Side::Ask, Side::Bid]);
-        let crate::wasm::Outcome::Done(second) = strategy.step(&market(1)).await else {
+        let crate::host::Outcome::Done(second) = strategy.step(&market(1)).await else {
             panic!()
         };
         assert!(second.is_empty());

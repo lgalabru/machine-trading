@@ -7,8 +7,8 @@
 //! [`Market`] is one of those instruments as a session trades it: its top,
 //! its depth, the matches it recorded, and what an account holds there, as
 //! a core [`Holding`]. A [`Seat`] is one account trading a market, signed by
-//! the grader: the bot's component's (see [`crate::wasm`]) or an actor's
-//! (see [`crate::actors`]).
+//! its host: a strategy component's, or, in a grade, one of the grader's
+//! actors'.
 //!
 //! What a market does follows its instrument's kind, as
 //! `specs/instruments/` defines each kind, not its venue: a perp margins, so
@@ -86,7 +86,7 @@ pub fn spot_venue(name: &str, rpc_url: &str) -> Result<Box<dyn Venue>> {
         "openbook" => Ok(Box::new(openbook::OpenBook::new(rpc_url))),
         other => Err(Error::Transaction {
             label: "a spot venue".into(),
-            reason: format!("{other} is not a spot venue: {:?}", crate::spot::VENUES),
+            reason: format!("{other} is not a spot venue: {:?}", books::VENUES),
         }),
     }
 }

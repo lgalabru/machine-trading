@@ -880,7 +880,7 @@ async fn onboard_unique(
     .await?;
     keypairs
         .into_iter()
-        .map(|keypair| perp.unique_seat(keypair, rpc_url))
+        .map(|keypair| Ok(perp.unique_seat(keypair, rpc_url)?))
         .collect()
 }
 

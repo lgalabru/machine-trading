@@ -14,7 +14,7 @@ use mtx_core::{
     mandate::{InstrumentRef, Kind},
 };
 use mtx_kit::{
-    Action, BotEnv, Decimal, Planned, Sent, Side, Trader,
+    Action, BotEnv, Decimal, Phoenix, Planned, Sent, Side, Trader,
     chain::{ExecutionPlan, RpcChainClient},
     core::{Rounding, Side as CoreSide},
     phoenix_rise::types::exchange::ExchangeResponse,
@@ -26,9 +26,11 @@ use solana_pubkey::Pubkey;
 use super::{Market, Seat, SeatResult};
 use crate::{
     Error, Result,
-    phoenix::Phoenix,
-    session::{INTERNAL_RPC_TIMEOUT, patiently},
+    reads::{INTERNAL_RPC_TIMEOUT, patiently},
 };
+
+/// The venue every perp session trades on.
+pub const VENUE: &str = "phoenix";
 
 /// One perpetual of a Phoenix Eternal exchange.
 pub struct PerpMarket {
@@ -63,7 +65,7 @@ impl PerpMarket {
         .map_err(Error::InvalidExchangeKey)?;
         Ok(Self {
             instrument: InstrumentRef {
-                venue: crate::scenario::VENUE.into(),
+                venue: VENUE.into(),
                 kind: Kind::Perp,
                 symbol: symbol.into(),
             },
@@ -386,7 +388,7 @@ impl Seat for PerpSeat {
 }
 
 /// A [`PerpSeat`] whose transactions are each unique among its own: a
-/// library actor's (see [`crate::actors::library`]), which may send the
+/// library actor's (the grader's `actors::library`), which may send the
 /// same order twice in a slot. Two such would otherwise be the same
 /// transaction, signed alike, and the second would never land. Its `n`th
 /// send asks for `n % 1024 + 1` fewer compute units than Phoenix's plan.
