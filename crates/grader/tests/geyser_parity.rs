@@ -18,23 +18,52 @@ use serde_json::{Value, json};
 use solana_rpc_client::rpc_client::RpcClient;
 use solana_rpc_client_api::request::RpcRequest;
 
+/// How a session's strategy trades, which decides what can be compared.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Trades {
+    /// It only takes, and every move of the session cranks the market: the
+    /// mark the perp asset map holds is the one the view reports, and
+    /// nothing changes the account between the grader's read and the
+    /// strategy's own orders.
+    Takes,
+    /// It rests quotes the session's takers fill between its turns: in the
+    /// slot after the grader's read, too. The takers' trades don't crank,
+    /// so the stored mark lags the view's, which blends the book as it
+    /// stands.
+    Makes,
+}
+
 /// What the grader read at a step: the market the strategy was handed.
-/// A field is `None` where the session doesn't compare it (see
+/// The mark is `None` where the session doesn't compare it (see
 /// [`the_plugin_reads_market_making_as_the_grader_does`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Read {
     oracle: f64,
-    mark: Option<f64>,
+    best_bid: Option<f64>,
+    best_ask: Option<f64>,
     /// The position and its entry.
-    position: Option<(f64, f64)>,
+    position: (f64, f64),
+    mark: Option<f64>,
+}
+
+/// One step's numbers, as either side read them.
+struct Numbers {
+    oracle: f64,
+    mark: f64,
+    best_bid: Option<f64>,
+    best_ask: Option<f64>,
+    position: f64,
+    entry_usd: f64,
 }
 
 impl Read {
-    fn of(settled: bool, oracle: f64, mark: f64, position: f64, entry_usd: f64) -> Self {
+    fn of(trades: Trades, numbers: Numbers) -> Self {
         Self {
-            oracle,
-            mark: settled.then_some(mark),
-            position: settled.then_some((position, entry_usd)),
+            oracle: numbers.oracle,
+            best_bid: numbers.best_bid,
+            best_ask: numbers.best_ask,
+            position: (numbers.position, numbers.entry_usd),
+            mark: (trades == Trades::Takes).then_some(numbers.mark),
         }
     }
 }
@@ -47,8 +76,7 @@ struct Watcher {
     /// Phoenix's metadata for the snapshot, and the session's market.
     exchange: PathBuf,
     symbol: String,
-    /// Whether the session settles every fill before the next turn.
-    settled: bool,
+    trades: Trades,
     /// Each step's slot, how many orders the strategy sent in it, and what
     /// the grader read for it.
     steps: Mutex<Vec<(u64, usize, Read)>>,
@@ -98,11 +126,15 @@ impl StepObserver for Watcher {
             market.slot,
             trace.sent.len(),
             Read::of(
-                self.settled,
-                market.oracle,
-                market.mark,
-                market.position.size,
-                market.position.entry_usd,
+                self.trades,
+                Numbers {
+                    oracle: market.oracle,
+                    mark: market.mark,
+                    best_bid: market.best_bid,
+                    best_ask: market.best_ask,
+                    position: market.position.size,
+                    entry_usd: market.position.entry_usd,
+                },
             ),
         ));
     }
@@ -135,7 +167,7 @@ async fn settled_journal(path: &Path) {
 }
 
 /// The plugin's journal, in order: each line's slot, status and reading.
-fn journal(path: &Path, settled: bool) -> Vec<(u64, String, Read)> {
+fn journal(path: &Path, trades: Trades) -> Vec<(u64, String, Read)> {
     let text = std::fs::read_to_string(path).expect("the plugin's journal");
     text.lines()
         .map(|line| {
@@ -150,11 +182,15 @@ fn journal(path: &Path, settled: bool) -> Vec<(u64, String, Read)> {
                 line["slot"].as_u64().expect("a slot"),
                 line["status"].as_str().expect("a status").to_string(),
                 Read::of(
-                    settled,
-                    number("oracle"),
-                    number("mark"),
-                    number("position"),
-                    number("entry_usd"),
+                    trades,
+                    Numbers {
+                        oracle: number("oracle"),
+                        mark: number("mark"),
+                        best_bid: line["best_bid"].as_f64(),
+                        best_ask: line["best_ask"].as_f64(),
+                        position: number("position"),
+                        entry_usd: number("entry_usd"),
+                    },
                 ),
             )
         })
@@ -179,7 +215,7 @@ fn states_in(journal: &[(u64, String, Read)], slot: u64) -> Vec<Read> {
     journal[began..=ended].iter().map(|line| line.2).collect()
 }
 
-async fn plays_as_the_grader_reads(bot: &str, scenario: &str, settled: bool) {
+async fn plays_as_the_grader_reads(bot: &str, scenario: &str, trades: Trades) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let plugin = PathBuf::from(
         std::env::var("MTX_TEST_GEYSER_PLUGIN").expect("MTX_TEST_GEYSER_PLUGIN: the built plugin"),
@@ -188,7 +224,11 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, settled: bool) {
     let snapshot = root.join("snapshots/phoenix-spcx-2026-10-29");
     let dir = std::env::temp_dir().join(format!(
         "mtx-geyser-parity-{}-{}",
-        if settled { "settled" } else { "unsettled" },
+        if trades == Trades::Takes {
+            "takes"
+        } else {
+            "makes"
+        },
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
@@ -197,7 +237,7 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, settled: bool) {
         dir: dir.clone(),
         exchange: snapshot.join("exchange.json"),
         symbol: scenario.symbol.clone(),
-        settled,
+        trades,
         steps: Mutex::new(Vec::new()),
     });
     grade::grade(GradeOptions {
@@ -224,7 +264,7 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, settled: bool) {
     .unwrap();
     let steps = watcher.steps.lock().unwrap().clone();
     settled_journal(&watcher.journal()).await;
-    let readings = journal(&watcher.journal(), settled);
+    let readings = journal(&watcher.journal(), trades);
     assert!(steps.len() > 100, "{} steps", steps.len());
     let mut traded = 0;
     for (slot, sent, graded) in &steps {
@@ -232,15 +272,15 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, settled: bool) {
         // The grader reads between the slot's moves and the strategy's own
         // orders, where no slot event falls: its read is one of the states
         // the slot passed through, and the last of them unless the strategy
-        // traded.
+        // traded, or rests quotes the takers fill after the read.
         assert!(
             states.contains(graded),
             "slot {slot}: the grader read {graded:?}, the plugin {states:?}"
         );
-        if *sent == 0 {
-            assert_eq!(states.last(), Some(graded), "slot {slot}");
-        } else {
+        if *sent > 0 {
             traded += 1;
+        } else if trades == Trades::Takes {
+            assert_eq!(states.last(), Some(graded), "slot {slot}");
         }
     }
     assert!(
@@ -258,25 +298,25 @@ async fn the_plugin_reads_a_flash_crash_as_the_grader_does() {
     plays_as_the_grader_reads(
         "bench/tasks/flash-crash-spcx/reference",
         "bench/tasks/flash-crash-spcx/environment/practice/practice-1.json",
-        true,
+        Trades::Takes,
     )
     .await;
 }
 
-/// A market maker's fills come between its turns, from the takers, and
-/// only the oracle is compared. Phoenix's views compute the mark from the
-/// book as it stands, and count a maker's fills the moment they happen;
-/// the accounts hold the mark of the last crank, and a maker's position
-/// as of its last settlement. On a flash-crash every move cranks and the
-/// strategy only takes, so the accounts are current at every turn
-/// (`docs/rfd/0004`, what we learned).
+/// A market maker's fills come between its turns, from the takers: its
+/// position is read from the active trader buffer, where the matching
+/// engine counts a fill the moment it happens, and the book from the
+/// splines as `view_bbo` computes it. The mark isn't compared: the takers'
+/// trades don't crank the market, and between cranks the view blends the
+/// book as it stands where the perp asset map holds the last crank's mark.
+/// On a flash-crash every move cranks (`docs/rfd/0004`, what we learned).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs the built plugin and components"]
 async fn the_plugin_reads_market_making_as_the_grader_does() {
     plays_as_the_grader_reads(
         "bench/tasks/market-making-spcx/reference",
         "bench/tasks/market-making-spcx/environment/practice/practice-1.json",
-        false,
+        Trades::Makes,
     )
     .await;
 }
