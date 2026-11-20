@@ -836,9 +836,9 @@ impl MakingFamily {
                     "a perp mandate has one allowance"
                 );
                 mandate.universe[0].taking = self.taking;
-                // A taking rule is a v0.1 member: a file that states it
-                // under v0 doesn't validate.
-                mandate.version = mandate.minimal_version().into();
+                // A taking rule is a v0.2.0 member: a file that states it
+                // under v0.1.0 doesn't validate.
+                mandate.version = mandate.minimal_version();
                 mandate
             },
             path,
@@ -1090,20 +1090,21 @@ mod tests {
         }
     }
 
-    /// The family's mandate allows taking only to reduce, which is a v0.1
-    /// member: the scenario file must say v0.1 and read back the same. A
-    /// family without the rule stays on v0, so older scenarios are unchanged.
+    /// The family's mandate allows taking only to reduce, which is a v0.2.0
+    /// member: the scenario file must say v0.2.0 and read back the same. A
+    /// family without the rule stays on v0.1.0.
     #[test]
-    fn the_mandate_takes_only_to_reduce_and_says_v0_1() {
-        use mtx_core::mandate::Taking;
+    fn the_mandate_takes_only_to_reduce_and_says_v0_2_0() {
+        use mtx_core::mandate::{Taking, Version};
 
         let family = MakingFamily::spcx();
         let s = family.sample("m", 7);
         assert_eq!(s.mandate.universe.len(), 1);
         assert_eq!(s.mandate.universe[0].taking, Some(Taking::ReduceOnly));
-        assert_eq!(s.mandate.version, "v0.1");
+        assert_eq!(s.mandate.version, Version::V0_2_0);
         let json = serde_json::to_string(&s).unwrap();
         assert!(json.contains(r#""taking":"reduce_only""#), "{json}");
+        assert!(json.contains(r#""version":"v0.2.0""#), "{json}");
         let read: Scenario = serde_json::from_str(&json).unwrap();
         assert_eq!(read, s);
         assert_eq!(read.validate(), Ok(()));
@@ -1114,7 +1115,7 @@ mod tests {
         };
         let s = free.sample("m", 7);
         assert_eq!(s.mandate.universe[0].taking, None);
-        assert_eq!(s.mandate.version, "v0");
+        assert_eq!(s.mandate.version, Version::V0_1_0);
     }
 
     #[test]

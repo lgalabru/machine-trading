@@ -22,7 +22,7 @@
     ]
   },
   "mandate": {
-    "version": "v0",
+    "version": "v0.1.0",
     "universe": [
       {
         "instrument": "phoenix:perp:NVDA",

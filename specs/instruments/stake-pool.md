@@ -1,4 +1,4 @@
-# Instrument profile: stake pool (`stake-pool`), v0
+# Instrument profile: stake pool (`stake-pool`), v0.1.0
 
 Status: draft, proposed (not yet agreed)
 

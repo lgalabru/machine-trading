@@ -1,4 +1,4 @@
-# Instrument profile: pool (`amm`), v0
+# Instrument profile: pool (`amm`), v0.1.0
 
 Status: draft, proposed (not yet agreed)
 

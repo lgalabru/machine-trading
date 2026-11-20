@@ -64,7 +64,7 @@ mtx-kit = "0.12"
 
 const START = 143.05;
 
-const MANDATE = { version: "v0", universe: [{ instrument: "phoenix:perp:SPCX", max_position: 70 }], limits: { max_drawdown_usd: 1000 } };
+const MANDATE = { version: "v0.1.0", universe: [{ instrument: "phoenix:perp:SPCX", max_position: 70 }], limits: { max_drawdown_usd: 1000 } };
 
 function levels(sc) {
   const steps = Math.ceil(sc.duration_slots / 2);

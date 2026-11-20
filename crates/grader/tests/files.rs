@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use mtx_core::Mandate;
+use mtx_core::{Mandate, mandate::Version};
 use mtx_grader::scenario::Scenario;
 
 fn root() -> PathBuf {
@@ -49,10 +49,11 @@ fn every_spec_example_is_a_valid_mandate() {
 }
 
 /// Every mandate the tasks ship states the oldest version that holds its
-/// members (v0 unless it uses a v0.1 member, as market-making's taking rule
-/// is), and writes back with the same members and values; every spec
-/// example writes back as the same bytes. A v0 reader reads the v0 ones as
-/// before, and refuses a v0.1 one rather than misreading it.
+/// members (v0.1.0 unless it uses a v0.2.0 member, as market-making's
+/// taking rule is), and writes back with the same members and values; every
+/// spec example writes back as the same bytes. A v0.1.0 reader reads the
+/// v0.1.0 ones as before, and refuses a v0.2.0 one rather than misreading
+/// it.
 #[test]
 fn every_shipped_mandate_states_its_minimal_version() {
     let mut count = 0;
@@ -75,7 +76,7 @@ fn every_shipped_mandate_states_its_minimal_version() {
                     "{}",
                     file.display()
                 );
-                versions.insert(mandate.version.clone());
+                versions.insert(mandate.version);
                 assert_eq!(
                     serde_json::to_value(mandate).unwrap(),
                     raw["mandate"],
@@ -87,15 +88,21 @@ fn every_shipped_mandate_states_its_minimal_version() {
         }
     }
     assert!(count > 0, "no task scenarios found");
-    // Market-making takes only to reduce (v0.1); the other tasks are v0.
+    // Market-making takes only to reduce (v0.2.0); the other tasks are
+    // v0.1.0.
     assert_eq!(
         versions,
-        std::collections::BTreeSet::from(["v0".to_string(), "v0.1".to_string()])
+        std::collections::BTreeSet::from([Version::V0_1_0, Version::V0_2_0])
     );
     for file in json_files(&root().join("specs/examples")) {
         let mandate = Mandate::load(&file).unwrap();
-        if mandate.version == "v0" {
-            assert_eq!(mandate.minimal_version(), "v0", "{}", file.display());
+        if mandate.version == Version::V0_1_0 {
+            assert_eq!(
+                mandate.minimal_version(),
+                Version::V0_1_0,
+                "{}",
+                file.display()
+            );
         }
         assert_eq!(
             serde_json::to_string_pretty(&mandate).unwrap() + "\n",

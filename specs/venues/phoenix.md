@@ -1,4 +1,4 @@
-# Venue profile: Phoenix (`phoenix`), v0
+# Venue profile: Phoenix (`phoenix`), v0.1.0
 
 Status: draft
 

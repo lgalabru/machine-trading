@@ -18,9 +18,14 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     sent, and the bot is told; it is no breach. A position is built with
     quotes and may be shed with a take. The reference no longer buys a
     burst, or takes at all: it stops quoting the side the burst hit and
-    lets its skew unwind the rest. The ladder's flow oracle leans with a quote at the oracle instead
-    of taking the cap. The bound is unchanged, so rewards are lower than
-    0.12.0's and don't compare with them.
+    lets its skew unwind the rest. The ladder's flow oracle leans with a
+    quote at the oracle instead of taking the cap. The bound is unchanged,
+    so rewards are lower than 0.12.0's and don't compare with them.
+  - **The mandate is versioned with semantic versioning.** `"v0"` is now
+    `"v0.1.0"` and `"v0.1"` is `"v0.2.0"` (the version that adds `taking`,
+    which market-making's mandate states); readers still take the old
+    spellings. See the mandate spec's
+    [changelog](../../specs/mandate.md#changelog).
   - **Three of Astra's market-making bots are exploit rungs**
     (`market-making-astra-ring-0.12`, `-blocks-0.12`, `-accounts-0.12`).
     The last one found the grader's eight takers by their collateral and

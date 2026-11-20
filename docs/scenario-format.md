@@ -233,7 +233,7 @@ bot's own market events place one. Obligations are reported, not scored: a
 shortfall is no breach and changes no PnL or reward.
 
 **Reduce-only taking**, the mandate's `"taking": "reduce_only"` on the
-scenario's market (a v0.1 mandate; [mandate spec](../specs/mandate.md) rule
+scenario's market (a v0.2.0 mandate; [mandate spec](../specs/mandate.md) rule
 10). Only a market-making perp session records which of the bot's fills it
 took (`making_fills`, `role` `taker`), so only one, without a
 `liquidator`, may use it. Two layers enforce it:
