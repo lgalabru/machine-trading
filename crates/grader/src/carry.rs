@@ -530,6 +530,7 @@ impl CarryFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            impact: None,
         };
         let shape = Shape {
             informed_share,

@@ -1,7 +1,9 @@
 # Instrument profile: stake pool (`stake-pool`), v0
 
-Status: draft, proposed (not yet agreed). The bot interface's `stake-pool`
-market kind (`mtx:strategy@0.2.0`) needs a profile; this is the proposal.
+Status: draft, proposed (not yet agreed)
+
+The bot interface's `stake-pool` market kind (`mtx:strategy@0.2.0`) needs a
+profile; this is the proposal.
 
 A stake pool takes SOL, stakes it with validators, and issues a liquid
 staking token (an LST, such as JitoSOL or mSOL) that redeems for a growing

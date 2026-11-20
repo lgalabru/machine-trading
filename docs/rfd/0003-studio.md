@@ -24,8 +24,8 @@ current directory (`--bot-path` for another: its directory or its
 `Cargo.toml`). The bot is a
 workspace: a strategy crate (`mtx bot new`'s layout: `Cargo.toml`,
 `Justfile`, `src/lib.rs`) and the scenarios it plays (`scenarios/*.json`,
-seeded with the studio's own: `practice-101`, 5 steps, and `practice-102`,
-10). Four resizable panels, as Rex lays
+seeded with the studio's own: `practice-101`, 5 steps, `practice-102`,
+10, and `practice-103`, 60 steps with price impact). Four resizable panels, as Rex lays
 out its panes:
 
 ```
@@ -67,8 +67,9 @@ stopped at, so "why didn't it buy here?" means the step on screen.
 
 Discovery, at start and on demand (`agents/list`):
 
-- ACP adapters on `PATH` (`claude-agent-acp`, `codex-acp`), or through
-  `npx` when Node is installed;
+- Claude Code and Codex through mtx's own ACP agents (`mtx claude-acp`
+  and `mtx codex-acp`, the `mtx-acp` crate), which need only the
+  harness's own command (`claude`, `codex`), not an adapter or Node;
 - for each, whether it can authenticate (an API key in the environment,
   or the CLI's own login) and the models it offers;
 - the pick is saved in the workspace (`.mtx/studio.json`) and changed

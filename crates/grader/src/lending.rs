@@ -1598,6 +1598,8 @@ impl Account for LendingAccount {
             book_usd: None,
             best_bid_usd: None,
             best_ask_usd: None,
+            impact_bps: None,
+            trades: None,
             position: first.supplied - first.borrowed,
             value_usd,
             pnl_usd: value_usd - self.start_value_usd,

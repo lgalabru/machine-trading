@@ -6,16 +6,24 @@
 //! or compare trials of one task whose stamps differ (see [`enforce`]),
 //! unless `--allow-version-mismatch` is given; the output then shows the
 //! mismatch. The task fingerprint itself is [`fingerprint`].
+//!
+//! The agent's `mtx` (built without `host`) has only what `mtx grade`
+//! needs: where the verifier's fingerprint is, and which one a grade
+//! records.
 
+#[cfg(feature = "host")]
+use std::collections::BTreeMap;
+use std::path::Path;
 #[cfg(feature = "generate")]
 use std::path::PathBuf;
-use std::{collections::BTreeMap, path::Path};
 
 #[cfg(feature = "generate")]
 use anyhow::Context;
+#[cfg(feature = "host")]
 use anyhow::{Result, bail};
 #[cfg(feature = "generate")]
 use mtx_grader::versions::{GRADER_VERSION, hash_parts};
+#[cfg(feature = "host")]
 use serde_json::{Value, json};
 
 /// Where the verifier finds its task's fingerprint, written there by
@@ -25,6 +33,7 @@ pub const VERIFIER_FINGERPRINT: &str = "/tests/task.fingerprint";
 #[cfg(feature = "generate")]
 pub const FINGERPRINT_FILE: &str = "tests/task.fingerprint";
 /// What a missing stamp reads as.
+#[cfg(feature = "host")]
 pub const UNVERSIONED: &str = "unversioned";
 
 /// The fingerprint a grade records: the one given, else the file the
@@ -260,6 +269,7 @@ fn disk_files(root: &Path, dir: &Path) -> Vec<PathBuf> {
 }
 
 /// What a trial says about its versions.
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stamp {
     pub trial: String,
@@ -269,6 +279,7 @@ pub struct Stamp {
     pub scoring: Option<String>,
 }
 
+#[cfg(feature = "host")]
 impl Stamp {
     /// From a grade's report (`versions` in it).
     pub fn of_report(trial: &str, task: &str, report: &Value) -> Self {
@@ -283,6 +294,7 @@ impl Stamp {
 }
 
 /// Trials of one task whose stamps disagree on one field.
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mismatch {
     pub task: String,
@@ -294,6 +306,7 @@ pub struct Mismatch {
 
 /// The mismatches among `stamps`, per task and field. Trials of different
 /// tasks are never compared with each other.
+#[cfg(feature = "host")]
 pub fn mismatches(stamps: &[Stamp]) -> Vec<Mismatch> {
     let mut out = Vec::new();
     let mut tasks: Vec<&str> = stamps.iter().map(|s| s.task.as_str()).collect();
@@ -328,6 +341,7 @@ pub fn mismatches(stamps: &[Stamp]) -> Vec<Mismatch> {
 
 /// The trials with no fingerprint or no spec hash: written before versions,
 /// or graded without them.
+#[cfg(feature = "host")]
 pub fn unversioned(stamps: &[Stamp]) -> Vec<String> {
     stamps
         .iter()
@@ -336,11 +350,13 @@ pub fn unversioned(stamps: &[Stamp]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(feature = "host")]
 fn short(value: &str) -> &str {
     value.get(..12).unwrap_or(value)
 }
 
 /// The mismatches as lines for a person.
+#[cfg(feature = "host")]
 pub fn describe(mismatches: &[Mismatch]) -> String {
     mismatches
         .iter()
@@ -364,10 +380,12 @@ pub fn describe(mismatches: &[Mismatch]) -> String {
         .join("\n")
 }
 
+#[cfg(feature = "host")]
 fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
+#[cfg(feature = "host")]
 pub fn to_json(mismatches: &[Mismatch]) -> Value {
     Value::Array(
         mismatches
@@ -379,6 +397,7 @@ pub fn to_json(mismatches: &[Mismatch]) -> Value {
 
 /// The gate: with mismatches, fail naming them and the flag, or (with
 /// `allow`) say so on stderr and go on.
+#[cfg(feature = "host")]
 pub fn enforce(what: &str, mismatches: &[Mismatch], allow: bool) -> Result<()> {
     if mismatches.is_empty() {
         return Ok(());
@@ -398,6 +417,7 @@ pub fn enforce(what: &str, mismatches: &[Mismatch], allow: bool) -> Result<()> {
 
 /// The versions each task's trials carry, for a release's `release.json`:
 /// the value when all agree, else `mixed`.
+#[cfg(feature = "host")]
 pub fn by_task(stamps: &[Stamp]) -> Value {
     let mut out = serde_json::Map::new();
     let mut tasks: Vec<&str> = stamps.iter().map(|s| s.task.as_str()).collect();
@@ -429,7 +449,9 @@ pub fn by_task(stamps: &[Stamp]) -> Value {
     Value::Object(out)
 }
 
-#[cfg(test)]
+// The stamps and the gate are host-side, and so are these tests' tools (a
+// results root, uuid): the agent's mtx only records a fingerprint.
+#[cfg(all(test, feature = "host"))]
 pub(crate) mod tests {
     use super::*;
 

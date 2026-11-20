@@ -1,0 +1,41 @@
+{
+  "schema": 2,
+  "name": "impact-smoke",
+  "description": "SPCX dips 2%, then comes back above its start. A bot that buys the dip with 350 SPCX walks the asks up and sells into the recovery: with impact, the book stays where each trade left it, half of that for good",
+  "duration_slots": 160,
+  "assets": {
+    "symbol": "SPCX"
+  },
+  "venues": {
+    "perp": {
+      "impact": {
+        "permanent_share": 0.5,
+        "half_life_slots": 10
+      }
+    }
+  },
+  "market_model": {
+    "path": [
+      {
+        "slot": 20,
+        "level_pct": -2.0
+      },
+      {
+        "slot": 90,
+        "level_pct": 0.5
+      }
+    ]
+  },
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 700.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 20000.0
+    }
+  }
+}

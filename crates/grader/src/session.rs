@@ -382,6 +382,44 @@ pub struct Timeline {
     pub market_taker_orders: BTreeMap<String, Vec<TakerRecord>>,
 }
 
+/// What traded on the session's market in a step, between anyone: read from
+/// the fills the market's transactions recorded, each match once. A chart's
+/// candles take their highs, lows and volume from it.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct StepTrades {
+    /// Matches.
+    pub count: u64,
+    /// Base units traded, and what they traded for, in USD.
+    pub base: f64,
+    pub quote_usd: f64,
+    /// Of `base`, what takers bought; the rest they sold.
+    pub bought_base: f64,
+    /// The first and last match's price, and the highest and lowest. All 0
+    /// when nothing traded.
+    pub open_usd: f64,
+    pub high_usd: f64,
+    pub low_usd: f64,
+    pub close_usd: f64,
+}
+
+impl StepTrades {
+    /// Count one match: `base` units at `price`, the taker buying or not.
+    pub fn add(&mut self, price: f64, base: f64, taker_bought: bool) {
+        if self.count == 0 {
+            (self.open_usd, self.high_usd, self.low_usd) = (price, price, price);
+        }
+        self.count += 1;
+        self.base += base;
+        self.quote_usd += base * price;
+        if taker_bought {
+            self.bought_base += base;
+        }
+        self.high_usd = self.high_usd.max(price);
+        self.low_usd = self.low_usd.min(price);
+        self.close_usd = price;
+    }
+}
+
 /// The world and the account after a step's blocks landed, before the bot's
 /// turn.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -405,6 +443,15 @@ pub struct StepRecord {
     pub best_bid_usd: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_ask_usd: Option<f64>,
+    /// With the scenario's `impact`: how far trades have the book from the
+    /// scenario's book level, in basis points (see [`crate::impact`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact_bps: Option<f64>,
+    /// What traded on the market since the step before, where the session
+    /// reads the market's fills: one that is watched step by step (the
+    /// studio, `mtx bot run --debug`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trades: Option<StepTrades>,
     /// The bot's position, in base units; positive is long.
     pub position: f64,
     /// The account's value as the session values it, and its PnL so far.
@@ -928,6 +975,14 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                                 .as_ref()
                                 .map(|_| ("MTX_STOP_OUT".to_string(), "1".to_string())),
                         )
+                        // The book stays where trades leave it (the
+                        // scenario's `impact`).
+                        .chain(
+                            scenario
+                                .impact
+                                .as_ref()
+                                .map(|_| ("MTX_IMPACT".to_string(), "1".to_string())),
+                        )
                         .chain(raw_programs.as_ref().map(|programs| {
                             let programs: Vec<String> =
                                 programs.iter().map(ToString::to_string).collect();
@@ -1215,6 +1270,8 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
                     position: now.position,
                     position_change: now.position - before,
                     level_usd: now.level_usd,
+                    impact_bps: now.impact_bps,
+                    trades: now.trades,
                     valued_at_usd: match scenario.primary_valuation() {
                         "oracle" => Some(now.level_usd),
                         "book" => now.book_usd,
@@ -1945,6 +2002,39 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    #[test]
+    fn a_steps_trades_keep_their_first_last_highest_and_lowest_price() {
+        let mut trades = StepTrades::default();
+        assert_eq!(
+            (trades.count, trades.high_usd, trades.low_usd),
+            (0, 0.0, 0.0)
+        );
+        trades.add(100.0, 2.0, true);
+        trades.add(101.5, 1.0, true);
+        trades.add(99.0, 4.0, false);
+        trades.add(100.5, 1.0, false);
+        assert_eq!(
+            trades,
+            StepTrades {
+                count: 4,
+                base: 8.0,
+                quote_usd: 200.0 + 101.5 + 396.0 + 100.5,
+                bought_base: 3.0,
+                open_usd: 100.0,
+                high_usd: 101.5,
+                low_usd: 99.0,
+                close_usd: 100.5,
+            }
+        );
+        // A session that doesn't read the market's fills writes none.
+        let record: StepRecord = serde_json::from_str(
+            r#"{"k":0,"at":2,"mark_usd":1.0,"index_usd":1.0,"level_usd":1.0,"position":0.0,"value_usd":0.0,"pnl_usd":0.0}"#,
+        )
+        .unwrap();
+        assert_eq!(record.trades, None);
+        assert!(!serde_json::to_string(&record).unwrap().contains("trades"));
+    }
 
     fn mode(path: &Path) -> u32 {
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777

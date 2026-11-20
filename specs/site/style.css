@@ -68,6 +68,11 @@ th { background: #fafafa; }
 /* Wide screens: the table of contents sits beside the text, fixed, as on
    paymentauth.org, with the section being read highlighted. */
 .toc a.active { color: #000; font-weight: 700; }
+/* A guide's links to the guides before and after it, in reading order. */
+.pager { display: flex; justify-content: space-between; gap: 1.5rem; margin: 3rem 0 1rem; padding-top: 1rem; border-top: 1px solid var(--color-rule); font-size: 0.95rem; }
+.pager a { font-weight: 700; }
+.pager span { display: block; font-size: 0.75rem; font-weight: 400; color: var(--color-muted); }
+.pager-next { margin-left: auto; text-align: right; }
 @media (min-width: 1180px) {
   body.spec { max-width: 1240px; padding-right: 330px; box-sizing: border-box; }
   .spec .toc {

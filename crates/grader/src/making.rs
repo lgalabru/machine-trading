@@ -859,6 +859,7 @@ impl MakingFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            impact: None,
         };
         (scenario, informed, leaks)
     }

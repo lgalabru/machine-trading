@@ -7,7 +7,7 @@ version = "0.1.0"
 license = "MIT"
 publish = false
 
-# A strategy component: build.sh builds it for wasm32-wasip2 into bot.wasm,
+# A strategy component: `just build` builds it for wasm32-wasip2 into bot.wasm,
 # which the grader loads and calls (docs/rfd/0002-wasm-strategies.md).
 [lib]
 crate-type = ["cdylib"]

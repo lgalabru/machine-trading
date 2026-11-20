@@ -18,6 +18,9 @@ The reference implementation reads spot instruments, and the benchmark's
 grader audits spot sessions on [Phoenix](../venues/phoenix.md) and
 [OpenBook](../venues/openbook.md), as their profiles describe.
 
+New to spot trading? The [guide](../guides/instruments/spot.md) explains it
+with interactive figures.
+
 ## Position
 
 The position in a spot instrument is the account's **holdings of the base

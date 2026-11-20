@@ -663,6 +663,12 @@ pub struct Account {
     pub position_change: f64,
     /// The scenario's planned level at the step.
     pub level_usd: f64,
+    /// How far trades have the book from the scenario's level, in basis
+    /// points, where the scenario has an `impact`.
+    pub impact_bps: Option<f64>,
+    /// What traded on the market since the step before, between anyone,
+    /// where the session reads it.
+    pub trades: Option<crate::session::StepTrades>,
     /// The price the session values the position at, where it isn't
     /// Phoenix's mark: market making's oracle level, or the book's level
     /// where the book trades at a premium.

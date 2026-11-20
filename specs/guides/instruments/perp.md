@@ -61,7 +61,7 @@ in 2016, and perps are now the most traded crypto derivative.
 
 The **underlying** is whatever the perp's price follows. You never hold it:
 the perp only borrows its price, through the venue's index. On Phoenix, it
-can be one of five kinds of thing, and the kind decides where the price
+can be one of six kinds of thing, and the kind decides where the price
 comes from and when:
 
 | Kind | Example perp | Its underlying | Where the price comes from |
@@ -70,12 +70,19 @@ comes from and when:
 | Stock | `SPCX`, `AAPL` | One share of a listed company: SpaceX, Apple | US stock trading, 24 hours a day on weekdays |
 | ETF | `SPY`, `QQQ` | A stock index: the S&P 500, the Nasdaq 100 | The index's prices, on the same weekday hours |
 | Commodity | `GOLD`, `WTIOIL` | Gold's spot price; a crude oil futures contract | Spot and futures markets, closed from Friday to Sunday evening and for an hour each weekday evening |
+| Currency (FX) | `EURUSD`, `USDJPY` | An exchange rate: one euro in US dollars; one US dollar in yen | Currency markets, open from Sunday evening to Friday evening, New York time |
 | Pre-IPO | `ANTHROPIC` | A private company's valuation: $1 of the perp is $1 billion | No public market: Phoenix's own pricing, within bounds it resets every four hours |
 
 The further the underlying is from a market that trades around the clock,
 the more of the week the perp spends without its anchor, which comes up
-again [below](#when-spcxs-own-market-is-closed). This guide follows `SPCX`
-throughout. Phoenix lists every market and its underlying in its
+again [below](#when-spcxs-own-market-is-closed). A pre-IPO perp is also
+temporary: when the company lists, Phoenix opens an ordinary stock perp on
+its shares and closes the pre-IPO market within a week, settling what is
+still open at the mark price. As this is written, in November 2026,
+Phoenix's docs schedule exactly that for `ANTHROPIC`, with a per-share `ANT`
+market replacing it. This guide follows `SPCX` throughout. Phoenix lists
+its commodity, stock, ETF, currency and pre-IPO markets, each with its
+underlying, in its
 [market specs](https://docs.phoenix.trade/phoenix/real-world-assets/market-specs.md).
 
 ### Your first trade
@@ -239,7 +246,7 @@ to pay for the cleanup.
   ],
   "fixed": { "entry": 100, "deposit": 1000 },
   "presets": [
-    { "label": "Calm SPCX", "set": { "daily": 1.5 }, "note": "SPCX moving about 1.5% a day, like a large stock: an ordinary day only liquidates you past about 22×." },
+    { "label": "Calm SPCX", "set": { "daily": 1.5 }, "note": "SPCX moving about 1.5% a day, like a large stock: an ordinary day only liquidates you from about 22.5× up." },
     { "label": "Wild SPCX", "set": { "daily": 8 }, "note": "SPCX moving 8% a day: from about 9.5× up, an ordinary day liquidates you." },
     { "label": "30×", "set": { "leverage": 30 }, "note": "At 30×, $1,000 holds 300 SPCX, and SPCX falling to about $99.66 ends the trade: a third of a percent." }
   ],
@@ -419,7 +426,7 @@ the mandate's drawdown limit normally stays far from liquidation, but leverage
 decides how far: the mandate limits the loss in dollars, the venue limits it
 as a share of the margin.
 
-:::example The benchmark's `phoenix-flash-crash` task
+:::example The benchmark's `flash-crash-spcx` task
 A bot trades `phoenix:perp:SPCX` under a cap of 70 and a $1,000 drawdown
 limit, through replayed sessions in which the price may crash. Holding the
 full cap into a crash of more than about $14 breaks the limit, so a bot has
@@ -453,7 +460,7 @@ drawdown limit.
     { "label": "Long into a flash crash", "set": { "path": "flash-crash", "side": "long", "size": 50, "leverage": 3 }, "note": "A 22% fall in an hour. The position survives the venue but breaks the drawdown limit, which no recovery undoes." },
     { "label": "Same, at 5×", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 5 }, "note": "At 5× the venue liquidates the position at the bottom, and it misses the rebound." },
     { "label": "Sized for the limit", "set": { "path": "flash-crash", "side": "long", "size": 40, "leverage": 3 }, "note": "40 SPCX: the same crash costs less than the drawdown limit, if only just, and the mandate holds." },
-    { "label": "Short into a squeeze", "set": { "path": "squeeze", "side": "short", "size": 40, "leverage": 8 }, "note": "A short squeeze: the price jumps 20% in three hours and the short is liquidated." },
+    { "label": "Short into a squeeze", "set": { "path": "squeeze", "side": "short", "size": 40, "leverage": 8 }, "note": "A short squeeze: the price jumps from $99 to $120 in three hours and the short is liquidated." },
     { "label": "Paying to wait", "set": { "path": "chop", "side": "long", "size": 60, "funding": 2.5 }, "note": "A market going nowhere, with crowded funding: the position bleeds funding every hour." },
     { "label": "Over the cap", "set": { "path": "rally", "size": 90 }, "note": "A winning trade that breaks the mandate anyway: 90 SPCX against a cap of 70." }
   ],

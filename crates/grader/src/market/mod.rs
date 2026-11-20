@@ -92,6 +92,7 @@ pub(crate) mod tests {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            impact: None,
             oracles: None,
             lending: None,
             warps: Vec::new(),

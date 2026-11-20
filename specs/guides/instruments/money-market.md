@@ -294,6 +294,10 @@ let health fall below 1.25. The [mandate](../../mandate.md#examples) has the
 same shape for SOL.
 :::
 
+`min_health` is in the specification, but the reference implementation
+doesn't judge it yet: its reader rejects a mandate that sets it. Until it
+does, a mandate bounds a borrow with `min_position` alone.
+
 ## Check yourself
 
 Three questions for each idea, all on SPCX at $100 and USDC. Work each one

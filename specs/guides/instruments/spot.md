@@ -205,6 +205,13 @@ Say you hold 10 SPCX and rest an ask for 4 of them on OpenBook. Your wallet
 has 6 SPCX, 4 are locked on OpenBook, and your position is still **10 SPCX**:
 you haven't sold anything until the ask fills.
 
+When it does fill, the sale is done at once, but on OpenBook your account
+may show it a little later. A taker's order that matches your ask either
+settles your side in the same transaction, if it names your open orders
+account, or leaves the fill as an event on the market's **event heap**,
+where it waits until a later transaction consumes it. In between, you have
+sold the 4 SPCX, and your open orders account still shows them locked.
+
 Your wallet also holds some SOL, which pays your transaction fees. It isn't
 part of your position, and on a SOL-USDC market the profiles count only
 wrapped SOL, the token form of SOL that venues trade, for the same reason.
@@ -365,7 +372,7 @@ Yes. The limit applies to every fill, not the average.
 :::
 
 :::check Why does a mandate to sell 30,000 SOL usually have no drawdown limit?
-Because the holding's value falls with SPCX whatever the agent does. A
+Because the holding's value falls with SOL whatever the agent does. A
 drawdown limit would measure the market, not the agent.
 :::
 

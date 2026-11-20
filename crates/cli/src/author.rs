@@ -51,43 +51,85 @@ impl Agent {
         }
     }
 
-    /// The ACP adapter's executable and the npm package that ships it.
-    pub(crate) fn adapter(self) -> (&'static str, &'static str) {
+    /// The harness's own command, which mtx's agent for it drives.
+    pub(crate) fn cli(self) -> &'static str {
         match self {
-            Self::ClaudeCode => ("claude-agent-acp", "@agentclientprotocol/claude-agent-acp"),
-            Self::Codex => ("codex-acp", "@agentclientprotocol/codex-acp"),
+            Self::ClaudeCode => "claude",
+            Self::Codex => "codex",
         }
     }
 
-    /// The adapter from `PATH` if installed, otherwise through `npx`.
-    /// `model` takes Harbor's `provider/model` form or a bare model name.
+    /// The variable that names the harness's command when it isn't the one
+    /// on `PATH`, as its agent reads it.
+    fn cli_variable(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "CLAUDE_CODE_EXECUTABLE",
+            Self::Codex => "CODEX_EXECUTABLE",
+        }
+    }
+
+    /// mtx's own ACP agent for the harness (the `mtx-acp` crate): the hidden
+    /// subcommand that serves it.
+    pub(crate) fn subcommand(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => "claude-acp",
+            Self::Codex => "codex-acp",
+        }
+    }
+
+    /// Whether the harness's command is there to drive.
+    pub(crate) fn installed(self) -> bool {
+        std::env::var_os(self.cli_variable()).is_some() || on_path(self.cli())
+    }
+
+    /// What to do when the agent doesn't start.
+    pub(crate) fn how_to_install(self) -> String {
+        format!(
+            "starting {name}'s agent; install {name} (the `{cli}` command) and run it once to log in",
+            name = self.name(),
+            cli = self.cli()
+        )
+    }
+
+    /// The agent's command: mtx itself, serving ACP for the harness. No
+    /// adapter and no Node: the agent drives the harness's own command.
+    /// `model` takes Harbor's `provider/model` form or a bare model name;
+    /// Claude Code reads it from its environment, and Codex is told once the
+    /// session exists ([`Agent::session_model`]).
     pub(crate) fn command(self, model: Option<&str>) -> Command {
-        let (program, package) = self.adapter();
-        let mut command = if on_path(program) {
-            Command::new(program)
-        } else {
-            let mut npx = Command::new("npx");
-            npx.args(["-y", package]);
-            npx
-        };
-        if let Some(model) = model {
-            let model = model.rsplit('/').next().unwrap_or(model);
-            match self {
-                Self::ClaudeCode => {
-                    command.env("ANTHROPIC_MODEL", model);
-                }
-                Self::Codex => {
-                    command.args(["-c", &format!("model=\"{model}\"")]);
-                }
-            }
+        let mtx = std::env::current_exe().unwrap_or_else(|_| "mtx".into());
+        let mut command = Command::new(mtx);
+        command.arg(self.subcommand());
+        if let (Self::ClaudeCode, Some(model)) = (self, model) {
+            command.env("ANTHROPIC_MODEL", bare_model(model));
         }
         command
     }
+
+    /// The model to set on a new session (`session/set_model`), for a
+    /// harness that takes it that way.
+    pub(crate) fn session_model(self, model: Option<&str>) -> Option<&str> {
+        match self {
+            Self::ClaudeCode => None,
+            Self::Codex => model.map(bare_model).filter(|model| !model.is_empty()),
+        }
+    }
+}
+
+/// A model's name without Harbor's `provider/` in front.
+fn bare_model(model: &str) -> &str {
+    model.rsplit('/').next().unwrap_or(model)
 }
 
 pub(crate) fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+    find_on_path(program).is_some()
+}
+
+/// Where `program` is on `PATH`, if it is.
+pub(crate) fn find_on_path(program: &str) -> Option<std::path::PathBuf> {
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(program))
+        .find(|path| path.is_file())
 }
 
 /// A Phoenix perp and its mark on the surfnet the agent reads, which is
@@ -173,10 +215,7 @@ pub fn author(opts: AuthorOptions<'_>) -> Result<Scenario> {
         PermissionPolicy::AllowAll,
         stderr,
     )
-    .with_context(|| {
-        let (program, package) = opts.agent.adapter();
-        format!("starting {program}; install it with `npm install -g {package}`")
-    })?;
+    .with_context(|| opts.agent.how_to_install())?;
     let agent = client.initialize().context("ACP initialize")?;
     let surfpool = McpServer {
         name: "surfpool".into(),
@@ -186,10 +225,15 @@ pub fn author(opts: AuthorOptions<'_>) -> Result<Scenario> {
     let session = client
         .new_session(&workdir, &[surfpool])
         .context("ACP session/new")?;
+    if let Some(model) = opts.agent.session_model(opts.model) {
+        client
+            .set_model(&session, model)
+            .context("ACP session/set_model")?;
+    }
     let adapter = agent
         .agent_info
         .map(|info| format!("{} {}", info.name, info.version.unwrap_or_default()))
-        .unwrap_or_else(|| opts.agent.adapter().0.into());
+        .unwrap_or_else(|| format!("mtx {}", opts.agent.subcommand()));
     ui::done(format!("{name} connected {}", ui::dim(adapter.trim())));
 
     let registry = TemplateRegistry::new();
@@ -723,27 +767,40 @@ mod tests {
     }
 
     #[test]
-    fn models_reach_each_adapter_in_its_own_way() {
+    fn models_reach_each_agent_in_its_own_way() {
         let claude = Agent::ClaudeCode.command(Some("anthropic/claude-sonnet-5-5"));
         let model = claude
             .get_envs()
             .find(|(k, _)| *k == "ANTHROPIC_MODEL")
             .and_then(|(_, v)| v);
         assert_eq!(model, Some(std::ffi::OsStr::new("claude-sonnet-5-5")));
+        assert_eq!(
+            Agent::ClaudeCode.session_model(Some("claude-sonnet-5-5")),
+            None
+        );
 
-        let codex = Agent::Codex.command(Some("gpt-5"));
-        let args: Vec<_> = codex.get_args().collect();
-        assert_eq!(args[args.len() - 2..], ["-c", "model=\"gpt-5\""]);
+        // Codex takes it on the session, not on its command.
+        let codex = Agent::Codex.command(Some("openai/gpt-5"));
+        assert_eq!(codex.get_args().collect::<Vec<_>>(), ["codex-acp"]);
+        assert_eq!(codex.get_envs().count(), 0);
+        assert_eq!(
+            Agent::Codex.session_model(Some("openai/gpt-5")),
+            Some("gpt-5")
+        );
+        assert_eq!(Agent::Codex.session_model(None), None);
     }
 
     #[test]
-    fn adapters_not_on_path_run_through_npx() {
-        let command = Agent::Codex.command(None);
-        if command.get_program() == "npx" {
-            let args: Vec<_> = command.get_args().collect();
-            assert_eq!(args, ["-y", "@agentclientprotocol/codex-acp"]);
-        } else {
-            assert_eq!(command.get_program(), "codex-acp");
+    fn both_agents_run_through_mtx_itself_not_a_node_adapter() {
+        for (agent, subcommand, cli) in [
+            (Agent::ClaudeCode, "claude-acp", "`claude`"),
+            (Agent::Codex, "codex-acp", "`codex`"),
+        ] {
+            let command = agent.command(None);
+            assert_ne!(command.get_program(), "npx");
+            assert_eq!(command.get_args().collect::<Vec<_>>(), [subcommand]);
+            let hint = agent.how_to_install();
+            assert!(hint.contains(cli) && !hint.contains("npm"), "{hint}");
         }
     }
 

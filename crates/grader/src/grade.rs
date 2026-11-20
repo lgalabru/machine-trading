@@ -2015,6 +2015,7 @@ mod tests {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            impact: None,
         }
     }
 
@@ -2047,6 +2048,8 @@ mod tests {
             fair_usd: Some(fair),
             best_bid_usd: None,
             best_ask_usd: None,
+            impact_bps: None,
+            trades: None,
             position,
             value_usd: value,
             pnl_usd: value - 10_100.0,

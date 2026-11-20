@@ -1,0 +1,48 @@
+{
+  "schema": 2,
+  "name": "impact-resistance",
+  "description": "The impact smoke with a zone from 5 to 30 bp above the level, where four ticks walked move the book one: the 350 SPCX buy moves the book by less than it walked and finds the asks back, and the sale, below the level, moves it in full",
+  "duration_slots": 160,
+  "assets": {
+    "symbol": "SPCX"
+  },
+  "venues": {
+    "perp": {
+      "impact": {
+        "permanent_share": 0.5,
+        "half_life_slots": 10,
+        "resistance": [
+          {
+            "from_bps": 5,
+            "to_bps": 30,
+            "strength": 4
+          }
+        ]
+      }
+    }
+  },
+  "market_model": {
+    "path": [
+      {
+        "slot": 20,
+        "level_pct": -2.0
+      },
+      {
+        "slot": 90,
+        "level_pct": 0.5
+      }
+    ]
+  },
+  "mandate": {
+    "version": "v0",
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SPCX",
+        "max_position": 700.0
+      }
+    ],
+    "limits": {
+      "max_drawdown_usd": 20000.0
+    }
+  }
+}

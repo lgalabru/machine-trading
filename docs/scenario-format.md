@@ -25,7 +25,7 @@ docs together.
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet`; a perp session's `start_positions`, signed base units by market symbol |
-| `venues` | Exactly one of `perp` (with its `funding` and `liquidator`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
+| `venues` | Exactly one of `perp` (with its `funding`, `liquidator` and `impact`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps). `record.jump_rate_per_hour`, `record.jump_size` and `record.scheduled` (all optional, absent unless stated) state a jump rate, jump sizes and scheduled releases in place of the calibration's. Values must come from measured real event or opening-window data with the source cited, and no all-session rate may exceed the instrument's measured opening-window rate (reference table, Phoenix 1 m archives and the calibration's 5-sigma rule: [market calibration](market-calibration.md#stated-jump-regimes), realism rule: [market realism](../skills/trading-task-design/references/market-realism.md)) |
 | `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
 | `actors` | The `competitor` maker (in a market-making scenario with the bot's quoting `obligations`, and `makers_bps`, where the snapshot's makers are widened to when not `competitor_bps`, at least that: a book whose depth near the touch is the grader's maker alone, the snapshot's deep curve behind it), the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
@@ -133,6 +133,8 @@ What a session on several markets doesn't do yet:
 - **Closed periods** stay a one-market scenario's.
 - **The liquidation keeper** (`venues.perp.liquidator`) is refused: it
   liquidates the scenario's market only.
+- **Price impact** (`venues.perp.impact`) is refused: its script plays one
+  market's path.
 - **Process bots** built on `mtx_kit::run` trade the primary market only:
   its run loop holds one trader. A process bot that wants the others reads
   `MTX_MARKETS` (`["phoenix:perp:NVDA", "phoenix:perp:SPCX"]`, the primary
@@ -319,6 +321,117 @@ A scenario that lists Phoenix's program in `tx.raw_sends` is refused with a
 liquidator: a bot that could send Phoenix's own instructions could liquidate
 its accounts itself. The code is `crates/grader/src/keeper.rs`, and
 `bench/checks/keeper/run.sh` checks it end to end.
+
+## Price impact: `venues.perp.impact`
+
+By default a perp session's book is centred on the path, and the path is a
+schedule: the snapshot's makers come back at full depth on every planned
+move. A bot that walks the book pays for the depth it takes and then finds
+the book back where it was. A scenario can keep the book where trades leave
+it instead:
+
+```json
+"venues": { "perp": { "impact": { "permanent_share": 0.5, "half_life_slots": 10, "max_bps": 150, "probe": 10 } } }
+```
+
+- `permanent_share`: of the distance trades walked the book, the share that
+  stays for good, from 0 to 1 (0.5 when absent). The rest fades.
+- `half_life_slots`: slots the fading part takes to halve.
+- `max_bps`: the most the impact moves the book either way, in basis points
+  of the book's level (150 when absent, 190 at most).
+- `probe`: the size, in base units, the book is priced at (10 when absent):
+  where the book is, each side, is what a market order of this size would
+  fill for on average. Larger than the odd lots that rest at the touch, and
+  small beside the makers' depth.
+- `resistance`: stretches where the book is harder to move (none when
+  absent, 8 at most), described below.
+
+The path is then played by a Surfpool scenario script, not a schedule of
+overrides (`surfnet_registerScenario`'s `scripts`). On the first slot of
+each step it asks Phoenix what a market order of the probe size would fill
+for, each side: a buy that fills further from the makers' centre than it
+did on their own quotes is depth taken, and the same for a sale. It centres
+the makers on the path's book level plus what was walked, at once in full,
+and lets the fading part decay. On the step's second slot it reads the
+makers' quotes as the move left them, which the next step's trades are
+measured against: Phoenix's makers quote further out on a side they were
+filled on.
+
+What this means for a session:
+
+- **The impact is never more than the trade moved the book**, so a round
+  trip costs the spread at least: a bot is not paid to push the price.
+- **Every taker's trades count**: the bot's, the tape's and the actors'.
+  The book is read at the probe's size, not at the best bid and ask: an odd
+  lot resting at the touch moves the touch and would hide a walk behind it.
+  A book too thin to fill the probe is not read, and leaves no impact.
+- **Only the book moves.** The oracles stay on the scenario's index, and
+  the account is valued at the scenario's book level (`valuation` `book`),
+  not at the price trades pushed the book to.
+- **The first slot centres the makers and the index on the starting mark**,
+  where a session without impact leaves them as the snapshot had them
+  until the path's first move. A planned move lands on the first slot of
+  the step the schedule would land it in, and is uncrossed in that slot.
+- Each step records `impact_bps`, how far the makers are centred from the
+  book's level, and a component sees `MTX_IMPACT=1` in its session vars.
+
+The impact is state the script writes, not orders. Volume is still what
+traded: the bot's fills and the takers', which are transactions.
+
+Impact is refused with market making or a closed period (their makers are
+placed their own way), with the scenario's own `oracles` (the script writes
+Phoenix's index), with the `refill` actor (the fading part is the depth
+coming back), with the transaction layer (it lands the bot's sends on
+any slot, and the script reads trades between steps) and on a session with
+several markets (the script plays one market's path). The code is
+`crates/grader/src/impact.rs`, and `bench/checks/impact/run.sh` checks it
+end to end.
+
+On the 2026-10-29 SPCX snapshot, buying 35 SPCX (about $5,000) walks the
+asks 2 ticks (1.4 bp), and 350 SPCX (about $49,000) walks them 28 ticks
+(20 bp).
+
+### Resistance: `impact.resistance`
+
+A level where the book is harder to push through: while the book sits
+inside a zone, a trade moves it a fraction of what the trade walked, and
+the makers put the rest of the depth back.
+
+```json
+"impact": {
+  "half_life_slots": 10,
+  "resistance": [
+    { "from_bps": 5, "to_bps": 30, "strength": 4 },
+    { "from_bps": -60, "to_bps": -40, "strength": 10 }
+  ]
+}
+```
+
+- `from_bps`, `to_bps`: where the zone is, as the book's distance from the
+  path's level, in basis points of the session's starting mark. Negative is
+  below the level. A zone may hold the level (`-10` to `10`); zones may
+  touch and may not overlap, and none reaches past `max_bps`.
+- `strength`: how many ticks of walking move the book one tick inside the
+  zone, above 1 and 50 at most.
+
+With the first zone above, the 350 SPCX buy that walks the asks 28 ticks
+moves the book 12: the 7 ticks to the zone, and a quarter of the 21 inside
+it. The makers are centred 12 ticks up, with their full depth, so the next
+buy starts 16 ticks under where the first one ended. The fading part and
+the limit work as before: what fades is walk, and the book comes back
+along the same zones; `max_bps` is the book's distance, so reaching it
+through a zone takes that much more walking.
+
+A zone is a place on one fixed curve from "ticks walked" to "ticks the book
+moved", measured from the path's level. That is what keeps the round trip's
+property: the curve never falls and is the same whichever way the book is
+going, so buying and selling back never sells above where it bought,
+however the trade is cut up and whatever the waits. It is also why a zone
+is not a price, does not give way once crossed and does not resist one
+direction only. Each of those is a curve that changes under the trader: buy
+where the book barely moves, sell where it moves in full, and the
+difference is profit no market paid for. To put a wall at a price, give
+the path a level there and a zone around it.
 
 ## Example
 

@@ -17,6 +17,10 @@ collateral for borrows from another.
 The reference implementation reads Kamino's reserves as money-market
 instruments ([Kamino's profile](../venues/kamino.md)).
 
+New to lending and borrowing? The
+[guide](../guides/instruments/money-market.md) explains them with
+interactive figures.
+
 ## Position
 
 The position in a money-market instrument is what the account has supplied

@@ -197,6 +197,12 @@ pub struct Scenario {
     /// ending liquidatable disqualifies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquidator: Option<crate::keeper::Liquidator>,
+    /// Opt-in: price impact. The book stays where trades leave it, part of
+    /// that for good and part for a while, and the path is played by a
+    /// script that adds it (see [`crate::impact`]). Absent, the book is
+    /// where the path puts it whatever anyone trades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impact: Option<crate::impact::Impact>,
 }
 
 /// The grader's risk desk: which mandate limits it enforces by closing the
@@ -978,9 +984,16 @@ impl Scenario {
     /// market making, where a bot's quotes move the mark, and where a broker
     /// prices the close) or `book` (the scenario's book level, where the
     /// book trades at a premium: what the position would close at, which
-    /// Phoenix's mark, a blend of the book and the index, is not).
+    /// Phoenix's mark, a blend of the book and the index, is not). With
+    /// `impact`, `book` too: the scenario's level, not the price trades
+    /// pushed the book to, which trading out would take back.
     pub fn valuation(&self) -> &'static str {
-        self.flat_market().valuation(self.prices_the_close())
+        let valuation = self.flat_market().valuation(self.prices_the_close());
+        if self.impact.is_some() && valuation == "mark" {
+            "book"
+        } else {
+            valuation
+        }
     }
 
     /// [`Scenario::valuation`] of the primary market, `symbol`: the flat
@@ -1429,6 +1442,7 @@ impl ShockFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            impact: None,
         };
         let shape = Shape {
             direction,
@@ -2160,6 +2174,7 @@ mod tests {
                     tx_layer: None,
                     stop_out: None,
                     liquidator: None,
+                    impact: None,
                     ..marked.clone()
                 },
                 plain
@@ -2253,6 +2268,7 @@ mod tests {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            impact: None,
         };
         assert!(scenario.validate().unwrap_err().contains("previous move"));
 
@@ -2335,6 +2351,7 @@ mod tests {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
+            impact: None,
         }
     }
 
