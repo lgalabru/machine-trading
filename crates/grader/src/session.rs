@@ -79,6 +79,7 @@ pub(crate) const TRUSTED_WALL: Duration = Duration::from_secs(120);
 /// the world stops waiting.
 pub(crate) const TURN_BUDGET_PER_STEP: Duration = Duration::from_millis(500);
 
+pub use mtx_runtime::desk::StepTrades;
 pub(crate) use mtx_runtime::reads::{INTERNAL_RPC_TIMEOUT, decimal_f64 as grader_f64, patiently};
 
 /// Collateral each session's trader starts with.
@@ -372,44 +373,6 @@ pub struct Timeline {
     /// the primary, by symbol.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub market_taker_orders: BTreeMap<String, Vec<TakerRecord>>,
-}
-
-/// What traded on the session's market in a step, between anyone: read from
-/// the fills the market's transactions recorded, each match once. A chart's
-/// candles take their highs, lows and volume from it.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
-pub struct StepTrades {
-    /// Matches.
-    pub count: u64,
-    /// Base units traded, and what they traded for, in USD.
-    pub base: f64,
-    pub quote_usd: f64,
-    /// Of `base`, what takers bought; the rest they sold.
-    pub bought_base: f64,
-    /// The first and last match's price, and the highest and lowest. All 0
-    /// when nothing traded.
-    pub open_usd: f64,
-    pub high_usd: f64,
-    pub low_usd: f64,
-    pub close_usd: f64,
-}
-
-impl StepTrades {
-    /// Count one match: `base` units at `price`, the taker buying or not.
-    pub fn add(&mut self, price: f64, base: f64, taker_bought: bool) {
-        if self.count == 0 {
-            (self.open_usd, self.high_usd, self.low_usd) = (price, price, price);
-        }
-        self.count += 1;
-        self.base += base;
-        self.quote_usd += base * price;
-        if taker_bought {
-            self.bought_base += base;
-        }
-        self.high_usd = self.high_usd.max(price);
-        self.low_usd = self.low_usd.min(price);
-        self.close_usd = price;
-    }
 }
 
 /// The world and the account after a step's blocks landed, before the bot's
@@ -948,7 +911,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             )
             .await?;
         wasm_bot = Some(
-            crate::wasm::WasmBot::start(
+            crate::wasm::start(
                 &component,
                 &env.rpc_url,
                 crate::wasm::Clock {

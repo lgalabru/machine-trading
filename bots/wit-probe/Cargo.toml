@@ -1,5 +1,5 @@
 # A check, not a strategy: a component that puts every line the interface
-# allows on its sheet and logs what it is handed (crates/grader/src/wasm.rs's
+# allows on its sheet and logs what it is handed (crates/runtime/src/host.rs's
 # tests; `just wit-probe` grades it in a session).
 [package]
 name = "mtx-bot-wit-probe"
