@@ -30,7 +30,8 @@
 //! Every feature is causal: it reads only what was pushed. A value that is
 //! not finite is refused and changes nothing, so one bad read cannot poison
 //! a window for its whole length. A feature that cannot be computed yet
-//! (too few samples, a zero or negative base) is `None`, never a made-up
+//! (too few samples, a zero base, the log of a value that is not positive,
+//! a result too large for an `f64`) is `None`, never a made-up
 //! number: decide in the strategy what the model sees then, and make the
 //! training pipeline decide the same.
 //!
@@ -150,7 +151,8 @@ impl Window {
 
     /// The mean of the values held; `None` when empty.
     pub fn mean(&self) -> Option<f64> {
-        mean(self.iter())
+        // Values near `f64::MAX` can sum past it.
+        mean(self.iter()).and_then(finite)
     }
 
     /// The sample standard deviation of the values held (divided by
@@ -172,6 +174,12 @@ impl Window {
     /// How many standard deviations the latest value is from the window's
     /// mean. `None` with fewer than two values, or when they are all equal.
     pub fn z_score(&self) -> Option<f64> {
+        // Equal values have a rounded mean a hair off each of them, so a
+        // standard deviation of 1e-17 instead of 0: test equality itself,
+        // or the z-score of a flat window would be a large made-up number.
+        if self.min()? == self.max()? {
+            return None;
+        }
         let (latest, mean, std) = (self.last()?, self.mean()?, self.std()?);
         finite((latest - mean) / std)
     }
@@ -223,12 +231,18 @@ impl Ema {
         if !value.is_finite() {
             return Err(FeatureError::NotFinite);
         }
+        // The weighted sum, not `average + alpha * (value - average)`: the
+        // gap between two finite values can overflow (-1e308 to 1e308),
+        // while a weighted sum of them lies between them.
         let average = match self.value {
-            Some(average) => average + self.alpha * (value - average),
+            Some(average) => (1.0 - self.alpha) * average + self.alpha * value,
             None => value,
         };
-        // Between two finite numbers, so finite itself.
-        assert!(average.is_finite(), "an average of finite values");
+        if !average.is_finite() {
+            // Only when rounding takes a sum of values next to `f64::MAX`
+            // over it: refuse the value, as for one that is not finite.
+            return Err(FeatureError::NotFinite);
+        }
         self.value = Some(average);
         Ok(average)
     }
@@ -583,6 +597,23 @@ mod tests {
         assert_eq!(window.volatility(), Some(0.0));
     }
 
+    /// 0.1 three times has a rounded mean a hair off 0.1, so a standard
+    /// deviation of about 1e-17: still flat, still no z-score.
+    #[test]
+    fn a_flat_window_of_inexact_values_has_no_z_score() {
+        for count in 2..=7 {
+            let window = window_of(8, &vec![0.1; count]);
+            assert_eq!(window.z_score(), None, "{count} values of 0.1");
+        }
+    }
+
+    #[test]
+    fn a_mean_too_large_for_an_f64_is_none() {
+        let window = window_of(4, &[1e308, 1e308]);
+        assert_eq!(window.mean(), None);
+        assert_eq!(window.z_score(), None);
+    }
+
     #[test]
     fn volatility_is_the_spread_of_step_log_returns() {
         let window = window_of(8, &[100.0, 110.0, 99.0, 108.9]);
@@ -650,6 +681,19 @@ mod tests {
         assert_eq!(ema.update(20.0).unwrap(), 15.0);
         assert_eq!(ema.update(20.0).unwrap(), 17.5);
         assert_eq!(ema.value(), Some(17.5));
+    }
+
+    /// The gap between these two overflows an `f64`; the average must not.
+    #[test]
+    fn an_ema_of_values_at_the_ends_of_f64_stays_finite() {
+        let mut ema = Ema::new(3).unwrap();
+        ema.update(-1e308).unwrap();
+        assert_eq!(ema.update(1e308).unwrap(), 0.0);
+        let mut ema = Ema::new(3).unwrap();
+        ema.update(f64::MAX).unwrap();
+        assert_eq!(ema.update(f64::MAX).unwrap(), f64::MAX);
+        assert_eq!(ema.update(f64::NAN), Err(FeatureError::NotFinite));
+        assert_eq!(ema.value(), Some(f64::MAX));
     }
 
     #[test]

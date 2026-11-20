@@ -36,8 +36,10 @@ Refused, with an error that says which, since the format cannot hold them:
 
 **Train on float32 features.** `Trees::predict` rounds each feature to
 float32 before comparing it to a threshold. So its prediction for `x` is the
-Python model's for `x.astype(np.float32)`, bit for bit, and the model's for
-`x` itself when it was fitted on float32 features (`X.astype(np.float32)`).
+Python model's for `x.astype(np.float32)`, bit for bit. On `x` itself the two
+can differ by a split when a feature sits within a float32 rounding of a
+threshold: these models compare the unrounded float64. Fit on
+`X.astype(np.float32)` and predict on float32 features in Python too.
 `check` compares against the float32 prediction for that reason.
 
 The format, little-endian (see the module docs of `mtx_kit::trees`):
@@ -147,7 +149,13 @@ def _sklearn_trees(model):
         )
     if model.n_trees_per_iteration_ != 1:
         raise Unsupported("the model has more than one output")
-    base = float(model._baseline_prediction.ravel()[0])
+    # With categorical features, scikit-learn moves those columns first
+    # before the trees see them, so `feature_idx` would no longer be the
+    # caller's column, even when no tree splits on a categorical one.
+    categorical = getattr(model, "is_categorical_", None)
+    if categorical is not None and categorical.any():
+        raise Unsupported("the model has categorical features")
+    base =float(model._baseline_prediction.ravel()[0])
     trees = []
     for (predictor,) in model._predictors:
         nodes = predictor.nodes

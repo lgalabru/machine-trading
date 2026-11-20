@@ -27,9 +27,13 @@
 //!
 //! The feature is rounded to `f32` before it is compared, as scikit-learn's
 //! classic trees do. So `predict(x)` equals the Python model's prediction on
-//! `x.astype(np.float32)`, exactly; and equals its prediction on `x` itself
-//! when the model was trained on `float32` features, which is what the
-//! exporter asks for. Seven significant digits are plenty for a feature;
+//! `x.astype(np.float32)`, exactly. On `x` itself the two can differ, even
+//! for a model trained on `float32` features: scikit-learn's histogram
+//! gradient boosting and LightGBM compare the unrounded `f64`, so a value
+//! within an `f32` rounding of a threshold can go the other way. Round the
+//! features to `f32` in the training pipeline too (the exporter asks for
+//! `float32` training data), and the two agree. Seven significant digits
+//! are plenty for a feature;
 //! they are not for a raw price next to a threshold, so feed returns and
 //! ratios, not prices.
 //!
