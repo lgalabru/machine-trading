@@ -66,6 +66,14 @@
 //! | `openbook-v2-venue` | OpenBook v2's decoding, conversions and instructions alone, for `wasm32-wasip2` |
 //! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
+//! | `candle` | [`candle`], [`candle_nn`] and [`nn`]: small neural networks from embedded weights, for `wasm32-wasip2` too |
+//!
+//! # Models
+//!
+//! A strategy that embeds a trained model builds its inputs with
+//! [`features`] (rolling windows, returns, volatility, bars), and evaluates
+//! either a tree ensemble with [`trees`] or, with the `candle` feature, a
+//! small network with [`nn`]. All three build for `wasm32-wasip2`.
 
 #[cfg(feature = "chain")]
 pub mod chain;
@@ -74,6 +82,8 @@ pub mod features;
 mod inputs;
 #[cfg(feature = "chain")]
 pub mod lending;
+#[cfg(feature = "candle")]
+pub mod nn;
 #[cfg(any(feature = "chain", feature = "spot-venue"))]
 pub mod protocols;
 pub mod raw;
@@ -101,6 +111,13 @@ mod tx;
 
 #[cfg(feature = "phoenix")]
 pub use bot::*;
+/// [candle](https://github.com/huggingface/candle)'s tensors, CPU only: the
+/// version [`nn`] is built on, so a strategy need not pin a matching one.
+#[cfg(feature = "candle")]
+pub use candle_core as candle;
+/// candle's layers, optimizers and `VarBuilder`.
+#[cfg(feature = "candle")]
+pub use candle_nn;
 pub use inputs::{
     BrokerHaircut, CloseOuts, PerpMarkets, SessionOrder, SessionVarError, StartPositions,
 };
