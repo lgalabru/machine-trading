@@ -123,7 +123,7 @@ solana-transaction-status-client-types = { version = "4.3", optional = true }
 spl-associated-token-account-interface = { version = "2", optional = true }
 spl-token-interface = { version = "3", optional = true }
 
-phoenix-rise = { version = "=0.6.15", default-features = false, features = ["serde"], optional = true }
+phoenix-rise = { version = "=0.10.2", default-features = false, features = ["serde"], optional = true }
 
 # CPU only: no default features, so no BLAS, GPU or network crates.
 candle-core = { version = "0.9", default-features = false, optional = true }
