@@ -316,6 +316,11 @@ struct Manager {
     /// The TPU client strategies send through, if the runtime sends so.
     tpu: Option<Arc<super::tpu::Tpu>>,
     strategies: BTreeMap<String, Strategy>,
+    /// Strategies the desired state holds that aren't running here: waiting
+    /// for the node to be live (restored on the first slot), or that
+    /// couldn't be restored, and why. Kept in the desired state, so a
+    /// restart that can't bring one back never forgets it.
+    held: Vec<(Stored, Option<String>)>,
     /// The latest slot the feed reported.
     slot: u64,
 }
@@ -327,11 +332,14 @@ impl Manager {
             shared,
             tpu,
             strategies: BTreeMap::new(),
+            held: Vec::new(),
             slot: 0,
         }
     }
 
-    /// Restart every strategy the desired state holds, as it was.
+    /// Read the desired state: its strategies wait in `held` until the
+    /// node is live ([`Manager::restore_held`]), since a strategy's start
+    /// reads the node's RPC, which a starting node doesn't answer yet.
     async fn restore(&mut self) {
         let stored = match std::fs::read(&self.config.state) {
             Ok(bytes) => match serde_json::from_slice::<DesiredState>(&bytes) {
@@ -347,10 +355,36 @@ impl Manager {
                 return;
             }
         };
-        for stored in stored.into_iter().take(STRATEGIES_MAX) {
+        self.held = stored
+            .into_iter()
+            .take(STRATEGIES_MAX)
+            .map(|stored| (stored, None))
+            .collect();
+    }
+
+    /// Start every held strategy that hasn't been tried: on the first slot
+    /// the feed applies, once the node is live. One that fails stays held,
+    /// stopped, with the reason.
+    async fn restore_held(&mut self) {
+        let waiting: Vec<Stored> = self
+            .held
+            .iter()
+            .filter(|(_, why)| why.is_none())
+            .map(|(stored, _)| stored.clone())
+            .collect();
+        self.held.retain(|(_, why)| why.is_some());
+        for stored in waiting {
             let name = stored.spec.name.clone();
-            if let Err(error) = self.add(stored.spec, Some(stored.component_sha256)).await {
-                tracing::warn!(name, %error, "a strategy couldn't be restored");
+            match self
+                .add(stored.spec.clone(), Some(stored.component_sha256.clone()))
+                .await
+            {
+                Ok(()) => tracing::info!(name, "a strategy was restored"),
+                Err(error) => {
+                    tracing::warn!(name, %error, "a strategy couldn't be restored");
+                    self.held
+                        .push((stored, Some(format!("not restored: {error}"))));
+                }
             }
         }
     }
@@ -368,6 +402,12 @@ impl Manager {
                     }
                     let slot = *slots.borrow_and_update();
                     self.slot = self.slot.max(slot);
+                    if self.held.iter().any(|(_, why)| why.is_none()) {
+                        self.restore_held().await;
+                        if let Err(error) = self.persist() {
+                            tracing::error!(%error, "the desired state can't be written");
+                        }
+                    }
                     self.step(self.slot).await;
                 }
                 request = commands.recv() => {
@@ -505,6 +545,8 @@ impl Manager {
     }
 
     async fn handle(&mut self, command: Command) -> Reply {
+        // Only a command that changes something rewrites the desired state.
+        let changes = !matches!(command, Command::Status);
         let done = match command {
             Command::Status => Ok(()),
             Command::Pause { name, orders } => {
@@ -522,7 +564,11 @@ impl Manager {
             Command::Add(spec) => self.add(spec, None).await,
             Command::Remove { name } => self.remove(&name).await,
         };
-        match done.and_then(|()| self.persist()) {
+        let persisted = done.and_then(|()| match changes {
+            true => self.persist(),
+            false => Ok(()),
+        });
+        match persisted {
             Ok(()) => Reply::Ok {
                 feed: FeedStatus {
                     slot: self.slot,
@@ -638,7 +684,11 @@ impl Manager {
     /// Compile, start and keep `spec`: paused unless it runs. `restored`
     /// is the component's hash when the desired state brings it back.
     async fn add(&mut self, spec: AddStrategy, restored: Option<String>) -> Result<(), String> {
-        if self.strategies.contains_key(&spec.name) {
+        let held = self
+            .held
+            .iter()
+            .any(|(stored, _)| stored.spec.name == spec.name);
+        if self.strategies.contains_key(&spec.name) || (restored.is_none() && held) {
             return Err(format!("a strategy is already named {}", spec.name));
         }
         if self.strategies.len() == STRATEGIES_MAX {
@@ -724,6 +774,11 @@ impl Manager {
 
     /// Pause `name`, cancel its orders, `end` it and forget it.
     async fn remove(&mut self, name: &str) -> Result<(), String> {
+        let held = self.held.len();
+        self.held.retain(|(stored, _)| stored.spec.name != name);
+        if self.held.len() < held {
+            return Ok(());
+        }
         self.pause(name, OnPause::Cancel, "removed".into()).await?;
         let strategy = self.strategies.remove(name).expect("paused above");
         let mut inner = strategy.inner.lock().await;
@@ -847,6 +902,11 @@ impl Manager {
                     drawdown: stats.drawdown,
                 }
             })
+            .chain(
+                self.held
+                    .iter()
+                    .map(|(stored, why)| held_status(stored, why)),
+            )
             .collect()
     }
 
@@ -865,6 +925,7 @@ impl Manager {
                     },
                     component_sha256: strategy.component_sha256.clone(),
                 })
+                .chain(self.held.iter().map(|(stored, _)| stored.clone()))
                 .collect(),
         };
         let text = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
@@ -872,6 +933,36 @@ impl Manager {
         let partial = path.with_extension("partial");
         std::fs::write(&partial, text).map_err(|e| format!("{}: {e}", partial.display()))?;
         std::fs::rename(&partial, path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+}
+
+/// A held strategy, as status shows it: stopped, waiting for the node, or
+/// not restored.
+fn held_status(stored: &Stored, why: &Option<String>) -> StrategyStatus {
+    let spec = &stored.spec;
+    let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol).unwrap_or((0.0, 0.0));
+    StrategyStatus {
+        name: spec.name.clone(),
+        state: StrategyState::Stopped {
+            why: why
+                .clone()
+                .unwrap_or_else(|| "waiting for the node to be live".into()),
+        },
+        symbol: spec.symbol.clone(),
+        authority: String::new(),
+        cap,
+        max_drawdown,
+        shadow: spec.shadow,
+        last_step_ms: None,
+        sends_landed: 0,
+        sends_failed: 0,
+        last_send_error: None,
+        steps: 0,
+        skipped: 0,
+        last_slot: None,
+        position: None,
+        pnl: None,
+        drawdown: None,
     }
 }
 
