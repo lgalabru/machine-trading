@@ -199,6 +199,9 @@ async fn play(
             start_slot: hello.start_slot,
             vars: task_variables(&vars),
             reports: hello.reports.into(),
+            // As the grader hosts it: a session is scored against the
+            // grader's own run, which has no deadline.
+            step_deadline: None,
         },
         end_slot: hello.end_slot,
         cap: env.max_position,
@@ -207,6 +210,11 @@ async fn play(
         cache,
         slot: slot.clone(),
         log: Box::new(log),
+        // As the grader's component sends: through the bot's endpoint.
+        sends: None,
+        observer: None,
+        readings: Default::default(),
+        dispatch: mtx_kit::protocols::phoenix::eternal::Dispatch::Confirm,
     })
     .await?;
     let mut played = 0;

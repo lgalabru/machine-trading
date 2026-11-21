@@ -12,13 +12,21 @@
 //! sends its orders as the bot, its steps coming from the grader's turns.
 //! With a [`strategies::ControlConfig`], it runs strategies on its own:
 //! each stepped on the chain's slots, controlled through a Unix socket
-//! (`mtx live`), and kept on disk across restarts.
+//! (`mtx live`), and kept on disk across restarts. Their orders go to the
+//! leaders' TPU ([`tpu`]) or, in a shadow run, nowhere ([`shadow`]).
 
+pub mod blockhash;
 pub mod bot;
+pub mod events;
 pub mod feed;
+pub mod journal;
 pub mod perp;
 pub mod session;
+pub mod shadow;
 pub mod strategies;
+pub mod tape;
+pub mod telemetry;
+pub mod tpu;
 
 use std::{
     io::{BufWriter, Write},
@@ -79,6 +87,10 @@ pub struct Config {
     /// controlled through a socket ([`strategies`]): step 4.
     #[serde(default)]
     pub control: Option<strategies::ControlConfig>,
+    /// Logs, traces and metrics ([`telemetry`]): without it, the
+    /// runtime's events go nowhere.
+    #[serde(default)]
+    pub telemetry: Option<telemetry::TelemetryConfig>,
 }
 
 /// One account on one market, to read.
@@ -158,12 +170,23 @@ pub enum Read {
 #[derive(Debug)]
 pub struct Runtime {
     thread: JoinHandle<()>,
+    /// Flushed once the runtime's thread has ended, so its last events go
+    /// out.
+    telemetry: Option<telemetry::Telemetry>,
 }
 
 impl Runtime {
     /// Start the runtime `config` describes. The sender is the feed's
     /// input: hand it to whatever sees the chain.
     pub fn start(config: Config) -> Result<(Self, FeedSender), String> {
+        let telemetry = config.telemetry.as_ref().map(telemetry::init).transpose()?;
+        tracing::info!(
+            version = env!("CARGO_PKG_VERSION"),
+            markets = config.markets.len(),
+            control = config.control.is_some(),
+            session = config.session.is_some(),
+            "the runtime starts"
+        );
         let readers = config.readers()?;
         let journal = std::fs::File::create(&config.journal)
             .map_err(|e| format!("{}: {e}", config.journal.display()))?;
@@ -183,17 +206,33 @@ impl Runtime {
                 ready.clone(),
             )?;
         }
+        let latest_blockhash = Arc::new(blockhash::LatestBlockhash::default());
         // The latest slot the feed reported, for the strategies' steps.
         let (slots, slots_seen) = tokio::sync::watch::channel(0u64);
+        let mut slot_events = None;
         if let Some(control) = config.control.clone() {
+            let (events, received) = match control.tpu {
+                Some(_) => {
+                    let (events, received) = tpu::slot_events();
+                    (Some(events), Some(received))
+                }
+                None => (None, None),
+            };
+            slot_events = events;
             strategies::spawn(
                 control,
-                strategies::Shared {
-                    cache: cache.clone(),
-                    watch,
-                    progress: receiver.progress(),
+                strategies::Inputs {
+                    shared: strategies::Shared {
+                        cache: cache.clone(),
+                        watch,
+                        progress: receiver.progress(),
+                        events: events::Events::default(),
+                        blockhash: latest_blockhash.clone(),
+                        readings: Arc::default(),
+                    },
+                    slots: slots_seen,
+                    slot_events: received,
                 },
-                slots_seen,
             )?;
         }
         let thread = std::thread::Builder::new()
@@ -214,11 +253,15 @@ impl Runtime {
                     &cache,
                     BufWriter::new(journal),
                     config.journal_writes,
-                    &slots,
+                    &Slots {
+                        newest: slots,
+                        events: slot_events,
+                        blockhash: latest_blockhash,
+                    },
                 );
             })
             .map_err(|e| format!("the runtime's thread: {e}"))?;
-        Ok((Self { thread }, sender))
+        Ok((Self { thread, telemetry }, sender))
     }
 
     /// Wait for the runtime to end, once its senders are dropped. Its
@@ -227,6 +270,8 @@ impl Runtime {
         if self.thread.join().is_err() {
             tracing::error!("the runtime's thread panicked");
         }
+        tracing::info!("the runtime stopped");
+        drop(self.telemetry);
     }
 }
 
@@ -243,7 +288,7 @@ fn run(
     cache: &Mutex<AccountCache>,
     mut journal: impl Write,
     journal_writes: bool,
-    slots: &tokio::sync::watch::Sender<u64>,
+    slots: &Slots,
 ) {
     while let Some(event) = events.next() {
         let mut cache = lock(cache);
@@ -259,17 +304,30 @@ fn run(
             }
             FeedEvent::Slot { slot, status, .. } => {
                 events.applied();
-                // Strategies step on the newest slot seen, whatever its
-                // status: a slot is due once it exists.
-                slots.send_if_modified(|seen| {
-                    let newer = slot > *seen;
-                    *seen = (*seen).max(slot);
-                    newer
-                });
+                events.applied_slot(slot);
+                // Strategies step on the newest slot the node has a bank
+                // for (`feed::banked`).
+                if feed::banked(status) {
+                    events.slot_banked(slot);
+                    slots.newest.send_if_modified(|seen| {
+                        let newer = slot > *seen;
+                        *seen = (*seen).max(slot);
+                        newer
+                    });
+                }
+                if let Some(events) = &slots.events {
+                    events.offer(slot, status);
+                }
                 (slot, status.as_str())
             }
-            FeedEvent::Block { .. } => {
+            FeedEvent::Block {
+                slot, blockhash, ..
+            } => {
                 events.applied();
+                match blockhash.parse() {
+                    Ok(hash) => slots.blockhash.produced(slot, hash),
+                    Err(error) => tracing::warn!(slot, %error, "a block's hash doesn't read"),
+                }
                 continue;
             }
         };
@@ -285,6 +343,26 @@ fn run(
             // audited: stop rather than run unseen.
             tracing::error!(%error, "the journal can't be written; the runtime stops");
             return;
+        }
+    }
+}
+
+/// Where the feed's loop reports slots: the newest, for the strategies'
+/// steps, and each start and end, for the TPU's leader tracker.
+struct Slots {
+    newest: tokio::sync::watch::Sender<u64>,
+    events: Option<tpu::SlotEvents>,
+    /// Where each block's hash goes, for the strategies' transactions.
+    blockhash: Arc<blockhash::LatestBlockhash>,
+}
+
+impl Slots {
+    #[cfg(test)]
+    fn none() -> Self {
+        Self {
+            newest: tokio::sync::watch::channel(0).0,
+            events: None,
+            blockhash: Arc::default(),
         }
     }
 }
@@ -436,7 +514,7 @@ mod tests {
             &Mutex::default(),
             &mut journal,
             true,
-            &tokio::sync::watch::channel(0).0,
+            &Slots::none(),
         );
         let lines = lines(&journal);
         let seen: Vec<_> = lines
@@ -490,7 +568,7 @@ mod tests {
             &Mutex::default(),
             &mut journal,
             false,
-            &tokio::sync::watch::channel(0).0,
+            &Slots::none(),
         );
         assert!(journal.is_empty());
     }
@@ -575,6 +653,7 @@ mod tests {
             markets: vec![market; MARKETS_MAX + 1],
             session: None,
             control: None,
+            telemetry: None,
         };
         assert!(config.readers().unwrap_err().contains("at most"));
     }

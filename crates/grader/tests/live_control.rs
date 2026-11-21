@@ -15,7 +15,11 @@ use std::{
 
 use mtx_core::{
     Mandate,
-    control::{self, AddStrategy, Command, OnPause, Reply, StrategyState, StrategyStatus},
+    control::{
+        self, AddStrategy, Command, CommandKind, ErrorCode, OnPause, Reply, StrategyState,
+        StrategyStatus,
+    },
+    events::{Event, PROTOCOL},
 };
 use mtx_grader::{
     chain::{self, Override},
@@ -41,7 +45,7 @@ const SYMBOL: &str = "SPCX";
 
 fn ask(socket: &Path, command: Command) -> Vec<StrategyStatus> {
     match control::request(socket, &command).expect("the runtime answers") {
-        Reply::Ok { strategies } => strategies,
+        Reply::Ok { strategies, .. } => strategies,
         Reply::Error { error } => panic!("{command:?} refused: {error}"),
     }
 }
@@ -148,6 +152,7 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
     )
     .unwrap();
     let socket = dir.join("control.sock");
+    let events = dir.join("events.sock");
     let config = dir.join("mtx-geyser.json");
     std::fs::write(
         &config,
@@ -158,10 +163,12 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
                 "markets": [],
                 "control": {
                     "socket": socket,
+                    "events": events,
                     "state": dir.join("strategies.json"),
                     "rpc_url": world.surfnet.rpc_url(),
                     "logs": dir.join("logs"),
                 },
+                "telemetry": { "log": dir.join("runtime.jsonl") },
             },
         })
         .to_string(),
@@ -178,12 +185,132 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
             symbol: SYMBOL.into(),
             slots_per_step: 2,
             run,
+            close_on_breach: false,
+            shadow: false,
         })
     };
+
+    // A sidecar listening before anything runs: a hello, then the add
+    // and the steps, pushed as they happen (docs/sidecar.md).
+    let (sidecar, heard) = std::sync::mpsc::channel();
+    let events_socket = events.clone();
+    std::thread::spawn(move || {
+        // The plugin binds its sockets as it loads: a moment's retries.
+        let lines = (0..100)
+            .find_map(|_| {
+                let lines = mtx_core::events::subscribe(&events_socket).ok();
+                if lines.is_none() {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                lines
+            })
+            .expect("the event socket listens");
+        for line in lines {
+            if sidecar.send(line.unwrap().event).is_err() {
+                return;
+            }
+        }
+    });
+    let hello = heard.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        matches!(&hello, Event::Hello { protocol: PROTOCOL, strategies, .. } if strategies.is_empty()),
+        "{hello:?}"
+    );
 
     // Added running, it steps on the slots.
     ask(&socket, add("a", true));
     until(&socket, "a steps", |s| one(s, "a").steps >= 3).await;
+    let (mut added, mut stepped, mut slots) = (false, 0, 0);
+    while let Ok(event) = heard.recv_timeout(Duration::from_secs(2)) {
+        match event {
+            Event::Command {
+                command: CommandKind::Add,
+                error,
+            } => added = error.is_none(),
+            Event::Step {
+                strategy,
+                running,
+                timings,
+                ..
+            } if strategy == "a" => {
+                assert!(running);
+                // Every stage is timed, from the plugin's callback on.
+                assert!(timings.total_us > 0 && timings.call_us > 0, "{timings:?}");
+                assert!(
+                    timings.total_us >= timings.read_us + timings.call_us + timings.send_us,
+                    "{timings:?}"
+                );
+                stepped += 1;
+            }
+            Event::Slot { .. } => slots += 1,
+            _ => {}
+        }
+        if added && stepped >= 3 && slots >= 3 {
+            break;
+        }
+    }
+    assert!(
+        added && stepped >= 3 && slots >= 3,
+        "{added} {stepped} {slots}"
+    );
+
+    // The contract, as a sidecar holds it: one connection for every
+    // command, and each refusal with a code to branch on.
+    let mut client = control::Client::connect(&socket).unwrap();
+    let refused = client
+        .send(&Command::Remove {
+            name: "nobody".into(),
+        })
+        .unwrap();
+    assert!(
+        matches!(&refused, Reply::Error { error } if error.code == ErrorCode::UnknownStrategy),
+        "{refused:?}"
+    );
+    let twice = client.send(&add("a", true)).unwrap();
+    assert!(
+        matches!(&twice, Reply::Error { error } if error.code == ErrorCode::Exists),
+        "{twice:?}"
+    );
+    let round_trips = 50;
+    let started = Instant::now();
+    for _ in 0..round_trips {
+        assert!(matches!(
+            client.send(&Command::Status).unwrap(),
+            Reply::Ok { .. }
+        ));
+    }
+    let each = started.elapsed() / round_trips;
+    eprintln!("a status round trip on a kept connection: {each:?}");
+    assert!(each < Duration::from_millis(20), "{each:?}");
+    // The refusals are on the event stream too, typed.
+    let mut refusals = 0;
+    while let Ok(event) = heard.recv_timeout(Duration::from_secs(2)) {
+        if let Event::Command {
+            error: Some(error), ..
+        } = event
+        {
+            assert!(matches!(
+                error.code,
+                ErrorCode::UnknownStrategy | ErrorCode::Exists
+            ));
+            refusals += 1;
+            if refusals == 2 {
+                break;
+            }
+        }
+    }
+    assert_eq!(refusals, 2);
+
+    // Its telemetry: each step a span and a metric event, by strategy.
+    let telemetry = std::fs::read_to_string(dir.join("runtime.jsonl")).unwrap();
+    let stepped = telemetry
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|line| line["fields"]["message"] == "a strategy stepped")
+        .expect("a step's metric event in the runtime's log");
+    assert_eq!(stepped["fields"]["strategy"], "a");
+    assert!(stepped["fields"]["histogram.mtx_strategy_step_ms"].is_u64());
+    assert_eq!(stepped["span"]["name"], "strategy.step");
 
     // Paused, it doesn't.
     let paused = ask(

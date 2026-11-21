@@ -1,0 +1,11 @@
+# Grafana provisions the mtx dashboards from the files mounted beside it
+# (docker-compose.yml); an edit to the JSON shows up within 30 s.
+apiVersion: 1
+providers:
+  - name: mtx
+    folder: mtx
+    type: file
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /otel-lgtm/mtx-dashboards

@@ -29,12 +29,15 @@ pub const FEED_EVENTS_MAX: usize = 1 << 16;
 #[derive(Debug, Default)]
 pub struct Watch {
     addresses: RwLock<HashSet<Address>>,
+    /// The transactions of the program the tape keeps ([`super::tape`]).
+    pub tape: super::tape::Tape,
 }
 
 impl Watch {
     pub fn new(addresses: impl IntoIterator<Item = Address>) -> Self {
         Self {
             addresses: RwLock::new(addresses.into_iter().collect()),
+            tape: super::tape::Tape::default(),
         }
     }
 
@@ -67,6 +70,80 @@ pub struct FeedSender {
     dropped: Arc<AtomicU64>,
     /// Events handed to the runtime so far.
     sent: Arc<AtomicU64>,
+    /// The newest slot the chain told of.
+    notified_slot: Arc<AtomicU64>,
+    /// When each recent slot was told of, and applied.
+    clocks: Arc<SlotClocks>,
+}
+
+/// Whether a slot's status means the node has a bank for it: what the
+/// strategies step on, since the accounts they read are that bank's. A slot
+/// whose shreds have only started arriving is the cluster's tip, ahead of
+/// the accounts while the node catches up; a dead or merely completed one
+/// has no bank to read.
+pub fn banked(status: mtx_core::feed::SlotStatus) -> bool {
+    !matches!(
+        status,
+        mtx_core::feed::SlotStatus::FirstShredReceived
+            | mtx_core::feed::SlotStatus::Completed
+            | mtx_core::feed::SlotStatus::Dead
+    )
+}
+
+/// Slots whose times are kept: a few minutes of 400 ms slots, more than a
+/// step ever looks back.
+pub const SLOT_CLOCKS_MAX: usize = 512;
+
+/// When the validator first told the plugin of each recent slot, and when
+/// the runtime's feed applied a banked status of it: where a step's
+/// [`mtx_core::events::StepTimings`] start.
+#[derive(Debug, Default)]
+pub struct SlotClocks {
+    slots: std::sync::Mutex<std::collections::VecDeque<SlotClock>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SlotClock {
+    pub slot: u64,
+    pub notified: std::time::Instant,
+    pub applied: Option<std::time::Instant>,
+}
+
+impl SlotClocks {
+    /// The validator told of `slot`: kept the first time only.
+    fn notified(&self, slot: u64, at: std::time::Instant) {
+        let Ok(mut slots) = self.slots.lock() else {
+            return;
+        };
+        if slots.iter().rev().take(8).any(|c| c.slot == slot) {
+            return;
+        }
+        if slots.len() == SLOT_CLOCKS_MAX {
+            slots.pop_front();
+        }
+        slots.push_back(SlotClock {
+            slot,
+            notified: at,
+            applied: None,
+        });
+    }
+
+    /// The feed applied a banked status of `slot`: kept the first time.
+    pub fn applied(&self, slot: u64, at: std::time::Instant) {
+        let Ok(mut slots) = self.slots.lock() else {
+            return;
+        };
+        if let Some(clock) = slots.iter_mut().rev().find(|c| c.slot == slot)
+            && clock.applied.is_none()
+        {
+            clock.applied = Some(at);
+        }
+    }
+
+    pub fn get(&self, slot: u64) -> Option<SlotClock> {
+        let slots = self.slots.lock().ok()?;
+        slots.iter().rev().find(|c| c.slot == slot).copied()
+    }
 }
 
 impl FeedSender {
@@ -75,10 +152,22 @@ impl FeedSender {
         self.watch.has(address)
     }
 
+    /// Where the transactions of [`super::tape::Tape::program`] go: apart
+    /// from the account feed, so a busy tape never drops an account write.
+    pub fn tape(&self) -> &super::tape::Tape {
+        &self.watch.tape
+    }
+
     /// Hand `event` to the runtime, without waiting. With no room, the
     /// event is dropped and counted. A runtime that stopped takes nothing,
     /// and that isn't a loss.
     pub fn send(&self, event: FeedEvent) {
+        if let FeedEvent::Slot { slot, status, .. } = &event {
+            self.notified_slot.fetch_max(*slot, Ordering::Release);
+            if banked(*status) {
+                self.clocks.notified(*slot, std::time::Instant::now());
+            }
+        }
         match self.events.try_send(event) {
             Ok(()) => {
                 self.sent.fetch_add(1, Ordering::Release);
@@ -106,16 +195,40 @@ pub struct FeedProgress {
     sent: Arc<AtomicU64>,
     applied: Arc<AtomicU64>,
     dropped: Arc<AtomicU64>,
+    /// The newest slot the chain told of, and the newest the runtime has
+    /// applied.
+    notified_slot: Arc<AtomicU64>,
+    applied_slot: Arc<AtomicU64>,
+    clocks: Arc<SlotClocks>,
 }
 
 /// How often [`FeedProgress::settle`] looks again.
 const SETTLE_LOOKS_EVERY: std::time::Duration = std::time::Duration::from_micros(200);
 
 impl FeedProgress {
+    /// The newest slot the runtime has applied.
+    pub fn newest_applied_slot(&self) -> u64 {
+        self.applied_slot.load(Ordering::Acquire)
+    }
+
+    /// When recent slots were told of and applied.
+    pub fn clocks(&self) -> &SlotClocks {
+        &self.clocks
+    }
+
     /// How many events the senders dropped so far: above 0, the cache may
     /// be stale, and nothing read from it should be traded on.
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
+    }
+
+    /// How many slots the runtime is behind what the chain told of: the
+    /// slots still waiting in the feed. A runtime that far behind reads a
+    /// market that has moved on.
+    pub fn slots_behind(&self) -> u64 {
+        self.notified_slot
+            .load(Ordering::Acquire)
+            .saturating_sub(self.applied_slot.load(Ordering::Acquire))
     }
 
     /// Wait until the runtime has applied every event handed to the feed
@@ -150,6 +263,22 @@ impl FeedReceiver {
         self.progress.applied.fetch_add(1, Ordering::Release);
     }
 
+    /// Say a slot event for `slot` is applied: the runtime has caught up
+    /// with the chain that far.
+    pub fn applied_slot(&self, slot: u64) {
+        self.progress
+            .applied_slot
+            .fetch_max(slot, Ordering::Release);
+    }
+
+    /// Say a banked status of `slot` is applied: when it was, for its
+    /// steps' timings.
+    pub fn slot_banked(&self, slot: u64) {
+        self.progress
+            .clocks
+            .applied(slot, std::time::Instant::now());
+    }
+
     /// A handle on how far the runtime has got, for another thread.
     pub fn progress(&self) -> FeedProgress {
         self.progress.clone()
@@ -162,12 +291,16 @@ pub fn channel(watch: Arc<Watch>) -> (FeedSender, FeedReceiver) {
     let (sender, receiver) = sync_channel(FEED_EVENTS_MAX);
     let dropped = Arc::new(AtomicU64::new(0));
     let sent = Arc::new(AtomicU64::new(0));
+    let notified_slot = Arc::new(AtomicU64::new(0));
+    let clocks = Arc::new(SlotClocks::default());
     (
         FeedSender {
             events: sender,
             watch,
             dropped: dropped.clone(),
             sent: sent.clone(),
+            notified_slot: notified_slot.clone(),
+            clocks: clocks.clone(),
         },
         FeedReceiver {
             events: receiver,
@@ -176,26 +309,78 @@ pub fn channel(watch: Arc<Watch>) -> (FeedSender, FeedReceiver) {
                 sent,
                 applied: Arc::new(AtomicU64::new(0)),
                 dropped,
+                notified_slot,
+                applied_slot: Arc::new(AtomicU64::new(0)),
+                clocks,
             },
         },
     )
 }
 
 /// The watched accounts, each as its latest write left it.
+///
+/// Each account's bytes are behind an [`Arc`]: a reader takes the accounts
+/// it needs under the cache's lock (a reference count each) and decodes
+/// them after letting go, so a strategy's read never holds the feed's
+/// writes, nor another strategy's read, for as long as a decode takes.
 #[derive(Debug, Default)]
 pub struct AccountCache {
-    accounts: HashMap<Address, AccountWrite>,
+    accounts: HashMap<Address, Held>,
+}
+
+#[derive(Debug, Clone)]
+struct Held {
+    slot: u64,
+    write_version: u64,
+    data: Arc<Vec<u8>>,
+}
+
+/// Accounts a read decodes: the cache under its lock, or a [`Snapshot`]
+/// taken from it.
+pub trait Accounts {
+    fn data(&self, address: &Address) -> Option<&[u8]>;
+}
+
+impl Accounts for AccountCache {
+    fn data(&self, address: &Address) -> Option<&[u8]> {
+        AccountCache::data(self, address)
+    }
+}
+
+/// Some accounts of the cache as they stood when it was taken, held
+/// without the cache's lock.
+#[derive(Debug, Default, Clone)]
+pub struct Snapshot {
+    accounts: HashMap<Address, Arc<Vec<u8>>>,
+}
+
+impl Accounts for Snapshot {
+    fn data(&self, address: &Address) -> Option<&[u8]> {
+        self.accounts.get(address).map(|data| data.as_slice())
+    }
 }
 
 impl AccountCache {
     /// Keep `write` if it is the account's latest: a later slot, or the
     /// same slot and no lower a write version. Returns whether it was kept.
     pub fn apply(&mut self, write: AccountWrite) -> bool {
-        let is_latest = self.accounts.get(&write.address).is_none_or(|held| {
+        self.keep(
+            write.address,
+            Held {
+                slot: write.slot,
+                write_version: write.write_version,
+                // The write's bytes move in: no copy.
+                data: Arc::new(write.data),
+            },
+        )
+    }
+
+    fn keep(&mut self, address: Address, write: Held) -> bool {
+        let is_latest = self.accounts.get(&address).is_none_or(|held| {
             (write.slot, write.write_version) >= (held.slot, held.write_version)
         });
         if is_latest {
-            self.accounts.insert(write.address, write);
+            self.accounts.insert(address, write);
         }
         is_latest
     }
@@ -205,10 +390,21 @@ impl AccountCache {
         self.accounts.get(address).map(|held| held.data.as_slice())
     }
 
+    /// `addresses` as they stand, to read without the cache's lock: a
+    /// reference count each. An address never written is left out.
+    pub fn snapshot(&self, addresses: &[Address]) -> Snapshot {
+        Snapshot {
+            accounts: addresses
+                .iter()
+                .filter_map(|address| Some((*address, self.accounts.get(address)?.data.clone())))
+                .collect(),
+        }
+    }
+
     /// Keep every write of `other` that is the latest of its account.
     pub fn merge(&mut self, other: AccountCache) {
-        for write in other.accounts.into_values() {
-            self.apply(write);
+        for (address, write) in other.accounts {
+            self.keep(address, write);
         }
     }
 
@@ -293,6 +489,24 @@ mod tests {
         // A third, not applied: not settled.
         sender.send(FeedEvent::Account(write(1, 3, 0, 3)));
         assert!(!progress.settle(std::time::Duration::from_millis(5)));
+    }
+
+    #[test]
+    fn a_runtime_behind_the_chain_knows_by_how_many_slots() {
+        let (sender, receiver) = channel(Arc::new(Watch::default()));
+        let progress = receiver.progress();
+        let slot = |slot| FeedEvent::Slot {
+            slot,
+            parent: None,
+            status: SlotStatus::Processed,
+        };
+        sender.send(slot(10));
+        sender.send(slot(14));
+        assert_eq!(progress.slots_behind(), 14);
+        receiver.applied_slot(10);
+        assert_eq!(progress.slots_behind(), 4);
+        receiver.applied_slot(14);
+        assert_eq!(progress.slots_behind(), 0);
     }
 
     #[test]

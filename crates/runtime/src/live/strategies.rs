@@ -32,9 +32,11 @@ use std::{
 use mtx_core::{
     Mandate,
     control::{
-        AddStrategy, Command, MESSAGE_BYTES_MAX, OnPause, Reply, StrategyState, StrategyStatus,
+        AddStrategy, Command, CommandKind, ControlError, ErrorCode, FeedStatus, MESSAGE_BYTES_MAX,
+        OnPause, Reply, StrategyState, StrategyStatus,
     },
-    mandate::InstrumentRef,
+    events::{Event, PauseReason, Side as EventSide, StepTimings},
+    mandate::{InstrumentRef, Observed},
 };
 use mtx_kit::chain::RpcChainClient;
 use serde::{Deserialize, Serialize};
@@ -45,10 +47,10 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use super::{
     bot::{self, BotSpec},
-    feed::{AccountCache, FeedProgress, Watch},
+    feed::{AccountCache, FeedProgress, SlotClock, Watch},
     perp::PerpReader,
 };
-use crate::desk::{Clock, WasmBot};
+use crate::desk::{Clock, TurnTimings, WasmBot};
 
 /// Where the runtime takes commands and keeps its strategies: the
 /// `control` member of its configuration.
@@ -65,7 +67,45 @@ pub struct ControlConfig {
     pub rpc_url: String,
     /// A directory for each strategy's prints, `<name>.log`.
     pub logs: PathBuf,
+    /// How long one of a strategy's calls may run: past it the call is
+    /// interrupted and the strategy stops. Under a slot by default.
+    #[serde(default = "default_step_deadline_ms")]
+    pub step_deadline_ms: u64,
+    /// Send over the leaders' TPU rather than the node's RPC.
+    #[serde(default)]
+    pub tpu: Option<super::tpu::TpuConfig>,
+    /// The strategies' worker threads: steps run on them, at once across
+    /// strategies.
+    #[serde(default = "default_workers")]
+    pub workers: usize,
+    /// Cores to pin the strategies' threads to, away from the validator's
+    /// busiest: a step that never waits on a busy core. Unpinned without.
+    #[serde(default)]
+    pub cores: Option<Vec<usize>>,
+    /// The Unix socket a sidecar reads the runtime's events on
+    /// ([`super::events`], `docs/sidecar.md`). A file already there is
+    /// removed first.
+    #[serde(default)]
+    pub events: Option<PathBuf>,
 }
+
+/// Four: a step is a fraction of a millisecond of one core, and four let
+/// a handful of strategies step at once with room for their sends.
+fn default_workers() -> usize {
+    4
+}
+
+/// The most worker threads: a runtime beside a validator takes a few
+/// cores, not the machine.
+const WORKERS_MAX: usize = 16;
+
+fn default_step_deadline_ms() -> u64 {
+    DEFAULT_STEP_DEADLINE_MS
+}
+
+/// A step's deadline unless the configuration says otherwise: most of a
+/// 400 ms slot, leaving the rest to plan, sign and send.
+const DEFAULT_STEP_DEADLINE_MS: u64 = 250;
 
 /// The most strategies one runtime runs.
 pub const STRATEGIES_MAX: usize = 32;
@@ -74,13 +114,28 @@ pub const STRATEGIES_MAX: usize = 32;
 /// connection, and a person types them.
 const COMMANDS_WAITING_MAX: usize = 16;
 
-/// How often the control thread looks for a connection: a person typing
-/// `mtx live` waits this long at most.
-const ACCEPT_LOOKS_EVERY: Duration = Duration::from_millis(50);
+/// Control connections at once: a sidecar's, its UI's, and people's.
+const CONTROL_CONNECTIONS_MAX: usize = 16;
+
+/// How often the feed's metrics are recorded, in slots: every few seconds,
+/// a Grafana panel's resolution.
+const FEED_METRICS_EVERY_SLOTS: u64 = 10;
+
+/// How often held strategies wait to ask whether the node has caught up,
+/// in slots: a few seconds, so a starting node isn't asked every slot.
+const HEALTH_EVERY_SLOTS: u64 = 10;
+
+/// How long the node may take to say whether it has caught up.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// How long a step waits for the feed to apply what the chain wrote
 /// before its slot: past it, the strategy steps on what the cache holds.
 const SETTLE_WITHIN: Duration = Duration::from_secs(1);
+
+/// How many slots the runtime may lag what the chain told of before every
+/// strategy is paused: a little more than a step, so a busy slot doesn't
+/// stop anything, and well under a second of a market moving on.
+const FEED_SLOTS_BEHIND_MAX: u64 = 4;
 
 /// How far past the touch a flattening market order may fill.
 const FLATTEN_SLIPPAGE: f64 = 0.05;
@@ -114,26 +169,44 @@ pub struct Shared {
     pub cache: Arc<Mutex<AccountCache>>,
     pub watch: Arc<Watch>,
     pub progress: FeedProgress,
+    /// What a sidecar is told as it happens.
+    pub events: super::events::Events,
+    /// The newest blockhash, for the strategies' transactions.
+    pub blockhash: Arc<super::blockhash::LatestBlockhash>,
+    /// Market readings, shared across strategies.
+    pub readings: Arc<super::bot::Readings>,
+}
+
+/// What the strategies' thread starts with besides the configuration.
+pub struct Inputs {
+    pub shared: Shared,
+    /// The newest slot the feed reported.
+    pub slots: watch::Receiver<u64>,
+    /// The slots' starts and ends, for the TPU's leader tracker, when the
+    /// configuration sends over the TPU.
+    pub slot_events:
+        Option<mpsc::Receiver<solana_tpu_client_next::node_address_service::SlotEvent>>,
 }
 
 /// Start the strategies' thread: restore the desired state, then step the
 /// running strategies on `slots`, and serve commands on the socket.
-pub fn spawn(
-    config: ControlConfig,
-    shared: Shared,
-    slots: watch::Receiver<u64>,
-) -> Result<(), String> {
+pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
+    let Inputs {
+        shared,
+        slots,
+        slot_events,
+    } = inputs;
     std::fs::create_dir_all(&config.logs).map_err(|e| format!("{}: {e}", config.logs.display()))?;
     let (commands, received) = mpsc::channel(COMMANDS_WAITING_MAX);
-    listen(&config.socket, commands)?;
+    listen(&config.socket, commands.clone())?;
+    if let Some(socket) = &config.events {
+        super::events::listen(socket, shared.events.clone(), commands.clone())?;
+    }
+    let sockets = (config.socket.clone(), config.events.clone());
     std::thread::Builder::new()
         .name("mtx-live-strategies".into())
         .spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-            {
+            let runtime = match strategies_runtime(&config) {
                 Ok(runtime) => runtime,
                 Err(error) => {
                     tracing::error!(%error, "no async runtime for strategies; none will run");
@@ -141,49 +214,100 @@ pub fn spawn(
                 }
             };
             runtime.block_on(async move {
-                let mut manager = Manager::new(config, shared);
+                let tpu = match (&config.tpu, slot_events) {
+                    (Some(tpu), Some(events)) => {
+                        match super::tpu::Tpu::start(tpu, &config.rpc_url, events).await {
+                            Ok(tpu) => Some(Arc::new(tpu)),
+                            Err(error) => {
+                                // Strategies still run, sending through the RPC.
+                                tracing::error!(%error, "the TPU client didn't start; sends go through the RPC");
+                                None
+                            }
+                        }
+                    }
+                    _ => None,
+                };
+                let mut manager = Manager::new(config, shared, tpu);
                 manager.restore().await;
                 manager.serve(slots, received).await;
             });
+            // The commands' receiver is gone with the manager: the
+            // listeners see it once woken.
+            wake(&sockets.0);
+            if let Some(events) = &sockets.1 {
+                wake(events);
+            }
         })
         .map_err(|e| format!("the strategies' thread: {e}"))?;
     Ok(())
 }
 
-/// A command and where its reply goes.
-type Request = (Command, oneshot::Sender<Reply>);
+/// The strategies' async runtime: its worker threads, pinned to the cores
+/// the configuration names, one a thread, round the list.
+fn strategies_runtime(config: &ControlConfig) -> std::io::Result<tokio::runtime::Runtime> {
+    let workers = config.workers.clamp(1, WORKERS_MAX);
+    let cores = config.cores.clone().unwrap_or_default();
+    let next = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.worker_threads(workers).enable_all();
+    if !cores.is_empty() {
+        builder.on_thread_start(move || {
+            let core = cores[next.fetch_add(1, Ordering::Relaxed) % cores.len()];
+            if !core_affinity::set_for_current(core_affinity::CoreId { id: core }) {
+                tracing::warn!(core, "a strategies' thread couldn't be pinned");
+            }
+        });
+    }
+    builder.build()
+}
 
-/// Take commands on `socket`, one a connection, on a thread of their own,
-/// and hand each to the manager.
+/// A command and where its reply goes.
+type Request = super::events::Request;
+
+/// Take commands on `socket`, on threads of their own, and hand each to
+/// the manager. A connection may carry many commands, each answered before
+/// the next is read: a sidecar connects once.
 fn listen(socket: &Path, commands: mpsc::Sender<Request>) -> Result<(), String> {
     match std::fs::remove_file(socket) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("{}: {e}", socket.display())),
     }
+    // Blocking: a connection is answered the moment it comes. When the
+    // strategies stop, their thread connects once to wake this one, which
+    // sees them gone and ends ([`wake`]).
     let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
-    // Not blocking, so the thread sees when the strategies stop (the
-    // runtime was unloaded) and ends, rather than waiting on a socket
-    // nobody will answer.
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("{}: {e}", socket.display()))?;
+    let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     std::thread::Builder::new()
         .name("mtx-live-control".into())
         .spawn(move || {
-            while !commands.is_closed() {
-                match listener.accept() {
+            loop {
+                let accepted = listener.accept();
+                if commands.is_closed() {
+                    return;
+                }
+                match accepted {
                     Ok((stream, _)) => {
-                        let answered = stream
-                            .set_nonblocking(false)
-                            .map_err(|e| e.to_string())
-                            .and_then(|()| answer(stream, &commands));
-                        if let Err(error) = answered {
-                            tracing::warn!(%error, "a control connection failed");
+                        if open.load(Ordering::Acquire) >= CONTROL_CONNECTIONS_MAX {
+                            tracing::warn!(
+                                max = CONTROL_CONNECTIONS_MAX,
+                                "a control connection refused: too many"
+                            );
+                            continue;
                         }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(ACCEPT_LOOKS_EVERY);
+                        open.fetch_add(1, Ordering::AcqRel);
+                        let (commands, open) = (commands.clone(), open.clone());
+                        let spawned = std::thread::Builder::new()
+                            .name("mtx-live-control-connection".into())
+                            .spawn(move || {
+                                if let Err(error) = answer(stream, &commands) {
+                                    tracing::warn!(%error, "a control connection failed");
+                                }
+                                open.fetch_sub(1, Ordering::AcqRel);
+                            });
+                        if let Err(error) = spawned {
+                            tracing::warn!(%error, "a control connection's thread didn't start");
+                        }
                     }
                     Err(error) => tracing::warn!(%error, "a control connection failed"),
                 }
@@ -193,31 +317,54 @@ fn listen(socket: &Path, commands: mpsc::Sender<Request>) -> Result<(), String> 
     Ok(())
 }
 
+/// Answer one connection's commands, in order, until it closes.
 fn answer(stream: UnixStream, commands: &mpsc::Sender<Request>) -> Result<(), String> {
-    let mut line = String::new();
-    BufReader::new(stream.try_clone().map_err(|e| e.to_string())?)
-        .take(MESSAGE_BYTES_MAX as u64)
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    let reply = match serde_json::from_str::<Command>(&line) {
-        Ok(command) => {
-            let (reply, replied) = oneshot::channel();
-            commands
-                .blocking_send((command, reply))
-                .map_err(|_| "the runtime's strategies stopped".to_string())?;
-            replied
-                .blocking_recv()
-                .map_err(|_| "the runtime dropped the command".to_string())?
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
+    let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+    let mut writer = &stream;
+    loop {
+        let mut line = String::new();
+        let read = (&mut reader)
+            .take(MESSAGE_BYTES_MAX as u64)
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+        if read == 0 {
+            return Ok(());
         }
-        Err(error) => Reply::Error {
-            error: format!("not a command: {error}"),
-        },
-    };
-    let mut text = serde_json::to_string(&reply).map_err(|e| e.to_string())?;
-    text.push('\n');
-    (&stream)
-        .write_all(text.as_bytes())
-        .map_err(|e| e.to_string())
+        let reply = match serde_json::from_str::<Command>(&line) {
+            Ok(command) => {
+                let (reply, replied) = oneshot::channel();
+                match commands.blocking_send((command, reply)) {
+                    Ok(()) => replied.blocking_recv().unwrap_or_else(|_| stopped()),
+                    Err(_) => stopped(),
+                }
+            }
+            Err(error) => Reply::Error {
+                error: ControlError::new(ErrorCode::NotACommand, format!("not a command: {error}")),
+            },
+        };
+        let mut text = serde_json::to_string(&reply).map_err(|e| e.to_string())?;
+        text.push('\n');
+        writer
+            .write_all(text.as_bytes())
+            .map_err(|e| e.to_string())?;
+        // A line past the bound was cut, and the rest of it is no command.
+        if !line.ends_with('\n') {
+            return Err(format!("a command past {MESSAGE_BYTES_MAX} bytes"));
+        }
+    }
+}
+
+/// Wake a listener blocked on `socket` so it sees the strategies gone. A
+/// listener already gone has nothing to wake.
+fn wake(socket: &Path) {
+    drop(UnixStream::connect(socket));
+}
+
+fn stopped() -> Reply {
+    Reply::Error {
+        error: ControlError::new(ErrorCode::Stopped, "the runtime's strategies stopped"),
+    }
 }
 
 /// One strategy the runtime runs.
@@ -243,6 +390,8 @@ struct Inner {
     bot: Option<WasmBot>,
     /// Its next step's number.
     k: u64,
+    /// What the enforcer has seen of it under its current mandate.
+    observed: Observed,
 }
 
 #[derive(Debug, Clone)]
@@ -252,324 +401,71 @@ struct Stats {
     skipped: u64,
     /// The slot its next step is due at.
     due: u64,
+    last_step_ms: Option<u64>,
+    sends_landed: u64,
+    sends_failed: u64,
+    last_send_error: Option<String>,
     last_slot: Option<u64>,
     position: Option<f64>,
     pnl: Option<f64>,
     drawdown: Option<f64>,
 }
 
-struct Manager {
+/// What a strategy is started with, apart from the manager: cloned onto
+/// a task, so that an `add`'s slow work (its files, its accounts from the
+/// node, its component) doesn't hold the other strategies' steps.
+#[derive(Clone)]
+struct Ctx {
     config: ControlConfig,
     shared: Shared,
-    strategies: BTreeMap<String, Strategy>,
-    /// The latest slot the feed reported.
-    slot: u64,
+    tpu: Option<Arc<super::tpu::Tpu>>,
 }
 
-impl Manager {
-    fn new(config: ControlConfig, shared: Shared) -> Self {
-        Self {
-            config,
-            shared,
-            strategies: BTreeMap::new(),
-            slot: 0,
-        }
-    }
-
-    /// Restart every strategy the desired state holds, as it was.
-    async fn restore(&mut self) {
-        let stored = match std::fs::read(&self.config.state) {
-            Ok(bytes) => match serde_json::from_slice::<DesiredState>(&bytes) {
-                Ok(state) => state.strategies,
-                Err(error) => {
-                    tracing::error!(%error, "the desired state can't be read; starting with none");
-                    return;
-                }
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => {
-                tracing::error!(%error, "the desired state can't be read; starting with none");
-                return;
-            }
-        };
-        for stored in stored.into_iter().take(STRATEGIES_MAX) {
-            let name = stored.spec.name.clone();
-            if let Err(error) = self.add(stored.spec, Some(stored.component_sha256)).await {
-                tracing::warn!(name, %error, "a strategy couldn't be restored");
-            }
-        }
-    }
-
-    async fn serve(
-        &mut self,
-        mut slots: watch::Receiver<u64>,
-        mut commands: mpsc::Receiver<Request>,
-    ) {
-        loop {
-            tokio::select! {
-                changed = slots.changed() => {
-                    if changed.is_err() {
-                        return;
-                    }
-                    let slot = *slots.borrow_and_update();
-                    self.slot = self.slot.max(slot);
-                    self.step(self.slot).await;
-                }
-                request = commands.recv() => {
-                    let Some((command, reply)) = request else {
-                        return;
-                    };
-                    let answer = self.handle(command).await;
-                    // A client that hung up doesn't need the answer.
-                    let _ = reply.send(answer);
-                }
-            }
-        }
-    }
-
-    /// Step every running strategy whose step is due at `slot`.
-    async fn step(&mut self, slot: u64) {
-        if self.shared.progress.dropped() > 0 {
-            let lossy: Vec<String> = self
-                .strategies
-                .iter()
-                .filter(|(_, s)| lock(&s.stats).state == StrategyState::Running)
-                .map(|(name, _)| name.clone())
-                .collect();
-            for name in lossy {
-                let why = "the feed dropped events: the cache may be stale".to_string();
-                if let Err(error) = self.pause(&name, OnPause::Cancel, why).await {
-                    tracing::warn!(name, %error, "a strategy couldn't be paused");
-                }
-            }
-            return;
-        }
-        for (name, strategy) in &self.strategies {
-            let mut stats = lock(&strategy.stats);
-            if stats.state != StrategyState::Running || slot < stats.due {
-                continue;
-            }
-            stats.due = slot + strategy.spec.slots_per_step;
-            let Ok(mut inner) = strategy.inner.clone().try_lock_owned() else {
-                stats.skipped += 1;
-                continue;
-            };
-            drop(stats);
-            let (name, progress) = (name.clone(), self.shared.progress.clone());
-            let (slot_cell, stats, max_drawdown) = (
-                strategy.slot.clone(),
-                strategy.stats.clone(),
-                strategy.max_drawdown,
-            );
-            tokio::spawn(async move {
-                let inner = &mut *inner;
-                let Some(bot) = inner.bot.as_mut() else {
-                    return;
-                };
-                if !tokio::task::block_in_place(|| progress.settle(SETTLE_WITHIN)) {
-                    tracing::warn!(
-                        name,
-                        slot,
-                        "the feed is behind; the step reads what the cache holds"
-                    );
-                }
-                slot_cell.store(slot, Ordering::Release);
-                let step = mtx_core::Step::new(inner.k, slot, false);
-                let answered = bot.turn(&step, None).await;
-                inner.k += 1;
-                let market = bot.last_market().cloned();
-                let breach = {
-                    let mut stats = lock(&stats);
-                    stats.steps += u64::from(answered);
-                    if let Some(market) = &market {
-                        stats.last_slot = Some(market.slot);
-                        stats.position = Some(market.position.size);
-                        stats.pnl = Some(market.pnl);
-                        stats.drawdown = Some(market.drawdown);
-                    }
-                    if let Some(why) = &bot.stopped {
-                        stats.state = StrategyState::Stopped { why: why.clone() };
-                    }
-                    let breach = market.as_ref().is_some_and(|m| m.drawdown > max_drawdown);
-                    if breach && stats.state == StrategyState::Running {
-                        stats.state = StrategyState::Paused {
-                            why: format!(
-                                "the enforcer: drawdown {:.2} past the limit {max_drawdown:.2}",
-                                market.as_ref().map_or(0.0, |m| m.drawdown)
-                            ),
-                        };
-                    }
-                    breach
-                };
-                if breach {
-                    for failed in bot.cancel_all().await {
-                        tracing::warn!(name, failed, "an order couldn't be cancelled");
-                    }
-                }
-            });
-        }
-    }
-
-    async fn handle(&mut self, command: Command) -> Reply {
-        let done = match command {
-            Command::Status => Ok(()),
-            Command::Pause { name, orders } => {
-                self.each(name, |m, name| m.pause_by_command(name, orders))
-                    .await
-            }
-            Command::Resume { name } => self.each(name, Self::resume).await,
-            Command::Kill => {
-                self.each(None, |m, name| {
-                    m.pause(name, OnPause::Cancel, "the kill switch".to_string())
-                })
-                .await
-            }
-            Command::Mandate { name, mandate } => self.change_mandate(&name, mandate).await,
-            Command::Add(spec) => self.add(spec, None).await,
-            Command::Remove { name } => self.remove(&name).await,
-        };
-        match done.and_then(|()| self.persist()) {
-            Ok(()) => Reply::Ok {
-                strategies: self.status(),
-            },
-            Err(error) => Reply::Error { error },
-        }
-    }
-
-    /// Do `action` to `name`, or to every strategy.
-    async fn each<'a, F, Fut>(
-        &'a mut self,
-        name: Option<String>,
-        mut action: F,
-    ) -> Result<(), String>
-    where
-        F: FnMut(&'a Self, &'a str) -> Fut,
-        Fut: std::future::Future<Output = Result<(), String>> + 'a,
-    {
-        let this: &'a Self = self;
-        match name {
-            Some(name) => {
-                let (name, _) = this
-                    .strategies
-                    .get_key_value(&name)
-                    .ok_or_else(|| format!("no strategy {name}"))?;
-                action(this, name).await
-            }
-            None => {
-                for name in this.strategies.keys() {
-                    action(this, name).await?;
-                }
-                Ok(())
-            }
-        }
-    }
-
-    async fn pause_by_command(&self, name: &str, orders: OnPause) -> Result<(), String> {
-        self.pause(name, orders, "paused".to_string()).await
-    }
-
-    /// Stop stepping `name`, at its step boundary, and do `orders` to its
-    /// resting orders. A stopped strategy stays stopped.
-    async fn pause(&self, name: &str, orders: OnPause, why: String) -> Result<(), String> {
-        let strategy = self.get(name)?;
-        let mut inner = strategy.inner.lock().await;
-        {
-            let mut stats = lock(&strategy.stats);
-            if matches!(stats.state, StrategyState::Stopped { .. }) {
-                return Ok(());
-            }
-            stats.state = StrategyState::Paused { why };
-        }
-        let Some(bot) = inner.bot.as_mut() else {
-            return Ok(());
-        };
-        match orders {
-            OnPause::Keep => Ok(()),
-            OnPause::Cancel => cancelled(bot.cancel_all().await),
-            OnPause::Flatten => {
-                cancelled(bot.cancel_all().await)?;
-                bot.flatten(FLATTEN_SLIPPAGE).await
-            }
-        }
-    }
-
-    async fn resume(&self, name: &str) -> Result<(), String> {
-        let strategy = self.get(name)?;
-        let mut stats = lock(&strategy.stats);
-        if let StrategyState::Paused { .. } = stats.state {
-            stats.state = StrategyState::Running;
-            stats.due = self.slot;
-        }
-        Ok(())
-    }
-
-    /// Restart `name` under `mandate`, paused or running as it was.
-    async fn change_mandate(&mut self, name: &str, mandate: Mandate) -> Result<(), String> {
-        mandate.validate()?;
-        let (cap, max_drawdown) = limits(&mandate, &self.get(name)?.spec.symbol)?;
-        let start_slot = self.slot;
-        let strategy = self.get(name)?;
-        let mut spec = strategy.spec.clone();
-        spec.mandate = mandate;
-        let mut inner = strategy.inner.lock().await;
-        if let Some(mut bot) = inner.bot.take() {
-            bot.end().await;
-        }
-        let bot = self.start_bot(&spec, strategy, start_slot).await;
-        let stopped = bot.as_ref().err().cloned();
-        inner.bot = bot.ok();
-        inner.k = 0;
-        drop(inner);
-        let strategy = self
-            .strategies
-            .get_mut(name)
-            .expect("the strategy changed above");
-        strategy.spec = spec;
-        strategy.cap = cap;
-        strategy.max_drawdown = max_drawdown;
-        if let Some(why) = stopped {
-            lock(&strategy.stats).state = StrategyState::Stopped { why: why.clone() };
-            return Err(why);
-        }
-        Ok(())
-    }
-
-    /// Compile, start and keep `spec`: paused unless it runs. `restored`
-    /// is the component's hash when the desired state brings it back.
-    async fn add(&mut self, spec: AddStrategy, restored: Option<String>) -> Result<(), String> {
-        if self.strategies.contains_key(&spec.name) {
-            return Err(format!("a strategy is already named {}", spec.name));
-        }
-        if self.strategies.len() == STRATEGIES_MAX {
-            return Err(format!(
-                "a runtime runs at most {STRATEGIES_MAX} strategies"
-            ));
-        }
-        if spec.slots_per_step == 0 {
-            return Err("a strategy steps every slot at most: slots_per_step is at least 1".into());
-        }
-        spec.mandate.validate()?;
-        let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol)?;
-        let component = std::fs::read(&spec.component)
-            .map_err(|e| format!("{}: {e}", spec.component.display()))?;
+impl Ctx {
+    /// Read `spec`'s files and accounts, and start its component: the
+    /// strategy, paused unless it runs, or stopped if its component didn't
+    /// start (kept, so the desired state still holds it). `restored` is
+    /// the component's hash when the desired state brings it back.
+    async fn prepare(
+        &self,
+        spec: AddStrategy,
+        restored: Option<String>,
+        slot: u64,
+    ) -> Result<Strategy, ControlError> {
+        let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol).map_err(invalid)?;
+        let component =
+            std::fs::read(&spec.component).map_err(|e| unreadable(&spec.component, e))?;
         let component_sha256 = format!("{:x}", Sha256::digest(&component));
-        let keypair = read_keypair(&spec.keypair)?;
+        let keypair =
+            read_keypair(&spec.keypair).map_err(|e| ControlError::new(ErrorCode::Unreadable, e))?;
         let authority = solana_signer::Signer::pubkey(&keypair);
-        let exchange = std::fs::read_to_string(&spec.exchange)
-            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
-        let exchange = serde_json::from_str(&exchange)
-            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
-        let reader = PerpReader::new(exchange, &spec.symbol, &authority)?;
-        self.backfill(&reader).await?;
+        let exchange =
+            std::fs::read_to_string(&spec.exchange).map_err(|e| unreadable(&spec.exchange, e))?;
+        let exchange =
+            serde_json::from_str(&exchange).map_err(|e| unreadable(&spec.exchange, e))?;
+        let reader = PerpReader::new(exchange, &spec.symbol, &authority).map_err(invalid)?;
+        // A shadow run's key may have no account on the venue: flat, since
+        // it sends nothing.
+        let reader = match spec.shadow {
+            true => reader.flat_without_account(),
+            false => reader,
+        };
+        self.backfill(&reader)
+            .await
+            .map_err(|e| ControlError::new(ErrorCode::StartFailed, e))?;
         let strategy = Strategy {
             component_sha256: component_sha256.clone(),
             authority,
             keypair: Arc::new(keypair),
             reader,
-            slot: Arc::new(AtomicU64::new(self.slot)),
+            slot: Arc::new(AtomicU64::new(slot)),
             cap,
             max_drawdown,
-            inner: Arc::new(tokio::sync::Mutex::new(Inner { bot: None, k: 0 })),
+            inner: Arc::new(tokio::sync::Mutex::new(Inner {
+                bot: None,
+                k: 0,
+                observed: Observed::default(),
+            })),
             stats: Arc::new(Mutex::new(Stats {
                 state: StrategyState::Paused {
                     why: "added".into(),
@@ -577,6 +473,10 @@ impl Manager {
                 steps: 0,
                 skipped: 0,
                 due: 0,
+                last_step_ms: None,
+                sends_landed: 0,
+                sends_failed: 0,
+                last_send_error: None,
                 last_slot: None,
                 position: None,
                 pnl: None,
@@ -588,34 +488,28 @@ impl Manager {
             Some(hash) if hash != component_sha256 => Err(format!(
                 "its component changed since it was added (sha256 {hash}, now {component_sha256})"
             )),
-            _ => self.start_bot(&spec, &strategy, self.slot).await,
+            _ => self.start_bot(&spec, &strategy, slot).await,
         };
         match state {
             Ok(bot) => {
                 strategy.inner.lock().await.bot = Some(bot);
                 let mut stats = lock(&strategy.stats);
-                stats.due = self.slot;
+                stats.due = slot;
                 if spec.run {
                     stats.state = StrategyState::Running;
                 }
             }
             Err(why) => {
+                // Kept, stopped, so the desired state still holds it: the
+                // add is done, and the event says it can't step.
+                self.shared.events.emit(Event::Stopped {
+                    strategy: spec.name.clone(),
+                    why: why.clone(),
+                });
                 lock(&strategy.stats).state = StrategyState::Stopped { why };
             }
         }
-        self.strategies.insert(spec.name.clone(), strategy);
-        Ok(())
-    }
-
-    /// Pause `name`, cancel its orders, `end` it and forget it.
-    async fn remove(&mut self, name: &str) -> Result<(), String> {
-        self.pause(name, OnPause::Cancel, "removed".into()).await?;
-        let strategy = self.strategies.remove(name).expect("paused above");
-        let mut inner = strategy.inner.lock().await;
-        if let Some(mut bot) = inner.bot.take() {
-            bot.end().await;
-        }
-        Ok(())
+        Ok(strategy)
     }
 
     async fn start_bot(
@@ -653,6 +547,7 @@ impl Manager {
                 start_slot,
                 vars: Vec::new(),
                 reports: mtx_kit::Reports::default(),
+                step_deadline: Some(Duration::from_millis(self.config.step_deadline_ms)),
             },
             end_slot,
             cap: strategy.cap,
@@ -660,9 +555,79 @@ impl Manager {
             reader: strategy.reader.clone(),
             cache: self.shared.cache.clone(),
             slot: strategy.slot.clone(),
+            readings: self.shared.readings.clone(),
             log: Box::new(log),
+            sends: self.sends(spec)?,
+            dispatch: self.dispatch(spec),
+            observer: Some(Arc::new(
+                super::journal::Journal::open(
+                    &self.config.logs,
+                    &spec.name,
+                    spec.shadow,
+                    Some(self.tape_reader(spec)?),
+                    self.shared.events.clone(),
+                )?
+                .behind()?,
+            )),
         })
         .await
+    }
+
+    /// Where a strategy's journal reads its market's trades.
+    fn tape_reader(&self, spec: &AddStrategy) -> Result<super::journal::TapeReader, String> {
+        let json = std::fs::read_to_string(&spec.exchange)
+            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
+        let venue = mtx_kit::venue::PhoenixVenue::from_json(&json)?;
+        let market =
+            mtx_kit::protocols::phoenix::eternal::PhoenixExchange::new(venue.exchange().clone())
+                .market(&spec.symbol)
+                .map_err(|e| e.to_string())?;
+        Ok(super::journal::TapeReader::new(
+            self.shared.watch.clone(),
+            market,
+        ))
+    }
+
+    /// Whether a strategy's orders wait to land: never through a shadow or
+    /// the TPU, which watch for a send's fate after it; the node's own
+    /// simulation first only where the TPU is told to (`preflight`).
+    fn dispatch(&self, spec: &AddStrategy) -> mtx_kit::protocols::phoenix::eternal::Dispatch {
+        use mtx_kit::protocols::phoenix::eternal::Dispatch;
+        match (&self.tpu, &self.config.tpu) {
+            _ if spec.shadow => Dispatch::FireAndForget { simulate: false },
+            (Some(_), Some(config)) => Dispatch::FireAndForget {
+                simulate: config.preflight,
+            },
+            _ => Dispatch::Confirm,
+        }
+    }
+
+    /// The chain a strategy's orders go through: nowhere in a shadow run,
+    /// the leaders' TPU when the runtime sends so, else the node's RPC.
+    fn sends(
+        &self,
+        spec: &AddStrategy,
+    ) -> Result<Option<Arc<dyn mtx_kit::chain::ChainClient>>, String> {
+        let rpc = || RpcChainClient::new(self.config.rpc_url.clone());
+        if spec.shadow {
+            let journal = self.config.logs.join(format!("{}.shadow.jsonl", spec.name));
+            return Ok(Some(Arc::new(super::shadow::ShadowChain::live(
+                rpc(),
+                &journal,
+                &spec.name,
+                self.shared.blockhash.clone(),
+                Some(self.shared.progress.clone()),
+            )?)));
+        }
+        Ok(self.tpu.as_ref().map(|tpu| {
+            Arc::new(super::tpu::TpuChainClient::new(
+                rpc(),
+                tpu.clone(),
+                &spec.name,
+                self.shared.blockhash.clone(),
+                self.shared.events.clone(),
+            )) as Arc<dyn mtx_kit::chain::ChainClient>
+        }))
     }
 
     /// Watch a new strategy's accounts, and read them once from the node:
@@ -678,11 +643,756 @@ impl Manager {
         lock(&self.shared.cache).merge(found);
         Ok(())
     }
+}
 
-    fn get(&self, name: &str) -> Result<&Strategy, String> {
-        self.strategies
-            .get(name)
-            .ok_or_else(|| format!("no strategy {name}"))
+/// An `add` prepared off the strategies' loop, and where its answer goes.
+struct Prepared {
+    spec: AddStrategy,
+    outcome: Result<Strategy, ControlError>,
+    reply: oneshot::Sender<Reply>,
+}
+
+struct Manager {
+    config: ControlConfig,
+    shared: Shared,
+    /// The TPU client strategies send through, if the runtime sends so.
+    tpu: Option<Arc<super::tpu::Tpu>>,
+    strategies: BTreeMap<String, Strategy>,
+    /// Strategies the desired state holds that aren't running here: waiting
+    /// for the node to catch up, or that
+    /// couldn't be restored, and why. Kept in the desired state, so a
+    /// restart that can't bring one back never forgets it.
+    held: Vec<(Stored, Option<String>)>,
+    /// The latest slot the feed reported.
+    slot: u64,
+    /// The trades of each market a strategy runs on, by symbol, read once
+    /// for the event socket however many strategies share the market.
+    tapes: BTreeMap<String, super::journal::TapeReader>,
+    /// Strategies being added, off the loop: their names are taken.
+    adding: std::collections::BTreeSet<String>,
+    /// Where an `add`'s task hands back the strategy it prepared.
+    prepared: (mpsc::Sender<Prepared>, Option<mpsc::Receiver<Prepared>>),
+}
+
+impl Manager {
+    fn new(config: ControlConfig, shared: Shared, tpu: Option<Arc<super::tpu::Tpu>>) -> Self {
+        Self {
+            config,
+            shared,
+            tpu,
+            strategies: BTreeMap::new(),
+            held: Vec::new(),
+            slot: 0,
+            tapes: BTreeMap::new(),
+            adding: std::collections::BTreeSet::new(),
+            prepared: {
+                let (sender, receiver) = mpsc::channel(STRATEGIES_MAX);
+                (sender, Some(receiver))
+            },
+        }
+    }
+
+    fn ctx(&self) -> Ctx {
+        Ctx {
+            config: self.config.clone(),
+            shared: self.shared.clone(),
+            tpu: self.tpu.clone(),
+        }
+    }
+
+    /// Tell the event socket the trades on every market a strategy runs
+    /// on, since the last slot. A market whose exchange file can't be read
+    /// has no trades to tell, and its strategy fails on the same file.
+    fn emit_trades(&mut self) {
+        let wanted: Vec<AddStrategy> = self
+            .strategies
+            .values()
+            .filter(|s| !self.tapes.contains_key(&s.spec.symbol))
+            .map(|s| s.spec.clone())
+            .collect();
+        for spec in wanted {
+            match self.ctx().tape_reader(&spec) {
+                Ok(reader) => {
+                    self.tapes.insert(spec.symbol.clone(), reader);
+                }
+                Err(error) => {
+                    tracing::warn!(symbol = spec.symbol, %error, "a market's trades can't be read");
+                }
+            }
+        }
+        for (symbol, tape) in &mut self.tapes {
+            for trade in tape.trades("events") {
+                self.shared.events.emit(Event::Trade {
+                    symbol: symbol.clone(),
+                    slot: trade.slot,
+                    taker: match trade.taker {
+                        mtx_kit::Side::Bid => EventSide::Buy,
+                        mtx_kit::Side::Ask => EventSide::Sell,
+                    },
+                    price: trade.price,
+                    size: trade.size,
+                });
+            }
+        }
+    }
+
+    /// Read the desired state: its strategies wait in `held` until the
+    /// node has caught up ([`Manager::restore_held`]): a strategy's start
+    /// reads the market, which a node still replaying has behind the tip.
+    async fn restore(&mut self) {
+        let stored = match std::fs::read(&self.config.state) {
+            Ok(bytes) => match serde_json::from_slice::<DesiredState>(&bytes) {
+                Ok(state) => state.strategies,
+                Err(error) => {
+                    tracing::error!(%error, "the desired state can't be read; starting with none");
+                    return;
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => {
+                tracing::error!(%error, "the desired state can't be read; starting with none");
+                return;
+            }
+        };
+        self.held = stored
+            .into_iter()
+            .take(STRATEGIES_MAX)
+            .map(|stored| (stored, None))
+            .collect();
+    }
+
+    /// Whether the node says it has caught up with the cluster (its RPC's
+    /// `getHealth`): its accounts are then the chain's, and a strategy can
+    /// start on them.
+    async fn node_is_healthy(&self) -> bool {
+        RpcChainClient::with_timeout(&self.config.rpc_url, HEALTH_TIMEOUT)
+            .rpc()
+            .get_health()
+            .await
+            .is_ok()
+    }
+
+    /// Start every held strategy that hasn't been tried: once the node has
+    /// caught up. One that fails stays held, stopped, with the reason.
+    async fn restore_held(&mut self) {
+        let waiting: Vec<Stored> = self
+            .held
+            .iter()
+            .filter(|(_, why)| why.is_none())
+            .map(|(stored, _)| stored.clone())
+            .collect();
+        self.held.retain(|(_, why)| why.is_some());
+        for stored in waiting {
+            let name = stored.spec.name.clone();
+            match self
+                .add(stored.spec.clone(), Some(stored.component_sha256.clone()))
+                .await
+            {
+                Ok(()) => tracing::info!(name, "a strategy was restored"),
+                Err(error) => {
+                    tracing::warn!(name, %error, "a strategy couldn't be restored");
+                    self.held
+                        .push((stored, Some(format!("not restored: {error}"))));
+                }
+            }
+        }
+    }
+
+    async fn serve(
+        &mut self,
+        mut slots: watch::Receiver<u64>,
+        mut commands: mpsc::Receiver<Request>,
+    ) {
+        let mut prepared = self.prepared.1.take().expect("the strategies serve once");
+        loop {
+            tokio::select! {
+                done = prepared.recv() => {
+                    if let Some(done) = done {
+                        self.finish_add(done);
+                    }
+                }
+                changed = slots.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let slot = *slots.borrow_and_update();
+                    self.slot = self.slot.max(slot);
+                    if self.held.iter().any(|(_, why)| why.is_none())
+                        && slot.is_multiple_of(HEALTH_EVERY_SLOTS)
+                        && self.node_is_healthy().await
+                    {
+                        self.restore_held().await;
+                        if let Err(error) = self.persist() {
+                            tracing::error!(%error, "the desired state can't be written");
+                        }
+                    }
+                    self.step(self.slot).await;
+                    // After the steps are on their way: decoding the tape
+                    // for the event stream is no strategy's business.
+                    self.emit_trades();
+                }
+                request = commands.recv() => {
+                    let Some((command, reply)) = request else {
+                        return;
+                    };
+                    if let Command::Add(spec) = command {
+                        self.begin_add(spec, reply);
+                        continue;
+                    }
+                    let answer = self.handle(command).await;
+                    // A client that hung up doesn't need the answer.
+                    let _ = reply.send(answer);
+                }
+            }
+        }
+    }
+
+    /// Step every running strategy whose step is due at `slot`.
+    async fn step(&mut self, slot: u64) {
+        let woke = std::time::Instant::now();
+        let progress = &self.shared.progress;
+        self.shared.events.emit(Event::Slot {
+            slot,
+            behind: progress.slots_behind(),
+            dropped: progress.dropped(),
+        });
+        if slot.is_multiple_of(FEED_METRICS_EVERY_SLOTS) {
+            tracing::info!(
+                gauge.mtx_feed_slot = slot,
+                gauge.mtx_feed_slots_behind = progress.slots_behind(),
+                gauge.mtx_feed_dropped = progress.dropped(),
+                gauge.mtx_strategies = self.strategies.len() as u64,
+                "feed"
+            );
+        }
+        let stale = match (progress.dropped(), progress.slots_behind()) {
+            (0, behind) if behind <= FEED_SLOTS_BEHIND_MAX => None,
+            (0, behind) => Some(format!("the feed is {behind} slots behind the chain")),
+            (dropped, _) => Some(format!(
+                "the feed dropped {dropped} events: the cache may be stale"
+            )),
+        };
+        if let Some(why) = stale {
+            let running: Vec<String> = self
+                .strategies
+                .iter()
+                .filter(|(_, s)| lock(&s.stats).state == StrategyState::Running)
+                .map(|(name, _)| name.clone())
+                .collect();
+            for name in running {
+                tracing::warn!(
+                    counter.mtx_enforcer_pauses = 1_u64,
+                    strategy = %name,
+                    reason = "feed",
+                    why = %why,
+                    "the enforcer pauses a strategy"
+                );
+                self.shared.events.emit(Event::Paused {
+                    strategy: name.clone(),
+                    reason: PauseReason::Feed,
+                    why: why.clone(),
+                });
+                if let Err(error) = self.pause(&name, OnPause::Cancel, why.clone()).await {
+                    tracing::warn!(name, %error, "a strategy couldn't be paused");
+                }
+            }
+            return;
+        }
+        for (name, strategy) in &self.strategies {
+            let mut stats = lock(&strategy.stats);
+            if stats.state != StrategyState::Running || slot < stats.due {
+                continue;
+            }
+            stats.due = slot + strategy.spec.slots_per_step;
+            let Ok(mut inner) = strategy.inner.clone().try_lock_owned() else {
+                stats.skipped += 1;
+                tracing::warn!(
+                    counter.mtx_strategy_steps_skipped = 1_u64,
+                    strategy = %name,
+                    slot,
+                    "a step is skipped: the one before still runs"
+                );
+                self.shared.events.emit(Event::StepSkipped {
+                    strategy: name.clone(),
+                    slot,
+                });
+                continue;
+            };
+            drop(stats);
+            let (name, progress) = (name.clone(), self.shared.progress.clone());
+            let (slot_cell, stats) = (strategy.slot.clone(), strategy.stats.clone());
+            let (mandate, close_on_breach) =
+                (strategy.spec.mandate.clone(), strategy.spec.close_on_breach);
+            let instrument = instrument_of(&strategy.spec.symbol);
+            let shadow = strategy.spec.shadow;
+            let events = self.shared.events.clone();
+            let clock = self.shared.progress.clocks().get(slot);
+            // The step's clock starts as its slot reaches the strategies.
+            let started = std::time::Instant::now();
+            let span = tracing::info_span!(
+                "strategy.step",
+                strategy = %name,
+                slot,
+                k = inner.k,
+                shadow,
+                answered = tracing::field::Empty,
+                step_ms = tracing::field::Empty,
+            );
+            tokio::spawn(tracing::Instrument::instrument(
+                async move {
+                    let inner = &mut *inner;
+                    let Some(bot) = inner.bot.as_mut() else {
+                        return;
+                    };
+                    let settling = std::time::Instant::now();
+                    let settled = tokio::task::block_in_place(|| progress.settle(SETTLE_WITHIN));
+                    let settle_us = micros(settling);
+                    if !settled {
+                        tracing::warn!(
+                            name,
+                            slot,
+                            "the feed is behind; the step reads what the cache holds"
+                        );
+                    }
+                    slot_cell.store(slot, Ordering::Release);
+                    let step = mtx_core::Step::new(inner.k, slot, false);
+                    let answered = bot.turn(&step, None).await;
+                    let ended = std::time::Instant::now();
+                    let took_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    let timings = step_timings(clock, woke, settle_us, bot.last_timings(), ended);
+                    let current = tracing::Span::current();
+                    current.record("answered", answered);
+                    current.record("step_ms", took_ms);
+                    inner.k += 1;
+                    let market = bot.last_market().cloned();
+                    // After the trade: what the step left, into what the
+                    // enforcer has seen, and the mandate's audit of it all.
+                    if let Some(market) = &market {
+                        let observed = &mut inner.observed;
+                        observed.record(&instrument, market.position.size);
+                        observed.max_drawdown_usd = observed.max_drawdown_usd.max(market.drawdown);
+                        if market.resting_bids > 0.0 {
+                            observed.record_open_order(&instrument, mtx_core::Side::Buy);
+                        }
+                        if market.resting_asks > 0.0 {
+                            observed.record_open_order(&instrument, mtx_core::Side::Sell);
+                        }
+                    }
+                    let breach = mandate.audit(&inner.observed);
+                    let paused = {
+                        let mut stats = lock(&stats);
+                        stats.steps += u64::from(answered);
+                        stats.last_step_ms = Some(took_ms);
+                        if let Some(market) = &market {
+                            // What became of the step before's orders, as this
+                            // step's market reports them.
+                            for send in &market.sends {
+                                let outcome = match &send.state {
+                                    mtx_kit::SendState::Landed(_) => "landed",
+                                    mtx_kit::SendState::Failed { .. } => "failed",
+                                    mtx_kit::SendState::NotSent(_) => "not_sent",
+                                    mtx_kit::SendState::Delayed => "delayed",
+                                    mtx_kit::SendState::Expired => "expired",
+                                };
+                                tracing::info!(
+                                    counter.mtx_strategy_sends = 1_u64,
+                                    strategy = %name,
+                                    outcome,
+                                    "a send's fate"
+                                );
+                                match &send.state {
+                                    mtx_kit::SendState::Landed(_) => stats.sends_landed += 1,
+                                    mtx_kit::SendState::Failed { reason, .. }
+                                    | mtx_kit::SendState::NotSent(reason) => {
+                                        stats.sends_failed += 1;
+                                        // The step's first failure, not the
+                                        // orders it stopped after it.
+                                        if reason != crate::desk::EARLIER_ORDER_FAILED {
+                                            stats.last_send_error = Some(reason.clone());
+                                        }
+                                    }
+                                    mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => {}
+                                }
+                            }
+                            stats.last_slot = Some(market.slot);
+                            stats.position = Some(market.position.size);
+                            stats.pnl = Some(market.pnl);
+                            stats.drawdown = Some(market.drawdown);
+                        }
+                        if let Some(why) = &bot.stopped
+                            && !matches!(stats.state, StrategyState::Stopped { .. })
+                        {
+                            stats.state = StrategyState::Stopped { why: why.clone() };
+                            events.emit(Event::Stopped {
+                                strategy: name.clone(),
+                                why: why.clone(),
+                            });
+                        }
+                        let paused = match (&breach, &stats.state) {
+                            (Some(breach), StrategyState::Running) => {
+                                tracing::warn!(
+                                    counter.mtx_enforcer_pauses = 1_u64,
+                                    strategy = %name,
+                                    reason = "mandate",
+                                    breach = %breach,
+                                    "the enforcer pauses a strategy"
+                                );
+                                events.emit(Event::Paused {
+                                    strategy: name.clone(),
+                                    reason: PauseReason::Mandate,
+                                    why: breach.to_string(),
+                                });
+                                stats.state = StrategyState::Paused {
+                                    why: format!("the enforcer: {breach}"),
+                                };
+                                true
+                            }
+                            _ => false,
+                        };
+                        tracing::info!(
+                            counter.mtx_strategy_steps = 1_u64,
+                            histogram.mtx_strategy_step_ms = took_ms,
+                            gauge.mtx_strategy_position = stats.position.unwrap_or(0.0),
+                            gauge.mtx_strategy_pnl_usd = stats.pnl.unwrap_or(0.0),
+                            gauge.mtx_strategy_drawdown_usd = stats.drawdown.unwrap_or(0.0),
+                            gauge.mtx_strategy_running =
+                                u64::from(stats.state == StrategyState::Running),
+                            strategy = %name,
+                            shadow,
+                            answered,
+                            "a strategy stepped"
+                        );
+                        events.emit(Event::Step {
+                            strategy: name.clone(),
+                            slot,
+                            k: inner.k - 1,
+                            step_ms: took_ms,
+                            timings,
+                            answered,
+                            shadow,
+                            orders: bot.last_orders(),
+                            position: stats.position.unwrap_or(0.0),
+                            pnl_usd: stats.pnl.unwrap_or(0.0),
+                            drawdown_usd: stats.drawdown.unwrap_or(0.0),
+                            running: stats.state == StrategyState::Running,
+                        });
+                        paused
+                    };
+                    if paused {
+                        for failed in bot.cancel_all().await {
+                            tracing::warn!(name, failed, "an order couldn't be cancelled");
+                        }
+                        if close_on_breach && let Err(error) = bot.flatten(FLATTEN_SLIPPAGE).await {
+                            tracing::warn!(name, %error, "the position couldn't be closed");
+                        }
+                    }
+                },
+                span,
+            ));
+        }
+    }
+
+    async fn handle(&mut self, command: Command) -> Reply {
+        let kind = command.kind();
+        let span = tracing::info_span!("control.command", command = kind.as_str());
+        let reply = tracing::Instrument::instrument(self.handle_in_span(command), span).await;
+        self.report(kind, &reply);
+        reply
+    }
+
+    /// Tell the logs, the metrics and the event stream what a command that
+    /// changes something came to.
+    fn report(&self, kind: CommandKind, reply: &Reply) {
+        if !kind.changes() {
+            return;
+        }
+        let error = match reply {
+            Reply::Error { error } => Some(error.clone()),
+            Reply::Ok { .. } => None,
+        };
+        match &error {
+            Some(error) => tracing::warn!(
+                counter.mtx_control_commands = 1_u64,
+                command = kind.as_str(),
+                outcome = "error",
+                code = ?error.code,
+                error = %error.error,
+                "a command was refused"
+            ),
+            None => tracing::info!(
+                counter.mtx_control_commands = 1_u64,
+                command = kind.as_str(),
+                outcome = "ok",
+                "a command was done"
+            ),
+        }
+        self.shared.events.emit(Event::Command {
+            command: kind,
+            error,
+        });
+    }
+
+    /// The answer to a command done: the feed and every strategy.
+    fn ok(&self) -> Reply {
+        Reply::Ok {
+            feed: FeedStatus {
+                slot: self.slot,
+                behind: self.shared.progress.slots_behind(),
+                dropped: self.shared.progress.dropped(),
+            },
+            strategies: self.status(),
+        }
+    }
+
+    async fn handle_in_span(&mut self, command: Command) -> Reply {
+        // Only a command that changes something rewrites the desired state.
+        let changes = !matches!(command, Command::Status);
+        let done = match command {
+            Command::Status => Ok(()),
+            Command::Pause { name, orders } => {
+                self.each(name, |m, name| m.pause_by_command(name, orders))
+                    .await
+            }
+            Command::Resume { name } => self.each(name, Self::resume).await,
+            Command::Kill => {
+                self.each(None, |m, name| {
+                    m.pause(name, OnPause::Cancel, "the kill switch".to_string())
+                })
+                .await
+            }
+            Command::Mandate { name, mandate } => self.change_mandate(&name, mandate).await,
+            Command::Add(spec) => self.add(spec, None).await,
+            Command::Remove { name } => self.remove(&name).await,
+        };
+        let persisted = done.and_then(|()| match changes {
+            true => self
+                .persist()
+                .map_err(|e| ControlError::new(ErrorCode::NotPersisted, e)),
+            false => Ok(()),
+        });
+        match persisted {
+            Ok(()) => self.ok(),
+            Err(error) => Reply::Error { error },
+        }
+    }
+
+    /// Do `action` to `name`, or to every strategy.
+    async fn each<'a, F, Fut>(&'a mut self, name: Option<String>, mut action: F) -> Done
+    where
+        F: FnMut(&'a Self, &'a str) -> Fut,
+        Fut: std::future::Future<Output = Done> + 'a,
+    {
+        let this: &'a Self = self;
+        match name {
+            Some(name) => {
+                let (name, _) = this
+                    .strategies
+                    .get_key_value(&name)
+                    .ok_or_else(|| unknown(&name))?;
+                action(this, name).await
+            }
+            None => {
+                for name in this.strategies.keys() {
+                    action(this, name).await?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    async fn pause_by_command(&self, name: &str, orders: OnPause) -> Done {
+        self.pause(name, orders, "paused".to_string()).await
+    }
+
+    /// Stop stepping `name`, at its step boundary, and do `orders` to its
+    /// resting orders. A stopped strategy stays stopped.
+    async fn pause(&self, name: &str, orders: OnPause, why: String) -> Done {
+        let strategy = self.get(name)?;
+        let mut inner = strategy.inner.lock().await;
+        {
+            let mut stats = lock(&strategy.stats);
+            if matches!(stats.state, StrategyState::Stopped { .. }) {
+                return Ok(());
+            }
+            stats.state = StrategyState::Paused { why };
+        }
+        let Some(bot) = inner.bot.as_mut() else {
+            return Ok(());
+        };
+        match orders {
+            OnPause::Keep => Ok(()),
+            OnPause::Cancel => cancelled(bot.cancel_all().await),
+            OnPause::Flatten => {
+                cancelled(bot.cancel_all().await)?;
+                bot.flatten(FLATTEN_SLIPPAGE).await.map_err(|e| {
+                    ControlError::new(
+                        ErrorCode::Failed,
+                        format!("the position couldn't be closed: {e}"),
+                    )
+                })
+            }
+        }
+    }
+
+    async fn resume(&self, name: &str) -> Done {
+        let strategy = self.get(name)?;
+        let mut stats = lock(&strategy.stats);
+        if let StrategyState::Paused { .. } = stats.state {
+            stats.state = StrategyState::Running;
+            stats.due = self.slot;
+        }
+        Ok(())
+    }
+
+    /// Restart `name` under `mandate`, paused or running as it was.
+    async fn change_mandate(&mut self, name: &str, mandate: Mandate) -> Done {
+        mandate.validate().map_err(invalid)?;
+        let (cap, max_drawdown) =
+            limits(&mandate, &self.get(name)?.spec.symbol).map_err(invalid)?;
+        let start_slot = self.slot;
+        let strategy = self.get(name)?;
+        let mut spec = strategy.spec.clone();
+        spec.mandate = mandate;
+        let mut inner = strategy.inner.lock().await;
+        if let Some(mut bot) = inner.bot.take() {
+            bot.end().await;
+        }
+        let bot = self.ctx().start_bot(&spec, strategy, start_slot).await;
+        let stopped = bot.as_ref().err().cloned();
+        inner.bot = bot.ok();
+        inner.k = 0;
+        // A new mandate audits from here on.
+        inner.observed = Observed::default();
+        drop(inner);
+        let strategy = self
+            .strategies
+            .get_mut(name)
+            .expect("the strategy changed above");
+        strategy.spec = spec;
+        strategy.cap = cap;
+        strategy.max_drawdown = max_drawdown;
+        if let Some(why) = stopped {
+            lock(&strategy.stats).state = StrategyState::Stopped { why: why.clone() };
+            return Err(ControlError::new(ErrorCode::StartFailed, why));
+        }
+        Ok(())
+    }
+
+    /// Compile, start and keep `spec`: paused unless it runs. `restored`
+    /// is the component's hash when the desired state brings it back.
+    async fn add(&mut self, spec: AddStrategy, restored: Option<String>) -> Done {
+        self.check_add(&spec, restored.is_some())?;
+        let name = spec.name.clone();
+        let strategy = self.ctx().prepare(spec, restored, self.slot).await?;
+        self.strategies.insert(name, strategy);
+        Ok(())
+    }
+
+    /// What an `add` can be refused for at once, before its slow work: a
+    /// name taken (by a strategy, one held, or one being added), no room,
+    /// a malformed step or mandate.
+    fn check_add(&self, spec: &AddStrategy, restoring: bool) -> Done {
+        let held = self
+            .held
+            .iter()
+            .any(|(stored, _)| stored.spec.name == spec.name);
+        if self.strategies.contains_key(&spec.name)
+            || self.adding.contains(&spec.name)
+            || (!restoring && held)
+        {
+            return Err(ControlError::new(
+                ErrorCode::Exists,
+                format!("a strategy is already named {}", spec.name),
+            ));
+        }
+        if self.strategies.len() + self.adding.len() >= STRATEGIES_MAX {
+            return Err(ControlError::new(
+                ErrorCode::TooMany,
+                format!("a runtime runs at most {STRATEGIES_MAX} strategies"),
+            ));
+        }
+        if spec.slots_per_step == 0 {
+            return Err(invalid(
+                "a strategy steps every slot at most: slots_per_step is at least 1".into(),
+            ));
+        }
+        spec.mandate.validate().map_err(invalid)?;
+        limits(&spec.mandate, &spec.symbol).map_err(invalid)?;
+        Ok(())
+    }
+
+    /// Start an `add` off the loop: refused at once if it can be, else
+    /// prepared on a task while the other strategies step, and finished
+    /// ([`Manager::finish_add`]) when it is ready.
+    fn begin_add(&mut self, spec: AddStrategy, reply: oneshot::Sender<Reply>) {
+        if let Err(error) = self.check_add(&spec, false) {
+            let answer = Reply::Error { error };
+            self.report(CommandKind::Add, &answer);
+            let _ = reply.send(answer);
+            return;
+        }
+        self.adding.insert(spec.name.clone());
+        let (ctx, slot, prepared) = (self.ctx(), self.slot, self.prepared.0.clone());
+        tokio::spawn(async move {
+            let outcome = ctx.prepare(spec.clone(), None, slot).await;
+            // The manager gone (the runtime stopping): nothing to finish.
+            let _ = prepared
+                .send(Prepared {
+                    spec,
+                    outcome,
+                    reply,
+                })
+                .await;
+        });
+    }
+
+    /// An `add` prepared off the loop: kept, written down, and answered.
+    fn finish_add(&mut self, prepared: Prepared) {
+        let Prepared {
+            spec,
+            outcome,
+            reply,
+        } = prepared;
+        self.adding.remove(&spec.name);
+        let answer = match outcome {
+            Ok(strategy) => {
+                if let Ok(mut stats) = strategy.stats.lock() {
+                    // It was prepared at an earlier slot: it steps from now.
+                    stats.due = stats.due.max(self.slot);
+                }
+                self.strategies.insert(spec.name.clone(), strategy);
+                match self.persist() {
+                    Ok(()) => self.ok(),
+                    Err(e) => Reply::Error {
+                        error: ControlError::new(ErrorCode::NotPersisted, e),
+                    },
+                }
+            }
+            Err(error) => Reply::Error { error },
+        };
+        self.report(CommandKind::Add, &answer);
+        // A client that hung up doesn't need the answer.
+        let _ = reply.send(answer);
+    }
+
+    /// Pause `name`, cancel its orders, `end` it and forget it.
+    async fn remove(&mut self, name: &str) -> Done {
+        let held = self.held.len();
+        self.held.retain(|(stored, _)| stored.spec.name != name);
+        if self.held.len() < held {
+            return Ok(());
+        }
+        self.pause(name, OnPause::Cancel, "removed".into()).await?;
+        let strategy = self.strategies.remove(name).expect("paused above");
+        let mut inner = strategy.inner.lock().await;
+        if let Some(mut bot) = inner.bot.take() {
+            bot.end().await;
+        }
+        Ok(())
+    }
+
+    fn get(&self, name: &str) -> Result<&Strategy, ControlError> {
+        self.strategies.get(name).ok_or_else(|| unknown(name))
     }
 
     fn status(&self) -> Vec<StrategyStatus> {
@@ -697,6 +1407,11 @@ impl Manager {
                     authority: strategy.authority.to_string(),
                     cap: strategy.cap,
                     max_drawdown: strategy.max_drawdown,
+                    shadow: strategy.spec.shadow,
+                    last_step_ms: stats.last_step_ms,
+                    sends_landed: stats.sends_landed,
+                    sends_failed: stats.sends_failed,
+                    last_send_error: stats.last_send_error,
                     steps: stats.steps,
                     skipped: stats.skipped,
                     last_slot: stats.last_slot,
@@ -705,6 +1420,11 @@ impl Manager {
                     drawdown: stats.drawdown,
                 }
             })
+            .chain(
+                self.held
+                    .iter()
+                    .map(|(stored, why)| held_status(stored, why)),
+            )
             .collect()
     }
 
@@ -723,6 +1443,7 @@ impl Manager {
                     },
                     component_sha256: strategy.component_sha256.clone(),
                 })
+                .chain(self.held.iter().map(|(stored, _)| stored.clone()))
                 .collect(),
         };
         let text = serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?;
@@ -733,14 +1454,40 @@ impl Manager {
     }
 }
 
+/// A held strategy, as status shows it: stopped, waiting for the node, or
+/// not restored.
+fn held_status(stored: &Stored, why: &Option<String>) -> StrategyStatus {
+    let spec = &stored.spec;
+    let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol).unwrap_or((0.0, 0.0));
+    StrategyStatus {
+        name: spec.name.clone(),
+        state: StrategyState::Stopped {
+            why: why
+                .clone()
+                .unwrap_or_else(|| "waiting for the node to catch up".into()),
+        },
+        symbol: spec.symbol.clone(),
+        authority: String::new(),
+        cap,
+        max_drawdown,
+        shadow: spec.shadow,
+        last_step_ms: None,
+        sends_landed: 0,
+        sends_failed: 0,
+        last_send_error: None,
+        steps: 0,
+        skipped: 0,
+        last_slot: None,
+        position: None,
+        pnl: None,
+        drawdown: None,
+    }
+}
+
 /// The mandate's position cap on `symbol`'s perpetual, and its drawdown
 /// limit (none is no limit).
 fn limits(mandate: &Mandate, symbol: &str) -> Result<(f64, f64), String> {
-    let instrument = InstrumentRef {
-        venue: crate::venue::perps::VENUE.into(),
-        kind: mtx_core::mandate::Kind::Perp,
-        symbol: symbol.into(),
-    };
+    let instrument = instrument_of(symbol);
     let allowance = mandate
         .allowance(&instrument)
         .ok_or_else(|| format!("the mandate doesn't allow {instrument}"))?;
@@ -748,6 +1495,60 @@ fn limits(mandate: &Mandate, symbol: &str) -> Result<(f64, f64), String> {
         allowance.max_position,
         mandate.limits.max_drawdown_usd.unwrap_or(f64::INFINITY),
     ))
+}
+
+/// `symbol`'s perpetual, as mandates name it.
+fn micros(since: std::time::Instant) -> u64 {
+    u64::try_from(since.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
+fn between(from: std::time::Instant, to: std::time::Instant) -> u64 {
+    u64::try_from(to.saturating_duration_since(from).as_micros()).unwrap_or(u64::MAX)
+}
+
+/// A step's timings: from the validator's notice of its slot (`clock`),
+/// through the strategies waking (`woke`), the feed settling, the turn's
+/// stages, to the turn's end. Without the slot's clock (a slot older than
+/// the clocks keep), the feed's stages are 0 and the total starts at the
+/// wake.
+fn step_timings(
+    clock: Option<SlotClock>,
+    woke: std::time::Instant,
+    settle_us: u64,
+    turn: TurnTimings,
+    ended: std::time::Instant,
+) -> StepTimings {
+    let (notified, applied) = match clock {
+        Some(clock) => (clock.notified, clock.applied.unwrap_or(clock.notified)),
+        None => (woke, woke),
+    };
+    let timings = StepTimings {
+        feed_us: between(notified, applied),
+        wake_us: between(applied, woke),
+        settle_us,
+        read_us: turn.read_us,
+        call_us: turn.call_us,
+        send_us: turn.send_us,
+        total_us: between(notified, ended),
+    };
+    debug_assert!(
+        timings.total_us + 1_000
+            >= timings.feed_us
+                + timings.wake_us
+                + timings.read_us
+                + timings.call_us
+                + timings.send_us,
+        "the stages fit in the total: {timings:?}"
+    );
+    timings
+}
+
+fn instrument_of(symbol: &str) -> InstrumentRef {
+    InstrumentRef {
+        venue: crate::venue::perps::VENUE.into(),
+        kind: mtx_core::mandate::Kind::Perp,
+        symbol: symbol.into(),
+    }
 }
 
 fn read_keypair(path: &Path) -> Result<Keypair, String> {
@@ -758,11 +1559,32 @@ fn read_keypair(path: &Path) -> Result<Keypair, String> {
 }
 
 /// Every cancel went through, or why not.
-fn cancelled(failed: Vec<String>) -> Result<(), String> {
+fn cancelled(failed: Vec<String>) -> Done {
     match failed.is_empty() {
         true => Ok(()),
-        false => Err(format!("orders not cancelled: {}", failed.join("; "))),
+        false => Err(ControlError::new(
+            ErrorCode::OrdersNotCancelled,
+            format!("orders not cancelled: {}", failed.join("; ")),
+        )),
     }
+}
+
+/// What a command's work comes to: done, or refused with a code.
+type Done = Result<(), ControlError>;
+
+fn unknown(name: &str) -> ControlError {
+    ControlError::new(ErrorCode::UnknownStrategy, format!("no strategy {name}"))
+}
+
+fn invalid(error: String) -> ControlError {
+    ControlError::new(ErrorCode::Invalid, error)
+}
+
+fn unreadable(path: &Path, error: impl std::fmt::Display) -> ControlError {
+    ControlError::new(
+        ErrorCode::Unreadable,
+        format!("{}: {error}", path.display()),
+    )
 }
 
 /// A lock no thread holds across a panic: each holder only copies numbers
@@ -801,6 +1623,8 @@ mod tests {
                     symbol: "SOL".into(),
                     slots_per_step: 2,
                     run: true,
+                    close_on_breach: false,
+                    shadow: false,
                 },
                 component_sha256: "ab".into(),
             }],
@@ -816,6 +1640,40 @@ mod tests {
     fn cancels_that_failed_say_which() {
         assert_eq!(cancelled(Vec::new()), Ok(()));
         let error = cancelled(vec!["phoenix:perp:SOL: refused".into()]).unwrap_err();
-        assert!(error.contains("phoenix:perp:SOL"), "{error}");
+        assert_eq!(error.code, ErrorCode::OrdersNotCancelled);
+        assert!(error.error.contains("phoenix:perp:SOL"), "{error}");
+    }
+
+    #[test]
+    fn a_step_s_stages_fit_in_its_total() {
+        let notified = std::time::Instant::now();
+        let applied = notified + std::time::Duration::from_micros(300);
+        let woke = applied + std::time::Duration::from_micros(200);
+        let ended = woke + std::time::Duration::from_micros(2_000);
+        let clock = SlotClock {
+            slot: 9,
+            notified,
+            applied: Some(applied),
+        };
+        let turn = TurnTimings {
+            read_us: 100,
+            call_us: 1_200,
+            send_us: 600,
+        };
+        let timings = step_timings(Some(clock), woke, 50, turn, ended);
+        assert_eq!(
+            (timings.feed_us, timings.wake_us, timings.total_us),
+            (300, 200, 2_500)
+        );
+        assert_eq!(
+            (timings.read_us, timings.call_us, timings.send_us),
+            (100, 1_200, 600)
+        );
+        // A slot the clocks no longer keep: the step is timed from its wake.
+        let timings = step_timings(None, woke, 0, turn, ended);
+        assert_eq!(
+            (timings.feed_us, timings.wake_us, timings.total_us),
+            (0, 0, 2_000)
+        );
     }
 }

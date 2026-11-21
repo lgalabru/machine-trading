@@ -5,6 +5,8 @@
 //! Phoenix's own decoding of them ([`phoenix_rise::accounts`]). It builds
 //! for `wasm32-wasip2`, so a component can use it.
 
+mod top;
+
 pub use phoenix_rise;
 use phoenix_rise::types::exchange::{ExchangeMarketConfig, ExchangeResponse};
 use solana_pubkey::Pubkey;
@@ -308,6 +310,223 @@ pub fn perp_top_of_book(
     accounts: &PerpBookAccounts<'_>,
     current_slot: u64,
 ) -> Result<TopOfBook, String> {
+    let traders = Traders::decode(accounts.global_trader_index, accounts.active_trader_buffer)?;
+    top_of_book(venue, symbol, accounts, current_slot, &traders)
+}
+
+/// [`perp_top_of_book`] and [`perp_position_live`] for `trader`, from one
+/// decoding of the trader accounts: what a strategy's market read needs.
+pub fn perp_top_and_position(
+    venue: &PhoenixVenue,
+    symbol: &str,
+    accounts: &PerpBookAccounts<'_>,
+    trader: &Pubkey,
+    current_slot: u64,
+) -> Result<(TopOfBook, Option<crate::Position>), String> {
+    let market = venue.market(symbol)?;
+    let traders = Traders::decode(accounts.global_trader_index, accounts.active_trader_buffer)?;
+    let top = top_of_book(venue, symbol, accounts, current_slot, &traders)?;
+    let position = traders.position(trader, market.asset_id).map(|position| {
+        position_of(
+            market,
+            position.base_lot_position.as_inner(),
+            position.virtual_quote_lot_position.as_inner(),
+        )
+    });
+    Ok((top, position))
+}
+
+fn top_of_book(
+    venue: &PhoenixVenue,
+    symbol: &str,
+    accounts: &PerpBookAccounts<'_>,
+    current_slot: u64,
+    traders: &Traders<'_>,
+) -> Result<TopOfBook, String> {
+    use phoenix_rise::accounts::{orderbook::Orderbook, spline_collection::SplineCollection};
+    type Stream = Box<dyn Iterator<Item = (u64, u64)>>;
+    let market = venue.market(symbol)?;
+    let marks = Marks::decode(venue, accounts.perp_asset_map)?;
+    let (mut bid_orders, mut ask_orders) = (Vec::new(), Vec::new());
+    {
+        let aligned = aligned(accounts.orderbook);
+        let orderbook = Orderbook::try_from_account_bytes(aligned.as_ref())
+            .map_err(|e| format!("the orderbook: {e}"))?;
+        for order in orderbook.bid_orders() {
+            bid_orders.push((
+                order.price_in_ticks().as_inner(),
+                order.num_base_lots_remaining().as_inner(),
+            ));
+        }
+        for order in orderbook.ask_orders() {
+            ask_orders.push((
+                order.price_in_ticks().as_inner(),
+                order.num_base_lots_remaining().as_inner(),
+            ));
+        }
+    }
+    let mut bids: Vec<Stream> = Vec::new();
+    let mut asks: Vec<Stream> = Vec::new();
+    let splines = SplineCollection::try_from_account_bytes(accounts.spline_collection)
+        .map_err(|e| format!("the spline collection: {e}"))?;
+    for spline in splines.splines() {
+        let spline = spline.map_err(|e| format!("a spline: {e}"))?;
+        if !spline.is_enabled() {
+            continue;
+        }
+        let (bid_lots_max, ask_lots_max) = spline_capacity(&spline, market, &marks, traders);
+        let mid = spline.mid_price().as_inner();
+        let updated = spline.user_update_slot();
+        let regions = |regions: &[phoenix_rise::accounts::spline_collection::TickRegion]| {
+            regions
+                .iter()
+                .filter(|r| r.is_active(current_slot, updated) && !r.is_empty())
+                .map(|r| top::Region {
+                    start: r.start_offset().as_inner(),
+                    end: r.end_offset().as_inner(),
+                    lots_per_tick: r.density().as_inner(),
+                    filled: r.filled_size().as_inner(),
+                })
+                .collect::<Vec<_>>()
+        };
+        for (is_bid, walk) in [
+            (
+                true,
+                top::Walk::new(
+                    regions(spline.active_bid_regions()),
+                    mid,
+                    spline.bid_base_width().as_inner(),
+                    true,
+                    bid_lots_max,
+                    SPLINE_TICKS_PER_SIDE_MAX,
+                ),
+            ),
+            (
+                false,
+                top::Walk::new(
+                    regions(spline.active_ask_regions()),
+                    mid,
+                    spline.ask_base_width().as_inner(),
+                    false,
+                    ask_lots_max,
+                    SPLINE_TICKS_PER_SIDE_MAX,
+                ),
+            ),
+        ] {
+            let (orders, streams) = match is_bid {
+                true => (&mut bid_orders, &mut bids),
+                false => (&mut ask_orders, &mut asks),
+            };
+            // A spline whose regions aren't in order of their offsets is
+            // read whole, with the resting orders, which are sorted below.
+            match walk.regions_in_order() {
+                true => streams.push(Box::new(walk)),
+                false => orders.extend(walk),
+            }
+        }
+    }
+    bids.push(top::sorted(bid_orders, true));
+    asks.push(top::sorted(ask_orders, false));
+    let (best_bid_ticks, best_ask_ticks) = top::top(bids, asks);
+    Ok(TopOfBook {
+        best_bid_ticks,
+        best_ask_ticks,
+    })
+}
+
+/// Where [`perp_top_of_book`]'s time goes, stage by stage, in
+/// microseconds: for the runtime's read benchmark.
+#[doc(hidden)]
+#[cfg(not(target_arch = "wasm32"))]
+pub fn perp_top_of_book_profile(
+    venue: &PhoenixVenue,
+    symbol: &str,
+    accounts: &PerpBookAccounts<'_>,
+    current_slot: u64,
+) -> Result<Vec<(&'static str, f64)>, String> {
+    use phoenix_rise::accounts::spline_collection::SplineCollection;
+    let us = |t: std::time::Instant| t.elapsed().as_secs_f64() * 1e6;
+    let mut stages = Vec::new();
+    let market = venue.market(symbol)?;
+    let t = std::time::Instant::now();
+    let marks = Marks::decode(venue, accounts.perp_asset_map)?;
+    stages.push(("marks", us(t)));
+    let t = std::time::Instant::now();
+    let traders = Traders::decode(accounts.global_trader_index, accounts.active_trader_buffer)?;
+    stages.push(("traders", us(t)));
+    let t = std::time::Instant::now();
+    let splines = SplineCollection::try_from_account_bytes(accounts.spline_collection)
+        .map_err(|e| format!("the spline collection: {e}"))?;
+    let all: Vec<_> = splines
+        .splines()
+        .collect::<Result<_, _>>()
+        .map_err(|e| format!("a spline: {e}"))?;
+    stages.push(("splines", us(t)));
+    let enabled: Vec<_> = all.iter().filter(|s| s.is_enabled()).collect();
+    stages.push(("splines enabled", enabled.len() as f64));
+    let t = std::time::Instant::now();
+    let mut position_us = 0.0;
+    let mut margin_us = 0.0;
+    for spline in &enabled {
+        let trader = Pubkey::new_from_array(spline.trader());
+        let p = std::time::Instant::now();
+        let position_lots = traders
+            .position(&trader, market.asset_id)
+            .map_or(0, |position| position.base_lot_position.as_inner());
+        position_us += us(p);
+        let m = std::time::Instant::now();
+        let _ = traders
+            .margin(&trader, &marks)
+            .map(|margin| margin.capacity(market, &marks, position_lots));
+        margin_us += us(m);
+    }
+    stages.push(("capacity", us(t)));
+    stages.push(("  position lookups", position_us));
+    stages.push(("  margins", margin_us));
+    let t = std::time::Instant::now();
+    let mut levels = 0u64;
+    for spline in &enabled {
+        let mid = spline.mid_price().as_inner();
+        let updated = spline.user_update_slot();
+        let regions: Vec<top::Region> = spline
+            .active_bid_regions()
+            .iter()
+            .filter(|r| r.is_active(current_slot, updated) && !r.is_empty())
+            .map(|r| top::Region {
+                start: r.start_offset().as_inner(),
+                end: r.end_offset().as_inner(),
+                lots_per_tick: r.density().as_inner(),
+                filled: r.filled_size().as_inner(),
+            })
+            .collect();
+        levels += top::Walk::new(
+            regions,
+            mid,
+            spline.bid_base_width().as_inner(),
+            true,
+            u64::MAX,
+            SPLINE_TICKS_PER_SIDE_MAX,
+        )
+        .count() as u64;
+    }
+    stages.push(("walk every bid level", us(t)));
+    stages.push(("bid levels", levels as f64));
+    let t = std::time::Instant::now();
+    perp_top_of_book(venue, symbol, accounts, current_slot)?;
+    stages.push(("whole", us(t)));
+    Ok(stages)
+}
+
+/// The book built whole, level by level, then uncrossed: what
+/// [`perp_top_of_book`] did before it merged the ladders lazily, kept to
+/// check it against (the runtime's read benchmark).
+#[doc(hidden)]
+pub fn perp_top_of_book_reference(
+    venue: &PhoenixVenue,
+    symbol: &str,
+    accounts: &PerpBookAccounts<'_>,
+    current_slot: u64,
+) -> Result<TopOfBook, String> {
     let market = venue.market(symbol)?;
     let marks = Marks::decode(venue, accounts.perp_asset_map)?;
     let mut book = Ladders::default();
@@ -380,26 +599,28 @@ fn take(side: &mut std::collections::BTreeMap<u64, u64>, ticks: u64, lots: u64) 
     }
 }
 
+/// The orderbook's bytes, aligned as its decoder needs (the alignment of
+/// its widest field): borrowed when they already are, copied when not.
+fn aligned(orderbook: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if (orderbook.as_ptr() as usize).is_multiple_of(std::mem::align_of::<u128>()) {
+        return std::borrow::Cow::Borrowed(orderbook);
+    }
+    let words: Vec<u128> = orderbook
+        .chunks(16)
+        .map(|chunk| {
+            let mut word = [0u8; 16];
+            word[..chunk.len()].copy_from_slice(chunk);
+            u128::from_ne_bytes(word)
+        })
+        .collect();
+    std::borrow::Cow::Owned(bytemuck::cast_slice::<u128, u8>(&words)[..orderbook.len()].to_vec())
+}
+
 fn add_resting_orders(book: &mut Ladders, orderbook: &[u8]) -> Result<(), String> {
     use phoenix_rise::accounts::orderbook::Orderbook;
-    // The decoder borrows the account as its layout, which needs the
-    // alignment of its widest field: copy the bytes if theirs is less.
-    let aligned: Vec<u128>;
-    let bytes = if (orderbook.as_ptr() as usize).is_multiple_of(std::mem::align_of::<u128>()) {
-        orderbook
-    } else {
-        aligned = orderbook
-            .chunks(16)
-            .map(|chunk| {
-                let mut word = [0u8; 16];
-                word[..chunk.len()].copy_from_slice(chunk);
-                u128::from_ne_bytes(word)
-            })
-            .collect();
-        &bytemuck::cast_slice::<u128, u8>(&aligned)[..orderbook.len()]
-    };
-    let orderbook =
-        Orderbook::try_from_account_bytes(bytes).map_err(|e| format!("the orderbook: {e}"))?;
+    let bytes = aligned(orderbook);
+    let orderbook = Orderbook::try_from_account_bytes(bytes.as_ref())
+        .map_err(|e| format!("the orderbook: {e}"))?;
     for (is_bid, orders) in [
         (true, orderbook.bid_orders()),
         (false, orderbook.ask_orders()),
@@ -430,25 +651,35 @@ fn add_splines(
         if !spline.is_enabled() {
             continue;
         }
-        // A maker the index doesn't hold, or with no position in this
-        // market, is flat.
-        let trader = Pubkey::new_from_array(spline.trader());
-        let position_lots = traders
-            .position(&trader, market.asset_id)
-            .map_or(0, |position| position.base_lot_position.as_inner());
-        let (position_bids, position_asks) = position_capacity(&spline, position_lots);
-        let (margin_bids, margin_asks) = traders
-            .margin(&trader, marks)
-            .map_or((u64::MAX, u64::MAX), |margin| {
-                margin.capacity(market, marks, position_lots)
-            });
-        let capacity = (
-            position_bids.min(margin_bids),
-            position_asks.min(margin_asks),
-        );
+        let capacity = spline_capacity(&spline, market, marks, &traders);
         add_spline(book, &spline, capacity, current_slot);
     }
     Ok(())
+}
+
+/// What a spline may quote each way: what its position limits leave, and
+/// what its maker's margin carries. A maker the index doesn't hold, or with
+/// no position in this market, is flat.
+fn spline_capacity(
+    spline: &phoenix_rise::accounts::spline_collection::Spline,
+    market: &ExchangeMarketConfig,
+    marks: &Marks<'_>,
+    traders: &Traders<'_>,
+) -> (u64, u64) {
+    let trader = Pubkey::new_from_array(spline.trader());
+    let position_lots = traders
+        .position(&trader, market.asset_id)
+        .map_or(0, |position| position.base_lot_position.as_inner());
+    let (position_bids, position_asks) = position_capacity(spline, position_lots);
+    let (margin_bids, margin_asks) = traders
+        .margin(&trader, marks)
+        .map_or((u64::MAX, u64::MAX), |margin| {
+            margin.capacity(market, marks, position_lots)
+        });
+    (
+        position_bids.min(margin_bids),
+        position_asks.min(margin_asks),
+    )
 }
 
 /// One spline's ladder, both sides: Phoenix's own walk of its regions
@@ -514,6 +745,18 @@ fn add_spline(
 struct Traders<'a> {
     index: phoenix_rise::accounts::global_trader_index::GlobalTraderIndex<'a>,
     buffer: phoenix_rise::accounts::active_trader_buffer::ActiveTraderBuffer<'a>,
+    /// Every trader's positions, by node, read in one pass the first time a
+    /// margin is asked for: the buffer's own lookup scans all of it for each
+    /// trader, and a book asks for every spline maker's.
+    holdings: std::cell::OnceCell<std::collections::HashMap<u32, Vec<Held>>>,
+}
+
+/// One position, as a maker's margin reads it.
+#[derive(Debug, Clone, Copy)]
+struct Held {
+    asset_id: u32,
+    base_lots: i64,
+    quote_lots: i64,
 }
 
 impl<'a> Traders<'a> {
@@ -531,6 +774,25 @@ impl<'a> Traders<'a> {
                 active_trader_buffer.iter().copied(),
             )
             .map_err(|e| format!("the active trader buffer: {e}"))?,
+            holdings: std::cell::OnceCell::new(),
+        })
+    }
+
+    fn holdings(&self) -> &std::collections::HashMap<u32, Vec<Held>> {
+        self.holdings.get_or_init(|| {
+            let mut by_node: std::collections::HashMap<u32, Vec<Held>> =
+                std::collections::HashMap::new();
+            for (id, entry) in self.buffer.iter_all_positions() {
+                by_node
+                    .entry(id.trader_id().to_u32_or_sentinel())
+                    .or_default()
+                    .push(Held {
+                        asset_id: id.asset_id(),
+                        base_lots: entry.position.base_lot_position.as_inner(),
+                        quote_lots: entry.position.virtual_quote_lot_position.as_inner(),
+                    });
+            }
+            by_node
         })
     }
 
@@ -541,16 +803,13 @@ impl<'a> Traders<'a> {
         let node = self.index.index(trader)?;
         let state = self.index.get(trader)?;
         let mut free = i128::from(state.quote_lot_collateral.as_inner());
-        for (id, entry) in self
-            .buffer
-            .iter_positions(node)
-            .take(POSITIONS_PER_TRADER_MAX)
-        {
-            let (market, mark) = marks.get(id.asset_id())?;
+        let positions = self.holdings().get(&node).map_or(&[][..], Vec::as_slice);
+        for position in positions.iter().take(POSITIONS_PER_TRADER_MAX) {
+            let (market, mark) = marks.get(position.asset_id)?;
             let unit_price = i128::from(mark) * i128::from(market.tick_size);
-            let base = i128::from(entry.position.base_lot_position.as_inner());
-            let quote = i128::from(entry.position.virtual_quote_lot_position.as_inner());
-            let held = entry.position.base_lot_position.as_inner().unsigned_abs();
+            let base = i128::from(position.base_lots);
+            let quote = i128::from(position.quote_lots);
+            let held = position.base_lots.unsigned_abs();
             free += base * unit_price + quote;
             free -= initial_margin(market, unit_price, held) * i128::from(held);
         }
@@ -601,21 +860,28 @@ impl<'a> Marks<'a> {
         use phoenix_rise::accounts::perp_asset_map::PerpAssetMap;
         let map = PerpAssetMap::try_from_account_bytes(perp_asset_map)
             .map_err(|e| format!("the perp asset map: {e}"))?;
+        // One pass over the map, each entry decoded once: looking each
+        // market up by symbol scans and decodes the map again, which on
+        // mainnet's map was most of a book read.
         let mut markets = Vec::with_capacity(venue.exchange.markets.len());
-        for market in &venue.exchange.markets {
-            let entry = map
-                .find_by_symbol(&market.symbol)
-                .map_err(|e| e.to_string())?;
-            if let Some(entry) = entry {
-                let mark = entry
-                    .metadata
-                    .oracle_price()
-                    .mark_price
-                    .price
-                    .ticks
-                    .as_inner();
-                markets.push((market, mark));
-            }
+        for entry in map.iter() {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let Some(market) = venue
+                .exchange
+                .markets
+                .iter()
+                .find(|market| entry.symbol.matches(&market.symbol))
+            else {
+                continue;
+            };
+            let mark = entry
+                .metadata
+                .oracle_price()
+                .mark_price
+                .price
+                .ticks
+                .as_inner();
+            markets.push((market, mark));
         }
         Ok(Self { markets })
     }

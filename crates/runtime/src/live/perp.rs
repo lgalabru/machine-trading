@@ -16,14 +16,16 @@ use mtx_core::feed::Address;
 use mtx_kit::{
     phoenix_rise::types::exchange::{ExchangeMarketConfig, ExchangeResponse},
     venue::{
-        PerpBookAccounts, PhoenixVenue, key, perp_index, perp_position, perp_position_live,
-        perp_prices, perp_top_of_book, ticks_to_usd,
+        PerpBookAccounts, PhoenixVenue, key, perp_index, perp_position, perp_prices,
+        perp_top_and_position, ticks_to_usd,
     },
 };
 use serde::Serialize;
 use solana_pubkey::Pubkey;
 
+#[cfg(test)]
 use super::feed::AccountCache;
+use super::feed::Accounts;
 
 /// The trader index's and the active trader buffer's accounts a reader
 /// takes at most: Phoenix's `/exchange` lists one of each today.
@@ -40,9 +42,20 @@ pub struct PerpReader {
     spline_collection: Address,
     global_trader_index: Vec<Address>,
     active_trader_buffer: Vec<Address>,
+    /// Read a trader account the cache doesn't hold as flat
+    /// ([`PerpReader::flat_without_account`]).
+    flat_without_account: bool,
 }
 
 /// What [`PerpReader::read`] found, in USD and base units.
+/// A reader's identity, for sharing its readings ([`PerpReader::key`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ReaderKey {
+    orderbook: Address,
+    trader: Address,
+    flat_without_account: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct PerpReading {
     pub mark: f64,
@@ -88,7 +101,19 @@ impl PerpReader {
             active_trader_buffer,
             market,
             venue,
+            flat_without_account: false,
         })
+    }
+
+    /// Read a trader account the cache doesn't hold as a flat position,
+    /// rather than as an error: for a shadow run, whose key may never have
+    /// opened an account on the venue, and sends nothing that could hold a
+    /// position. Every other reading still refuses to guess.
+    pub fn flat_without_account(self) -> Self {
+        Self {
+            flat_without_account: true,
+            ..self
+        }
     }
 
     pub fn symbol(&self) -> &str {
@@ -98,6 +123,16 @@ impl PerpReader {
     /// The trader account whose position is read.
     pub fn trader(&self) -> Address {
         self.trader
+    }
+
+    /// What makes two readers' readings the same: the market, and the
+    /// account whose position they read.
+    pub fn key(&self) -> ReaderKey {
+        ReaderKey {
+            orderbook: self.orderbook,
+            trader: self.trader,
+            flat_without_account: self.flat_without_account,
+        }
     }
 
     /// The accounts a read needs: what the feed has to watch.
@@ -119,7 +154,7 @@ impl PerpReader {
     /// hasn't seen is an error: a reading must never be a guess. The trader
     /// account is read only while the trader isn't active in the market,
     /// and one that doesn't exist yet reads as missing, not as flat.
-    pub fn read(&self, cache: &AccountCache, slot: u64) -> Result<PerpReading, String> {
+    pub fn read(&self, cache: &impl Accounts, slot: u64) -> Result<PerpReading, String> {
         let seen = |address: &Address, what: &str| {
             cache
                 .data(address)
@@ -145,17 +180,24 @@ impl PerpReader {
             perp_prices(&self.market, asset_map).map_err(|e| format!("the perp asset map: {e}"))?;
         let index =
             perp_index(&self.market, asset_map, slot).map_err(|e| format!("the index: {e}"))?;
-        let top = perp_top_of_book(&self.venue, &self.market.symbol, &book, slot)?;
-        let live = perp_position_live(
-            &self.market,
+        let (top, live) = perp_top_and_position(
+            &self.venue,
+            &self.market.symbol,
+            &book,
             &key_of(&self.trader),
-            &global_trader_index,
-            &active_trader_buffer,
+            slot,
         )?;
-        let position = match live {
-            Some(position) => position,
-            None => perp_position(&self.market, seen(&self.trader, "trader account")?)
+        let position = match (live, cache.data(&self.trader)) {
+            (Some(position), _) => position,
+            (None, Some(account)) => perp_position(&self.market, account)
                 .map_err(|e| format!("the trader account: {e}"))?,
+            (None, None) if self.flat_without_account => mtx_kit::Position::default(),
+            (None, None) => {
+                return Err(format!(
+                    "the trader account {} wasn't seen",
+                    key_of(&self.trader)
+                ));
+            }
         };
         let usd = |ticks: u64| ticks_to_usd(&self.market, ticks);
         Ok(PerpReading {
@@ -177,4 +219,193 @@ fn key_of(address: &Address) -> Pubkey {
 /// A pubkey from text, as an [`Address`].
 pub fn address(text: &str) -> Result<Address, String> {
     key(text).map(|key| key.to_bytes())
+}
+
+#[cfg(test)]
+mod bench {
+    use mtx_kit::venue::{perp_position_live, perp_top_of_book};
+
+    use super::*;
+
+    /// A slot the market's index is fresh at: the newest the cache saw.
+    fn book_slot(cache: &AccountCache, reader: &PerpReader) -> u64 {
+        reader
+            .addresses()
+            .iter()
+            .filter_map(|a| cache.slot(a))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// What a market read costs, stage by stage, on a node's real accounts:
+    /// `MTX_BENCH_RPC=http://127.0.0.1:8899 MTX_BENCH_EXCHANGE=exchange.json
+    /// cargo test --release -p mtx-runtime --features live --lib read_speed
+    /// -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "needs a node's RPC and Phoenix's exchange file"]
+    fn read_speed() {
+        let rpc = std::env::var("MTX_BENCH_RPC").unwrap();
+        let exchange: ExchangeResponse = serde_json::from_str(
+            &std::fs::read_to_string(std::env::var("MTX_BENCH_EXCHANGE").unwrap()).unwrap(),
+        )
+        .unwrap();
+        let reader = PerpReader::new(exchange, "SOL", &Pubkey::new_unique())
+            .unwrap()
+            .flat_without_account();
+        let mut cache = AccountCache::default();
+        super::super::backfill_blocking(&rpc, &reader.addresses(), &mut cache).unwrap();
+        let sizes: usize = reader
+            .addresses()
+            .iter()
+            .filter_map(|a| cache.data(a))
+            .map(<[u8]>::len)
+            .sum();
+        eprintln!(
+            "accounts: {} bytes over {}",
+            sizes,
+            reader.addresses().len()
+        );
+        let rounds = 200;
+        let time = |name: &str, f: &mut dyn FnMut()| {
+            f();
+            let started = std::time::Instant::now();
+            for _ in 0..rounds {
+                f();
+            }
+            eprintln!(
+                "{name:<24} {:>9.1} µs",
+                started.elapsed().as_secs_f64() * 1e6 / rounds as f64
+            );
+        };
+        let slot = u64::MAX / 2;
+        let asset_map = cache.data(&reader.asset_map).unwrap();
+        let gti: Vec<&[u8]> = reader
+            .global_trader_index
+            .iter()
+            .map(|a| cache.data(a).unwrap())
+            .collect();
+        let atb: Vec<&[u8]> = reader
+            .active_trader_buffer
+            .iter()
+            .map(|a| cache.data(a).unwrap())
+            .collect();
+        let book = PerpBookAccounts {
+            perp_asset_map: asset_map,
+            orderbook: cache.data(&reader.orderbook).unwrap(),
+            spline_collection: cache.data(&reader.spline_collection).unwrap(),
+            global_trader_index: &gti,
+            active_trader_buffer: &atb,
+        };
+        time("read (all of it)", &mut || {
+            let _ = reader.read(&cache, slot);
+        });
+        time("prices", &mut || {
+            let _ = perp_prices(&reader.market, asset_map);
+        });
+        time("index", &mut || {
+            let _ = perp_index(&reader.market, asset_map, slot);
+        });
+        let real_slot = book_slot(&cache, &reader);
+        time("top of book", &mut || {
+            let _ = perp_top_of_book(&reader.venue, &reader.market.symbol, &book, real_slot);
+        });
+        time("top of book, built whole", &mut || {
+            let _ = mtx_kit::venue::perp_top_of_book_reference(
+                &reader.venue,
+                &reader.market.symbol,
+                &book,
+                real_slot,
+            );
+        });
+        // The merge and the whole book agree, at the slot the accounts were
+        // read and at slots around it (a spline's regions expire by slot).
+        for slot in real_slot.saturating_sub(300)..real_slot + 300 {
+            let merged =
+                perp_top_of_book(&reader.venue, &reader.market.symbol, &book, slot).unwrap();
+            let whole = mtx_kit::venue::perp_top_of_book_reference(
+                &reader.venue,
+                &reader.market.symbol,
+                &book,
+                slot,
+            )
+            .unwrap();
+            assert_eq!(
+                (merged.best_bid_ticks, merged.best_ask_ticks),
+                (whole.best_bid_ticks, whole.best_ask_ticks),
+                "slot {slot}"
+            );
+        }
+        eprintln!("the merge and the whole book agree at 600 slots around {real_slot}");
+        for _ in 0..3 {
+            let _ = mtx_kit::venue::perp_top_of_book_profile(
+                &reader.venue,
+                &reader.market.symbol,
+                &book,
+                real_slot,
+            );
+        }
+        for (stage, value) in mtx_kit::venue::perp_top_of_book_profile(
+            &reader.venue,
+            &reader.market.symbol,
+            &book,
+            real_slot,
+        )
+        .unwrap()
+        {
+            eprintln!("  stage {stage:<24} {value:>9.1}");
+        }
+        time("trader index decode", &mut || {
+            let _ = mtx_kit::phoenix_rise::accounts::global_trader_index::GlobalTraderIndex::try_from_account_buffers(gti.iter().copied());
+        });
+        time("trader buffer decode", &mut || {
+            let _ = mtx_kit::phoenix_rise::accounts::active_trader_buffer::ActiveTraderBuffer::try_from_account_buffers(atb.iter().copied());
+        });
+        time("orderbook decode", &mut || {
+            let _ = mtx_kit::phoenix_rise::accounts::orderbook::Orderbook::try_from_account_bytes(
+                book.orderbook,
+            );
+        });
+        time("orderbook walk", &mut || {
+            let book =
+                mtx_kit::phoenix_rise::accounts::orderbook::Orderbook::try_from_account_bytes(
+                    book.orderbook,
+                )
+                .unwrap();
+            let mut n = 0u64;
+            for order in book.bid_orders().chain(book.ask_orders()) {
+                n += order.num_base_lots_remaining().as_inner();
+            }
+            std::hint::black_box(n);
+        });
+        {
+            let ob = mtx_kit::phoenix_rise::accounts::orderbook::Orderbook::try_from_account_bytes(
+                book.orderbook,
+            )
+            .unwrap();
+            let live = ob
+                .bid_orders()
+                .chain(ob.ask_orders())
+                .filter(|o| o.num_base_lots_remaining().as_inner() > 0)
+                .count();
+            let all = ob.bid_orders().chain(ob.ask_orders()).count();
+            eprintln!("orders: {live} live of {all} iterated");
+        }
+        time("splines decode", &mut || {
+            let _ = mtx_kit::phoenix_rise::accounts::spline_collection::SplineCollection::try_from_account_bytes(book.spline_collection);
+        });
+        eprintln!(
+            "orderbook {} B (aligned {}), splines {} B, index {:?} B, buffer {:?} B",
+            book.orderbook.len(),
+            (book.orderbook.as_ptr() as usize).is_multiple_of(16),
+            book.spline_collection.len(),
+            gti.iter().map(|a| a.len()).collect::<Vec<_>>(),
+            atb.iter().map(|a| a.len()).collect::<Vec<_>>()
+        );
+        time("read at a live slot", &mut || {
+            let _ = reader.read(&cache, real_slot);
+        });
+        time("position (live)", &mut || {
+            let _ = perp_position_live(&reader.market, &key_of(&reader.trader), &gti, &atb);
+        });
+    }
 }

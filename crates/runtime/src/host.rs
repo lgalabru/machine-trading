@@ -477,6 +477,9 @@ enum Bindings {
 pub struct WasmStrategy<R: RawSend = NoRawSends> {
     store: Store<Host<R>>,
     strategy: Bindings,
+    /// A wall deadline for each call, and the engine whose epoch a timer
+    /// moves past it ([`WasmStrategy::load`]'s `deadline`).
+    deadline: Option<(std::time::Duration, Engine)>,
     /// The session's fuel left, what the call in progress was given, what
     /// the session has spent, and the most one call spent.
     fuel_left: u64,
@@ -497,13 +500,34 @@ impl<R: RawSend> WasmStrategy<R> {
         log: Box<dyn Write + Send>,
         seed: u64,
         session_fuel: u64,
+        deadline: Option<std::time::Duration>,
     ) -> crate::Result<Self> {
         let wasm_error = |e: wasmtime::Error| Error::Wasm(format!("{}: {e:#}", path.display()));
         let mut config = Config::new();
         config.consume_fuel(true);
+        // A wall deadline interrupts a call at its next loop or function
+        // entry once a timer moves the engine's epoch: fuel bounds the work,
+        // the deadline bounds the time, for a host where a slow step costs
+        // the market (the live runtime). Off, nothing changes.
+        config.epoch_interruption(deadline.is_some());
         config.wasm_multi_memory(false);
+        // Code for speed: a component compiles once and steps thousands of
+        // times.
+        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+        // Compiled code is kept on disk, keyed by these settings and the
+        // component's bytes: a strategy restarted, re-added or given a new
+        // mandate loads in milliseconds rather than compiling again. Each
+        // load has its own engine (a deadline moves its engine's epoch),
+        // so the cache is shared across engines.
+        config.cache(code_cache());
         let engine = Engine::new(&config).map_err(wasm_error)?;
+        let compiling = std::time::Instant::now();
         let component = Component::from_file(&engine, path).map_err(wasm_error)?;
+        tracing::info!(
+            component = %path.display(),
+            ms = compiling.elapsed().as_millis() as u64,
+            "a strategy component compiled, or loaded from the code cache"
+        );
         let linker = |add: fn(&mut Linker<Host<R>>) -> wasmtime::Result<()>| {
             let mut linker: Linker<Host<R>> = Linker::new(&engine);
             wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
@@ -553,6 +577,12 @@ impl<R: RawSend> WasmStrategy<R> {
         };
         let mut store = Store::new(&engine, host);
         store.limiter(|host| &mut host.limits);
+        if deadline.is_some() {
+            // Instantiating runs under no deadline: one epoch never passes
+            // until a call's timer moves it.
+            store.set_epoch_deadline(1);
+            store.epoch_deadline_trap();
+        }
         // Instantiating runs no strategy code worth metering apart: it comes
         // out of the session's fuel like a call.
         let mut this_fuel = session_fuel.min(FUEL_PER_CALL);
@@ -564,6 +594,7 @@ impl<R: RawSend> WasmStrategy<R> {
         let used = this_fuel - store.get_fuel().unwrap_or(0);
         this_fuel = session_fuel.saturating_sub(used);
         Ok(Self {
+            deadline: deadline.map(|deadline| (deadline, store.engine().clone())),
             store,
             strategy,
             fuel_left: this_fuel,
@@ -581,6 +612,17 @@ impl<R: RawSend> WasmStrategy<R> {
             Bindings::V2(_) => "0.2.0",
             Bindings::V1(_) => "0.1.0",
         }
+    }
+
+    /// Start the next call's deadline: a timer that moves the engine's
+    /// epoch past it. The handle stops the timer once the call returns.
+    fn arm(&mut self) -> Option<tokio::task::JoinHandle<()>> {
+        let (deadline, engine) = self.deadline.clone()?;
+        self.store.set_epoch_deadline(1);
+        Some(tokio::spawn(async move {
+            tokio::time::sleep(deadline).await;
+            engine.increment_epoch();
+        }))
     }
 
     /// Fuel for the next call, from what the session has left: `false` if
@@ -647,6 +689,7 @@ impl<R: RawSend> WasmStrategy<R> {
             Ok(mandate) => mandate,
             Err(e) => return Outcome::Failed(format!("the mandate: {e}")),
         };
+        let timer = self.arm();
         let result = match &self.strategy {
             Bindings::V2(s) => {
                 s.call_start(&mut self.store, &wit2::session(session, mandate))
@@ -657,6 +700,7 @@ impl<R: RawSend> WasmStrategy<R> {
                     .await
             }
         };
+        timer.inspect(tokio::task::JoinHandle::abort);
         self.charge();
         match result {
             Ok(Ok(())) => Outcome::Done(()),
@@ -670,6 +714,7 @@ impl<R: RawSend> WasmStrategy<R> {
         if !self.refuel() {
             return Outcome::Trapped(Self::spent());
         }
+        let timer = self.arm();
         let result = match &self.strategy {
             Bindings::V2(s) => s
                 .call_step(&mut self.store, &wit2::market(market))
@@ -687,6 +732,7 @@ impl<R: RawSend> WasmStrategy<R> {
                     })
                 }),
         };
+        timer.inspect(tokio::task::JoinHandle::abort);
         self.charge();
         match result {
             Ok(Ok(lines)) => Outcome::Done(lines),
@@ -699,6 +745,7 @@ impl<R: RawSend> WasmStrategy<R> {
         if !self.refuel() {
             return Outcome::Trapped(Self::spent());
         }
+        let timer = self.arm();
         let result = match &self.strategy {
             Bindings::V2(s) => {
                 let last = last.map(wit2::market);
@@ -706,6 +753,7 @@ impl<R: RawSend> WasmStrategy<R> {
             }
             Bindings::V1(s) => s.call_end(&mut self.store, last.map(wit1::market)).await,
         };
+        timer.inspect(tokio::task::JoinHandle::abort);
         self.charge();
         match result {
             Ok(()) => Outcome::Done(()),
@@ -1333,6 +1381,23 @@ mod wit1 {
     }
 }
 
+/// The process's compiled-code cache (wasmtime's, in its default place
+/// on disk), or none where it can't be made: then every load compiles.
+fn code_cache() -> Option<wasmtime::Cache> {
+    static CACHE: std::sync::OnceLock<Option<wasmtime::Cache>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(
+            || match wasmtime::Cache::new(wasmtime::CacheConfig::new()) {
+                Ok(cache) => Some(cache),
+                Err(error) => {
+                    tracing::warn!(%error, "no compiled-code cache: every component compiles");
+                    None
+                }
+            },
+        )
+        .clone()
+}
+
 #[cfg(test)]
 mod tests {
     use mtx_core::turns::{BookLevels, Level, Role, Trade};
@@ -1416,6 +1481,7 @@ mod tests {
             Box::new(log.clone()),
             7,
             100 * FUEL_PER_CALL,
+            None,
         )
         .await
         .unwrap()

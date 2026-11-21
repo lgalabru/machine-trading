@@ -141,6 +141,11 @@ pub struct Clock {
     pub vars: Vec<(String, String)>,
     /// What the session's steps report beyond prices.
     pub reports: mtx_kit::Reports,
+    /// A wall deadline for each of the strategy's calls: past it the call
+    /// is interrupted, as a trap. A grade has none (fuel alone bounds a
+    /// step there); the live runtime does, since a slow step costs the
+    /// market.
+    pub step_deadline: Option<std::time::Duration>,
 }
 
 /// The mandate a component's session runs under, as its `start` sees it.
@@ -214,6 +219,10 @@ pub trait PerpReads: Send + Sync {
     async fn position(&self) -> Result<mtx_kit::Position, String>;
 }
 
+/// Why an order after a failed one in the same step wasn't sent: the
+/// step's first failure says why the step's orders didn't go out.
+pub const EARLIER_ORDER_FAILED: &str = "an earlier order of the step failed";
+
 /// A component playing one session: the strategy, and the markets the
 /// host trades for it ([`Desk`]). Reads and sends as `mtx_kit::run` does
 /// for a process bot.
@@ -247,6 +256,24 @@ pub struct WasmBot<R: RawDesk = NoRawSends> {
     /// Where the mandate allows taking on the bot's market only to reduce:
     /// the check its orders there pass before they go out.
     taking: Option<TakingGuard>,
+    /// The orders its last turn sent to the chain, the one that failed
+    /// included.
+    last_orders: u32,
+    /// Where its last turn's time went.
+    last_timings: TurnTimings,
+}
+
+/// Where a turn's time went, in microseconds: reading the market, the
+/// strategy's `step`, and planning and sending its sheet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TurnTimings {
+    pub read_us: u64,
+    pub call_us: u64,
+    pub send_us: u64,
+}
+
+fn micros(since: std::time::Instant) -> u64 {
+    u64::try_from(since.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
 impl<R: RawDesk> WasmBot<R> {
@@ -270,6 +297,7 @@ impl<R: RawDesk> WasmBot<R> {
             start_slot,
             vars,
             reports,
+            step_deadline,
         } = clock;
         let (start_mark, start_oracle) = match &desk.reader {
             Reader::Perp(trader) => (trader.mark_usd().await?, trader.oracle_usd().await?),
@@ -284,7 +312,16 @@ impl<R: RawDesk> WasmBot<R> {
         };
         let session_fuel = (steps + 2).saturating_mul(FUEL_PER_STEP);
         let mut stopped = None;
-        let mut strategy = match WasmStrategy::load(path, reads, log, seed, session_fuel).await {
+        let mut strategy = match WasmStrategy::load(
+            path,
+            reads,
+            log,
+            seed,
+            session_fuel,
+            step_deadline,
+        )
+        .await
+        {
             Ok(strategy) => {
                 tracing::info!(interface = strategy.interface(), "strategy component");
                 Some(strategy)
@@ -365,6 +402,8 @@ impl<R: RawDesk> WasmBot<R> {
             observer,
             account: None,
             taking,
+            last_orders: 0,
+            last_timings: TurnTimings::default(),
         })
     }
 
@@ -632,9 +671,15 @@ impl<R: RawDesk> WasmBot<R> {
         if self.stopped.is_some() {
             return false;
         }
-        let Some(market) = self.market(step, wallet).await else {
+        self.last_timings = TurnTimings::default();
+        let started = std::time::Instant::now();
+        let read = tracing::info_span!("strategy.market", k);
+        let Some(market) = tracing::Instrument::instrument(self.market(step, wallet), read).await
+        else {
             return false;
         };
+        self.last_timings.read_us = micros(started);
+        let called = std::time::Instant::now();
         let Some(strategy) = self.strategy.as_mut() else {
             self.last = Some(market);
             return false;
@@ -642,7 +687,10 @@ impl<R: RawDesk> WasmBot<R> {
         if let Some(raw) = strategy.raw_sender() {
             raw.begin(k, self.account).await;
         }
-        let outcome = strategy.step(&market).await;
+        let call = tracing::info_span!("strategy.call", k);
+        let outcome = tracing::Instrument::instrument(strategy.step(&market), call).await;
+        self.last_timings.call_us = micros(called);
+        let sending = std::time::Instant::now();
         let raw = strategy.raw_sender();
         let dropped = match &outcome {
             Outcome::Done(_) => raw.map(|raw| {
@@ -729,7 +777,7 @@ impl<R: RawDesk> WasmBot<R> {
                 None => None,
             };
             let state = if failed {
-                SendState::NotSent("an earlier order of the step failed".into())
+                SendState::NotSent(EARLIER_ORDER_FAILED.into())
             } else if let Some(reason) = refused {
                 tracing::info!(step = k, action = ?planned.action, "{reason}");
                 SendState::NotSent(reason)
@@ -737,7 +785,13 @@ impl<R: RawDesk> WasmBot<R> {
                 if let Some(pool) = &self.desk.sends {
                     pool.set_options(planned.tx);
                 }
-                let sent = seat.send(&planned).await;
+                let order = tracing::info_span!(
+                    "strategy.order",
+                    k,
+                    venue = seat.market(),
+                    action = ?planned.action,
+                );
+                let sent = tracing::Instrument::instrument(seat.send(&planned), order).await;
                 if sent.sent {
                     tried.push(planned.action.clone());
                     if let SendState::Failed { reason, .. } = &sent.state {
@@ -776,6 +830,7 @@ impl<R: RawDesk> WasmBot<R> {
                 tip: None,
             });
         }
+        self.last_orders = u32::try_from(tried.len()).unwrap_or(u32::MAX);
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
         let from = self.sends.len() - planned_count;
         // Raw sends go after the sheet, whatever became of it.
@@ -831,8 +886,19 @@ impl<R: RawDesk> WasmBot<R> {
                 }
             }
         }
+        self.last_timings.send_us = micros(sending);
         self.observe(trace);
         true
+    }
+
+    /// The orders its last turn sent to the chain.
+    pub fn last_orders(&self) -> u32 {
+        self.last_orders
+    }
+
+    /// Where its last turn's time went.
+    pub fn last_timings(&self) -> TurnTimings {
+        self.last_timings
     }
 
     /// The account as the session measured it, for the next turn's trace.

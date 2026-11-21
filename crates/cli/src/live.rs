@@ -62,23 +62,61 @@ pub enum LiveCommand {
         /// Start stepping at once.
         #[arg(long)]
         run: bool,
+        /// When the enforcer finds the mandate broken, close the position
+        /// too, not only cancel the orders.
+        #[arg(long)]
+        close_on_breach: bool,
+        /// Step, plan and sign, and send nothing: what it would have sent
+        /// goes to `<name>.shadow.jsonl` in the runtime's logs.
+        #[arg(long)]
+        shadow: bool,
     },
     /// Pause a strategy, cancel its orders, end it and forget it.
     Remove { name: String },
     /// The kill switch: pause every strategy and cancel every order.
     Kill,
+    /// Follow the runtime's events as they happen, from its event socket
+    /// (its configuration's `control.events`): what a sidecar reads
+    /// (`docs/sidecar.md`). `--json` prints each line as the runtime sent
+    /// it.
+    Watch {
+        /// The event socket.
+        #[arg(long, env = "MTX_LIVE_EVENTS")]
+        events: PathBuf,
+    },
+    /// Measure the runtime: for `--seconds`, each step's stages from the
+    /// validator's notice of its slot to its last send, the delay from the
+    /// runtime to this reader, and command round trips, as percentiles.
+    Latency {
+        /// The event socket.
+        #[arg(long, env = "MTX_LIVE_EVENTS")]
+        events: PathBuf,
+        #[arg(long, default_value_t = 60)]
+        seconds: u64,
+    },
 }
 
 /// Send `command` to the runtime at `socket`, and print what it answers.
 pub fn run(socket: &Path, command: LiveCommand, json: bool) -> Result<()> {
+    if let LiveCommand::Watch { events } = &command {
+        return watch(events, json);
+    }
+    if let LiveCommand::Latency { events, seconds } = &command {
+        return latency(socket, events, *seconds, json);
+    }
     let request = to_request(command)?;
     let reply = mtx_core::control::request(socket, &request)
         .with_context(|| format!("the runtime at {}", socket.display()))?;
     match reply {
-        Reply::Ok { strategies } => {
+        Reply::Ok { feed, strategies } => {
             if json {
-                println!("{}", serde_json::to_string_pretty(&strategies)?);
+                let both = serde_json::json!({ "feed": feed, "strategies": strategies });
+                println!("{}", serde_json::to_string_pretty(&both)?);
             } else {
+                println!(
+                    "feed: slot {}, {} behind, {} dropped",
+                    feed.slot, feed.behind, feed.dropped
+                );
                 print!("{}", table(&strategies));
             }
             Ok(())
@@ -87,9 +125,224 @@ pub fn run(socket: &Path, command: LiveCommand, json: bool) -> Result<()> {
     }
 }
 
+/// Print the runtime's events until it closes the connection.
+fn watch(socket: &Path, json: bool) -> Result<()> {
+    use mtx_core::events::Event;
+    let lines = mtx_core::events::subscribe(socket)
+        .with_context(|| format!("the runtime's events at {}", socket.display()))?;
+    for line in lines {
+        let line = line.context("an event line")?;
+        if json {
+            println!("{}", serde_json::to_string(&line)?);
+            continue;
+        }
+        let text = match &line.event {
+            Event::Hello {
+                protocol,
+                feed,
+                strategies,
+            } => format!(
+                "hello: protocol {protocol}, slot {}, {} strategies",
+                feed.slot,
+                strategies.len()
+            ),
+            // A slot a few times a second is noise to a person.
+            Event::Slot { .. } => continue,
+            Event::Step {
+                strategy,
+                slot,
+                timings,
+                orders,
+                position,
+                pnl_usd,
+                ..
+            } => format!(
+                "{strategy}: step at {slot}, {:.2} ms from the slot (call {:.2}), {orders} orders, position {position}, pnl {pnl_usd:.2}",
+                timings.total_us as f64 / 1e3,
+                timings.call_us as f64 / 1e3
+            ),
+            Event::PaperFill {
+                strategy,
+                model,
+                side,
+                price,
+                size,
+                edge_bps,
+                ..
+            } => format!(
+                "{strategy}: paper fill ({model:?}) {side:?} {size} at {price}, edge {edge_bps:+.2} bps"
+            ),
+            Event::Markout {
+                strategy,
+                model,
+                horizon_slots,
+                bps,
+                ..
+            } => format!("{strategy}: markout ({model:?}) {horizon_slots} slots {bps:+.2} bps"),
+            Event::Trade {
+                symbol,
+                taker,
+                price,
+                size,
+                ..
+            } => format!("{symbol}: trade, taker {taker:?} {size} at {price}"),
+            Event::Paused {
+                strategy,
+                reason,
+                why,
+            } => format!("{strategy}: paused ({reason:?}): {why}"),
+            Event::Command { command, error } => match error {
+                Some(error) => format!("command {}: refused: {error}", command.as_str()),
+                None => format!("command {}: done", command.as_str()),
+            },
+            Event::StepSkipped { strategy, slot } => {
+                format!("{strategy}: step at {slot} skipped, the one before still ran")
+            }
+            Event::Stopped { strategy, why } => format!("{strategy}: stopped: {why}"),
+            Event::Fate {
+                strategy,
+                signature,
+                landed,
+                slot,
+                error,
+                after_us,
+            } => match (landed, slot, error) {
+                (true, Some(slot), _) => format!(
+                    "{strategy}: {signature} landed at {slot}, {:.0} ms after it was sent",
+                    *after_us as f64 / 1e3
+                ),
+                (_, _, Some(error)) => format!("{strategy}: {signature} failed: {error}"),
+                _ => format!("{strategy}: {signature} wasn't seen landing"),
+            },
+            Event::Lagged { dropped } => {
+                format!("lagged: {dropped} events lost; run `mtx live status`")
+            }
+        };
+        println!("{text}");
+    }
+    Ok(())
+}
+
+/// Percentiles of a sample, in microseconds.
+fn percentiles(name: &str, mut sample: Vec<u64>) -> serde_json::Value {
+    sample.sort_unstable();
+    let at = |p: f64| -> u64 {
+        if sample.is_empty() {
+            return 0;
+        }
+        let i = ((sample.len() - 1) as f64 * p).round() as usize;
+        sample[i]
+    };
+    serde_json::json!({
+        "stage": name,
+        "n": sample.len(),
+        "p50_us": at(0.5),
+        "p90_us": at(0.9),
+        "p99_us": at(0.99),
+        "max_us": sample.last().copied().unwrap_or(0),
+    })
+}
+
+/// Read the event stream for `seconds` and time each stage; then time
+/// command round trips, one connection each and on a kept one.
+fn latency(control: &Path, events: &Path, seconds: u64, json: bool) -> Result<()> {
+    use mtx_core::events::Event;
+    let now_us = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_micros() as u64)
+    };
+    let lines = mtx_core::events::subscribe(events)
+        .with_context(|| format!("the runtime's events at {}", events.display()))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut stages: [(&str, Vec<u64>); 7] = [
+        ("feed", Vec::new()),
+        ("wake", Vec::new()),
+        ("settle", Vec::new()),
+        ("read", Vec::new()),
+        ("call", Vec::new()),
+        ("send", Vec::new()),
+        ("total", Vec::new()),
+    ];
+    let mut delivery = Vec::new();
+    let (mut skipped, mut lagged) = (0u64, 0u64);
+    for line in lines {
+        let line = line.context("an event line")?;
+        delivery.push(now_us().saturating_sub(line.at_us));
+        match line.event {
+            Event::Step { timings, .. } => {
+                let values = [
+                    timings.feed_us,
+                    timings.wake_us,
+                    timings.settle_us,
+                    timings.read_us,
+                    timings.call_us,
+                    timings.send_us,
+                    timings.total_us,
+                ];
+                for ((_, sample), value) in stages.iter_mut().zip(values) {
+                    sample.push(value);
+                }
+            }
+            Event::StepSkipped { .. } => skipped += 1,
+            Event::Lagged { dropped } => lagged += dropped,
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+    }
+    let rounds = 100;
+    let mut one_shot = Vec::with_capacity(rounds);
+    for _ in 0..rounds {
+        let started = std::time::Instant::now();
+        mtx_core::control::request(control, &Command::Status)?;
+        one_shot.push(started.elapsed().as_micros() as u64);
+    }
+    let mut client = mtx_core::control::Client::connect(control)?;
+    let mut kept = Vec::with_capacity(rounds);
+    for _ in 0..rounds {
+        let started = std::time::Instant::now();
+        client.send(&Command::Status)?;
+        kept.push(started.elapsed().as_micros() as u64);
+    }
+    let mut rows: Vec<serde_json::Value> = stages
+        .into_iter()
+        .map(|(name, sample)| percentiles(name, sample))
+        .collect();
+    rows.push(percentiles("delivery", delivery));
+    rows.push(percentiles("status, one connection each", one_shot));
+    rows.push(percentiles("status, kept connection", kept));
+    if json {
+        let report = serde_json::json!({ "stages": rows, "skipped": skipped, "lagged": lagged });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    println!(
+        "{:<30} {:>7} {:>10} {:>10} {:>10} {:>10}",
+        "stage", "n", "p50 µs", "p90 µs", "p99 µs", "max µs"
+    );
+    for row in &rows {
+        println!(
+            "{:<30} {:>7} {:>10} {:>10} {:>10} {:>10}",
+            row["stage"].as_str().unwrap_or(""),
+            row["n"],
+            row["p50_us"],
+            row["p90_us"],
+            row["p99_us"],
+            row["max_us"]
+        );
+    }
+    println!("steps skipped: {skipped}, events lost: {lagged}");
+    Ok(())
+}
+
 fn to_request(command: LiveCommand) -> Result<Command> {
     Ok(match command {
         LiveCommand::Status => Command::Status,
+        LiveCommand::Watch { .. } | LiveCommand::Latency { .. } => {
+            unreachable!("reads events, sends no command")
+        }
         LiveCommand::Pause {
             name,
             keep_orders,
@@ -116,6 +369,8 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             symbol,
             slots_per_step,
             run,
+            close_on_breach,
+            shadow,
         } => Command::Add(AddStrategy {
             name,
             // The runtime reads these files itself, from its own directory.
@@ -126,6 +381,8 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             symbol,
             slots_per_step,
             run,
+            close_on_breach,
+            shadow,
         }),
         LiveCommand::Remove { name } => Command::Remove { name },
         LiveCommand::Kill => Command::Kill,
@@ -148,17 +405,19 @@ fn table(strategies: &[StrategyStatus]) -> String {
     }
     let number = |value: Option<f64>| value.map_or("-".to_string(), |v| format!("{v:.4}"));
     let mut out = format!(
-        "{:<16} {:<10} {:<8} {:>12} {:>12} {:>10} {:>8} {:>8}  why\n",
-        "name", "state", "market", "position", "pnl", "drawdown", "steps", "skipped"
+        "{:<16} {:<10} {:<8} {:>12} {:>12} {:>10} {:>8} {:>8} {:>8}  why\n",
+        "name", "state", "market", "position", "pnl", "drawdown", "steps", "skipped", "step ms"
     );
     for s in strategies {
-        let (state, why) = match &s.state {
-            StrategyState::Running => ("running", ""),
-            StrategyState::Paused { why } => ("paused", why.as_str()),
-            StrategyState::Stopped { why } => ("stopped", why.as_str()),
+        let (state, why) = match (&s.state, s.shadow) {
+            (StrategyState::Running, false) => ("running", ""),
+            (StrategyState::Running, true) => ("shadow", ""),
+            (StrategyState::Paused { why }, _) => ("paused", why.as_str()),
+            (StrategyState::Stopped { why }, _) => ("stopped", why.as_str()),
         };
+        let step_ms = s.last_step_ms.map_or("-".to_string(), |ms| ms.to_string());
         out.push_str(&format!(
-            "{:<16} {:<10} {:<8} {:>12} {:>12} {:>10} {:>8} {:>8}  {why}\n",
+            "{:<16} {:<10} {:<8} {:>12} {:>12} {:>10} {:>8} {:>8} {step_ms:>8}  {why}\n",
             s.name,
             state,
             s.symbol,
@@ -206,6 +465,11 @@ mod tests {
             authority: "k".into(),
             cap: 1.0,
             max_drawdown: 10.0,
+            shadow: false,
+            last_step_ms: Some(12),
+            sends_landed: 0,
+            sends_failed: 0,
+            last_send_error: None,
             steps: 3,
             skipped: 1,
             last_slot: Some(9),

@@ -1,0 +1,23 @@
+# Grafana, Tempo, Prometheus and Loki in one container (grafana/otel-lgtm),
+# beside the node. It takes the runtime's OTLP on localhost and keeps
+# traces, metrics and logs on the node's disk. Every port is bound to
+# 127.0.0.1: Grafana is reached through an SSH tunnel, never the internet.
+#
+#   ssh -N -L 3000:127.0.0.1:3000 ubuntu@213.239.140.203
+#   open http://localhost:3000
+#
+# setup-grafana.sh installs it as the mtx-grafana systemd unit.
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.41.1
+    container_name: mtx-grafana
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000" # Grafana
+      - "127.0.0.1:4317:4317" # OTLP gRPC
+      - "127.0.0.1:4318:4318" # OTLP HTTP: the runtime's otlp_endpoint
+    # Grafana's anonymous admin stays: only the tunnel reaches it.
+    volumes:
+      - /var/lib/mtx-grafana:/data
+      - ./dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/mtx.yaml:ro
+      - ./mtx-runtime-dashboard.json:/otel-lgtm/mtx-dashboards/mtx-runtime-dashboard.json:ro

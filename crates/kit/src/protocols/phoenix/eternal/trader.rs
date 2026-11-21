@@ -131,6 +131,21 @@ pub struct PhoenixOrderOptions {
 }
 
 /// One trader account in one Phoenix market.
+/// Whether a [`PhoenixTrader`]'s send waits for its transaction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Dispatch {
+    /// Simulate, sign, send, and wait for it to land: the send's answer is
+    /// its fate. What a bench session and a script want.
+    #[default]
+    Confirm,
+    /// Sign and send, and return once it is sent: its fate comes later, by
+    /// whatever watches the chain. What a live strategy wants, which
+    /// can't spend a slot waiting on each order. `simulate` runs the node's
+    /// simulation first and refuses to send what would fail: a round trip
+    /// to the node, against a failed transaction's fee.
+    FireAndForget { simulate: bool },
+}
+
 pub struct PhoenixTrader {
     exchange: Arc<PhoenixExchange>,
     market: PhoenixMarket,
@@ -139,6 +154,8 @@ pub struct PhoenixTrader {
     rpc_url: String,
     chain: Arc<dyn ChainClient>,
     options: ExecuteOptions,
+    /// Whether a send waits for its transaction to land.
+    dispatch: Dispatch,
     /// The next order's client order id. Without one, two identical orders
     /// on the same blockhash are the same transaction, and the chain runs it
     /// once: a bot slicing a position into equal orders within a slot gets
@@ -168,6 +185,7 @@ impl PhoenixTrader {
             authority,
             rpc_url,
             options: ExecuteOptions::without_receipts(),
+            dispatch: Dispatch::Confirm,
             next_order_id: std::sync::atomic::AtomicU64::new(1),
         })
     }
@@ -188,6 +206,12 @@ impl PhoenixTrader {
     /// Execution options for every plan this trader sends.
     pub fn with_execute_options(mut self, options: ExecuteOptions) -> Self {
         self.options = options;
+        self
+    }
+
+    /// Whether its sends wait for their transactions to land.
+    pub fn with_dispatch(mut self, dispatch: Dispatch) -> Self {
+        self.dispatch = dispatch;
         self
     }
 
@@ -478,11 +502,28 @@ impl PhoenixTrader {
         plan: &ExecutionPlan,
         signer: &dyn TransactionSigner,
     ) -> Result<Signature, PhoenixError> {
-        let receipts = chain::execute(plan, signer, &*self.chain, &[], self.options).await?;
-        Ok(receipts
-            .last()
-            .map(|r| r.signature)
-            .expect("execute returns one receipt per step of a non-empty plan"))
+        match self.dispatch {
+            Dispatch::Confirm => {
+                let receipts =
+                    chain::execute(plan, signer, &*self.chain, &[], self.options).await?;
+                Ok(receipts
+                    .last()
+                    .map(|r| r.signature)
+                    .expect("execute returns one receipt per step of a non-empty plan"))
+            }
+            Dispatch::FireAndForget { simulate } => {
+                let signatures = chain::fire_and_forget(
+                    plan,
+                    signer,
+                    &*self.chain,
+                    chain::FireAndForgetOptions { simulate },
+                )
+                .await?;
+                Ok(*signatures
+                    .last()
+                    .expect("fire_and_forget returns one signature per step of a non-empty plan"))
+            }
+        }
     }
 
     /// Plans and executes one order, with options.

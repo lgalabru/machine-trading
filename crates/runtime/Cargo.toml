@@ -18,6 +18,29 @@ solana-pubkey = { workspace = true, features = ["curve25519"] }
 solana-rpc-client-api.workspace = true
 solana-signer.workspace = true
 solana-transaction.workspace = true
+# The live runtime's sends straight to the leaders' TPU, over QUIC
+# (docs/rfd/0004, step 5): Anza's client, already in the tree through
+# surfpool, with its cancellation token, slot stream and wire bytes.
+solana-tpu-client-next = { version = "=4.3.2", optional = true, features = ["agave-unstable-api", "tracing"] }
+solana-rpc-client = { workspace = true, optional = true }
+solana-account = { version = "4", optional = true }
+solana-commitment-config = { version = "3", optional = true }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"], optional = true }
+core_affinity = { version = "0.8", optional = true }
+tokio-util = { version = "0.7", optional = true }
+tokio-stream = { version = "0.1", optional = true }
+bytes = { version = "1", optional = true }
+wincode = { version = "0.6", optional = true }
+# The live runtime's telemetry, as pay's services do it: tracing spans to
+# OTLP traces, `counter.`/`histogram.`/`gauge.` event fields to OTLP
+# metrics, JSON logs to a file (docs/rfd/0004, ops/grafana).
+tracing-subscriber = { workspace = true, optional = true, features = ["env-filter", "json"] }
+tracing-opentelemetry = { version = "0.33", optional = true }
+opentelemetry = { version = "0.32", optional = true }
+opentelemetry_sdk = { version = "0.32.1", optional = true, features = ["logs"] }
+opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "logs", "metrics", "reqwest-blocking-client", "reqwest-rustls", "trace"] }
+opentelemetry-appender-tracing = { version = "0.32", optional = true }
+opentelemetry-semantic-conventions = { version = "0.32.1", optional = true }
 tracing.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -36,9 +59,15 @@ tokio.workspace = true
 # A chain held in memory, for the backfill's tests.
 mtx-kit = { workspace = true, features = ["test-util"] }
 solana-account = "4"
+# A transfer, for the TPU's test against a validator (tests/tpu.rs).
+solana-system-interface = { version = "3", features = ["bincode"] }
+
+[[test]]
+name = "tpu"
+required-features = ["live"]
 
 [features]
 # The runtime that runs strategies against a live chain
 # (docs/rfd/0004-strategies-on-mainnet.md): the feed, the account cache and
 # the readers over it. Off in the grader.
-live = []
+live = ["dep:chrono", "dep:core_affinity", "dep:solana-tpu-client-next", "dep:tokio-util", "dep:tokio-stream", "dep:bytes", "dep:wincode", "dep:solana-rpc-client", "dep:solana-account", "dep:solana-commitment-config", "dep:tracing-subscriber", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions", "dep:opentelemetry-appender-tracing"]
