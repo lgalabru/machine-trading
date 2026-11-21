@@ -87,7 +87,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (strategy) (rate(mtx_strategy_steps_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
+          "expr": "sum by (strategy) (rate(mtx_strategy_steps{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -160,7 +160,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (strategy, outcome) (rate(mtx_strategy_sends_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
+          "expr": "sum by (strategy, outcome) (rate(mtx_strategy_sends{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
           "legendFormat": "{{strategy}} {{outcome}}",
           "refId": "A"
         }
@@ -192,7 +192,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (strategy) (increase(mtx_strategy_steps_skipped_total{service_name=~\"$service\", strategy=~\"$strategy\"}[5m]))",
+          "expr": "sum by (strategy) (increase(mtx_strategy_steps_skipped{service_name=~\"$service\", strategy=~\"$strategy\"}[5m]))",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -364,7 +364,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (strategy, reason) (increase(mtx_enforcer_pauses_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1h]))",
+          "expr": "sum by (strategy, reason) (increase(mtx_enforcer_pauses{service_name=~\"$service\", strategy=~\"$strategy\"}[1h]))",
           "legendFormat": "{{strategy}} {{reason}}",
           "refId": "A"
         }
@@ -396,7 +396,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (command, outcome) (increase(mtx_control_commands_total{service_name=~\"$service\"}[1h]))",
+          "expr": "sum by (command, outcome) (increase(mtx_control_commands{service_name=~\"$service\"}[1h]))",
           "legendFormat": "{{command}} {{outcome}}",
           "refId": "A"
         }
@@ -580,7 +580,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (strategy, simulated) (rate(mtx_shadow_sends_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
+          "expr": "sum by (strategy, simulated) (rate(mtx_shadow_sends{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
           "legendFormat": "{{strategy}} simulated={{simulated}}",
           "refId": "A"
         }
@@ -612,7 +612,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (strategy, route) (rate(mtx_tpu_sends_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
+          "expr": "sum by (strategy, route) (rate(mtx_tpu_sends{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
           "legendFormat": "{{strategy}} {{route}}",
           "refId": "A"
         }

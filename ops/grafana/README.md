@@ -74,27 +74,27 @@ otel-lgtm provisions `mtx-runtime-dashboard.json`; elsewhere, import it
 
 ## Metrics
 
-Names are as Prometheus stores them: OTLP counters gain `_total`, and
+Names are as otel-lgtm's Prometheus stores them: counters keep their name (no `_total`), and
 histograms become `_bucket`, `_sum` and `_count`.
 
 | Metric | Kind | Labels | What |
 |---|---|---|---|
-| `mtx_strategy_steps_total` | counter | strategy, shadow, answered | steps taken |
+| `mtx_strategy_steps` | counter | strategy, shadow, answered | steps taken |
 | `mtx_strategy_step_ms` | histogram | strategy | from the slot reaching the runtime to the step's sheet sent |
-| `mtx_strategy_steps_skipped_total` | counter | strategy | steps skipped because the previous one still ran |
-| `mtx_strategy_sends_total` | counter | strategy, outcome | each order's fate: landed, failed, not_sent, delayed, expired |
+| `mtx_strategy_steps_skipped` | counter | strategy | steps skipped because the previous one still ran |
+| `mtx_strategy_sends` | counter | strategy, outcome | each order's fate: landed, failed, not_sent, delayed, expired |
 | `mtx_strategy_position` | gauge | strategy | position, base units |
 | `mtx_strategy_pnl_usd` | gauge | strategy | PnL, marked to market (an estimate) |
 | `mtx_strategy_drawdown_usd` | gauge | strategy | drawdown from the PnL's peak |
 | `mtx_strategy_running` | gauge | strategy | 1 stepping, 0 paused or stopped |
-| `mtx_enforcer_pauses_total` | counter | strategy, reason | `mandate` (a breach) or `feed` (stale) |
-| `mtx_control_commands_total` | counter | command, outcome | `mtx live` commands that change something |
+| `mtx_enforcer_pauses` | counter | strategy, reason | `mandate` (a breach) or `feed` (stale) |
+| `mtx_control_commands` | counter | command, outcome | `mtx live` commands that change something |
 | `mtx_feed_slot` | gauge | | the newest bank slot the runtime applied |
 | `mtx_feed_slots_behind` | gauge | | slots between the chain's notifications and what the runtime applied |
 | `mtx_feed_dropped` | gauge | | feed events dropped since load |
 | `mtx_strategies` | gauge | | strategies running or held |
-| `mtx_shadow_sends_total` | counter | strategy, simulated | transactions a shadow strategy wrote down |
-| `mtx_tpu_sends_total` | counter | strategy, route | `tpu`, or `rpc` when no leader connection took it |
+| `mtx_shadow_sends` | counter | strategy, simulated | transactions a shadow strategy wrote down |
+| `mtx_tpu_sends` | counter | strategy, route | `tpu`, or `rpc` when no leader connection took it |
 | `mtx_tpu_confirm_ms` | histogram | strategy | from a TPU send to its confirmation |
 
 ## Traces
