@@ -262,6 +262,15 @@ impl Trader {
     /// now (the world is paused) isn't placed, and fails without reaching
     /// the chain. Actions this trader doesn't execute aren't sent.
     pub async fn send_planned(&self, planned: &Planned) -> Sent {
+        self.send_planned_at(planned, None).await
+    }
+
+    /// [`Trader::send_planned`], with the book a post-only order is checked
+    /// against when the caller already holds it (`known_top`): a host that
+    /// reads the market from its own account cache, where the trader's
+    /// simulated read may not work (a shadow strategy's account doesn't
+    /// exist yet). Without it, the trader reads the book itself.
+    pub async fn send_planned_at(&self, planned: &Planned, known_top: Option<Top>) -> Sent {
         let options = PhoenixOrderOptions {
             reduce_only: planned.reduce_only,
             last_valid_slot: planned.expires_slot,
@@ -291,7 +300,11 @@ impl Trader {
                         Side::Ask => top.best_bid.is_some_and(|bid| price <= bid),
                     })
                 };
-                match self.top().await.and_then(crosses) {
+                let top = match known_top {
+                    Some(top) => Ok(top),
+                    None => self.top().await,
+                };
+                match top.and_then(crosses) {
                     Ok(false) => self.order(size, |quantity| {
                         Ok(PhoenixOrder::PostOnly {
                             side: core_side(side),
