@@ -256,6 +256,9 @@ pub struct WasmBot<R: RawDesk = NoRawSends> {
     /// Where the mandate allows taking on the bot's market only to reduce:
     /// the check its orders there pass before they go out.
     taking: Option<TakingGuard>,
+    /// The orders its last turn sent to the chain, the one that failed
+    /// included.
+    last_orders: u32,
 }
 
 impl<R: RawDesk> WasmBot<R> {
@@ -384,6 +387,7 @@ impl<R: RawDesk> WasmBot<R> {
             observer,
             account: None,
             taking,
+            last_orders: 0,
         })
     }
 
@@ -804,6 +808,7 @@ impl<R: RawDesk> WasmBot<R> {
                 tip: None,
             });
         }
+        self.last_orders = u32::try_from(tried.len()).unwrap_or(u32::MAX);
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
         let from = self.sends.len() - planned_count;
         // Raw sends go after the sheet, whatever became of it.
@@ -861,6 +866,11 @@ impl<R: RawDesk> WasmBot<R> {
         }
         self.observe(trace);
         true
+    }
+
+    /// The orders its last turn sent to the chain.
+    pub fn last_orders(&self) -> u32 {
+        self.last_orders
     }
 
     /// The account as the session measured it, for the next turn's trace.

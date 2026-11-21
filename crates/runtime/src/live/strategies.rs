@@ -35,6 +35,7 @@ use mtx_core::{
         AddStrategy, Command, FeedStatus, MESSAGE_BYTES_MAX, OnPause, Reply, StrategyState,
         StrategyStatus,
     },
+    events::{Event, PauseReason, Side as EventSide},
     mandate::{InstrumentRef, Observed},
 };
 use mtx_kit::chain::RpcChainClient;
@@ -73,6 +74,11 @@ pub struct ControlConfig {
     /// Send over the leaders' TPU rather than the node's RPC.
     #[serde(default)]
     pub tpu: Option<super::tpu::TpuConfig>,
+    /// The Unix socket a sidecar reads the runtime's events on
+    /// ([`super::events`], `docs/sidecar.md`). A file already there is
+    /// removed first.
+    #[serde(default)]
+    pub events: Option<PathBuf>,
 }
 
 fn default_step_deadline_ms() -> u64 {
@@ -146,6 +152,8 @@ pub struct Shared {
     pub cache: Arc<Mutex<AccountCache>>,
     pub watch: Arc<Watch>,
     pub progress: FeedProgress,
+    /// What a sidecar is told as it happens.
+    pub events: super::events::Events,
 }
 
 /// What the strategies' thread starts with besides the configuration.
@@ -169,7 +177,10 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
     } = inputs;
     std::fs::create_dir_all(&config.logs).map_err(|e| format!("{}: {e}", config.logs.display()))?;
     let (commands, received) = mpsc::channel(COMMANDS_WAITING_MAX);
-    listen(&config.socket, commands)?;
+    listen(&config.socket, commands.clone())?;
+    if let Some(socket) = &config.events {
+        super::events::listen(socket, shared.events.clone(), commands.clone())?;
+    }
     std::thread::Builder::new()
         .name("mtx-live-strategies".into())
         .spawn(move || {
@@ -208,7 +219,7 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
 }
 
 /// A command and where its reply goes.
-type Request = (Command, oneshot::Sender<Reply>);
+type Request = super::events::Request;
 
 /// Take commands on `socket`, one a connection, on a thread of their own,
 /// and hand each to the manager.
@@ -334,6 +345,9 @@ struct Manager {
     held: Vec<(Stored, Option<String>)>,
     /// The latest slot the feed reported.
     slot: u64,
+    /// The trades of each market a strategy runs on, by symbol, read once
+    /// for the event socket however many strategies share the market.
+    tapes: BTreeMap<String, super::journal::TapeReader>,
 }
 
 impl Manager {
@@ -345,6 +359,43 @@ impl Manager {
             strategies: BTreeMap::new(),
             held: Vec::new(),
             slot: 0,
+            tapes: BTreeMap::new(),
+        }
+    }
+
+    /// Tell the event socket the trades on every market a strategy runs
+    /// on, since the last slot. A market whose exchange file can't be read
+    /// has no trades to tell, and its strategy fails on the same file.
+    fn emit_trades(&mut self) {
+        let wanted: Vec<AddStrategy> = self
+            .strategies
+            .values()
+            .filter(|s| !self.tapes.contains_key(&s.spec.symbol))
+            .map(|s| s.spec.clone())
+            .collect();
+        for spec in wanted {
+            match self.tape_reader(&spec) {
+                Ok(reader) => {
+                    self.tapes.insert(spec.symbol.clone(), reader);
+                }
+                Err(error) => {
+                    tracing::warn!(symbol = spec.symbol, %error, "a market's trades can't be read");
+                }
+            }
+        }
+        for (symbol, tape) in &mut self.tapes {
+            for trade in tape.trades("events") {
+                self.shared.events.emit(Event::Trade {
+                    symbol: symbol.clone(),
+                    slot: trade.slot,
+                    taker: match trade.taker {
+                        mtx_kit::Side::Bid => EventSide::Buy,
+                        mtx_kit::Side::Ask => EventSide::Sell,
+                    },
+                    price: trade.price,
+                    size: trade.size,
+                });
+            }
         }
     }
 
@@ -448,7 +499,13 @@ impl Manager {
 
     /// Step every running strategy whose step is due at `slot`.
     async fn step(&mut self, slot: u64) {
+        self.emit_trades();
         let progress = &self.shared.progress;
+        self.shared.events.emit(Event::Slot {
+            slot,
+            behind: progress.slots_behind(),
+            dropped: progress.dropped(),
+        });
         if slot.is_multiple_of(FEED_METRICS_EVERY_SLOTS) {
             tracing::info!(
                 gauge.mtx_feed_slot = slot,
@@ -480,6 +537,11 @@ impl Manager {
                     why = %why,
                     "the enforcer pauses a strategy"
                 );
+                self.shared.events.emit(Event::Paused {
+                    strategy: name.clone(),
+                    reason: PauseReason::Feed,
+                    why: why.clone(),
+                });
                 if let Err(error) = self.pause(&name, OnPause::Cancel, why.clone()).await {
                     tracing::warn!(name, %error, "a strategy couldn't be paused");
                 }
@@ -509,6 +571,7 @@ impl Manager {
                 (strategy.spec.mandate.clone(), strategy.spec.close_on_breach);
             let instrument = instrument_of(&strategy.spec.symbol);
             let shadow = strategy.spec.shadow;
+            let events = self.shared.events.clone();
             // The step's clock starts as its slot reaches the strategies.
             let started = std::time::Instant::now();
             let span = tracing::info_span!(
@@ -608,6 +671,11 @@ impl Manager {
                                     breach = %breach,
                                     "the enforcer pauses a strategy"
                                 );
+                                events.emit(Event::Paused {
+                                    strategy: name.clone(),
+                                    reason: PauseReason::Mandate,
+                                    why: breach.to_string(),
+                                });
                                 stats.state = StrategyState::Paused {
                                     why: format!("the enforcer: {breach}"),
                                 };
@@ -628,6 +696,19 @@ impl Manager {
                             answered,
                             "a strategy stepped"
                         );
+                        events.emit(Event::Step {
+                            strategy: name.clone(),
+                            slot,
+                            k: inner.k - 1,
+                            step_ms: took_ms,
+                            answered,
+                            shadow,
+                            orders: bot.last_orders(),
+                            position: stats.position.unwrap_or(0.0),
+                            pnl_usd: stats.pnl.unwrap_or(0.0),
+                            drawdown_usd: stats.drawdown.unwrap_or(0.0),
+                            running: stats.state == StrategyState::Running,
+                        });
                         paused
                     };
                     if paused {
@@ -660,6 +741,17 @@ impl Manager {
             Reply::Ok { .. } => "ok",
             Reply::Error { .. } => "error",
         };
+        if kind != "status" {
+            let error = match &reply {
+                Reply::Error { error } => Some(error.clone()),
+                Reply::Ok { .. } => None,
+            };
+            self.shared.events.emit(Event::Command {
+                command: kind.to_string(),
+                ok: error.is_none(),
+                error,
+            });
+        }
         match &reply {
             Reply::Error { error } if kind != "status" => tracing::warn!(
                 counter.mtx_control_commands = 1_u64,
@@ -968,8 +1060,30 @@ impl Manager {
             slot: strategy.slot.clone(),
             log: Box::new(log),
             sends: self.sends(spec)?,
+            observer: Some(Arc::new(super::journal::Journal::open(
+                &self.config.logs,
+                &spec.name,
+                spec.shadow,
+                Some(self.tape_reader(spec)?),
+                self.shared.events.clone(),
+            )?)),
         })
         .await
+    }
+
+    /// Where a strategy's journal reads its market's trades.
+    fn tape_reader(&self, spec: &AddStrategy) -> Result<super::journal::TapeReader, String> {
+        let json = std::fs::read_to_string(&spec.exchange)
+            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
+        let venue = mtx_kit::venue::PhoenixVenue::from_json(&json)?;
+        let market =
+            mtx_kit::protocols::phoenix::eternal::PhoenixExchange::new(venue.exchange().clone())
+                .market(&spec.symbol)
+                .map_err(|e| e.to_string())?;
+        Ok(super::journal::TapeReader::new(
+            self.shared.watch.clone(),
+            market,
+        ))
     }
 
     /// The chain a strategy's orders go through: nowhere in a shadow run,

@@ -75,10 +75,22 @@ pub enum LiveCommand {
     Remove { name: String },
     /// The kill switch: pause every strategy and cancel every order.
     Kill,
+    /// Follow the runtime's events as they happen, from its event socket
+    /// (its configuration's `control.events`): what a sidecar reads
+    /// (`docs/sidecar.md`). `--json` prints each line as the runtime sent
+    /// it.
+    Watch {
+        /// The event socket.
+        #[arg(long, env = "MTX_LIVE_EVENTS")]
+        events: PathBuf,
+    },
 }
 
 /// Send `command` to the runtime at `socket`, and print what it answers.
 pub fn run(socket: &Path, command: LiveCommand, json: bool) -> Result<()> {
+    if let LiveCommand::Watch { events } = &command {
+        return watch(events, json);
+    }
     let request = to_request(command)?;
     let reply = mtx_core::control::request(socket, &request)
         .with_context(|| format!("the runtime at {}", socket.display()))?;
@@ -100,9 +112,90 @@ pub fn run(socket: &Path, command: LiveCommand, json: bool) -> Result<()> {
     }
 }
 
+/// Print the runtime's events until it closes the connection.
+fn watch(socket: &Path, json: bool) -> Result<()> {
+    use mtx_core::events::Event;
+    let lines = mtx_core::events::subscribe(socket)
+        .with_context(|| format!("the runtime's events at {}", socket.display()))?;
+    for line in lines {
+        let line = line.context("an event line")?;
+        if json {
+            println!("{}", serde_json::to_string(&line)?);
+            continue;
+        }
+        let text = match &line.event {
+            Event::Hello {
+                protocol,
+                feed,
+                strategies,
+            } => format!(
+                "hello: protocol {protocol}, slot {}, {} strategies",
+                feed.slot,
+                strategies.len()
+            ),
+            // A slot a few times a second is noise to a person.
+            Event::Slot { .. } => continue,
+            Event::Step {
+                strategy,
+                slot,
+                step_ms,
+                orders,
+                position,
+                pnl_usd,
+                ..
+            } => format!(
+                "{strategy}: step at {slot}, {step_ms} ms, {orders} orders, position {position}, pnl {pnl_usd:.2}"
+            ),
+            Event::PaperFill {
+                strategy,
+                model,
+                side,
+                price,
+                size,
+                edge_bps,
+                ..
+            } => format!(
+                "{strategy}: paper fill ({model:?}) {side:?} {size} at {price}, edge {edge_bps:+.2} bps"
+            ),
+            Event::Markout {
+                strategy,
+                model,
+                horizon_slots,
+                bps,
+                ..
+            } => format!("{strategy}: markout ({model:?}) {horizon_slots} slots {bps:+.2} bps"),
+            Event::Trade {
+                symbol,
+                taker,
+                price,
+                size,
+                ..
+            } => format!("{symbol}: trade, taker {taker:?} {size} at {price}"),
+            Event::Paused {
+                strategy,
+                reason,
+                why,
+            } => format!("{strategy}: paused ({reason:?}): {why}"),
+            Event::Command { command, ok, error } => match error {
+                Some(error) => format!("command {command}: refused: {error}"),
+                None => format!(
+                    "command {command}: {}",
+                    if *ok { "done" } else { "refused" }
+                ),
+            },
+            Event::Lagged { dropped } => {
+                format!("lagged: {dropped} events lost; run `mtx live status`")
+            }
+        };
+        println!("{text}");
+    }
+    Ok(())
+}
+
 fn to_request(command: LiveCommand) -> Result<Command> {
     Ok(match command {
         LiveCommand::Status => Command::Status,
+        LiveCommand::Watch { .. } => unreachable!("watch reads events, it sends no command"),
         LiveCommand::Pause {
             name,
             keep_orders,

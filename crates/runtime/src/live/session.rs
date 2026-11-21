@@ -212,6 +212,7 @@ async fn play(
         log: Box::new(log),
         // As the grader's component sends: through the bot's endpoint.
         sends: None,
+        observer: None,
     })
     .await?;
     let mut played = 0;

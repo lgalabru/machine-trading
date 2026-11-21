@@ -29,12 +29,15 @@ pub const FEED_EVENTS_MAX: usize = 1 << 16;
 #[derive(Debug, Default)]
 pub struct Watch {
     addresses: RwLock<HashSet<Address>>,
+    /// The transactions of the program the tape keeps ([`super::tape`]).
+    pub tape: super::tape::Tape,
 }
 
 impl Watch {
     pub fn new(addresses: impl IntoIterator<Item = Address>) -> Self {
         Self {
             addresses: RwLock::new(addresses.into_iter().collect()),
+            tape: super::tape::Tape::default(),
         }
     }
 
@@ -75,6 +78,12 @@ impl FeedSender {
     /// Whether a write to `address` is worth copying.
     pub fn watches(&self, address: &[u8]) -> bool {
         self.watch.has(address)
+    }
+
+    /// Where the transactions of [`super::tape::Tape::program`] go: apart
+    /// from the account feed, so a busy tape never drops an account write.
+    pub fn tape(&self) -> &super::tape::Tape {
+        &self.watch.tape
     }
 
     /// Hand `event` to the runtime, without waiting. With no room, the

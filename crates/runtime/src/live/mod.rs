@@ -16,11 +16,14 @@
 //! leaders' TPU ([`tpu`]) or, in a shadow run, nowhere ([`shadow`]).
 
 pub mod bot;
+pub mod events;
 pub mod feed;
+pub mod journal;
 pub mod perp;
 pub mod session;
 pub mod shadow;
 pub mod strategies;
+pub mod tape;
 pub mod telemetry;
 pub mod tpu;
 
@@ -221,6 +224,7 @@ impl Runtime {
                         cache: cache.clone(),
                         watch,
                         progress: receiver.progress(),
+                        events: events::Events::default(),
                     },
                     slots: slots_seen,
                     slot_events: received,

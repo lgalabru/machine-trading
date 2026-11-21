@@ -54,6 +54,8 @@ pub struct BotSpec<'a> {
     /// The chain its orders go through, if not the node's RPC at
     /// `rpc_url`: the leaders' TPU ([`super::tpu::TpuChainClient`]).
     pub sends: Option<Arc<dyn mtx_kit::chain::ChainClient>>,
+    /// Watches each step: the strategy's journals ([`super::journal`]).
+    pub observer: Option<Arc<dyn crate::desk::StepObserver>>,
 }
 
 /// Load the component and call its `start`.
@@ -90,8 +92,18 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
         },
         None => trader,
     });
+    let reads: Arc<dyn PerpReads> = Arc::new(CacheReads {
+        reader: spec.reader,
+        cache: spec.cache,
+        slot: spec.slot,
+    });
+    // Post-only orders are checked against the cache's book: the trader's
+    // own read simulates against its account, which a shadow strategy's
+    // key may not have yet.
     let seats: Vec<Box<dyn Seat>> = vec![Box::new(
-        PerpSeat::new(market.instrument().to_string(), trader).pooled(pooled),
+        PerpSeat::new(market.instrument().to_string(), trader)
+            .pooled(pooled)
+            .reading_top(reads.clone()),
     )];
     let markets = mtx_kit::VenueInfo::of_perp_markets(
         spec.mandate,
@@ -100,11 +112,6 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
             Some(market.address().to_string()),
         )],
     );
-    let reads = CacheReads {
-        reader: spec.reader,
-        cache: spec.cache,
-        slot: spec.slot,
-    };
     WasmBot::<NoRawSends>::start(
         spec.component,
         HttpReads::boxed(spec.rpc_url),
@@ -121,12 +128,12 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
             symbol: spec.symbol.to_string(),
             venue: exchange_json,
             authority: authority.to_string(),
-            reader: Reader::Live(Arc::new(reads)),
+            reader: Reader::Live(reads),
             sends: None,
             rfqs: None,
         },
         spec.log,
-        None,
+        spec.observer,
         None,
     )
     .await

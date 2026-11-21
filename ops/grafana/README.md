@@ -87,6 +87,15 @@ histograms become `_bucket`, `_sum` and `_count`.
 | `mtx_strategy_pnl_usd` | gauge | strategy | PnL, marked to market (an estimate) |
 | `mtx_strategy_drawdown_usd` | gauge | strategy | drawdown from the PnL's peak |
 | `mtx_strategy_running` | gauge | strategy | 1 stepping, 0 paused or stopped |
+| `mtx_paper_fills` | counter | strategy, model, side, liquidity | a shadow strategy's paper fills (`maker` or `taker`), under `through` or `touch` |
+| `mtx_paper_markout_bps` | histogram | strategy, model, horizon, side, liquidity | a paper fill marked to the mid `1s`, `10s`, `60s` later; positive is good |
+| `mtx_paper_fill_edge_bps` | histogram | strategy, model, side, liquidity | how far a paper fill was on the good side of the mid |
+| `mtx_paper_position` | gauge | strategy | the paper fills' position, uncapped |
+| `mtx_paper_pnl_usd` | gauge | strategy | the paper fills' cash plus position at the mid, before fees |
+| `mtx_paper_at_touch` | gauge | strategy, model | 1 when a quote is at or inside the book's best |
+| `mtx_tape_trades` | counter | strategy | Phoenix trades on the strategy's market, from the validator's transactions |
+| `mtx_tape_missed` | counter | strategy | tape transactions the paper book fell too far behind to read |
+| `mtx_tape_undecoded` | counter | strategy | tape transactions whose Phoenix records didn't decode |
 | `mtx_enforcer_pauses` | counter | strategy, reason | `mandate` (a breach) or `feed` (stale) |
 | `mtx_control_commands` | counter | command, outcome | `mtx live` commands that change something |
 | `mtx_feed_slot` | gauge | | the newest bank slot the runtime applied |
@@ -111,3 +120,28 @@ finds a strategy's steps. A slow one shows which child took the time.
 
 In Loki, `{service_name="mtx-runtime"} | strategy = "mm-sol"` shows a
 strategy's events; the JSON file on the node holds the same.
+
+## Journals, to go back to
+
+Beside each strategy's prints (`logs/<strategy>.log`), the runtime keeps
+(`crates/runtime/src/live/journal.rs`):
+
+- `logs/<strategy>.steps.jsonl`, one line per step: the market the
+  strategy saw (mark, oracle, index, best bid and ask, position, resting,
+  PnL), what it printed, its intents, what the planner cut, and each order
+  with what became of it. Replay it through a changed strategy to see what
+  the change would have done. Also in Loki as `a strategy decided`.
+- `logs/<strategy>.fills.jsonl`, for a shadow strategy: its paper fills
+  and their markouts, under two models. The plugin reads every
+  transaction that runs Phoenix and keeps its trades (the tape,
+  `crates/runtime/src/live/tape.rs`). Under `through`, a real trade past
+  a quote's price fills it (price priority puts it first), as does the
+  book's far side reaching it: a lower bound. Under `touch`, trades at the
+  quote's own price fill it too, as if first in the queue: an upper bound.
+
+Each file is moved aside to `.jsonl.1` past 512 MiB.
+
+```sh
+jq -s 'group_by(.horizon_slots) | map({h: .[0].horizon_slots, n: length, mean_bps: (map(.bps) | add / length)})' \
+  <(grep '"markout"' ~/mtx/logs/mm-sol.fills.jsonl | grep '"through"')
+```

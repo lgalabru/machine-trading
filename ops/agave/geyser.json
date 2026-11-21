@@ -6,6 +6,7 @@
     "markets": [],
     "control": {
       "socket": "/home/sol/mtx/control.sock",
+      "events": "/home/sol/mtx/events.sock",
       "state": "/home/sol/mtx/strategies.json",
       "rpc_url": "http://127.0.0.1:8899",
       "logs": "/home/sol/mtx/logs"

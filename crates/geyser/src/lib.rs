@@ -36,10 +36,14 @@ use agave_geyser_plugin_interface as host;
 use agave_geyser_plugin_interface_5 as host;
 use host::geyser_plugin_interface::{
     GeyserPlugin, GeyserPluginError, ReplicaAccountInfoVersions, ReplicaBlockInfoVersions,
-    Result as PluginResult, SlotStatus as HostSlotStatus,
+    ReplicaTransactionInfoVersions, Result as PluginResult, SlotStatus as HostSlotStatus,
 };
 use mtx_core::feed::{AccountWrite, Address, FeedEvent, SlotStatus};
-use mtx_runtime::live::{Config, Runtime, feed::FeedSender};
+use mtx_runtime::live::{
+    Config, Runtime,
+    feed::FeedSender,
+    tape::{TAPE_INSTRUCTIONS_MAX, Tape, TapeTransaction},
+};
 
 /// The name the host lists the plugin under.
 pub const NAME: &str = "mtx-geyser";
@@ -162,10 +166,84 @@ impl GeyserPlugin for MtxGeyser {
         true
     }
 
-    /// The runtime reads no transactions yet: its own fills and the tape
-    /// come with the desks.
+    /// Every transaction comes by, and those that ran Phoenix go on the
+    /// tape ([`mtx_runtime::live::tape`]): what a shadow strategy's paper
+    /// book fills against.
     fn transaction_notifications_enabled(&self) -> bool {
-        false
+        true
+    }
+
+    // The host's default `notify_transaction_for_bank` calls this, on both
+    // interfaces; the bank's id says nothing the tape needs.
+    #[allow(deprecated)]
+    fn notify_transaction(
+        &self,
+        transaction: ReplicaTransactionInfoVersions,
+        slot: u64,
+    ) -> PluginResult<()> {
+        guarded(|| {
+            // 0.0.3 through Agave v4.3, 0.0.4 from v4.4: the same fields
+            // for what the tape reads.
+            #[cfg(not(feature = "agave-4-4"))]
+            let ReplicaTransactionInfoVersions::V0_0_3(info) = transaction else {
+                return Err(custom(
+                    "the host's transaction notifications are older than 0.0.3",
+                ));
+            };
+            #[cfg(feature = "agave-4-4")]
+            let ReplicaTransactionInfoVersions::V0_0_4(info) = transaction;
+            let meta = info.transaction_status_meta;
+            if info.is_vote || meta.status.is_err() {
+                return Ok(());
+            }
+            let program = Tape::program().to_bytes();
+            let statics = info.transaction.message.static_account_keys();
+            let loaded = &meta.loaded_addresses;
+            let keys = || {
+                statics
+                    .iter()
+                    .chain(loaded.writable.iter())
+                    .chain(loaded.readonly.iter())
+            };
+            // Most transactions stop here: a scan of their keys.
+            if !keys().any(|key| key.to_bytes() == program) {
+                return Ok(());
+            }
+            // An owned list on 0.0.3, a borrowed slice on 0.0.4.
+            #[allow(clippy::needless_option_as_deref)]
+            let Some(groups) = meta.inner_instructions.as_deref() else {
+                return Ok(());
+            };
+            let mut calls = Vec::new();
+            for group in groups {
+                for inner in group.instructions.iter() {
+                    let index = usize::from(inner.instruction.program_id_index);
+                    if keys()
+                        .nth(index)
+                        .is_some_and(|key| key.to_bytes() == program)
+                    {
+                        if calls.len() == TAPE_INSTRUCTIONS_MAX {
+                            return Ok(());
+                        }
+                        calls.push((group.index, inner.instruction.data.to_vec()));
+                    }
+                }
+            }
+            if calls.is_empty() {
+                return Ok(());
+            }
+            let signature: [u8; 64] = info
+                .signature
+                .as_ref()
+                .try_into()
+                .map_err(|_| custom("a signature that isn't 64 bytes"))?;
+            self.feed()?.tape().push(TapeTransaction {
+                slot,
+                signature,
+                calls,
+            });
+            Ok(())
+        })
     }
 }
 

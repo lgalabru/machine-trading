@@ -38,7 +38,7 @@
           "type": "prometheus",
           "uid": "prometheus"
         },
-        "query": "label_values(mtx_strategy_steps_total, strategy)",
+        "query": "label_values(mtx_strategy_steps, strategy)",
         "includeAll": true,
         "multi": true,
         "current": {
@@ -328,11 +328,265 @@
     },
     {
       "type": "row",
-      "title": "Enforcer and control",
+      "title": "Shadow strategies: paper fills",
       "collapsed": false,
       "gridPos": {
         "x": 0,
         "y": 33,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Paper fills",
+      "description": "A shadow strategy's orders, filled by the market's real trades: model=through counts trades past the quote (a lower bound), model=touch also those at its price (an upper bound).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (strategy, model, side, liquidity) (increase(mtx_paper_fills{service_name=~\"$service\", strategy=~\"$strategy\"}[5m]))",
+          "legendFormat": "{{strategy}} {{model}} {{side}} {{liquidity}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "The market's trades (tape)",
+      "description": "Phoenix's trades on the strategy's market, from the transactions the validator runs. Missed or undecoded above 0 means paper fills are under-counted.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 34,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (strategy) (rate(mtx_tape_trades{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
+          "legendFormat": "{{strategy}} trades/s",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (strategy) (rate(mtx_tape_missed{service_name=~\"$service\", strategy=~\"$strategy\"}[5m]))",
+          "legendFormat": "{{strategy}} missed/s",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (strategy) (rate(mtx_tape_undecoded{service_name=~\"$service\", strategy=~\"$strategy\"}[5m]))",
+          "legendFormat": "{{strategy}} undecoded/s",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Markout by horizon (mean, bps)",
+      "description": "How far the mid moved in the fill's favour 1, 10 and 60 s after it. Below 0: the fills are picked off (adverse selection).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (strategy, model, horizon) (rate(mtx_paper_markout_bps_sum{service_name=~\"$service\", strategy=~\"$strategy\"}[15m])) / sum by (strategy, model, horizon) (rate(mtx_paper_markout_bps_count{service_name=~\"$service\", strategy=~\"$strategy\"}[15m]))",
+          "legendFormat": "{{strategy}} {{model}} {{horizon}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Edge at fill (mean, bps)",
+      "description": "How far each fill was on the good side of the mid when it filled: the spread captured before the market moves.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 42,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (strategy, model, liquidity) (rate(mtx_paper_fill_edge_bps_sum{service_name=~\"$service\", strategy=~\"$strategy\"}[15m])) / sum by (strategy, model, liquidity) (rate(mtx_paper_fill_edge_bps_count{service_name=~\"$service\", strategy=~\"$strategy\"}[15m]))",
+          "legendFormat": "{{strategy}} {{model}} {{liquidity}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Quotes at the touch",
+      "description": "The share of steps with a quote at or inside the book's best: the fills the trade-through model can't see happen there.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "avg_over_time(mtx_paper_at_touch{service_name=~\"$service\", strategy=~\"$strategy\"}[5m])",
+          "legendFormat": "{{strategy}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Paper position",
+      "description": "The position the paper fills add up to, uncapped: the strategy quotes on its real position, which is 0.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 50,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "mtx_paper_position{service_name=~\"$service\", strategy=~\"$strategy\"}",
+          "legendFormat": "{{strategy}} {{model}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Paper PnL",
+      "description": "Cash from the paper fills plus the paper position at the mid; before fees.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "mtx_paper_pnl_usd{service_name=~\"$service\", strategy=~\"$strategy\"}",
+          "legendFormat": "{{strategy}} {{model}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Enforcer and control",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 58,
         "w": 24,
         "h": 1
       },
@@ -348,7 +602,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 34,
+        "y": 59,
         "w": 12,
         "h": 8
       },
@@ -380,7 +634,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 34,
+        "y": 59,
         "w": 12,
         "h": 8
       },
@@ -408,7 +662,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 42,
+        "y": 67,
         "w": 24,
         "h": 1
       },
@@ -424,7 +678,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 43,
+        "y": 68,
         "w": 12,
         "h": 8
       },
@@ -456,7 +710,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 51,
+        "y": 76,
         "w": 12,
         "h": 8
       },
@@ -488,7 +742,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 51,
+        "y": 76,
         "w": 12,
         "h": 8
       },
@@ -520,7 +774,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 59,
+        "y": 84,
         "w": 12,
         "h": 8
       },
@@ -548,7 +802,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 59,
+        "y": 84,
         "w": 24,
         "h": 1
       },
@@ -564,7 +818,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 60,
+        "y": 85,
         "w": 12,
         "h": 8
       },
@@ -596,7 +850,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 60,
+        "y": 85,
         "w": 12,
         "h": 8
       },
@@ -628,7 +882,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 68,
+        "y": 93,
         "w": 24,
         "h": 8
       },
