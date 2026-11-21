@@ -1,0 +1,9 @@
+# The book maker: `just build` builds it for wasm32-wasip2 into bot.wasm,
+# the component the live runtime hosts (`mtx live add --component`).
+build:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
+      | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
+    cp "$wasm" bot.wasm
+    echo "built bot.wasm from $wasm"

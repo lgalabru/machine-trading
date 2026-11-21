@@ -5282,6 +5282,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-book-maker"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-candle-mlp"
 version = "0.1.0"
 dependencies = [
@@ -5624,6 +5631,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes 1.12.1",
+ "chrono",
  "mtx-core",
  "mtx-kit",
  "opentelemetry",
