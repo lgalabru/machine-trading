@@ -8,12 +8,32 @@ telemetry the way pay's services do (`crates/runtime/src/live/telemetry.rs`):
   `tracing` event becomes an OTLP metric, for Prometheus or Mimir. The
   event's other fields become the metric's labels: `strategy`, `outcome`,
   `route`, `reason`, `command`.
-- **Logs:** every event becomes a line of JSON in a file on the node.
+- **Logs:** every event becomes a line of JSON in a file on the node, and
+  an OTLP log record, for Loki (the exporters' own events excepted).
 
-OTLP goes over HTTP to a collector beside the node (`collector.yaml`),
-which forwards it to Grafana Cloud or to your own Tempo and Prometheus.
-The resource attributes are `service.name=mtx-runtime`, `service.version`
-and `deployment.environment`.
+OTLP goes over HTTP to Grafana's otel-lgtm image beside the node
+(`docker-compose.yml`), which keeps traces in Tempo, metrics in
+Prometheus and logs in Loki, on the node's disk. The resource attributes
+are `service.name=mtx-runtime` (Prometheus's `service_name` label),
+`service.version` and `deployment.environment`.
+
+## Self-hosted, through an SSH tunnel
+
+Once, as root on the node (it installs Docker and the `mtx-grafana` unit):
+
+```sh
+bash /home/sol/mtx/src/ops/grafana/setup-grafana.sh
+```
+
+Every port is bound to `127.0.0.1`. From your machine:
+
+```sh
+ssh -N -L 3000:127.0.0.1:3000 -i ~/.ssh/id_ed25519_solana ubuntu@213.239.140.203
+open http://localhost:3000   # Dashboards → mtx → mtx runtime
+```
+
+Data lives in `/var/lib/mtx-grafana`. The dashboard is provisioned from
+`mtx-runtime-dashboard.json`; edit it in git, not in the UI.
 
 ## Turn it on
 
@@ -32,19 +52,17 @@ In the plugin's configuration (`/home/sol/mtx/geyser.json`), next to
 Without `otlp_endpoint`, only the JSON log is written. The plugin reads
 this at load, so a change needs a validator restart.
 
-## The collector
+## Grafana Cloud instead
 
-`collector.yaml` is an OpenTelemetry Collector (contrib) config. It
+`collector.yaml` is an OpenTelemetry Collector (contrib) config that
 listens on `127.0.0.1:4318` and forwards to Grafana Cloud's OTLP gateway,
 using `GRAFANA_OTLP_ENDPOINT` and `GRAFANA_OTLP_AUTH` (base64 of
-`<instance id>:<token>`). For a self-hosted stack, point the exporter at
-Tempo's OTLP endpoint, and at Prometheus started with
-`--web.enable-otlp-receiver`.
+`<instance id>:<token>`). Run it instead of otel-lgtm, not beside it.
 
 ## The dashboard
 
-Import `mtx-runtime-dashboard.json` (Dashboards → New → Import) and
-choose the Prometheus data source. Its variables are `job`
+otel-lgtm provisions `mtx-runtime-dashboard.json`; elsewhere, import it
+(its data source uid is `prometheus`). Its variables are `service`
 (= `service.name`) and `strategy`. The panels:
 
 | Row | Panels |
@@ -88,3 +106,8 @@ histograms become `_bucket`, `_sum` and `_count`.
 
 In Tempo, `{ resource.service.name = "mtx-runtime" && name = "strategy.step" && span.strategy = "mm-sol" }`
 finds a strategy's steps. A slow one shows which child took the time.
+
+## Logs
+
+In Loki, `{service_name="mtx-runtime"} | strategy = "mm-sol"` shows a
+strategy's events; the JSON file on the node holds the same.

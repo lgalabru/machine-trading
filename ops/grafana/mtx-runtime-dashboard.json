@@ -16,19 +16,14 @@
   "templating": {
     "list": [
       {
-        "name": "datasource",
-        "type": "datasource",
-        "query": "prometheus",
-        "label": "Metrics"
-      },
-      {
-        "name": "job",
+        "name": "service",
         "type": "query",
+        "label": "Service",
         "datasource": {
           "type": "prometheus",
-          "uid": "${datasource}"
+          "uid": "prometheus"
         },
-        "query": "label_values(mtx_feed_slot, job)",
+        "query": "label_values(mtx_feed_slot, service_name)",
         "includeAll": true,
         "multi": true,
         "current": {
@@ -41,7 +36,7 @@
         "type": "query",
         "datasource": {
           "type": "prometheus",
-          "uid": "${datasource}"
+          "uid": "prometheus"
         },
         "query": "label_values(mtx_strategy_steps_total, strategy)",
         "includeAll": true,
@@ -72,7 +67,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -90,9 +85,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "sum by (strategy) (rate(mtx_strategy_steps_total{job=~\"$job\", strategy=~\"$strategy\"}[1m]))",
+          "expr": "sum by (strategy) (rate(mtx_strategy_steps_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -104,7 +99,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -122,18 +117,18 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, strategy) (rate(mtx_strategy_step_ms_bucket{job=~\"$job\", strategy=~\"$strategy\"}[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le, strategy) (rate(mtx_strategy_step_ms_bucket{service_name=~\"$service\", strategy=~\"$strategy\"}[5m])))",
           "legendFormat": "{{strategy}} p50",
           "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le, strategy) (rate(mtx_strategy_step_ms_bucket{job=~\"$job\", strategy=~\"$strategy\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, strategy) (rate(mtx_strategy_step_ms_bucket{service_name=~\"$service\", strategy=~\"$strategy\"}[5m])))",
           "legendFormat": "{{strategy}} p99",
           "refId": "B"
         }
@@ -145,7 +140,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -163,9 +158,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "sum by (strategy, outcome) (rate(mtx_strategy_sends_total{job=~\"$job\", strategy=~\"$strategy\"}[1m]))",
+          "expr": "sum by (strategy, outcome) (rate(mtx_strategy_sends_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
           "legendFormat": "{{strategy}} {{outcome}}",
           "refId": "A"
         }
@@ -177,7 +172,7 @@
       "description": "A step skipped because the one before still held the strategy: a strategy slower than its step.",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -195,9 +190,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "sum by (strategy) (increase(mtx_strategy_steps_skipped_total{job=~\"$job\", strategy=~\"$strategy\"}[5m]))",
+          "expr": "sum by (strategy) (increase(mtx_strategy_steps_skipped_total{service_name=~\"$service\", strategy=~\"$strategy\"}[5m]))",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -209,7 +204,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -227,9 +222,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "mtx_strategy_position{job=~\"$job\", strategy=~\"$strategy\"}",
+          "expr": "mtx_strategy_position{service_name=~\"$service\", strategy=~\"$strategy\"}",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -241,7 +236,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -259,9 +254,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "mtx_strategy_pnl_usd{job=~\"$job\", strategy=~\"$strategy\"}",
+          "expr": "mtx_strategy_pnl_usd{service_name=~\"$service\", strategy=~\"$strategy\"}",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -273,7 +268,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -291,9 +286,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "mtx_strategy_drawdown_usd{job=~\"$job\", strategy=~\"$strategy\"}",
+          "expr": "mtx_strategy_drawdown_usd{service_name=~\"$service\", strategy=~\"$strategy\"}",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -305,7 +300,7 @@
       "description": "1 while the strategy steps; 0 paused or stopped.",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -323,9 +318,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "mtx_strategy_running{job=~\"$job\", strategy=~\"$strategy\"}",
+          "expr": "mtx_strategy_running{service_name=~\"$service\", strategy=~\"$strategy\"}",
           "legendFormat": "{{strategy}}",
           "refId": "A"
         }
@@ -349,7 +344,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -367,9 +362,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "sum by (strategy, reason) (increase(mtx_enforcer_pauses_total{job=~\"$job\", strategy=~\"$strategy\"}[1h]))",
+          "expr": "sum by (strategy, reason) (increase(mtx_enforcer_pauses_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1h]))",
           "legendFormat": "{{strategy}} {{reason}}",
           "refId": "A"
         }
@@ -381,7 +376,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -399,9 +394,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "sum by (command, outcome) (increase(mtx_control_commands_total{job=~\"$job\"}[1h]))",
+          "expr": "sum by (command, outcome) (increase(mtx_control_commands_total{service_name=~\"$service\"}[1h]))",
           "legendFormat": "{{command}} {{outcome}}",
           "refId": "A"
         }
@@ -425,7 +420,7 @@
       "description": "Past 4, every strategy pauses: the runtime reads a market that has moved on.",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -443,9 +438,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "mtx_feed_slots_behind{job=~\"$job\"}",
+          "expr": "mtx_feed_slots_behind{service_name=~\"$service\"}",
           "legendFormat": "behind",
           "refId": "A"
         }
@@ -457,7 +452,7 @@
       "description": "Above 0, every strategy pauses: the cache may be stale.",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -475,9 +470,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "mtx_feed_dropped{job=~\"$job\"}",
+          "expr": "mtx_feed_dropped{service_name=~\"$service\"}",
           "legendFormat": "dropped",
           "refId": "A"
         }
@@ -489,7 +484,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -507,9 +502,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "mtx_feed_slot{job=~\"$job\"}",
+          "expr": "mtx_feed_slot{service_name=~\"$service\"}",
           "legendFormat": "slot",
           "refId": "A"
         }
@@ -521,7 +516,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -539,9 +534,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "mtx_strategies{job=~\"$job\"}",
+          "expr": "mtx_strategies{service_name=~\"$service\"}",
           "legendFormat": "strategies",
           "refId": "A"
         }
@@ -565,7 +560,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -583,9 +578,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "sum by (strategy, simulated) (rate(mtx_shadow_sends_total{job=~\"$job\", strategy=~\"$strategy\"}[1m]))",
+          "expr": "sum by (strategy, simulated) (rate(mtx_shadow_sends_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
           "legendFormat": "{{strategy}} simulated={{simulated}}",
           "refId": "A"
         }
@@ -597,7 +592,7 @@
       "description": "route=rpc is the fallback: no leader connection took the send.",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 12,
@@ -615,9 +610,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "sum by (strategy, route) (rate(mtx_tpu_sends_total{job=~\"$job\", strategy=~\"$strategy\"}[1m]))",
+          "expr": "sum by (strategy, route) (rate(mtx_tpu_sends_total{service_name=~\"$service\", strategy=~\"$strategy\"}[1m]))",
           "legendFormat": "{{strategy}} {{route}}",
           "refId": "A"
         }
@@ -629,7 +624,7 @@
       "description": "",
       "datasource": {
         "type": "prometheus",
-        "uid": "${datasource}"
+        "uid": "prometheus"
       },
       "gridPos": {
         "x": 0,
@@ -647,18 +642,18 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.5, sum by (le, strategy) (rate(mtx_tpu_confirm_ms_bucket{job=~\"$job\", strategy=~\"$strategy\"}[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le, strategy) (rate(mtx_tpu_confirm_ms_bucket{service_name=~\"$service\", strategy=~\"$strategy\"}[5m])))",
           "legendFormat": "{{strategy}} p50",
           "refId": "A"
         },
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "${datasource}"
+            "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.99, sum by (le, strategy) (rate(mtx_tpu_confirm_ms_bucket{job=~\"$job\", strategy=~\"$strategy\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, strategy) (rate(mtx_tpu_confirm_ms_bucket{service_name=~\"$service\", strategy=~\"$strategy\"}[5m])))",
           "legendFormat": "{{strategy}} p99",
           "refId": "B"
         }

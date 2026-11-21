@@ -2,11 +2,11 @@
 //! spans exported as OTLP traces, `counter.*` / `histogram.*` / `gauge.*`
 //! fields of `tracing` events exported as OTLP metrics (with the event's
 //! other fields as their attributes, a strategy's name among them), and
-//! every event as a line of JSON in a log file.
+//! every event as a line of JSON in a log file and as an OTLP log record.
 //!
-//! OTLP goes over HTTP to a collector (an OpenTelemetry Collector or Grafana
-//! Alloy beside the node, `ops/grafana`), which forwards traces to Tempo and
-//! metrics to Prometheus or Mimir. Without an endpoint, the log file alone.
+//! OTLP goes over HTTP to a collector (`ops/grafana`: Grafana's otel-lgtm
+//! image beside the node), which keeps traces in Tempo, metrics in
+//! Prometheus and logs in Loki. Without an endpoint, the log file alone.
 //!
 //! The runtime lives in a geyser plugin, inside the validator's process:
 //! the plugin's `tracing` is its own copy, so the subscriber set here sees
@@ -15,9 +15,11 @@
 use std::{path::PathBuf, time::Duration};
 
 use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::{
     Resource,
+    logs::SdkLoggerProvider,
     metrics::{MeterProviderBuilder, PeriodicReader, SdkMeterProvider},
     trace::{RandomIdGenerator, Sampler, SdkTracerProvider},
 };
@@ -61,6 +63,10 @@ fn default_environment() -> String {
     "mainnet-beta".into()
 }
 
+/// The events exported as OTLP logs: the runtime's, not those of the
+/// crates that carry them out.
+const EXPORTED_LOGS: &str = "info,opentelemetry=off,opentelemetry_sdk=off,opentelemetry_otlp=off,reqwest=off,hyper=off,hyper_util=off,h2=off,rustls=off";
+
 /// How often metrics are exported: a Grafana panel's usual resolution.
 const METRICS_EVERY: Duration = Duration::from_secs(10);
 
@@ -69,6 +75,7 @@ const METRICS_EVERY: Duration = Duration::from_secs(10);
 pub struct Telemetry {
     tracer: Option<SdkTracerProvider>,
     meter: Option<SdkMeterProvider>,
+    logger: Option<SdkLoggerProvider>,
 }
 
 impl Drop for Telemetry {
@@ -82,6 +89,11 @@ impl Drop for Telemetry {
             && let Err(error) = meter.shutdown()
         {
             eprintln!("mtx runtime: OTLP metric shutdown failed: {error:?}");
+        }
+        if let Some(logger) = self.logger.take()
+            && let Err(error) = logger.shutdown()
+        {
+            eprintln!("mtx runtime: OTLP log shutdown failed: {error:?}");
         }
     }
 }
@@ -115,6 +127,7 @@ pub fn init(config: &TelemetryConfig) -> Result<Telemetry, String> {
         return Ok(Telemetry {
             tracer: None,
             meter: None,
+            logger: None,
         });
     };
     let base = endpoint.trim().trim_end_matches('/');
@@ -133,7 +146,7 @@ pub fn init(config: &TelemetryConfig) -> Result<Telemetry, String> {
         )
         .build();
     let meter = MeterProviderBuilder::default()
-        .with_resource(resource)
+        .with_resource(resource.clone())
         .with_reader(
             PeriodicReader::builder(
                 opentelemetry_otlp::MetricExporter::builder()
@@ -147,6 +160,17 @@ pub fn init(config: &TelemetryConfig) -> Result<Telemetry, String> {
             .build(),
         )
         .build();
+    let logger = SdkLoggerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(
+            opentelemetry_otlp::LogExporter::builder()
+                .with_http()
+                .with_protocol(Protocol::HttpBinary)
+                .with_endpoint(format!("{base}/v1/logs"))
+                .build()
+                .map_err(|e| format!("the OTLP log exporter: {e}"))?,
+        )
+        .build();
     global::set_tracer_provider(tracer.clone());
     global::set_meter_provider(meter.clone());
     if tracing_subscriber::registry()
@@ -154,6 +178,9 @@ pub fn init(config: &TelemetryConfig) -> Result<Telemetry, String> {
         .with(json)
         .with(MetricsLayer::new(meter.clone()))
         .with(OpenTelemetryLayer::new(tracer.tracer("mtx-runtime")))
+        // The exporters' own HTTP client and OpenTelemetry log through
+        // tracing too: exported as logs, each export would make more.
+        .with(OpenTelemetryTracingBridge::new(&logger).with_filter(EnvFilter::new(EXPORTED_LOGS)))
         .try_init()
         .is_err()
     {
@@ -162,6 +189,7 @@ pub fn init(config: &TelemetryConfig) -> Result<Telemetry, String> {
     Ok(Telemetry {
         tracer: Some(tracer),
         meter: Some(meter),
+        logger: Some(logger),
     })
 }
 

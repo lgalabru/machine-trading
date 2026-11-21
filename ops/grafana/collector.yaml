@@ -11,8 +11,8 @@
 # The runtime's plugin configuration points at it:
 #   "telemetry": { "log": ".../runtime.jsonl", "otlp_endpoint": "http://127.0.0.1:4318" }
 #
-# For a self-hosted Grafana, swap the exporter for Tempo's OTLP endpoint
-# and Prometheus's OTLP receiver (--web.enable-otlp-receiver).
+# For a self-hosted Grafana, use docker-compose.yml (otel-lgtm) instead:
+# it takes the same OTLP on the same port.
 receivers:
   otlp:
     protocols:

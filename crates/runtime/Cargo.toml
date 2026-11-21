@@ -35,8 +35,9 @@ wincode = { version = "0.6", optional = true }
 tracing-subscriber = { workspace = true, optional = true, features = ["env-filter", "json"] }
 tracing-opentelemetry = { version = "0.33", optional = true }
 opentelemetry = { version = "0.32", optional = true }
-opentelemetry_sdk = { version = "0.32.1", optional = true }
-opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "metrics", "reqwest-blocking-client", "reqwest-rustls", "trace"] }
+opentelemetry_sdk = { version = "0.32.1", optional = true, features = ["logs"] }
+opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["http-proto", "logs", "metrics", "reqwest-blocking-client", "reqwest-rustls", "trace"] }
+opentelemetry-appender-tracing = { version = "0.32", optional = true }
 opentelemetry-semantic-conventions = { version = "0.32.1", optional = true }
 tracing.workspace = true
 reqwest.workspace = true
@@ -67,4 +68,4 @@ required-features = ["live"]
 # The runtime that runs strategies against a live chain
 # (docs/rfd/0004-strategies-on-mainnet.md): the feed, the account cache and
 # the readers over it. Off in the grader.
-live = ["dep:solana-tpu-client-next", "dep:tokio-util", "dep:tokio-stream", "dep:bytes", "dep:wincode", "dep:solana-rpc-client", "dep:solana-account", "dep:solana-commitment-config", "dep:tracing-subscriber", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions"]
+live = ["dep:solana-tpu-client-next", "dep:tokio-util", "dep:tokio-stream", "dep:bytes", "dep:wincode", "dep:solana-rpc-client", "dep:solana-account", "dep:solana-commitment-config", "dep:tracing-subscriber", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions", "dep:opentelemetry-appender-tracing"]

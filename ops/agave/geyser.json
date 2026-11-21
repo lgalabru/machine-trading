@@ -12,6 +12,7 @@
     },
     "telemetry": {
       "log": "/home/sol/mtx/runtime.jsonl",
+      "otlp_endpoint": "http://127.0.0.1:4318",
       "filter": "info",
       "environment": "mainnet-beta"
     }
