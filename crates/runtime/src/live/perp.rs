@@ -40,6 +40,9 @@ pub struct PerpReader {
     spline_collection: Address,
     global_trader_index: Vec<Address>,
     active_trader_buffer: Vec<Address>,
+    /// Read a trader account the cache doesn't hold as flat
+    /// ([`PerpReader::flat_without_account`]).
+    flat_without_account: bool,
 }
 
 /// What [`PerpReader::read`] found, in USD and base units.
@@ -88,7 +91,19 @@ impl PerpReader {
             active_trader_buffer,
             market,
             venue,
+            flat_without_account: false,
         })
+    }
+
+    /// Read a trader account the cache doesn't hold as a flat position,
+    /// rather than as an error: for a shadow run, whose key may never have
+    /// opened an account on the venue, and sends nothing that could hold a
+    /// position. Every other reading still refuses to guess.
+    pub fn flat_without_account(self) -> Self {
+        Self {
+            flat_without_account: true,
+            ..self
+        }
     }
 
     pub fn symbol(&self) -> &str {
@@ -152,10 +167,17 @@ impl PerpReader {
             &global_trader_index,
             &active_trader_buffer,
         )?;
-        let position = match live {
-            Some(position) => position,
-            None => perp_position(&self.market, seen(&self.trader, "trader account")?)
+        let position = match (live, cache.data(&self.trader)) {
+            (Some(position), _) => position,
+            (None, Some(account)) => perp_position(&self.market, account)
                 .map_err(|e| format!("the trader account: {e}"))?,
+            (None, None) if self.flat_without_account => mtx_kit::Position::default(),
+            (None, None) => {
+                return Err(format!(
+                    "the trader account {} wasn't seen",
+                    key_of(&self.trader)
+                ));
+            }
         };
         let usd = |ticks: u64| ticks_to_usd(&self.market, ticks);
         Ok(PerpReading {

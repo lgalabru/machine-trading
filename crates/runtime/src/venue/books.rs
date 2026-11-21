@@ -815,6 +815,7 @@ mod tests {
             Box::new(std::io::sink()),
             7,
             100 * crate::host::FUEL_PER_CALL,
+            None,
         )
         .await
         .unwrap();

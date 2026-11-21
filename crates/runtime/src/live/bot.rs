@@ -51,6 +51,11 @@ pub struct BotSpec<'a> {
     pub slot: Arc<AtomicU64>,
     /// Where its prints go.
     pub log: Box<dyn Write + Send>,
+    /// The chain its orders go through, if not the node's RPC at
+    /// `rpc_url`: the leaders' TPU ([`super::tpu::TpuChainClient`]).
+    pub sends: Option<Arc<dyn mtx_kit::chain::ChainClient>>,
+    /// Watches each step: the strategy's journals ([`super::journal`]).
+    pub observer: Option<Arc<dyn crate::desk::StepObserver>>,
 }
 
 /// Load the component and call its `start`.
@@ -73,15 +78,33 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
         authority,
     )
     .map_err(|e| e.to_string())?;
-    let trader = Arc::new(
-        market
-            .trader(spec.keypair.insecure_clone(), spec.rpc_url)
-            .map_err(|e| e.to_string())?,
-    );
-    let seats: Vec<Box<dyn Seat>> = vec![Box::new(PerpSeat::new(
-        market.instrument().to_string(),
-        trader,
-    ))];
+    let trader = market
+        .trader(spec.keypair.insecure_clone(), spec.rpc_url)
+        .map_err(|e| e.to_string())?;
+    // A seat whose sends go through a chain put in place of the RPC sends
+    // every order through it, its cancels included: a shadow strategy must
+    // send nothing, and a TPU one nothing by RPC.
+    let pooled = spec.sends.is_some();
+    let trader = Arc::new(match spec.sends {
+        Some(chain) => mtx_kit::Trader {
+            inner: trader.inner.with_chain(chain),
+            ..trader
+        },
+        None => trader,
+    });
+    let reads: Arc<dyn PerpReads> = Arc::new(CacheReads {
+        reader: spec.reader,
+        cache: spec.cache,
+        slot: spec.slot,
+    });
+    // Post-only orders are checked against the cache's book: the trader's
+    // own read simulates against its account, which a shadow strategy's
+    // key may not have yet.
+    let seats: Vec<Box<dyn Seat>> = vec![Box::new(
+        PerpSeat::new(market.instrument().to_string(), trader)
+            .pooled(pooled)
+            .reading_top(reads.clone()),
+    )];
     let markets = mtx_kit::VenueInfo::of_perp_markets(
         spec.mandate,
         [(
@@ -89,11 +112,6 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
             Some(market.address().to_string()),
         )],
     );
-    let reads = CacheReads {
-        reader: spec.reader,
-        cache: spec.cache,
-        slot: spec.slot,
-    };
     WasmBot::<NoRawSends>::start(
         spec.component,
         HttpReads::boxed(spec.rpc_url),
@@ -110,12 +128,12 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
             symbol: spec.symbol.to_string(),
             venue: exchange_json,
             authority: authority.to_string(),
-            reader: Reader::Live(Arc::new(reads)),
+            reader: Reader::Live(reads),
             sends: None,
             rfqs: None,
         },
         spec.log,
-        None,
+        spec.observer,
         None,
     )
     .await

@@ -982,3 +982,16 @@ ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="targ
     python3 -I bench/checks/ladder/ladder.py {{task}} --mtx "${CARGO_TARGET_DIR:-target}/release/mtx" \
       --snapshot snapshots/{{snapshot}} --sets {{sets}} --jobs {{jobs}} --parallel {{parallel}} \
       --out "{{out}}" ${count_args[@]+"${count_args[@]}"}
+
+# The live runtime against a real Agave validator (docs/rfd/0004, step 5):
+# `solana-test-validator` loads the plugin and feeds it slots, and a
+# transfer sent over the TPU client lands with no RPC send. Needs
+# `solana-test-validator` on the path, of the plugin interface's version.
+agave:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo build -p mtx-geyser
+    case "$(uname -s)" in Darwin) lib=libmtx_geyser.dylib ;; *) lib=libmtx_geyser.so ;; esac
+    MTX_TEST_GEYSER_PLUGIN="$PWD/${CARGO_TARGET_DIR:-target}/debug/$lib" \
+      cargo test -p mtx-grader --test agave -- --ignored
+    cargo test -p mtx-runtime --features live --test tpu -- --ignored

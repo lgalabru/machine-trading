@@ -32,10 +32,12 @@
 //! | [`feed`] | What a chain tells a host as it happens: account writes, slots, blocks |
 //! | [`session`] | What a host measures of a session: the account, the trades, each send's fate |
 //! | [`control`] | The commands a live runtime takes while it runs, and its answers |
+//! | [`events`] | What a live runtime pushes to a sidecar as it happens |
 
 pub mod asset;
 pub mod control;
 mod error;
+pub mod events;
 pub mod feed;
 pub mod fill;
 pub mod holding;

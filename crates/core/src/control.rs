@@ -45,6 +45,14 @@ pub struct AddStrategy {
     /// Start stepping at once, rather than paused.
     #[serde(default)]
     pub run: bool,
+    /// When the enforcer finds the mandate broken, close the position too,
+    /// not only cancel the orders: the mandate's owner's choice.
+    #[serde(default)]
+    pub close_on_breach: bool,
+    /// Step, plan and sign, and send nothing: each transaction it would
+    /// have sent is written to `<name>.shadow.jsonl` in the runtime's logs.
+    #[serde(default)]
+    pub shadow: bool,
 }
 
 /// What `mtx live` asks of the runtime.
@@ -107,6 +115,19 @@ pub struct StrategyStatus {
     /// running when its slot came.
     pub steps: u64,
     pub skipped: u64,
+    /// Whether it sends nothing, only writes down what it would send.
+    pub shadow: bool,
+    /// How long its last step took, from its slot reaching the runtime to
+    /// its sheet signed and sent, in milliseconds.
+    pub last_step_ms: Option<u64>,
+    /// Its orders so far: landed (in a shadow run, written down), and
+    /// failed or not sent, with the latest reason.
+    #[serde(default)]
+    pub sends_landed: u64,
+    #[serde(default)]
+    pub sends_failed: u64,
+    #[serde(default)]
+    pub last_send_error: Option<String>,
     /// The slot of its last step, and what it read there.
     pub last_slot: Option<u64>,
     pub position: Option<f64>,
@@ -114,12 +135,27 @@ pub struct StrategyStatus {
     pub drawdown: Option<f64>,
 }
 
+/// The feed the runtime reads the chain from, as `mtx live status` shows
+/// it: a strategy only steps while the feed keeps up.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FeedStatus {
+    /// The newest slot the runtime has applied.
+    pub slot: u64,
+    /// The slots it is behind what the chain told of.
+    pub behind: u64,
+    /// The events it had no room for: above 0, every strategy is paused.
+    pub dropped: u64,
+}
+
 /// What the runtime answers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "reply", rename_all = "snake_case")]
 pub enum Reply {
-    /// Done: every strategy as it stands after the command.
-    Ok { strategies: Vec<StrategyStatus> },
+    /// Done: the feed, and every strategy as it stands after the command.
+    Ok {
+        feed: FeedStatus,
+        strategies: Vec<StrategyStatus>,
+    },
     /// Refused, and nothing changed.
     Error { error: String },
 }

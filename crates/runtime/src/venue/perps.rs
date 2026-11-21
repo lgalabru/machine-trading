@@ -174,9 +174,14 @@ pub struct PerpSeat {
     trader: Arc<Trader>,
     /// The signature of its last market order that landed.
     last: std::sync::Mutex<Option<String>>,
-    /// Its trader sends through the transaction layer's pool: every send
-    /// must go through its chain client, which returns without waiting.
+    /// Its trader sends through a chain the host put in place of the
+    /// node's RPC (the transaction layer's pool, the live runtime's TPU or
+    /// shadow chain): every send, cancels included, must go through its
+    /// chain client, never its own RPC client.
     pooled: bool,
+    /// Where post-only orders are checked against the book, if not through
+    /// the trader's own simulated read ([`PerpSeat::reading_top`]).
+    top: Option<Arc<dyn crate::desk::PerpReads>>,
 }
 
 impl PerpSeat {
@@ -186,6 +191,7 @@ impl PerpSeat {
             trader,
             last: std::sync::Mutex::default(),
             pooled: false,
+            top: None,
         }
     }
 
@@ -193,6 +199,15 @@ impl PerpSeat {
     /// `pooled`.
     pub fn pooled(self, pooled: bool) -> Self {
         Self { pooled, ..self }
+    }
+
+    /// Check post-only orders against the book `reads` holds, not one the
+    /// trader simulates: the live runtime's account cache.
+    pub fn reading_top(self, reads: Arc<dyn crate::desk::PerpReads>) -> Self {
+        Self {
+            top: Some(reads),
+            ..self
+        }
     }
 
     /// Cancel every resting order through the trader's chain client, not
@@ -247,7 +262,21 @@ impl Seat for PerpSeat {
         if self.pooled && matches!(planned.action, Action::CancelAll) {
             return self.cancel_all_pooled().await;
         }
-        self.trader.send_planned(planned).await
+        let known_top = match (&self.top, &planned.action) {
+            (Some(reads), Action::PostOnly { .. }) => match reads.top().await {
+                Ok(top) => Some(top),
+                Err(error) => {
+                    return Sent {
+                        state: mtx_kit::SendState::NotSent(format!(
+                            "post-only: couldn't read the book to check it: {error}"
+                        )),
+                        sent: false,
+                    };
+                }
+            },
+            _ => None,
+        };
+        self.trader.send_planned_at(planned, known_top).await
     }
 
     async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {
@@ -274,6 +303,16 @@ impl Seat for PerpSeat {
     }
 
     async fn cancel_all(&self) -> SeatResult {
+        if self.pooled {
+            let sent = self.cancel_all_pooled().await;
+            return match sent.state {
+                mtx_kit::SendState::Landed(_) => Ok(()),
+                mtx_kit::SendState::Failed { reason, .. } | mtx_kit::SendState::NotSent(reason) => {
+                    Err(reason)
+                }
+                mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => Ok(()),
+            };
+        }
         self.trader
             .cancel_all()
             .map(|_| ())
