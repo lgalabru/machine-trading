@@ -20,7 +20,7 @@ use solana_keypair::Keypair;
 
 use super::{
     feed::AccountCache,
-    perp::{PerpReader, PerpReading},
+    perp::{PerpReader, PerpReading, ReaderKey},
 };
 use crate::{
     desk::{Clock, Desk, PerpReads, Reader, Terms, WasmBot},
@@ -49,6 +49,8 @@ pub struct BotSpec<'a> {
     pub reader: PerpReader,
     pub cache: Arc<Mutex<AccountCache>>,
     pub slot: Arc<AtomicU64>,
+    /// Readings shared across the runtime's strategies.
+    pub readings: Arc<Readings>,
     /// Where its prints go.
     pub log: Box<dyn Write + Send>,
     /// The chain its orders go through, if not the node's RPC at
@@ -56,6 +58,10 @@ pub struct BotSpec<'a> {
     pub sends: Option<Arc<dyn mtx_kit::chain::ChainClient>>,
     /// Watches each step: the strategy's journals ([`super::journal`]).
     pub observer: Option<Arc<dyn crate::desk::StepObserver>>,
+    /// Whether an order waits to land before the step goes on. Through
+    /// `sends`, a live strategy fires and forgets: a step can't wait on
+    /// each of its orders.
+    pub dispatch: mtx_kit::protocols::phoenix::eternal::Dispatch,
 }
 
 /// Load the component and call its `start`.
@@ -87,7 +93,7 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
     let pooled = spec.sends.is_some();
     let trader = Arc::new(match spec.sends {
         Some(chain) => mtx_kit::Trader {
-            inner: trader.inner.with_chain(chain),
+            inner: trader.inner.with_chain(chain).with_dispatch(spec.dispatch),
             ..trader
         },
         None => trader,
@@ -96,6 +102,8 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
         reader: spec.reader,
         cache: spec.cache,
         slot: spec.slot,
+        readings: spec.readings,
+        last: Mutex::new(None),
     });
     // Post-only orders are checked against the cache's book: the trader's
     // own read simulates against its account, which a shadow strategy's
@@ -146,15 +154,81 @@ struct CacheReads {
     reader: PerpReader,
     cache: Arc<Mutex<AccountCache>>,
     slot: Arc<AtomicU64>,
+    /// Every strategy's latest readings, shared.
+    readings: Arc<Readings>,
+    /// The step's reading, by slot: a step asks for the top, the oracle and
+    /// the position (and a post-only order for the top again), and decoding
+    /// the market is most of a read's cost (hundreds of microseconds on
+    /// Phoenix's SOL book). One decode a step, every answer from the same
+    /// snapshot.
+    last: Mutex<Option<(u64, PerpReading)>>,
 }
 
 impl CacheReads {
     fn read(&self) -> Result<PerpReading, String> {
-        let cache = self
+        let slot = self.slot.load(Ordering::Acquire);
+        if let Ok(last) = self.last.lock()
+            && let Some((at, reading)) = *last
+            && at == slot
+        {
+            return Ok(reading);
+        }
+        let key = self.reader.key();
+        if let Some(reading) = self.readings.get(key, slot) {
+            return self.keep(slot, reading);
+        }
+        // The accounts under the lock, a reference count each; the decode
+        // after letting go of it.
+        let waited = std::time::Instant::now();
+        let snapshot = self
             .cache
             .lock()
-            .map_err(|_| "the account cache was poisoned".to_string())?;
-        self.reader.read(&cache, self.slot.load(Ordering::Acquire))
+            .map_err(|_| "the account cache was poisoned".to_string())?
+            .snapshot(&self.reader.addresses());
+        let decoding = std::time::Instant::now();
+        let reading = self.reader.read(&snapshot, slot)?;
+        tracing::info!(
+            histogram.mtx_read_lock_us = decoding.duration_since(waited).as_micros() as u64,
+            histogram.mtx_read_decode_us = decoding.elapsed().as_micros() as u64,
+            symbol = self.reader.symbol(),
+            "a market read"
+        );
+        self.readings.put(key, slot, reading);
+        self.keep(slot, reading)
+    }
+
+    fn keep(&self, slot: u64, reading: PerpReading) -> Result<PerpReading, String> {
+        if let Ok(mut last) = self.last.lock() {
+            *last = Some((slot, reading));
+        }
+        Ok(reading)
+    }
+}
+
+/// The readings of every market the runtime reads, by reader and slot:
+/// strategies that read one market for one account at one slot (two
+/// strategies sharing a key) decode it once between them.
+#[derive(Debug, Default)]
+pub struct Readings {
+    latest: Mutex<std::collections::HashMap<ReaderKey, (u64, PerpReading)>>,
+}
+
+impl Readings {
+    fn get(&self, key: ReaderKey, slot: u64) -> Option<PerpReading> {
+        let latest = self.latest.lock().ok()?;
+        latest
+            .get(&key)
+            .filter(|(at, _)| *at == slot)
+            .map(|(_, reading)| *reading)
+    }
+
+    fn put(&self, key: ReaderKey, slot: u64, reading: PerpReading) {
+        if let Ok(mut latest) = self.latest.lock() {
+            let newer = latest.get(&key).is_none_or(|(at, _)| slot >= *at);
+            if newer {
+                latest.insert(key, (slot, reading));
+            }
+        }
     }
 }
 

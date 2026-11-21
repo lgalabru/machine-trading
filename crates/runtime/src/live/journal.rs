@@ -277,6 +277,59 @@ impl Journal {
 
 impl StepObserver for Journal {
     fn started(&self, _session: &mtx_kit::Session, printed: &[String], failed: Option<&str>) {
+        self.write_started(printed, failed);
+    }
+
+    fn step(&self, trace: &StepTrace) {
+        self.record(trace, now_ms());
+    }
+}
+
+/// Steps journals may fall behind by: a few minutes of one strategy's.
+pub const JOURNAL_QUEUE_MAX: usize = 4096;
+
+/// A [`Journal`] on a thread of its own: a step hands it its trace and
+/// goes on. Writing a line, filling the paper books and reading the tape
+/// cost a step hundreds of microseconds when they ran in it. A step that
+/// finds the queue full drops its line and counts it, rather than wait.
+pub struct Behind {
+    strategy: String,
+    jobs: std::sync::mpsc::SyncSender<Job>,
+    dropped: std::sync::atomic::AtomicU64,
+}
+
+enum Job {
+    Started(Vec<String>, Option<String>),
+    Step(Box<StepTrace>, u64),
+}
+
+impl Journal {
+    /// This journal, written on a thread of its own.
+    pub fn behind(self) -> Result<Behind, String> {
+        let strategy = self.strategy.clone();
+        let (jobs, queue) = std::sync::mpsc::sync_channel::<Job>(JOURNAL_QUEUE_MAX);
+        std::thread::Builder::new()
+            .name(format!("mtx-journal-{strategy}"))
+            .spawn(move || {
+                // Ends when the strategy's session drops its observer.
+                for job in queue {
+                    match job {
+                        Job::Started(printed, failed) => {
+                            self.write_started(&printed, failed.as_deref())
+                        }
+                        Job::Step(trace, unix_ms) => self.record(&trace, unix_ms),
+                    }
+                }
+            })
+            .map_err(|e| format!("the journal's thread: {e}"))?;
+        Ok(Behind {
+            strategy,
+            jobs,
+            dropped: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    fn write_started(&self, printed: &[String], failed: Option<&str>) {
         let line = json!({ "started": true, "printed": printed, "failed": failed });
         match self.steps.lock() {
             Ok(mut steps) => steps.write(&line),
@@ -284,8 +337,7 @@ impl StepObserver for Journal {
         }
     }
 
-    fn step(&self, trace: &StepTrace) {
-        let unix_ms = now_ms();
+    fn record(&self, trace: &StepTrace, unix_ms: u64) {
         match self.steps.lock() {
             Ok(mut steps) => steps.write(&step_line(trace, unix_ms)),
             Err(_) => tracing::error!(strategy = %self.strategy, "the step journal was poisoned"),
@@ -305,6 +357,33 @@ impl StepObserver for Journal {
             "a strategy decided",
         );
         self.paper_step(trace, unix_ms);
+    }
+}
+
+impl Behind {
+    fn hand(&self, job: Job) {
+        if self.jobs.try_send(job).is_err() {
+            let dropped = self
+                .dropped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1;
+            tracing::warn!(
+                strategy = %self.strategy,
+                dropped,
+                counter.mtx_journal_dropped = 1_u64,
+                "the journal fell behind; a step's line is dropped"
+            );
+        }
+    }
+}
+
+impl StepObserver for Behind {
+    fn started(&self, _session: &mtx_kit::Session, printed: &[String], failed: Option<&str>) {
+        self.hand(Job::Started(printed.to_vec(), failed.map(str::to_string)));
+    }
+
+    fn step(&self, trace: &StepTrace) {
+        self.hand(Job::Step(Box::new(trace.clone()), now_ms()));
     }
 }
 

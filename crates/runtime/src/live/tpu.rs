@@ -55,6 +55,12 @@ pub struct TpuConfig {
     /// next.
     #[serde(default = "default_fanout")]
     pub fanout: usize,
+    /// Have the node simulate each transaction before it is sent, and send
+    /// nothing that would fail. Off by default: a round trip to the node on
+    /// every order, against the fee of a transaction that fails on chain
+    /// (5,000 lamports), which a post-only order that came too late is.
+    #[serde(default)]
+    pub preflight: bool,
 }
 
 fn default_fanout() -> usize {
@@ -198,19 +204,32 @@ impl Tpu {
 /// The chain a hosted strategy trades through when the runtime sends over
 /// the TPU: every read is the node's RPC's, every send goes to the leaders.
 pub struct TpuChainClient {
-    rpc: RpcChainClient,
+    rpc: Arc<RpcChainClient>,
     tpu: Arc<Tpu>,
-    /// The strategy whose sends these are, for their metrics.
+    /// The strategy whose sends these are, for their metrics and fates.
     strategy: String,
+    /// The newest blockhash the plugin told of, signed on with no round
+    /// trip while it is fresh.
+    blockhash: Arc<super::blockhash::LatestBlockhash>,
+    /// Where a send's fate is told, once the watcher knows it.
+    events: super::events::Events,
 }
 
 impl TpuChainClient {
-    /// `strategy`'s chain: its name labels the sends' metrics.
-    pub fn new(rpc: RpcChainClient, tpu: Arc<Tpu>, strategy: &str) -> Self {
+    /// `strategy`'s chain: its name labels the sends' metrics and fates.
+    pub fn new(
+        rpc: RpcChainClient,
+        tpu: Arc<Tpu>,
+        strategy: &str,
+        blockhash: Arc<super::blockhash::LatestBlockhash>,
+        events: super::events::Events,
+    ) -> Self {
         Self {
-            rpc,
+            rpc: Arc::new(rpc),
             tpu,
             strategy: strategy.to_string(),
+            blockhash,
+            events,
         }
     }
 
@@ -279,7 +298,10 @@ impl ChainClient for TpuChainClient {
     }
 
     async fn get_latest_blockhash(&self) -> Result<Hash, ChainError> {
-        self.rpc.get_latest_blockhash().await
+        match self.blockhash.fresh() {
+            Some(hash) => Ok(hash),
+            None => self.rpc.get_latest_blockhash().await,
+        }
     }
 
     async fn simulate(
@@ -298,55 +320,48 @@ impl ChainClient for TpuChainClient {
         transaction: &VersionedTransaction,
     ) -> Result<Signature, ChainError> {
         let signature = self.send_once(transaction).await?;
-        let sent_at = Instant::now();
-        let deadline = sent_at + CONFIRM_WITHIN;
-        loop {
-            let status = self
-                .rpc
-                .rpc()
-                .get_signature_statuses(&[signature])
-                .await
-                .map_err(|e| ChainError::Rpc(e.to_string()))?
-                .value
-                .into_iter()
-                .next()
-                .flatten();
-            // A failure is final once seen; a success counts at
-            // `confirmed`, the commitment the RPC client confirms at, so a
-            // read that follows sees what the send did.
-            match status {
-                Some(status) if status.err.is_some() => {
-                    return Err(ChainError::Failed {
-                        label: "a TPU send".into(),
-                        signature,
-                        error: status.err.expect("matched a failure"),
-                    });
-                }
-                Some(status) if status.satisfies_commitment(CommitmentConfig::confirmed()) => {
-                    tracing::info!(
-                        histogram.mtx_tpu_confirm_ms =
-                            u64::try_from(sent_at.elapsed().as_millis()).unwrap_or(u64::MAX),
-                        strategy = %self.strategy,
-                        landed_slot = status.slot,
-                        %signature,
-                        "a send landed"
-                    );
-                    return Ok(signature);
-                }
-                _ => {}
-            }
-            if Instant::now() >= deadline {
-                return Err(ChainError::Rpc(format!(
-                    "{signature} wasn't seen landed in {}s",
-                    CONFIRM_WITHIN.as_secs()
-                )));
-            }
-            tokio::time::sleep(CONFIRM_LOOKS_EVERY).await;
+        match confirm(&self.rpc, &self.strategy, signature, Instant::now()).await {
+            Fate::Landed { .. } => Ok(signature),
+            Fate::Failed { error, .. } => Err(ChainError::Failed {
+                label: "a TPU send".into(),
+                signature,
+                error,
+            }),
+            Fate::Unseen => Err(ChainError::Rpc(format!(
+                "{signature} wasn't seen landed in {}s",
+                CONFIRM_WITHIN.as_secs()
+            ))),
+            Fate::Unknown(error) => Err(ChainError::Rpc(error)),
         }
     }
 
+    /// Send and return at once; a watcher learns its fate and tells it on
+    /// the event stream (`fate`): a live strategy doesn't spend its steps
+    /// waiting on its orders.
     async fn send(&self, transaction: &VersionedTransaction) -> Result<Signature, ChainError> {
-        self.send_once(transaction).await
+        let signature = self.send_once(transaction).await?;
+        let sent_at = Instant::now();
+        let (rpc, strategy, events) =
+            (self.rpc.clone(), self.strategy.clone(), self.events.clone());
+        tokio::spawn(async move {
+            let fate = confirm(&rpc, &strategy, signature, sent_at).await;
+            let after_us = u64::try_from(sent_at.elapsed().as_micros()).unwrap_or(u64::MAX);
+            let (landed, slot, error) = match fate {
+                Fate::Landed { slot } => (true, Some(slot), None),
+                Fate::Failed { slot, error } => (false, Some(slot), Some(error.to_string())),
+                Fate::Unseen => (false, None, None),
+                Fate::Unknown(error) => (false, None, Some(error)),
+            };
+            events.emit(mtx_core::events::Event::Fate {
+                strategy,
+                signature: signature.to_string(),
+                landed,
+                slot,
+                error,
+                after_us,
+            });
+        });
+        Ok(signature)
     }
 
     async fn get_transaction(
@@ -362,6 +377,65 @@ impl ChainClient for TpuChainClient {
         after_slot: u64,
     ) -> Result<Vec<(Signature, u64)>, ChainError> {
         self.rpc.signatures_for_address(address, after_slot).await
+    }
+}
+
+/// What became of a sent transaction.
+enum Fate {
+    Landed {
+        slot: u64,
+    },
+    Failed {
+        slot: u64,
+        error: solana_transaction::TransactionError,
+    },
+    /// Not seen landing within [`CONFIRM_WITHIN`].
+    Unseen,
+    /// The node couldn't be asked.
+    Unknown(String),
+}
+
+/// Watch `signature` until it lands at `confirmed`, fails, or the watch
+/// gives up.
+async fn confirm(
+    rpc: &RpcChainClient,
+    strategy: &str,
+    signature: Signature,
+    sent_at: Instant,
+) -> Fate {
+    let deadline = sent_at + CONFIRM_WITHIN;
+    loop {
+        let status = match rpc.rpc().get_signature_statuses(&[signature]).await {
+            Ok(statuses) => statuses.value.into_iter().next().flatten(),
+            Err(error) => return Fate::Unknown(error.to_string()),
+        };
+        // A failure is final once seen; a success counts at `confirmed`,
+        // the commitment the RPC client confirms at, so a read that
+        // follows sees what the send did.
+        match status {
+            Some(status) if status.err.is_some() => {
+                return Fate::Failed {
+                    slot: status.slot,
+                    error: status.err.expect("matched a failure"),
+                };
+            }
+            Some(status) if status.satisfies_commitment(CommitmentConfig::confirmed()) => {
+                tracing::info!(
+                    histogram.mtx_tpu_confirm_ms =
+                        u64::try_from(sent_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    strategy,
+                    landed_slot = status.slot,
+                    %signature,
+                    "a send landed"
+                );
+                return Fate::Landed { slot: status.slot };
+            }
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            return Fate::Unseen;
+        }
+        tokio::time::sleep(CONFIRM_LOOKS_EVERY).await;
     }
 }
 
@@ -393,6 +467,7 @@ mod tests {
         let config = TpuConfig {
             identity: None,
             fanout: FANOUT_MAX + 1,
+            preflight: false,
         };
         let error = Tpu::start(&config, "http://127.0.0.1:1", slots)
             .await

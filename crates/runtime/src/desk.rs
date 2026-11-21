@@ -259,6 +259,21 @@ pub struct WasmBot<R: RawDesk = NoRawSends> {
     /// The orders its last turn sent to the chain, the one that failed
     /// included.
     last_orders: u32,
+    /// Where its last turn's time went.
+    last_timings: TurnTimings,
+}
+
+/// Where a turn's time went, in microseconds: reading the market, the
+/// strategy's `step`, and planning and sending its sheet.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TurnTimings {
+    pub read_us: u64,
+    pub call_us: u64,
+    pub send_us: u64,
+}
+
+fn micros(since: std::time::Instant) -> u64 {
+    u64::try_from(since.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
 impl<R: RawDesk> WasmBot<R> {
@@ -388,6 +403,7 @@ impl<R: RawDesk> WasmBot<R> {
             account: None,
             taking,
             last_orders: 0,
+            last_timings: TurnTimings::default(),
         })
     }
 
@@ -655,11 +671,15 @@ impl<R: RawDesk> WasmBot<R> {
         if self.stopped.is_some() {
             return false;
         }
+        self.last_timings = TurnTimings::default();
+        let started = std::time::Instant::now();
         let read = tracing::info_span!("strategy.market", k);
         let Some(market) = tracing::Instrument::instrument(self.market(step, wallet), read).await
         else {
             return false;
         };
+        self.last_timings.read_us = micros(started);
+        let called = std::time::Instant::now();
         let Some(strategy) = self.strategy.as_mut() else {
             self.last = Some(market);
             return false;
@@ -669,6 +689,8 @@ impl<R: RawDesk> WasmBot<R> {
         }
         let call = tracing::info_span!("strategy.call", k);
         let outcome = tracing::Instrument::instrument(strategy.step(&market), call).await;
+        self.last_timings.call_us = micros(called);
+        let sending = std::time::Instant::now();
         let raw = strategy.raw_sender();
         let dropped = match &outcome {
             Outcome::Done(_) => raw.map(|raw| {
@@ -864,6 +886,7 @@ impl<R: RawDesk> WasmBot<R> {
                 }
             }
         }
+        self.last_timings.send_us = micros(sending);
         self.observe(trace);
         true
     }
@@ -871,6 +894,11 @@ impl<R: RawDesk> WasmBot<R> {
     /// The orders its last turn sent to the chain.
     pub fn last_orders(&self) -> u32 {
         self.last_orders
+    }
+
+    /// Where its last turn's time went.
+    pub fn last_timings(&self) -> TurnTimings {
+        self.last_timings
     }
 
     /// The account as the session measured it, for the next turn's trace.

@@ -511,8 +511,23 @@ impl<R: RawSend> WasmStrategy<R> {
         // the market (the live runtime). Off, nothing changes.
         config.epoch_interruption(deadline.is_some());
         config.wasm_multi_memory(false);
+        // Code for speed: a component compiles once and steps thousands of
+        // times.
+        config.cranelift_opt_level(wasmtime::OptLevel::Speed);
+        // Compiled code is kept on disk, keyed by these settings and the
+        // component's bytes: a strategy restarted, re-added or given a new
+        // mandate loads in milliseconds rather than compiling again. Each
+        // load has its own engine (a deadline moves its engine's epoch),
+        // so the cache is shared across engines.
+        config.cache(code_cache());
         let engine = Engine::new(&config).map_err(wasm_error)?;
+        let compiling = std::time::Instant::now();
         let component = Component::from_file(&engine, path).map_err(wasm_error)?;
+        tracing::info!(
+            component = %path.display(),
+            ms = compiling.elapsed().as_millis() as u64,
+            "a strategy component compiled, or loaded from the code cache"
+        );
         let linker = |add: fn(&mut Linker<Host<R>>) -> wasmtime::Result<()>| {
             let mut linker: Linker<Host<R>> = Linker::new(&engine);
             wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
@@ -1364,6 +1379,23 @@ mod wit1 {
             w::Intent::CancelAll => Intent::CancelAll,
         }
     }
+}
+
+/// The process's compiled-code cache (wasmtime's, in its default place
+/// on disk), or none where it can't be made: then every load compiles.
+fn code_cache() -> Option<wasmtime::Cache> {
+    static CACHE: std::sync::OnceLock<Option<wasmtime::Cache>> = std::sync::OnceLock::new();
+    CACHE
+        .get_or_init(
+            || match wasmtime::Cache::new(wasmtime::CacheConfig::new()) {
+                Ok(cache) => Some(cache),
+                Err(error) => {
+                    tracing::warn!(%error, "no compiled-code cache: every component compiles");
+                    None
+                }
+            },
+        )
+        .clone()
 }
 
 #[cfg(test)]

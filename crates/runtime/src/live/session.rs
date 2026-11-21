@@ -213,6 +213,8 @@ async fn play(
         // As the grader's component sends: through the bot's endpoint.
         sends: None,
         observer: None,
+        readings: Default::default(),
+        dispatch: mtx_kit::protocols::phoenix::eternal::Dispatch::Confirm,
     })
     .await?;
     let mut played = 0;

@@ -32,10 +32,10 @@ use std::{
 use mtx_core::{
     Mandate,
     control::{
-        AddStrategy, Command, FeedStatus, MESSAGE_BYTES_MAX, OnPause, Reply, StrategyState,
-        StrategyStatus,
+        AddStrategy, Command, CommandKind, ControlError, ErrorCode, FeedStatus, MESSAGE_BYTES_MAX,
+        OnPause, Reply, StrategyState, StrategyStatus,
     },
-    events::{Event, PauseReason, Side as EventSide},
+    events::{Event, PauseReason, Side as EventSide, StepTimings},
     mandate::{InstrumentRef, Observed},
 };
 use mtx_kit::chain::RpcChainClient;
@@ -47,10 +47,10 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use super::{
     bot::{self, BotSpec},
-    feed::{AccountCache, FeedProgress, Watch},
+    feed::{AccountCache, FeedProgress, SlotClock, Watch},
     perp::PerpReader,
 };
-use crate::desk::{Clock, WasmBot};
+use crate::desk::{Clock, TurnTimings, WasmBot};
 
 /// Where the runtime takes commands and keeps its strategies: the
 /// `control` member of its configuration.
@@ -74,12 +74,30 @@ pub struct ControlConfig {
     /// Send over the leaders' TPU rather than the node's RPC.
     #[serde(default)]
     pub tpu: Option<super::tpu::TpuConfig>,
+    /// The strategies' worker threads: steps run on them, at once across
+    /// strategies.
+    #[serde(default = "default_workers")]
+    pub workers: usize,
+    /// Cores to pin the strategies' threads to, away from the validator's
+    /// busiest: a step that never waits on a busy core. Unpinned without.
+    #[serde(default)]
+    pub cores: Option<Vec<usize>>,
     /// The Unix socket a sidecar reads the runtime's events on
     /// ([`super::events`], `docs/sidecar.md`). A file already there is
     /// removed first.
     #[serde(default)]
     pub events: Option<PathBuf>,
 }
+
+/// Four: a step is a fraction of a millisecond of one core, and four let
+/// a handful of strategies step at once with room for their sends.
+fn default_workers() -> usize {
+    4
+}
+
+/// The most worker threads: a runtime beside a validator takes a few
+/// cores, not the machine.
+const WORKERS_MAX: usize = 16;
 
 fn default_step_deadline_ms() -> u64 {
     DEFAULT_STEP_DEADLINE_MS
@@ -96,9 +114,8 @@ pub const STRATEGIES_MAX: usize = 32;
 /// connection, and a person types them.
 const COMMANDS_WAITING_MAX: usize = 16;
 
-/// How often the control thread looks for a connection: a person typing
-/// `mtx live` waits this long at most.
-const ACCEPT_LOOKS_EVERY: Duration = Duration::from_millis(50);
+/// Control connections at once: a sidecar's, its UI's, and people's.
+const CONTROL_CONNECTIONS_MAX: usize = 16;
 
 /// How often the feed's metrics are recorded, in slots: every few seconds,
 /// a Grafana panel's resolution.
@@ -154,6 +171,10 @@ pub struct Shared {
     pub progress: FeedProgress,
     /// What a sidecar is told as it happens.
     pub events: super::events::Events,
+    /// The newest blockhash, for the strategies' transactions.
+    pub blockhash: Arc<super::blockhash::LatestBlockhash>,
+    /// Market readings, shared across strategies.
+    pub readings: Arc<super::bot::Readings>,
 }
 
 /// What the strategies' thread starts with besides the configuration.
@@ -181,14 +202,11 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
     if let Some(socket) = &config.events {
         super::events::listen(socket, shared.events.clone(), commands.clone())?;
     }
+    let sockets = (config.socket.clone(), config.events.clone());
     std::thread::Builder::new()
         .name("mtx-live-strategies".into())
         .spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .enable_all()
-                .build()
-            {
+            let runtime = match strategies_runtime(&config) {
                 Ok(runtime) => runtime,
                 Err(error) => {
                     tracing::error!(%error, "no async runtime for strategies; none will run");
@@ -213,45 +231,83 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
                 manager.restore().await;
                 manager.serve(slots, received).await;
             });
+            // The commands' receiver is gone with the manager: the
+            // listeners see it once woken.
+            wake(&sockets.0);
+            if let Some(events) = &sockets.1 {
+                wake(events);
+            }
         })
         .map_err(|e| format!("the strategies' thread: {e}"))?;
     Ok(())
 }
 
+/// The strategies' async runtime: its worker threads, pinned to the cores
+/// the configuration names, one a thread, round the list.
+fn strategies_runtime(config: &ControlConfig) -> std::io::Result<tokio::runtime::Runtime> {
+    let workers = config.workers.clamp(1, WORKERS_MAX);
+    let cores = config.cores.clone().unwrap_or_default();
+    let next = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.worker_threads(workers).enable_all();
+    if !cores.is_empty() {
+        builder.on_thread_start(move || {
+            let core = cores[next.fetch_add(1, Ordering::Relaxed) % cores.len()];
+            if !core_affinity::set_for_current(core_affinity::CoreId { id: core }) {
+                tracing::warn!(core, "a strategies' thread couldn't be pinned");
+            }
+        });
+    }
+    builder.build()
+}
+
 /// A command and where its reply goes.
 type Request = super::events::Request;
 
-/// Take commands on `socket`, one a connection, on a thread of their own,
-/// and hand each to the manager.
+/// Take commands on `socket`, on threads of their own, and hand each to
+/// the manager. A connection may carry many commands, each answered before
+/// the next is read: a sidecar connects once.
 fn listen(socket: &Path, commands: mpsc::Sender<Request>) -> Result<(), String> {
     match std::fs::remove_file(socket) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("{}: {e}", socket.display())),
     }
+    // Blocking: a connection is answered the moment it comes. When the
+    // strategies stop, their thread connects once to wake this one, which
+    // sees them gone and ends ([`wake`]).
     let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
-    // Not blocking, so the thread sees when the strategies stop (the
-    // runtime was unloaded) and ends, rather than waiting on a socket
-    // nobody will answer.
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("{}: {e}", socket.display()))?;
+    let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     std::thread::Builder::new()
         .name("mtx-live-control".into())
         .spawn(move || {
-            while !commands.is_closed() {
-                match listener.accept() {
+            loop {
+                let accepted = listener.accept();
+                if commands.is_closed() {
+                    return;
+                }
+                match accepted {
                     Ok((stream, _)) => {
-                        let answered = stream
-                            .set_nonblocking(false)
-                            .map_err(|e| e.to_string())
-                            .and_then(|()| answer(stream, &commands));
-                        if let Err(error) = answered {
-                            tracing::warn!(%error, "a control connection failed");
+                        if open.load(Ordering::Acquire) >= CONTROL_CONNECTIONS_MAX {
+                            tracing::warn!(
+                                max = CONTROL_CONNECTIONS_MAX,
+                                "a control connection refused: too many"
+                            );
+                            continue;
                         }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(ACCEPT_LOOKS_EVERY);
+                        open.fetch_add(1, Ordering::AcqRel);
+                        let (commands, open) = (commands.clone(), open.clone());
+                        let spawned = std::thread::Builder::new()
+                            .name("mtx-live-control-connection".into())
+                            .spawn(move || {
+                                if let Err(error) = answer(stream, &commands) {
+                                    tracing::warn!(%error, "a control connection failed");
+                                }
+                                open.fetch_sub(1, Ordering::AcqRel);
+                            });
+                        if let Err(error) = spawned {
+                            tracing::warn!(%error, "a control connection's thread didn't start");
+                        }
                     }
                     Err(error) => tracing::warn!(%error, "a control connection failed"),
                 }
@@ -261,31 +317,54 @@ fn listen(socket: &Path, commands: mpsc::Sender<Request>) -> Result<(), String> 
     Ok(())
 }
 
+/// Answer one connection's commands, in order, until it closes.
 fn answer(stream: UnixStream, commands: &mpsc::Sender<Request>) -> Result<(), String> {
-    let mut line = String::new();
-    BufReader::new(stream.try_clone().map_err(|e| e.to_string())?)
-        .take(MESSAGE_BYTES_MAX as u64)
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    let reply = match serde_json::from_str::<Command>(&line) {
-        Ok(command) => {
-            let (reply, replied) = oneshot::channel();
-            commands
-                .blocking_send((command, reply))
-                .map_err(|_| "the runtime's strategies stopped".to_string())?;
-            replied
-                .blocking_recv()
-                .map_err(|_| "the runtime dropped the command".to_string())?
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
+    let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
+    let mut writer = &stream;
+    loop {
+        let mut line = String::new();
+        let read = (&mut reader)
+            .take(MESSAGE_BYTES_MAX as u64)
+            .read_line(&mut line)
+            .map_err(|e| e.to_string())?;
+        if read == 0 {
+            return Ok(());
         }
-        Err(error) => Reply::Error {
-            error: format!("not a command: {error}"),
-        },
-    };
-    let mut text = serde_json::to_string(&reply).map_err(|e| e.to_string())?;
-    text.push('\n');
-    (&stream)
-        .write_all(text.as_bytes())
-        .map_err(|e| e.to_string())
+        let reply = match serde_json::from_str::<Command>(&line) {
+            Ok(command) => {
+                let (reply, replied) = oneshot::channel();
+                match commands.blocking_send((command, reply)) {
+                    Ok(()) => replied.blocking_recv().unwrap_or_else(|_| stopped()),
+                    Err(_) => stopped(),
+                }
+            }
+            Err(error) => Reply::Error {
+                error: ControlError::new(ErrorCode::NotACommand, format!("not a command: {error}")),
+            },
+        };
+        let mut text = serde_json::to_string(&reply).map_err(|e| e.to_string())?;
+        text.push('\n');
+        writer
+            .write_all(text.as_bytes())
+            .map_err(|e| e.to_string())?;
+        // A line past the bound was cut, and the rest of it is no command.
+        if !line.ends_with('\n') {
+            return Err(format!("a command past {MESSAGE_BYTES_MAX} bytes"));
+        }
+    }
+}
+
+/// Wake a listener blocked on `socket` so it sees the strategies gone. A
+/// listener already gone has nothing to wake.
+fn wake(socket: &Path) {
+    drop(UnixStream::connect(socket));
+}
+
+fn stopped() -> Reply {
+    Reply::Error {
+        error: ControlError::new(ErrorCode::Stopped, "the runtime's strategies stopped"),
+    }
 }
 
 /// One strategy the runtime runs.
@@ -332,6 +411,247 @@ struct Stats {
     drawdown: Option<f64>,
 }
 
+/// What a strategy is started with, apart from the manager: cloned onto
+/// a task, so that an `add`'s slow work (its files, its accounts from the
+/// node, its component) doesn't hold the other strategies' steps.
+#[derive(Clone)]
+struct Ctx {
+    config: ControlConfig,
+    shared: Shared,
+    tpu: Option<Arc<super::tpu::Tpu>>,
+}
+
+impl Ctx {
+    /// Read `spec`'s files and accounts, and start its component: the
+    /// strategy, paused unless it runs, or stopped if its component didn't
+    /// start (kept, so the desired state still holds it). `restored` is
+    /// the component's hash when the desired state brings it back.
+    async fn prepare(
+        &self,
+        spec: AddStrategy,
+        restored: Option<String>,
+        slot: u64,
+    ) -> Result<Strategy, ControlError> {
+        let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol).map_err(invalid)?;
+        let component =
+            std::fs::read(&spec.component).map_err(|e| unreadable(&spec.component, e))?;
+        let component_sha256 = format!("{:x}", Sha256::digest(&component));
+        let keypair =
+            read_keypair(&spec.keypair).map_err(|e| ControlError::new(ErrorCode::Unreadable, e))?;
+        let authority = solana_signer::Signer::pubkey(&keypair);
+        let exchange =
+            std::fs::read_to_string(&spec.exchange).map_err(|e| unreadable(&spec.exchange, e))?;
+        let exchange =
+            serde_json::from_str(&exchange).map_err(|e| unreadable(&spec.exchange, e))?;
+        let reader = PerpReader::new(exchange, &spec.symbol, &authority).map_err(invalid)?;
+        // A shadow run's key may have no account on the venue: flat, since
+        // it sends nothing.
+        let reader = match spec.shadow {
+            true => reader.flat_without_account(),
+            false => reader,
+        };
+        self.backfill(&reader)
+            .await
+            .map_err(|e| ControlError::new(ErrorCode::StartFailed, e))?;
+        let strategy = Strategy {
+            component_sha256: component_sha256.clone(),
+            authority,
+            keypair: Arc::new(keypair),
+            reader,
+            slot: Arc::new(AtomicU64::new(slot)),
+            cap,
+            max_drawdown,
+            inner: Arc::new(tokio::sync::Mutex::new(Inner {
+                bot: None,
+                k: 0,
+                observed: Observed::default(),
+            })),
+            stats: Arc::new(Mutex::new(Stats {
+                state: StrategyState::Paused {
+                    why: "added".into(),
+                },
+                steps: 0,
+                skipped: 0,
+                due: 0,
+                last_step_ms: None,
+                sends_landed: 0,
+                sends_failed: 0,
+                last_send_error: None,
+                last_slot: None,
+                position: None,
+                pnl: None,
+                drawdown: None,
+            })),
+            spec: spec.clone(),
+        };
+        let state = match restored {
+            Some(hash) if hash != component_sha256 => Err(format!(
+                "its component changed since it was added (sha256 {hash}, now {component_sha256})"
+            )),
+            _ => self.start_bot(&spec, &strategy, slot).await,
+        };
+        match state {
+            Ok(bot) => {
+                strategy.inner.lock().await.bot = Some(bot);
+                let mut stats = lock(&strategy.stats);
+                stats.due = slot;
+                if spec.run {
+                    stats.state = StrategyState::Running;
+                }
+            }
+            Err(why) => {
+                // Kept, stopped, so the desired state still holds it: the
+                // add is done, and the event says it can't step.
+                self.shared.events.emit(Event::Stopped {
+                    strategy: spec.name.clone(),
+                    why: why.clone(),
+                });
+                lock(&strategy.stats).state = StrategyState::Stopped { why };
+            }
+        }
+        Ok(strategy)
+    }
+
+    async fn start_bot(
+        &self,
+        spec: &AddStrategy,
+        strategy: &Strategy,
+        start_slot: u64,
+    ) -> Result<WasmBot, String> {
+        let log_path = self.config.logs.join(format!("{}.log", spec.name));
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| format!("{}: {e}", log_path.display()))?;
+        let end_slot = spec
+            .mandate
+            .term
+            .as_ref()
+            .map_or(u64::MAX, |t| t.until_slot);
+        let steps = match spec.mandate.term {
+            Some(_) => end_slot.saturating_sub(start_slot) / spec.slots_per_step,
+            None => NO_TERM_STEPS,
+        };
+        bot::start(BotSpec {
+            component: &spec.component,
+            rpc_url: &self.config.rpc_url,
+            keypair: &strategy.keypair,
+            exchange_path: &spec.exchange,
+            symbol: &spec.symbol,
+            mandate: &spec.mandate,
+            clock: Clock {
+                seed: mtx_core::turns::scenario_seed(&spec.name),
+                steps,
+                slots_per_step: spec.slots_per_step,
+                start_slot,
+                vars: Vec::new(),
+                reports: mtx_kit::Reports::default(),
+                step_deadline: Some(Duration::from_millis(self.config.step_deadline_ms)),
+            },
+            end_slot,
+            cap: strategy.cap,
+            max_drawdown: strategy.max_drawdown,
+            reader: strategy.reader.clone(),
+            cache: self.shared.cache.clone(),
+            slot: strategy.slot.clone(),
+            readings: self.shared.readings.clone(),
+            log: Box::new(log),
+            sends: self.sends(spec)?,
+            dispatch: self.dispatch(spec),
+            observer: Some(Arc::new(
+                super::journal::Journal::open(
+                    &self.config.logs,
+                    &spec.name,
+                    spec.shadow,
+                    Some(self.tape_reader(spec)?),
+                    self.shared.events.clone(),
+                )?
+                .behind()?,
+            )),
+        })
+        .await
+    }
+
+    /// Where a strategy's journal reads its market's trades.
+    fn tape_reader(&self, spec: &AddStrategy) -> Result<super::journal::TapeReader, String> {
+        let json = std::fs::read_to_string(&spec.exchange)
+            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
+        let venue = mtx_kit::venue::PhoenixVenue::from_json(&json)?;
+        let market =
+            mtx_kit::protocols::phoenix::eternal::PhoenixExchange::new(venue.exchange().clone())
+                .market(&spec.symbol)
+                .map_err(|e| e.to_string())?;
+        Ok(super::journal::TapeReader::new(
+            self.shared.watch.clone(),
+            market,
+        ))
+    }
+
+    /// Whether a strategy's orders wait to land: never through a shadow or
+    /// the TPU, which watch for a send's fate after it; the node's own
+    /// simulation first only where the TPU is told to (`preflight`).
+    fn dispatch(&self, spec: &AddStrategy) -> mtx_kit::protocols::phoenix::eternal::Dispatch {
+        use mtx_kit::protocols::phoenix::eternal::Dispatch;
+        match (&self.tpu, &self.config.tpu) {
+            _ if spec.shadow => Dispatch::FireAndForget { simulate: false },
+            (Some(_), Some(config)) => Dispatch::FireAndForget {
+                simulate: config.preflight,
+            },
+            _ => Dispatch::Confirm,
+        }
+    }
+
+    /// The chain a strategy's orders go through: nowhere in a shadow run,
+    /// the leaders' TPU when the runtime sends so, else the node's RPC.
+    fn sends(
+        &self,
+        spec: &AddStrategy,
+    ) -> Result<Option<Arc<dyn mtx_kit::chain::ChainClient>>, String> {
+        let rpc = || RpcChainClient::new(self.config.rpc_url.clone());
+        if spec.shadow {
+            let journal = self.config.logs.join(format!("{}.shadow.jsonl", spec.name));
+            return Ok(Some(Arc::new(super::shadow::ShadowChain::live(
+                rpc(),
+                &journal,
+                &spec.name,
+                self.shared.blockhash.clone(),
+                Some(self.shared.progress.clone()),
+            )?)));
+        }
+        Ok(self.tpu.as_ref().map(|tpu| {
+            Arc::new(super::tpu::TpuChainClient::new(
+                rpc(),
+                tpu.clone(),
+                &spec.name,
+                self.shared.blockhash.clone(),
+                self.shared.events.clone(),
+            )) as Arc<dyn mtx_kit::chain::ChainClient>
+        }))
+    }
+
+    /// Watch a new strategy's accounts, and read them once from the node:
+    /// the feed only tells of writes.
+    async fn backfill(&self, reader: &PerpReader) -> Result<(), String> {
+        let addresses = reader.addresses();
+        for address in &addresses {
+            self.shared.watch.add(*address);
+        }
+        let chain = RpcChainClient::with_timeout(&self.config.rpc_url, BACKFILL_TIMEOUT);
+        let mut found = AccountCache::default();
+        super::backfill(&chain, &addresses, &mut found).await?;
+        lock(&self.shared.cache).merge(found);
+        Ok(())
+    }
+}
+
+/// An `add` prepared off the strategies' loop, and where its answer goes.
+struct Prepared {
+    spec: AddStrategy,
+    outcome: Result<Strategy, ControlError>,
+    reply: oneshot::Sender<Reply>,
+}
+
 struct Manager {
     config: ControlConfig,
     shared: Shared,
@@ -348,6 +668,10 @@ struct Manager {
     /// The trades of each market a strategy runs on, by symbol, read once
     /// for the event socket however many strategies share the market.
     tapes: BTreeMap<String, super::journal::TapeReader>,
+    /// Strategies being added, off the loop: their names are taken.
+    adding: std::collections::BTreeSet<String>,
+    /// Where an `add`'s task hands back the strategy it prepared.
+    prepared: (mpsc::Sender<Prepared>, Option<mpsc::Receiver<Prepared>>),
 }
 
 impl Manager {
@@ -360,6 +684,19 @@ impl Manager {
             held: Vec::new(),
             slot: 0,
             tapes: BTreeMap::new(),
+            adding: std::collections::BTreeSet::new(),
+            prepared: {
+                let (sender, receiver) = mpsc::channel(STRATEGIES_MAX);
+                (sender, Some(receiver))
+            },
+        }
+    }
+
+    fn ctx(&self) -> Ctx {
+        Ctx {
+            config: self.config.clone(),
+            shared: self.shared.clone(),
+            tpu: self.tpu.clone(),
         }
     }
 
@@ -374,7 +711,7 @@ impl Manager {
             .map(|s| s.spec.clone())
             .collect();
         for spec in wanted {
-            match self.tape_reader(&spec) {
+            match self.ctx().tape_reader(&spec) {
                 Ok(reader) => {
                     self.tapes.insert(spec.symbol.clone(), reader);
                 }
@@ -466,8 +803,14 @@ impl Manager {
         mut slots: watch::Receiver<u64>,
         mut commands: mpsc::Receiver<Request>,
     ) {
+        let mut prepared = self.prepared.1.take().expect("the strategies serve once");
         loop {
             tokio::select! {
+                done = prepared.recv() => {
+                    if let Some(done) = done {
+                        self.finish_add(done);
+                    }
+                }
                 changed = slots.changed() => {
                     if changed.is_err() {
                         return;
@@ -484,11 +827,18 @@ impl Manager {
                         }
                     }
                     self.step(self.slot).await;
+                    // After the steps are on their way: decoding the tape
+                    // for the event stream is no strategy's business.
+                    self.emit_trades();
                 }
                 request = commands.recv() => {
                     let Some((command, reply)) = request else {
                         return;
                     };
+                    if let Command::Add(spec) = command {
+                        self.begin_add(spec, reply);
+                        continue;
+                    }
                     let answer = self.handle(command).await;
                     // A client that hung up doesn't need the answer.
                     let _ = reply.send(answer);
@@ -499,7 +849,7 @@ impl Manager {
 
     /// Step every running strategy whose step is due at `slot`.
     async fn step(&mut self, slot: u64) {
-        self.emit_trades();
+        let woke = std::time::Instant::now();
         let progress = &self.shared.progress;
         self.shared.events.emit(Event::Slot {
             slot,
@@ -562,6 +912,10 @@ impl Manager {
                     slot,
                     "a step is skipped: the one before still runs"
                 );
+                self.shared.events.emit(Event::StepSkipped {
+                    strategy: name.clone(),
+                    slot,
+                });
                 continue;
             };
             drop(stats);
@@ -572,6 +926,7 @@ impl Manager {
             let instrument = instrument_of(&strategy.spec.symbol);
             let shadow = strategy.spec.shadow;
             let events = self.shared.events.clone();
+            let clock = self.shared.progress.clocks().get(slot);
             // The step's clock starts as its slot reaches the strategies.
             let started = std::time::Instant::now();
             let span = tracing::info_span!(
@@ -589,7 +944,10 @@ impl Manager {
                     let Some(bot) = inner.bot.as_mut() else {
                         return;
                     };
-                    if !tokio::task::block_in_place(|| progress.settle(SETTLE_WITHIN)) {
+                    let settling = std::time::Instant::now();
+                    let settled = tokio::task::block_in_place(|| progress.settle(SETTLE_WITHIN));
+                    let settle_us = micros(settling);
+                    if !settled {
                         tracing::warn!(
                             name,
                             slot,
@@ -599,7 +957,9 @@ impl Manager {
                     slot_cell.store(slot, Ordering::Release);
                     let step = mtx_core::Step::new(inner.k, slot, false);
                     let answered = bot.turn(&step, None).await;
+                    let ended = std::time::Instant::now();
                     let took_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    let timings = step_timings(clock, woke, settle_us, bot.last_timings(), ended);
                     let current = tracing::Span::current();
                     current.record("answered", answered);
                     current.record("step_ms", took_ms);
@@ -659,8 +1019,14 @@ impl Manager {
                             stats.pnl = Some(market.pnl);
                             stats.drawdown = Some(market.drawdown);
                         }
-                        if let Some(why) = &bot.stopped {
+                        if let Some(why) = &bot.stopped
+                            && !matches!(stats.state, StrategyState::Stopped { .. })
+                        {
                             stats.state = StrategyState::Stopped { why: why.clone() };
+                            events.emit(Event::Stopped {
+                                strategy: name.clone(),
+                                why: why.clone(),
+                            });
                         }
                         let paused = match (&breach, &stats.state) {
                             (Some(breach), StrategyState::Running) => {
@@ -701,6 +1067,7 @@ impl Manager {
                             slot,
                             k: inner.k - 1,
                             step_ms: took_ms,
+                            timings,
                             answered,
                             shadow,
                             orders: bot.last_orders(),
@@ -726,49 +1093,55 @@ impl Manager {
     }
 
     async fn handle(&mut self, command: Command) -> Reply {
-        let kind = match &command {
-            Command::Status => "status",
-            Command::Pause { .. } => "pause",
-            Command::Resume { .. } => "resume",
-            Command::Mandate { .. } => "mandate",
-            Command::Add(_) => "add",
-            Command::Remove { .. } => "remove",
-            Command::Kill => "kill",
-        };
-        let span = tracing::info_span!("control.command", command = kind);
+        let kind = command.kind();
+        let span = tracing::info_span!("control.command", command = kind.as_str());
         let reply = tracing::Instrument::instrument(self.handle_in_span(command), span).await;
-        let outcome = match &reply {
-            Reply::Ok { .. } => "ok",
-            Reply::Error { .. } => "error",
-        };
-        if kind != "status" {
-            let error = match &reply {
-                Reply::Error { error } => Some(error.clone()),
-                Reply::Ok { .. } => None,
-            };
-            self.shared.events.emit(Event::Command {
-                command: kind.to_string(),
-                ok: error.is_none(),
-                error,
-            });
+        self.report(kind, &reply);
+        reply
+    }
+
+    /// Tell the logs, the metrics and the event stream what a command that
+    /// changes something came to.
+    fn report(&self, kind: CommandKind, reply: &Reply) {
+        if !kind.changes() {
+            return;
         }
-        match &reply {
-            Reply::Error { error } if kind != "status" => tracing::warn!(
+        let error = match reply {
+            Reply::Error { error } => Some(error.clone()),
+            Reply::Ok { .. } => None,
+        };
+        match &error {
+            Some(error) => tracing::warn!(
                 counter.mtx_control_commands = 1_u64,
-                command = kind,
-                outcome,
-                %error,
+                command = kind.as_str(),
+                outcome = "error",
+                code = ?error.code,
+                error = %error.error,
                 "a command was refused"
             ),
-            _ if kind != "status" => tracing::info!(
+            None => tracing::info!(
                 counter.mtx_control_commands = 1_u64,
-                command = kind,
-                outcome,
+                command = kind.as_str(),
+                outcome = "ok",
                 "a command was done"
             ),
-            _ => {}
         }
-        reply
+        self.shared.events.emit(Event::Command {
+            command: kind,
+            error,
+        });
+    }
+
+    /// The answer to a command done: the feed and every strategy.
+    fn ok(&self) -> Reply {
+        Reply::Ok {
+            feed: FeedStatus {
+                slot: self.slot,
+                behind: self.shared.progress.slots_behind(),
+                dropped: self.shared.progress.dropped(),
+            },
+            strategies: self.status(),
+        }
     }
 
     async fn handle_in_span(&mut self, command: Command) -> Reply {
@@ -792,31 +1165,22 @@ impl Manager {
             Command::Remove { name } => self.remove(&name).await,
         };
         let persisted = done.and_then(|()| match changes {
-            true => self.persist(),
+            true => self
+                .persist()
+                .map_err(|e| ControlError::new(ErrorCode::NotPersisted, e)),
             false => Ok(()),
         });
         match persisted {
-            Ok(()) => Reply::Ok {
-                feed: FeedStatus {
-                    slot: self.slot,
-                    behind: self.shared.progress.slots_behind(),
-                    dropped: self.shared.progress.dropped(),
-                },
-                strategies: self.status(),
-            },
+            Ok(()) => self.ok(),
             Err(error) => Reply::Error { error },
         }
     }
 
     /// Do `action` to `name`, or to every strategy.
-    async fn each<'a, F, Fut>(
-        &'a mut self,
-        name: Option<String>,
-        mut action: F,
-    ) -> Result<(), String>
+    async fn each<'a, F, Fut>(&'a mut self, name: Option<String>, mut action: F) -> Done
     where
         F: FnMut(&'a Self, &'a str) -> Fut,
-        Fut: std::future::Future<Output = Result<(), String>> + 'a,
+        Fut: std::future::Future<Output = Done> + 'a,
     {
         let this: &'a Self = self;
         match name {
@@ -824,7 +1188,7 @@ impl Manager {
                 let (name, _) = this
                     .strategies
                     .get_key_value(&name)
-                    .ok_or_else(|| format!("no strategy {name}"))?;
+                    .ok_or_else(|| unknown(&name))?;
                 action(this, name).await
             }
             None => {
@@ -836,13 +1200,13 @@ impl Manager {
         }
     }
 
-    async fn pause_by_command(&self, name: &str, orders: OnPause) -> Result<(), String> {
+    async fn pause_by_command(&self, name: &str, orders: OnPause) -> Done {
         self.pause(name, orders, "paused".to_string()).await
     }
 
     /// Stop stepping `name`, at its step boundary, and do `orders` to its
     /// resting orders. A stopped strategy stays stopped.
-    async fn pause(&self, name: &str, orders: OnPause, why: String) -> Result<(), String> {
+    async fn pause(&self, name: &str, orders: OnPause, why: String) -> Done {
         let strategy = self.get(name)?;
         let mut inner = strategy.inner.lock().await;
         {
@@ -860,12 +1224,17 @@ impl Manager {
             OnPause::Cancel => cancelled(bot.cancel_all().await),
             OnPause::Flatten => {
                 cancelled(bot.cancel_all().await)?;
-                bot.flatten(FLATTEN_SLIPPAGE).await
+                bot.flatten(FLATTEN_SLIPPAGE).await.map_err(|e| {
+                    ControlError::new(
+                        ErrorCode::Failed,
+                        format!("the position couldn't be closed: {e}"),
+                    )
+                })
             }
         }
     }
 
-    async fn resume(&self, name: &str) -> Result<(), String> {
+    async fn resume(&self, name: &str) -> Done {
         let strategy = self.get(name)?;
         let mut stats = lock(&strategy.stats);
         if let StrategyState::Paused { .. } = stats.state {
@@ -876,9 +1245,10 @@ impl Manager {
     }
 
     /// Restart `name` under `mandate`, paused or running as it was.
-    async fn change_mandate(&mut self, name: &str, mandate: Mandate) -> Result<(), String> {
-        mandate.validate()?;
-        let (cap, max_drawdown) = limits(&mandate, &self.get(name)?.spec.symbol)?;
+    async fn change_mandate(&mut self, name: &str, mandate: Mandate) -> Done {
+        mandate.validate().map_err(invalid)?;
+        let (cap, max_drawdown) =
+            limits(&mandate, &self.get(name)?.spec.symbol).map_err(invalid)?;
         let start_slot = self.slot;
         let strategy = self.get(name)?;
         let mut spec = strategy.spec.clone();
@@ -887,7 +1257,7 @@ impl Manager {
         if let Some(mut bot) = inner.bot.take() {
             bot.end().await;
         }
-        let bot = self.start_bot(&spec, strategy, start_slot).await;
+        let bot = self.ctx().start_bot(&spec, strategy, start_slot).await;
         let stopped = bot.as_ref().err().cloned();
         inner.bot = bot.ok();
         inner.k = 0;
@@ -903,104 +1273,110 @@ impl Manager {
         strategy.max_drawdown = max_drawdown;
         if let Some(why) = stopped {
             lock(&strategy.stats).state = StrategyState::Stopped { why: why.clone() };
-            return Err(why);
+            return Err(ControlError::new(ErrorCode::StartFailed, why));
         }
         Ok(())
     }
 
     /// Compile, start and keep `spec`: paused unless it runs. `restored`
     /// is the component's hash when the desired state brings it back.
-    async fn add(&mut self, spec: AddStrategy, restored: Option<String>) -> Result<(), String> {
+    async fn add(&mut self, spec: AddStrategy, restored: Option<String>) -> Done {
+        self.check_add(&spec, restored.is_some())?;
+        let name = spec.name.clone();
+        let strategy = self.ctx().prepare(spec, restored, self.slot).await?;
+        self.strategies.insert(name, strategy);
+        Ok(())
+    }
+
+    /// What an `add` can be refused for at once, before its slow work: a
+    /// name taken (by a strategy, one held, or one being added), no room,
+    /// a malformed step or mandate.
+    fn check_add(&self, spec: &AddStrategy, restoring: bool) -> Done {
         let held = self
             .held
             .iter()
             .any(|(stored, _)| stored.spec.name == spec.name);
-        if self.strategies.contains_key(&spec.name) || (restored.is_none() && held) {
-            return Err(format!("a strategy is already named {}", spec.name));
+        if self.strategies.contains_key(&spec.name)
+            || self.adding.contains(&spec.name)
+            || (!restoring && held)
+        {
+            return Err(ControlError::new(
+                ErrorCode::Exists,
+                format!("a strategy is already named {}", spec.name),
+            ));
         }
-        if self.strategies.len() == STRATEGIES_MAX {
-            return Err(format!(
-                "a runtime runs at most {STRATEGIES_MAX} strategies"
+        if self.strategies.len() + self.adding.len() >= STRATEGIES_MAX {
+            return Err(ControlError::new(
+                ErrorCode::TooMany,
+                format!("a runtime runs at most {STRATEGIES_MAX} strategies"),
             ));
         }
         if spec.slots_per_step == 0 {
-            return Err("a strategy steps every slot at most: slots_per_step is at least 1".into());
+            return Err(invalid(
+                "a strategy steps every slot at most: slots_per_step is at least 1".into(),
+            ));
         }
-        spec.mandate.validate()?;
-        let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol)?;
-        let component = std::fs::read(&spec.component)
-            .map_err(|e| format!("{}: {e}", spec.component.display()))?;
-        let component_sha256 = format!("{:x}", Sha256::digest(&component));
-        let keypair = read_keypair(&spec.keypair)?;
-        let authority = solana_signer::Signer::pubkey(&keypair);
-        let exchange = std::fs::read_to_string(&spec.exchange)
-            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
-        let exchange = serde_json::from_str(&exchange)
-            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
-        let reader = PerpReader::new(exchange, &spec.symbol, &authority)?;
-        // A shadow run's key may have no account on the venue: flat, since
-        // it sends nothing.
-        let reader = match spec.shadow {
-            true => reader.flat_without_account(),
-            false => reader,
-        };
-        self.backfill(&reader).await?;
-        let strategy = Strategy {
-            component_sha256: component_sha256.clone(),
-            authority,
-            keypair: Arc::new(keypair),
-            reader,
-            slot: Arc::new(AtomicU64::new(self.slot)),
-            cap,
-            max_drawdown,
-            inner: Arc::new(tokio::sync::Mutex::new(Inner {
-                bot: None,
-                k: 0,
-                observed: Observed::default(),
-            })),
-            stats: Arc::new(Mutex::new(Stats {
-                state: StrategyState::Paused {
-                    why: "added".into(),
-                },
-                steps: 0,
-                skipped: 0,
-                due: 0,
-                last_step_ms: None,
-                sends_landed: 0,
-                sends_failed: 0,
-                last_send_error: None,
-                last_slot: None,
-                position: None,
-                pnl: None,
-                drawdown: None,
-            })),
-            spec: spec.clone(),
-        };
-        let state = match restored {
-            Some(hash) if hash != component_sha256 => Err(format!(
-                "its component changed since it was added (sha256 {hash}, now {component_sha256})"
-            )),
-            _ => self.start_bot(&spec, &strategy, self.slot).await,
-        };
-        match state {
-            Ok(bot) => {
-                strategy.inner.lock().await.bot = Some(bot);
-                let mut stats = lock(&strategy.stats);
-                stats.due = self.slot;
-                if spec.run {
-                    stats.state = StrategyState::Running;
-                }
-            }
-            Err(why) => {
-                lock(&strategy.stats).state = StrategyState::Stopped { why };
-            }
-        }
-        self.strategies.insert(spec.name.clone(), strategy);
+        spec.mandate.validate().map_err(invalid)?;
+        limits(&spec.mandate, &spec.symbol).map_err(invalid)?;
         Ok(())
     }
 
+    /// Start an `add` off the loop: refused at once if it can be, else
+    /// prepared on a task while the other strategies step, and finished
+    /// ([`Manager::finish_add`]) when it is ready.
+    fn begin_add(&mut self, spec: AddStrategy, reply: oneshot::Sender<Reply>) {
+        if let Err(error) = self.check_add(&spec, false) {
+            let answer = Reply::Error { error };
+            self.report(CommandKind::Add, &answer);
+            let _ = reply.send(answer);
+            return;
+        }
+        self.adding.insert(spec.name.clone());
+        let (ctx, slot, prepared) = (self.ctx(), self.slot, self.prepared.0.clone());
+        tokio::spawn(async move {
+            let outcome = ctx.prepare(spec.clone(), None, slot).await;
+            // The manager gone (the runtime stopping): nothing to finish.
+            let _ = prepared
+                .send(Prepared {
+                    spec,
+                    outcome,
+                    reply,
+                })
+                .await;
+        });
+    }
+
+    /// An `add` prepared off the loop: kept, written down, and answered.
+    fn finish_add(&mut self, prepared: Prepared) {
+        let Prepared {
+            spec,
+            outcome,
+            reply,
+        } = prepared;
+        self.adding.remove(&spec.name);
+        let answer = match outcome {
+            Ok(strategy) => {
+                if let Ok(mut stats) = strategy.stats.lock() {
+                    // It was prepared at an earlier slot: it steps from now.
+                    stats.due = stats.due.max(self.slot);
+                }
+                self.strategies.insert(spec.name.clone(), strategy);
+                match self.persist() {
+                    Ok(()) => self.ok(),
+                    Err(e) => Reply::Error {
+                        error: ControlError::new(ErrorCode::NotPersisted, e),
+                    },
+                }
+            }
+            Err(error) => Reply::Error { error },
+        };
+        self.report(CommandKind::Add, &answer);
+        // A client that hung up doesn't need the answer.
+        let _ = reply.send(answer);
+    }
+
     /// Pause `name`, cancel its orders, `end` it and forget it.
-    async fn remove(&mut self, name: &str) -> Result<(), String> {
+    async fn remove(&mut self, name: &str) -> Done {
         let held = self.held.len();
         self.held.retain(|(stored, _)| stored.spec.name != name);
         if self.held.len() < held {
@@ -1015,119 +1391,8 @@ impl Manager {
         Ok(())
     }
 
-    async fn start_bot(
-        &self,
-        spec: &AddStrategy,
-        strategy: &Strategy,
-        start_slot: u64,
-    ) -> Result<WasmBot, String> {
-        let log_path = self.config.logs.join(format!("{}.log", spec.name));
-        let log = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .map_err(|e| format!("{}: {e}", log_path.display()))?;
-        let end_slot = spec
-            .mandate
-            .term
-            .as_ref()
-            .map_or(u64::MAX, |t| t.until_slot);
-        let steps = match spec.mandate.term {
-            Some(_) => end_slot.saturating_sub(start_slot) / spec.slots_per_step,
-            None => NO_TERM_STEPS,
-        };
-        bot::start(BotSpec {
-            component: &spec.component,
-            rpc_url: &self.config.rpc_url,
-            keypair: &strategy.keypair,
-            exchange_path: &spec.exchange,
-            symbol: &spec.symbol,
-            mandate: &spec.mandate,
-            clock: Clock {
-                seed: mtx_core::turns::scenario_seed(&spec.name),
-                steps,
-                slots_per_step: spec.slots_per_step,
-                start_slot,
-                vars: Vec::new(),
-                reports: mtx_kit::Reports::default(),
-                step_deadline: Some(Duration::from_millis(self.config.step_deadline_ms)),
-            },
-            end_slot,
-            cap: strategy.cap,
-            max_drawdown: strategy.max_drawdown,
-            reader: strategy.reader.clone(),
-            cache: self.shared.cache.clone(),
-            slot: strategy.slot.clone(),
-            log: Box::new(log),
-            sends: self.sends(spec)?,
-            observer: Some(Arc::new(super::journal::Journal::open(
-                &self.config.logs,
-                &spec.name,
-                spec.shadow,
-                Some(self.tape_reader(spec)?),
-                self.shared.events.clone(),
-            )?)),
-        })
-        .await
-    }
-
-    /// Where a strategy's journal reads its market's trades.
-    fn tape_reader(&self, spec: &AddStrategy) -> Result<super::journal::TapeReader, String> {
-        let json = std::fs::read_to_string(&spec.exchange)
-            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
-        let venue = mtx_kit::venue::PhoenixVenue::from_json(&json)?;
-        let market =
-            mtx_kit::protocols::phoenix::eternal::PhoenixExchange::new(venue.exchange().clone())
-                .market(&spec.symbol)
-                .map_err(|e| e.to_string())?;
-        Ok(super::journal::TapeReader::new(
-            self.shared.watch.clone(),
-            market,
-        ))
-    }
-
-    /// The chain a strategy's orders go through: nowhere in a shadow run,
-    /// the leaders' TPU when the runtime sends so, else the node's RPC.
-    fn sends(
-        &self,
-        spec: &AddStrategy,
-    ) -> Result<Option<Arc<dyn mtx_kit::chain::ChainClient>>, String> {
-        let rpc = || RpcChainClient::new(self.config.rpc_url.clone());
-        if spec.shadow {
-            let journal = self.config.logs.join(format!("{}.shadow.jsonl", spec.name));
-            return Ok(Some(Arc::new(super::shadow::ShadowChain::new(
-                rpc(),
-                &journal,
-                &spec.name,
-            )?)));
-        }
-        Ok(self.tpu.as_ref().map(|tpu| {
-            Arc::new(super::tpu::TpuChainClient::new(
-                rpc(),
-                tpu.clone(),
-                &spec.name,
-            )) as Arc<dyn mtx_kit::chain::ChainClient>
-        }))
-    }
-
-    /// Watch a new strategy's accounts, and read them once from the node:
-    /// the feed only tells of writes.
-    async fn backfill(&self, reader: &PerpReader) -> Result<(), String> {
-        let addresses = reader.addresses();
-        for address in &addresses {
-            self.shared.watch.add(*address);
-        }
-        let chain = RpcChainClient::with_timeout(&self.config.rpc_url, BACKFILL_TIMEOUT);
-        let mut found = AccountCache::default();
-        super::backfill(&chain, &addresses, &mut found).await?;
-        lock(&self.shared.cache).merge(found);
-        Ok(())
-    }
-
-    fn get(&self, name: &str) -> Result<&Strategy, String> {
-        self.strategies
-            .get(name)
-            .ok_or_else(|| format!("no strategy {name}"))
+    fn get(&self, name: &str) -> Result<&Strategy, ControlError> {
+        self.strategies.get(name).ok_or_else(|| unknown(name))
     }
 
     fn status(&self) -> Vec<StrategyStatus> {
@@ -1233,6 +1498,51 @@ fn limits(mandate: &Mandate, symbol: &str) -> Result<(f64, f64), String> {
 }
 
 /// `symbol`'s perpetual, as mandates name it.
+fn micros(since: std::time::Instant) -> u64 {
+    u64::try_from(since.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
+fn between(from: std::time::Instant, to: std::time::Instant) -> u64 {
+    u64::try_from(to.saturating_duration_since(from).as_micros()).unwrap_or(u64::MAX)
+}
+
+/// A step's timings: from the validator's notice of its slot (`clock`),
+/// through the strategies waking (`woke`), the feed settling, the turn's
+/// stages, to the turn's end. Without the slot's clock (a slot older than
+/// the clocks keep), the feed's stages are 0 and the total starts at the
+/// wake.
+fn step_timings(
+    clock: Option<SlotClock>,
+    woke: std::time::Instant,
+    settle_us: u64,
+    turn: TurnTimings,
+    ended: std::time::Instant,
+) -> StepTimings {
+    let (notified, applied) = match clock {
+        Some(clock) => (clock.notified, clock.applied.unwrap_or(clock.notified)),
+        None => (woke, woke),
+    };
+    let timings = StepTimings {
+        feed_us: between(notified, applied),
+        wake_us: between(applied, woke),
+        settle_us,
+        read_us: turn.read_us,
+        call_us: turn.call_us,
+        send_us: turn.send_us,
+        total_us: between(notified, ended),
+    };
+    debug_assert!(
+        timings.total_us + 1_000
+            >= timings.feed_us
+                + timings.wake_us
+                + timings.read_us
+                + timings.call_us
+                + timings.send_us,
+        "the stages fit in the total: {timings:?}"
+    );
+    timings
+}
+
 fn instrument_of(symbol: &str) -> InstrumentRef {
     InstrumentRef {
         venue: crate::venue::perps::VENUE.into(),
@@ -1249,11 +1559,32 @@ fn read_keypair(path: &Path) -> Result<Keypair, String> {
 }
 
 /// Every cancel went through, or why not.
-fn cancelled(failed: Vec<String>) -> Result<(), String> {
+fn cancelled(failed: Vec<String>) -> Done {
     match failed.is_empty() {
         true => Ok(()),
-        false => Err(format!("orders not cancelled: {}", failed.join("; "))),
+        false => Err(ControlError::new(
+            ErrorCode::OrdersNotCancelled,
+            format!("orders not cancelled: {}", failed.join("; ")),
+        )),
     }
+}
+
+/// What a command's work comes to: done, or refused with a code.
+type Done = Result<(), ControlError>;
+
+fn unknown(name: &str) -> ControlError {
+    ControlError::new(ErrorCode::UnknownStrategy, format!("no strategy {name}"))
+}
+
+fn invalid(error: String) -> ControlError {
+    ControlError::new(ErrorCode::Invalid, error)
+}
+
+fn unreadable(path: &Path, error: impl std::fmt::Display) -> ControlError {
+    ControlError::new(
+        ErrorCode::Unreadable,
+        format!("{}: {error}", path.display()),
+    )
 }
 
 /// A lock no thread holds across a panic: each holder only copies numbers
@@ -1309,6 +1640,40 @@ mod tests {
     fn cancels_that_failed_say_which() {
         assert_eq!(cancelled(Vec::new()), Ok(()));
         let error = cancelled(vec!["phoenix:perp:SOL: refused".into()]).unwrap_err();
-        assert!(error.contains("phoenix:perp:SOL"), "{error}");
+        assert_eq!(error.code, ErrorCode::OrdersNotCancelled);
+        assert!(error.error.contains("phoenix:perp:SOL"), "{error}");
+    }
+
+    #[test]
+    fn a_step_s_stages_fit_in_its_total() {
+        let notified = std::time::Instant::now();
+        let applied = notified + std::time::Duration::from_micros(300);
+        let woke = applied + std::time::Duration::from_micros(200);
+        let ended = woke + std::time::Duration::from_micros(2_000);
+        let clock = SlotClock {
+            slot: 9,
+            notified,
+            applied: Some(applied),
+        };
+        let turn = TurnTimings {
+            read_us: 100,
+            call_us: 1_200,
+            send_us: 600,
+        };
+        let timings = step_timings(Some(clock), woke, 50, turn, ended);
+        assert_eq!(
+            (timings.feed_us, timings.wake_us, timings.total_us),
+            (300, 200, 2_500)
+        );
+        assert_eq!(
+            (timings.read_us, timings.call_us, timings.send_us),
+            (100, 1_200, 600)
+        );
+        // A slot the clocks no longer keep: the step is timed from its wake.
+        let timings = step_timings(None, woke, 0, turn, ended);
+        assert_eq!(
+            (timings.feed_us, timings.wake_us, timings.total_us),
+            (0, 0, 2_000)
+        );
     }
 }

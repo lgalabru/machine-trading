@@ -84,12 +84,25 @@ pub enum LiveCommand {
         #[arg(long, env = "MTX_LIVE_EVENTS")]
         events: PathBuf,
     },
+    /// Measure the runtime: for `--seconds`, each step's stages from the
+    /// validator's notice of its slot to its last send, the delay from the
+    /// runtime to this reader, and command round trips, as percentiles.
+    Latency {
+        /// The event socket.
+        #[arg(long, env = "MTX_LIVE_EVENTS")]
+        events: PathBuf,
+        #[arg(long, default_value_t = 60)]
+        seconds: u64,
+    },
 }
 
 /// Send `command` to the runtime at `socket`, and print what it answers.
 pub fn run(socket: &Path, command: LiveCommand, json: bool) -> Result<()> {
     if let LiveCommand::Watch { events } = &command {
         return watch(events, json);
+    }
+    if let LiveCommand::Latency { events, seconds } = &command {
+        return latency(socket, events, *seconds, json);
     }
     let request = to_request(command)?;
     let reply = mtx_core::control::request(socket, &request)
@@ -138,13 +151,15 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
             Event::Step {
                 strategy,
                 slot,
-                step_ms,
+                timings,
                 orders,
                 position,
                 pnl_usd,
                 ..
             } => format!(
-                "{strategy}: step at {slot}, {step_ms} ms, {orders} orders, position {position}, pnl {pnl_usd:.2}"
+                "{strategy}: step at {slot}, {:.2} ms from the slot (call {:.2}), {orders} orders, position {position}, pnl {pnl_usd:.2}",
+                timings.total_us as f64 / 1e3,
+                timings.call_us as f64 / 1e3
             ),
             Event::PaperFill {
                 strategy,
@@ -176,12 +191,28 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
                 reason,
                 why,
             } => format!("{strategy}: paused ({reason:?}): {why}"),
-            Event::Command { command, ok, error } => match error {
-                Some(error) => format!("command {command}: refused: {error}"),
-                None => format!(
-                    "command {command}: {}",
-                    if *ok { "done" } else { "refused" }
+            Event::Command { command, error } => match error {
+                Some(error) => format!("command {}: refused: {error}", command.as_str()),
+                None => format!("command {}: done", command.as_str()),
+            },
+            Event::StepSkipped { strategy, slot } => {
+                format!("{strategy}: step at {slot} skipped, the one before still ran")
+            }
+            Event::Stopped { strategy, why } => format!("{strategy}: stopped: {why}"),
+            Event::Fate {
+                strategy,
+                signature,
+                landed,
+                slot,
+                error,
+                after_us,
+            } => match (landed, slot, error) {
+                (true, Some(slot), _) => format!(
+                    "{strategy}: {signature} landed at {slot}, {:.0} ms after it was sent",
+                    *after_us as f64 / 1e3
                 ),
+                (_, _, Some(error)) => format!("{strategy}: {signature} failed: {error}"),
+                _ => format!("{strategy}: {signature} wasn't seen landing"),
             },
             Event::Lagged { dropped } => {
                 format!("lagged: {dropped} events lost; run `mtx live status`")
@@ -192,10 +223,126 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Percentiles of a sample, in microseconds.
+fn percentiles(name: &str, mut sample: Vec<u64>) -> serde_json::Value {
+    sample.sort_unstable();
+    let at = |p: f64| -> u64 {
+        if sample.is_empty() {
+            return 0;
+        }
+        let i = ((sample.len() - 1) as f64 * p).round() as usize;
+        sample[i]
+    };
+    serde_json::json!({
+        "stage": name,
+        "n": sample.len(),
+        "p50_us": at(0.5),
+        "p90_us": at(0.9),
+        "p99_us": at(0.99),
+        "max_us": sample.last().copied().unwrap_or(0),
+    })
+}
+
+/// Read the event stream for `seconds` and time each stage; then time
+/// command round trips, one connection each and on a kept one.
+fn latency(control: &Path, events: &Path, seconds: u64, json: bool) -> Result<()> {
+    use mtx_core::events::Event;
+    let now_us = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_micros() as u64)
+    };
+    let lines = mtx_core::events::subscribe(events)
+        .with_context(|| format!("the runtime's events at {}", events.display()))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
+    let mut stages: [(&str, Vec<u64>); 7] = [
+        ("feed", Vec::new()),
+        ("wake", Vec::new()),
+        ("settle", Vec::new()),
+        ("read", Vec::new()),
+        ("call", Vec::new()),
+        ("send", Vec::new()),
+        ("total", Vec::new()),
+    ];
+    let mut delivery = Vec::new();
+    let (mut skipped, mut lagged) = (0u64, 0u64);
+    for line in lines {
+        let line = line.context("an event line")?;
+        delivery.push(now_us().saturating_sub(line.at_us));
+        match line.event {
+            Event::Step { timings, .. } => {
+                let values = [
+                    timings.feed_us,
+                    timings.wake_us,
+                    timings.settle_us,
+                    timings.read_us,
+                    timings.call_us,
+                    timings.send_us,
+                    timings.total_us,
+                ];
+                for ((_, sample), value) in stages.iter_mut().zip(values) {
+                    sample.push(value);
+                }
+            }
+            Event::StepSkipped { .. } => skipped += 1,
+            Event::Lagged { dropped } => lagged += dropped,
+            _ => {}
+        }
+        if std::time::Instant::now() >= deadline {
+            break;
+        }
+    }
+    let rounds = 100;
+    let mut one_shot = Vec::with_capacity(rounds);
+    for _ in 0..rounds {
+        let started = std::time::Instant::now();
+        mtx_core::control::request(control, &Command::Status)?;
+        one_shot.push(started.elapsed().as_micros() as u64);
+    }
+    let mut client = mtx_core::control::Client::connect(control)?;
+    let mut kept = Vec::with_capacity(rounds);
+    for _ in 0..rounds {
+        let started = std::time::Instant::now();
+        client.send(&Command::Status)?;
+        kept.push(started.elapsed().as_micros() as u64);
+    }
+    let mut rows: Vec<serde_json::Value> = stages
+        .into_iter()
+        .map(|(name, sample)| percentiles(name, sample))
+        .collect();
+    rows.push(percentiles("delivery", delivery));
+    rows.push(percentiles("status, one connection each", one_shot));
+    rows.push(percentiles("status, kept connection", kept));
+    if json {
+        let report = serde_json::json!({ "stages": rows, "skipped": skipped, "lagged": lagged });
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    println!(
+        "{:<30} {:>7} {:>10} {:>10} {:>10} {:>10}",
+        "stage", "n", "p50 µs", "p90 µs", "p99 µs", "max µs"
+    );
+    for row in &rows {
+        println!(
+            "{:<30} {:>7} {:>10} {:>10} {:>10} {:>10}",
+            row["stage"].as_str().unwrap_or(""),
+            row["n"],
+            row["p50_us"],
+            row["p90_us"],
+            row["p99_us"],
+            row["max_us"]
+        );
+    }
+    println!("steps skipped: {skipped}, events lost: {lagged}");
+    Ok(())
+}
+
 fn to_request(command: LiveCommand) -> Result<Command> {
     Ok(match command {
         LiveCommand::Status => Command::Status,
-        LiveCommand::Watch { .. } => unreachable!("watch reads events, it sends no command"),
+        LiveCommand::Watch { .. } | LiveCommand::Latency { .. } => {
+            unreachable!("reads events, sends no command")
+        }
         LiveCommand::Pause {
             name,
             keep_orders,

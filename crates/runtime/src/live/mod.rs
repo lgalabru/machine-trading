@@ -15,6 +15,7 @@
 //! (`mtx live`), and kept on disk across restarts. Their orders go to the
 //! leaders' TPU ([`tpu`]) or, in a shadow run, nowhere ([`shadow`]).
 
+pub mod blockhash;
 pub mod bot;
 pub mod events;
 pub mod feed;
@@ -205,6 +206,7 @@ impl Runtime {
                 ready.clone(),
             )?;
         }
+        let latest_blockhash = Arc::new(blockhash::LatestBlockhash::default());
         // The latest slot the feed reported, for the strategies' steps.
         let (slots, slots_seen) = tokio::sync::watch::channel(0u64);
         let mut slot_events = None;
@@ -225,6 +227,8 @@ impl Runtime {
                         watch,
                         progress: receiver.progress(),
                         events: events::Events::default(),
+                        blockhash: latest_blockhash.clone(),
+                        readings: Arc::default(),
                     },
                     slots: slots_seen,
                     slot_events: received,
@@ -252,6 +256,7 @@ impl Runtime {
                     &Slots {
                         newest: slots,
                         events: slot_events,
+                        blockhash: latest_blockhash,
                     },
                 );
             })
@@ -301,16 +306,9 @@ fn run(
                 events.applied();
                 events.applied_slot(slot);
                 // Strategies step on the newest slot the node has a bank
-                // for: the accounts they read are that bank's. A slot whose
-                // shreds have only started arriving is the cluster's tip,
-                // ahead of the accounts while the node catches up.
-                let banked = !matches!(
-                    status,
-                    mtx_core::feed::SlotStatus::FirstShredReceived
-                        | mtx_core::feed::SlotStatus::Completed
-                        | mtx_core::feed::SlotStatus::Dead
-                );
-                if banked {
+                // for (`feed::banked`).
+                if feed::banked(status) {
+                    events.slot_banked(slot);
                     slots.newest.send_if_modified(|seen| {
                         let newer = slot > *seen;
                         *seen = (*seen).max(slot);
@@ -322,8 +320,14 @@ fn run(
                 }
                 (slot, status.as_str())
             }
-            FeedEvent::Block { .. } => {
+            FeedEvent::Block {
+                slot, blockhash, ..
+            } => {
                 events.applied();
+                match blockhash.parse() {
+                    Ok(hash) => slots.blockhash.produced(slot, hash),
+                    Err(error) => tracing::warn!(slot, %error, "a block's hash doesn't read"),
+                }
                 continue;
             }
         };
@@ -348,6 +352,8 @@ fn run(
 struct Slots {
     newest: tokio::sync::watch::Sender<u64>,
     events: Option<tpu::SlotEvents>,
+    /// Where each block's hash goes, for the strategies' transactions.
+    blockhash: Arc<blockhash::LatestBlockhash>,
 }
 
 impl Slots {
@@ -356,6 +362,7 @@ impl Slots {
         Self {
             newest: tokio::sync::watch::channel(0).0,
             events: None,
+            blockhash: Arc::default(),
         }
     }
 }

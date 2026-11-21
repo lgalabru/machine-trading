@@ -113,7 +113,7 @@ pub fn init(config: &TelemetryConfig) -> Result<Telemetry, String> {
         .json()
         .with_current_span(true)
         .with_span_list(false)
-        .with_writer(std::sync::Mutex::new(file))
+        .with_writer(Lines::spawn(file)?)
         .boxed();
     let Some(endpoint) = &config.otlp_endpoint else {
         if tracing_subscriber::registry()
@@ -204,6 +204,111 @@ fn resource(config: &TelemetryConfig) -> Resource {
             SCHEMA_URL,
         )
         .build()
+}
+
+/// The JSON log's writer, off the threads that log: an event is formatted
+/// where it happens and its line handed to a thread that writes and flushes
+/// the file. A step logs several events; written in place, each was a
+/// system call on the step's path. With [`LINES_QUEUED_MAX`] lines waiting,
+/// a line is dropped and counted rather than wait.
+struct Lines {
+    sender: std::sync::mpsc::SyncSender<Vec<u8>>,
+    dropped: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+/// Lines the log may fall behind by: seconds of the busiest logging.
+const LINES_QUEUED_MAX: usize = 1 << 16;
+
+/// How often the writer flushes when lines keep coming.
+const FLUSH_EVERY: Duration = Duration::from_millis(100);
+
+impl Lines {
+    fn spawn(file: std::fs::File) -> Result<Self, String> {
+        use std::io::Write;
+        let (sender, lines) = std::sync::mpsc::sync_channel::<Vec<u8>>(LINES_QUEUED_MAX);
+        std::thread::Builder::new()
+            .name("mtx-log-writer".into())
+            .spawn(move || {
+                let mut out = std::io::BufWriter::with_capacity(1 << 16, file);
+                let mut flushed = std::time::Instant::now();
+                loop {
+                    match lines.recv_timeout(FLUSH_EVERY) {
+                        Ok(line) => {
+                            // A log that can't be written is nothing to stop
+                            // a strategy for; the next line tries again.
+                            let _ = out.write_all(&line);
+                            if flushed.elapsed() >= FLUSH_EVERY {
+                                let _ = out.flush();
+                                flushed = std::time::Instant::now();
+                            }
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                            let _ = out.flush();
+                            flushed = std::time::Instant::now();
+                        }
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            let _ = out.flush();
+                            return;
+                        }
+                    }
+                }
+            })
+            .map_err(|e| format!("the log's writer: {e}"))?;
+        Ok(Self {
+            sender,
+            dropped: std::sync::Arc::default(),
+        })
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Lines {
+    type Writer = Line<'a>;
+
+    fn make_writer(&'a self) -> Line<'a> {
+        Line {
+            lines: self,
+            buffer: Vec::with_capacity(512),
+        }
+    }
+}
+
+/// One event's line, handed over when the event is done with it.
+struct Line<'a> {
+    lines: &'a Lines,
+    buffer: Vec<u8>,
+}
+
+impl std::io::Write for Line<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.buffer.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Drop for Line<'_> {
+    fn drop(&mut self) {
+        if self.buffer.is_empty() {
+            return;
+        }
+        let line = std::mem::take(&mut self.buffer);
+        if self.lines.sender.try_send(line).is_err() {
+            let dropped = self
+                .lines
+                .dropped
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // Once in a while, on stderr: the log itself is what is full.
+            if dropped.is_power_of_two() {
+                eprintln!(
+                    "mtx runtime: the log fell behind; {} lines dropped",
+                    dropped + 1
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

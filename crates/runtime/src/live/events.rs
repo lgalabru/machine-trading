@@ -36,10 +36,6 @@ pub const SUBSCRIBERS_MAX: usize = 16;
 /// would lose events anyway, and holds a thread.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// How often the listener looks for a connection, and whether the runtime
-/// stopped.
-const ACCEPT_LOOKS_EVERY: Duration = Duration::from_millis(50);
-
 /// Where the runtime's events go: cloned to everything that emits.
 #[derive(Debug, Clone)]
 pub struct Events {
@@ -61,7 +57,7 @@ impl Events {
             return;
         }
         let mut text = match serde_json::to_string(&Line {
-            at_ms: now_ms(),
+            at_us: now_us(),
             event,
         }) {
             Ok(text) => text,
@@ -77,6 +73,12 @@ impl Events {
 
     fn subscribe(&self) -> broadcast::Receiver<Arc<str>> {
         self.sender.subscribe()
+    }
+
+    /// The events' lines, in this process: a test, or a consumer that
+    /// lives in the runtime. Each line is a [`Line`], newline included.
+    pub fn receiver(&self) -> broadcast::Receiver<Arc<str>> {
+        self.subscribe()
     }
 }
 
@@ -96,16 +98,19 @@ pub fn listen(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("{}: {e}", socket.display())),
     }
+    // Blocking: the strategies' thread wakes it with a connection when they
+    // stop, and it sees `commands` closed and ends.
     let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
-    listener
-        .set_nonblocking(true)
-        .map_err(|e| format!("{}: {e}", socket.display()))?;
     let open = Arc::new(AtomicUsize::new(0));
     std::thread::Builder::new()
         .name("mtx-live-events".into())
         .spawn(move || {
-            while !commands.is_closed() {
-                match listener.accept() {
+            loop {
+                let accepted = listener.accept();
+                if commands.is_closed() {
+                    return;
+                }
+                match accepted {
                     Ok((stream, _)) => {
                         if open.load(Ordering::Acquire) >= SUBSCRIBERS_MAX {
                             tracing::warn!(
@@ -128,9 +133,6 @@ pub fn listen(
                         if let Err(error) = spawned {
                             tracing::warn!(%error, "an event connection's thread didn't start");
                         }
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(ACCEPT_LOOKS_EVERY);
                     }
                     Err(error) => tracing::warn!(%error, "an event connection failed"),
                 }
@@ -163,11 +165,11 @@ fn serve(
             feed,
             strategies,
         },
-        Ok(Reply::Error { error }) => return Err(error),
+        Ok(Reply::Error { error }) => return Err(error.to_string()),
         Err(_) => return Err("the runtime dropped the status".into()),
     };
     let mut text = serde_json::to_string(&Line {
-        at_ms: now_ms(),
+        at_us: now_us(),
         event: hello,
     })
     .map_err(|e| e.to_string())?;
@@ -183,7 +185,7 @@ fn serve(
                 .map_err(|e| e.to_string())?,
             Err(broadcast::error::RecvError::Lagged(dropped)) => {
                 let mut text = serde_json::to_string(&Line {
-                    at_ms: now_ms(),
+                    at_us: now_us(),
                     event: Event::Lagged { dropped },
                 })
                 .map_err(|e| e.to_string())?;
@@ -197,10 +199,10 @@ fn serve(
     }
 }
 
-fn now_ms() -> u64 {
+fn now_us() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+        .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
 }
 
 #[cfg(test)]

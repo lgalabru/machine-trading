@@ -18,13 +18,17 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::control::{FeedStatus, StrategyStatus};
+use crate::control::{CommandKind, ControlError, FeedStatus, StrategyStatus};
 
-/// The protocol's version: a sidecar refuses a [`Event::Hello`] with
-/// another. Raised when an event changes in a way an old reader would
-/// misread; a new variant isn't such a change if readers skip what they
-/// don't know.
-pub const PROTOCOL: u32 = 1;
+/// The protocol's version, of both sockets: a sidecar refuses a
+/// [`Event::Hello`] with another. Raised when an event or a reply changes
+/// in a way an old reader would misread. A new variant of [`Event`] isn't
+/// such a change: a reader skips a line whose `event` it doesn't know.
+///
+/// 2: times in microseconds (`at_us`), a step's [`StepTimings`], commands
+/// and refusals typed ([`CommandKind`], [`crate::control::ErrorCode`]),
+/// skipped and stopped steps, and the fates of live sends.
+pub const PROTOCOL: u32 = 2;
 
 /// The most bytes of one event line: a hello with a few hundred strategies.
 pub const EVENT_BYTES_MAX: usize = 1 << 20;
@@ -32,10 +36,41 @@ pub const EVENT_BYTES_MAX: usize = 1 << 20;
 /// One line of the stream: when the runtime wrote it, and what.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Line {
-    /// Milliseconds since the Unix epoch, by the runtime's clock.
-    pub at_ms: u64,
+    /// Microseconds since the Unix epoch, by the runtime's clock, as the
+    /// line was handed to the socket. A sidecar on the same host reads its
+    /// own delay off it.
+    pub at_us: u64,
     #[serde(flatten)]
     pub event: Event,
+}
+
+impl Line {
+    pub fn at_ms(&self) -> u64 {
+        self.at_us / 1_000
+    }
+}
+
+/// Where a step's time went, each stage in microseconds, measured on the
+/// runtime's monotonic clock from the validator's notice of the slot to
+/// the step's last send. A stage the runtime couldn't time is 0.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StepTimings {
+    /// The plugin's callback with the slot's first banked status (the node
+    /// has its bank) to the runtime's feed applying it.
+    pub feed_us: u64,
+    /// The feed applying it to the strategies' loop starting the step.
+    pub wake_us: u64,
+    /// Waiting for the feed to apply the writes before the slot.
+    pub settle_us: u64,
+    /// Reading the strategy's market from the account cache.
+    pub read_us: u64,
+    /// The strategy's `step`, in its wasm sandbox.
+    pub call_us: u64,
+    /// Planning the sheet, signing and sending its orders.
+    pub send_us: u64,
+    /// From the plugin's callback to the last send: the sum, and what a
+    /// strategy's reaction time is.
+    pub total_us: u64,
 }
 
 /// Which way a fill or a trade went.
@@ -94,7 +129,10 @@ pub enum Event {
         strategy: String,
         slot: u64,
         k: u64,
+        /// From the slot reaching the strategies to the step's end, as
+        /// `mtx live status` reports it.
         step_ms: u64,
+        timings: StepTimings,
         /// Whether its `step` returned a sheet.
         answered: bool,
         shadow: bool,
@@ -138,6 +176,26 @@ pub enum Event {
         price: f64,
         size: f64,
     },
+    /// What became of a transaction a live strategy sent without waiting
+    /// (over the TPU): it landed at the `confirmed` commitment, or failed
+    /// on chain, or wasn't seen landing in time (`landed` false, no slot).
+    Fate {
+        strategy: String,
+        signature: String,
+        landed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slot: Option<u64>,
+        /// The chain's error, for one that failed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        /// From the send to the fate being known.
+        after_us: u64,
+    },
+    /// A strategy's step came while its last was still running, and was
+    /// skipped: a strategy slower than its step.
+    StepSkipped { strategy: String, slot: u64 },
+    /// A strategy can't step again: it trapped, ran out of fuel or time.
+    Stopped { strategy: String, why: String },
     /// The enforcer paused a strategy.
     Paused {
         strategy: String,
@@ -147,10 +205,10 @@ pub enum Event {
     /// A control command that changes something was done or refused: a
     /// person (or a sidecar) acted, and the strategies may have changed.
     Command {
-        command: String,
-        ok: bool,
+        command: CommandKind,
+        /// Why it was refused; `None` if it was done.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        error: Option<String>,
+        error: Option<ControlError>,
     },
     /// This connection fell behind and lost `dropped` events: read
     /// `status` to know where things stand.
@@ -190,7 +248,7 @@ mod tests {
     #[test]
     fn a_line_reads_as_it_is_written() {
         let line = Line {
-            at_ms: 7,
+            at_us: 7,
             event: Event::Markout {
                 strategy: "mm-sol".into(),
                 model: PaperModel::Through,
@@ -202,17 +260,15 @@ mod tests {
         let text = serde_json::to_string(&line).unwrap();
         assert_eq!(
             text,
-            r#"{"at_ms":7,"event":"markout","strategy":"mm-sol","model":"through","fill_slot":100,"horizon_slots":25,"bps":-1.5}"#
+            r#"{"at_us":7,"event":"markout","strategy":"mm-sol","model":"through","fill_slot":100,"horizon_slots":25,"bps":-1.5}"#
         );
         assert_eq!(serde_json::from_str::<Line>(&text).unwrap(), line);
         let command: Line =
-            serde_json::from_str(r#"{"at_ms":8,"event":"command","command":"pause","ok":true}"#)
-                .unwrap();
+            serde_json::from_str(r#"{"at_us":8,"event":"command","command":"pause"}"#).unwrap();
         assert_eq!(
             command.event,
             Event::Command {
-                command: "pause".into(),
-                ok: true,
+                command: CommandKind::Pause,
                 error: None
             }
         );

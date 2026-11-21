@@ -123,6 +123,7 @@ async fn a_transfer_sent_over_the_tpu_lands_without_an_rpc_send() {
             &TpuConfig {
                 identity: None,
                 fanout: 1,
+                preflight: false,
             },
             &url,
             slots,
@@ -176,7 +177,15 @@ async fn a_transfer_sent_over_the_tpu_lands_without_an_rpc_send() {
     }
 
     // Through the chain a desk trades on: sent over the TPU, confirmed.
-    let chain = TpuChainClient::new(RpcChainClient::new(url.clone()), tpu.clone(), "test");
+    let events = mtx_runtime::live::events::Events::default();
+    let mut heard = events.receiver();
+    let chain = TpuChainClient::new(
+        RpcChainClient::new(url.clone()),
+        tpu.clone(),
+        "test",
+        Arc::default(),
+        events,
+    );
     let again = Keypair::new();
     let blockhash = chain.get_latest_blockhash().await.unwrap();
     chain
@@ -184,5 +193,42 @@ async fn a_transfer_sent_over_the_tpu_lands_without_an_rpc_send() {
         .await
         .expect("a confirmed send");
     assert_eq!(rpc.get_balance(&again.pubkey()).await.unwrap(), 2_000_000);
+
+    // Fire and forget, as a live strategy sends: the send returns as it
+    // leaves, and its fate comes on the event stream.
+    let third = Keypair::new();
+    let started = std::time::Instant::now();
+    let signature = chain
+        .send(&transfer(&third, 3_000_000, blockhash))
+        .await
+        .expect("sent");
+    let sent_in = started.elapsed();
+    assert!(
+        sent_in < std::time::Duration::from_millis(100),
+        "{sent_in:?}"
+    );
+    let fate = tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        loop {
+            let line = heard.recv().await.expect("the events");
+            let line: mtx_core::events::Line = serde_json::from_str(&line).unwrap();
+            if let mtx_core::events::Event::Fate { .. } = line.event {
+                return line.event;
+            }
+        }
+    })
+    .await
+    .expect("a fate within a minute");
+    let mtx_core::events::Event::Fate {
+        signature: fated,
+        landed,
+        slot,
+        ..
+    } = fate
+    else {
+        unreachable!("matched a fate");
+    };
+    assert_eq!(fated, signature.to_string());
+    assert!(landed && slot.is_some());
+    assert_eq!(rpc.get_balance(&third.pubkey()).await.unwrap(), 3_000_000);
     let _ = std::fs::remove_dir_all(&ledger);
 }

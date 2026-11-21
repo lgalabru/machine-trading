@@ -15,7 +15,10 @@ use std::{
 
 use mtx_core::{
     Mandate,
-    control::{self, AddStrategy, Command, OnPause, Reply, StrategyState, StrategyStatus},
+    control::{
+        self, AddStrategy, Command, CommandKind, ErrorCode, OnPause, Reply, StrategyState,
+        StrategyStatus,
+    },
     events::{Event, PROTOCOL},
 };
 use mtx_grader::{
@@ -220,11 +223,23 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
     let (mut added, mut stepped, mut slots) = (false, 0, 0);
     while let Ok(event) = heard.recv_timeout(Duration::from_secs(2)) {
         match event {
-            Event::Command { command, ok, .. } if command == "add" => added = ok,
+            Event::Command {
+                command: CommandKind::Add,
+                error,
+            } => added = error.is_none(),
             Event::Step {
-                strategy, running, ..
+                strategy,
+                running,
+                timings,
+                ..
             } if strategy == "a" => {
                 assert!(running);
+                // Every stage is timed, from the plugin's callback on.
+                assert!(timings.total_us > 0 && timings.call_us > 0, "{timings:?}");
+                assert!(
+                    timings.total_us >= timings.read_us + timings.call_us + timings.send_us,
+                    "{timings:?}"
+                );
                 stepped += 1;
             }
             Event::Slot { .. } => slots += 1,
@@ -238,6 +253,53 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
         added && stepped >= 3 && slots >= 3,
         "{added} {stepped} {slots}"
     );
+
+    // The contract, as a sidecar holds it: one connection for every
+    // command, and each refusal with a code to branch on.
+    let mut client = control::Client::connect(&socket).unwrap();
+    let refused = client
+        .send(&Command::Remove {
+            name: "nobody".into(),
+        })
+        .unwrap();
+    assert!(
+        matches!(&refused, Reply::Error { error } if error.code == ErrorCode::UnknownStrategy),
+        "{refused:?}"
+    );
+    let twice = client.send(&add("a", true)).unwrap();
+    assert!(
+        matches!(&twice, Reply::Error { error } if error.code == ErrorCode::Exists),
+        "{twice:?}"
+    );
+    let round_trips = 50;
+    let started = Instant::now();
+    for _ in 0..round_trips {
+        assert!(matches!(
+            client.send(&Command::Status).unwrap(),
+            Reply::Ok { .. }
+        ));
+    }
+    let each = started.elapsed() / round_trips;
+    eprintln!("a status round trip on a kept connection: {each:?}");
+    assert!(each < Duration::from_millis(20), "{each:?}");
+    // The refusals are on the event stream too, typed.
+    let mut refusals = 0;
+    while let Ok(event) = heard.recv_timeout(Duration::from_secs(2)) {
+        if let Event::Command {
+            error: Some(error), ..
+        } = event
+        {
+            assert!(matches!(
+                error.code,
+                ErrorCode::UnknownStrategy | ErrorCode::Exists
+            ));
+            refusals += 1;
+            if refusals == 2 {
+                break;
+            }
+        }
+    }
+    assert_eq!(refusals, 2);
 
     // Its telemetry: each step a span and a metric event, by strategy.
     let telemetry = std::fs::read_to_string(dir.join("runtime.jsonl")).unwrap();
