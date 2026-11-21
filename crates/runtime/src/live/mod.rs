@@ -278,13 +278,23 @@ fn run(
             FeedEvent::Slot { slot, status, .. } => {
                 events.applied();
                 events.applied_slot(slot);
-                // Strategies step on the newest slot seen, whatever its
-                // status: a slot is due once it exists.
-                slots.newest.send_if_modified(|seen| {
-                    let newer = slot > *seen;
-                    *seen = (*seen).max(slot);
-                    newer
-                });
+                // Strategies step on the newest slot the node has a bank
+                // for: the accounts they read are that bank's. A slot whose
+                // shreds have only started arriving is the cluster's tip,
+                // ahead of the accounts while the node catches up.
+                let banked = !matches!(
+                    status,
+                    mtx_core::feed::SlotStatus::FirstShredReceived
+                        | mtx_core::feed::SlotStatus::Completed
+                        | mtx_core::feed::SlotStatus::Dead
+                );
+                if banked {
+                    slots.newest.send_if_modified(|seen| {
+                        let newer = slot > *seen;
+                        *seen = (*seen).max(slot);
+                        newer
+                    });
+                }
                 if let Some(events) = &slots.events {
                     events.offer(slot, status);
                 }

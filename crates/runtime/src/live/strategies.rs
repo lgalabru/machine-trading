@@ -94,6 +94,13 @@ const COMMANDS_WAITING_MAX: usize = 16;
 /// `mtx live` waits this long at most.
 const ACCEPT_LOOKS_EVERY: Duration = Duration::from_millis(50);
 
+/// How often held strategies wait to ask whether the node has caught up,
+/// in slots: a few seconds, so a starting node isn't asked every slot.
+const HEALTH_EVERY_SLOTS: u64 = 10;
+
+/// How long the node may take to say whether it has caught up.
+const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// How long a step waits for the feed to apply what the chain wrote
 /// before its slot: past it, the strategy steps on what the cache holds.
 const SETTLE_WITHIN: Duration = Duration::from_secs(1);
@@ -317,7 +324,7 @@ struct Manager {
     tpu: Option<Arc<super::tpu::Tpu>>,
     strategies: BTreeMap<String, Strategy>,
     /// Strategies the desired state holds that aren't running here: waiting
-    /// for the node to be live (restored on the first slot), or that
+    /// for the node to catch up, or that
     /// couldn't be restored, and why. Kept in the desired state, so a
     /// restart that can't bring one back never forgets it.
     held: Vec<(Stored, Option<String>)>,
@@ -338,8 +345,8 @@ impl Manager {
     }
 
     /// Read the desired state: its strategies wait in `held` until the
-    /// node is live ([`Manager::restore_held`]), since a strategy's start
-    /// reads the node's RPC, which a starting node doesn't answer yet.
+    /// node has caught up ([`Manager::restore_held`]): a strategy's start
+    /// reads the market, which a node still replaying has behind the tip.
     async fn restore(&mut self) {
         let stored = match std::fs::read(&self.config.state) {
             Ok(bytes) => match serde_json::from_slice::<DesiredState>(&bytes) {
@@ -362,9 +369,19 @@ impl Manager {
             .collect();
     }
 
-    /// Start every held strategy that hasn't been tried: on the first slot
-    /// the feed applies, once the node is live. One that fails stays held,
-    /// stopped, with the reason.
+    /// Whether the node says it has caught up with the cluster (its RPC's
+    /// `getHealth`): its accounts are then the chain's, and a strategy can
+    /// start on them.
+    async fn node_is_healthy(&self) -> bool {
+        RpcChainClient::with_timeout(&self.config.rpc_url, HEALTH_TIMEOUT)
+            .rpc()
+            .get_health()
+            .await
+            .is_ok()
+    }
+
+    /// Start every held strategy that hasn't been tried: once the node has
+    /// caught up. One that fails stays held, stopped, with the reason.
     async fn restore_held(&mut self) {
         let waiting: Vec<Stored> = self
             .held
@@ -402,7 +419,10 @@ impl Manager {
                     }
                     let slot = *slots.borrow_and_update();
                     self.slot = self.slot.max(slot);
-                    if self.held.iter().any(|(_, why)| why.is_none()) {
+                    if self.held.iter().any(|(_, why)| why.is_none())
+                        && slot.is_multiple_of(HEALTH_EVERY_SLOTS)
+                        && self.node_is_healthy().await
+                    {
                         self.restore_held().await;
                         if let Err(error) = self.persist() {
                             tracing::error!(%error, "the desired state can't be written");
@@ -950,7 +970,7 @@ fn held_status(stored: &Stored, why: &Option<String>) -> StrategyStatus {
         state: StrategyState::Stopped {
             why: why
                 .clone()
-                .unwrap_or_else(|| "waiting for the node to be live".into()),
+                .unwrap_or_else(|| "waiting for the node to catch up".into()),
         },
         symbol: spec.symbol.clone(),
         authority: String::new(),
