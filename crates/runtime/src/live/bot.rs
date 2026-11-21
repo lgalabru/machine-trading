@@ -79,6 +79,10 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
     let trader = market
         .trader(spec.keypair.insecure_clone(), spec.rpc_url)
         .map_err(|e| e.to_string())?;
+    // A seat whose sends go through a chain put in place of the RPC sends
+    // every order through it, its cancels included: a shadow strategy must
+    // send nothing, and a TPU one nothing by RPC.
+    let pooled = spec.sends.is_some();
     let trader = Arc::new(match spec.sends {
         Some(chain) => mtx_kit::Trader {
             inner: trader.inner.with_chain(chain),
@@ -86,10 +90,9 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
         },
         None => trader,
     });
-    let seats: Vec<Box<dyn Seat>> = vec![Box::new(PerpSeat::new(
-        market.instrument().to_string(),
-        trader,
-    ))];
+    let seats: Vec<Box<dyn Seat>> = vec![Box::new(
+        PerpSeat::new(market.instrument().to_string(), trader).pooled(pooled),
+    )];
     let markets = mtx_kit::VenueInfo::of_perp_markets(
         spec.mandate,
         [(
