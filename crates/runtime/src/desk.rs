@@ -219,6 +219,10 @@ pub trait PerpReads: Send + Sync {
     async fn position(&self) -> Result<mtx_kit::Position, String>;
 }
 
+/// Why an order after a failed one in the same step wasn't sent: the
+/// step's first failure says why the step's orders didn't go out.
+pub const EARLIER_ORDER_FAILED: &str = "an earlier order of the step failed";
+
 /// A component playing one session: the strategy, and the markets the
 /// host trades for it ([`Desk`]). Reads and sends as `mtx_kit::run` does
 /// for a process bot.
@@ -744,7 +748,7 @@ impl<R: RawDesk> WasmBot<R> {
                 None => None,
             };
             let state = if failed {
-                SendState::NotSent("an earlier order of the step failed".into())
+                SendState::NotSent(EARLIER_ORDER_FAILED.into())
             } else if let Some(reason) = refused {
                 tracing::info!(step = k, action = ?planned.action, "{reason}");
                 SendState::NotSent(reason)

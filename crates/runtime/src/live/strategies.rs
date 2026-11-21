@@ -509,7 +509,11 @@ impl Manager {
                                 mtx_kit::SendState::Failed { reason, .. }
                                 | mtx_kit::SendState::NotSent(reason) => {
                                     stats.sends_failed += 1;
-                                    stats.last_send_error = Some(reason.clone());
+                                    // The step's first failure, not the
+                                    // orders it stopped after it.
+                                    if reason != crate::desk::EARLIER_ORDER_FAILED {
+                                        stats.last_send_error = Some(reason.clone());
+                                    }
                                 }
                                 mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => {}
                             }
