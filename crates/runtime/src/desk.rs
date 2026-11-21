@@ -651,7 +651,9 @@ impl<R: RawDesk> WasmBot<R> {
         if self.stopped.is_some() {
             return false;
         }
-        let Some(market) = self.market(step, wallet).await else {
+        let read = tracing::info_span!("strategy.market", k);
+        let Some(market) = tracing::Instrument::instrument(self.market(step, wallet), read).await
+        else {
             return false;
         };
         let Some(strategy) = self.strategy.as_mut() else {
@@ -661,7 +663,8 @@ impl<R: RawDesk> WasmBot<R> {
         if let Some(raw) = strategy.raw_sender() {
             raw.begin(k, self.account).await;
         }
-        let outcome = strategy.step(&market).await;
+        let call = tracing::info_span!("strategy.call", k);
+        let outcome = tracing::Instrument::instrument(strategy.step(&market), call).await;
         let raw = strategy.raw_sender();
         let dropped = match &outcome {
             Outcome::Done(_) => raw.map(|raw| {
@@ -756,7 +759,13 @@ impl<R: RawDesk> WasmBot<R> {
                 if let Some(pool) = &self.desk.sends {
                     pool.set_options(planned.tx);
                 }
-                let sent = seat.send(&planned).await;
+                let order = tracing::info_span!(
+                    "strategy.order",
+                    k,
+                    venue = seat.market(),
+                    action = ?planned.action,
+                );
+                let sent = tracing::Instrument::instrument(seat.send(&planned), order).await;
                 if sent.sent {
                     tried.push(planned.action.clone());
                     if let SendState::Failed { reason, .. } = &sent.state {

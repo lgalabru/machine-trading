@@ -32,18 +32,26 @@ struct WouldSend {
     /// Its size on the wire, in bytes.
     bytes: usize,
     instructions: usize,
+    /// Why the node's simulation of it failed, if it did: in a shadow run
+    /// a key may hold no SOL and have no account on the venue, so its
+    /// transactions are written down whatever the simulation says.
+    simulation_error: Option<String>,
 }
 
 /// The chain a shadow strategy trades through: its reads are the node's,
 /// its sends are written to a journal and go nowhere.
 pub struct ShadowChain {
     rpc: RpcChainClient,
+    /// The strategy whose sends these are, for their metrics.
+    strategy: String,
     journal: Arc<Mutex<std::fs::File>>,
+    /// The last simulation's failure, for the send that follows it.
+    simulated: Mutex<Option<String>>,
 }
 
 impl ShadowChain {
-    /// Shadow sends written to `journal`, appended to.
-    pub fn new(rpc: RpcChainClient, journal: &Path) -> Result<Self, String> {
+    /// `strategy`'s shadow sends, written to `journal`, appended to.
+    pub fn new(rpc: RpcChainClient, journal: &Path, strategy: &str) -> Result<Self, String> {
         let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -51,7 +59,9 @@ impl ShadowChain {
             .map_err(|e| format!("{}: {e}", journal.display()))?;
         Ok(Self {
             rpc,
+            strategy: strategy.to_string(),
             journal: Arc::new(Mutex::new(file)),
+            simulated: Mutex::new(None),
         })
     }
 
@@ -73,6 +83,11 @@ impl ShadowChain {
             signature: signature.to_string(),
             bytes: wincode::serialize(transaction).map_or(0, |wire| wire.len()),
             instructions: transaction.message.instructions().len(),
+            simulation_error: self
+                .simulated
+                .lock()
+                .map_err(|_| ChainError::Rpc("the shadow chain was poisoned".into()))?
+                .take(),
         };
         let mut text = serde_json::to_string(&line).map_err(|e| ChainError::Rpc(e.to_string()))?;
         text.push('\n');
@@ -81,6 +96,14 @@ impl ShadowChain {
             .map_err(|_| ChainError::Rpc("the shadow journal was poisoned".into()))?
             .write_all(text.as_bytes())
             .map_err(|e| ChainError::Rpc(format!("the shadow journal: {e}")))?;
+        tracing::info!(
+            counter.mtx_shadow_sends = 1_u64,
+            strategy = %self.strategy,
+            simulated = line.simulation_error.is_none(),
+            signature = %line.signature,
+            bytes = line.bytes,
+            "a shadow send, written down"
+        );
         Ok(signature)
     }
 }
@@ -131,7 +154,35 @@ impl ChainClient for ShadowChain {
         transaction: &VersionedTransaction,
         watch: &[Pubkey],
     ) -> Result<SimulationOutcome, ChainError> {
-        self.rpc.simulate(transaction, watch).await
+        // The node simulates it for real; a failure is written down with the
+        // transaction rather than stopping it, since a shadow key may hold
+        // nothing the transaction needs.
+        let (outcome, failure) = match self.rpc.simulate(transaction, watch).await {
+            Ok(outcome) => {
+                let failure = outcome.error.as_ref().map(ToString::to_string);
+                (
+                    SimulationOutcome {
+                        error: None,
+                        ..outcome
+                    },
+                    failure,
+                )
+            }
+            Err(error) => (
+                SimulationOutcome {
+                    units_consumed: None,
+                    logs: Vec::new(),
+                    error: None,
+                    accounts: Vec::new(),
+                },
+                Some(error.to_string()),
+            ),
+        };
+        *self
+            .simulated
+            .lock()
+            .map_err(|_| ChainError::Rpc("the shadow chain was poisoned".into()))? = failure;
+        Ok(outcome)
     }
 
     /// Written down, never sent: it "confirms" at once, so the desk goes on
@@ -170,7 +221,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let journal = dir.join("shadow.jsonl");
         // A node that isn't there: a shadow send needs none.
-        let chain = ShadowChain::new(RpcChainClient::new("http://127.0.0.1:1"), &journal).unwrap();
+        let chain =
+            ShadowChain::new(RpcChainClient::new("http://127.0.0.1:1"), &journal, "test").unwrap();
         let payer = Keypair::new();
         let transaction = VersionedTransaction::from(Transaction::new_signed_with_payer(
             &[],

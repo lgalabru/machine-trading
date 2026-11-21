@@ -200,19 +200,41 @@ impl Tpu {
 pub struct TpuChainClient {
     rpc: RpcChainClient,
     tpu: Arc<Tpu>,
+    /// The strategy whose sends these are, for their metrics.
+    strategy: String,
 }
 
 impl TpuChainClient {
-    pub fn new(rpc: RpcChainClient, tpu: Arc<Tpu>) -> Self {
-        Self { rpc, tpu }
+    /// `strategy`'s chain: its name labels the sends' metrics.
+    pub fn new(rpc: RpcChainClient, tpu: Arc<Tpu>, strategy: &str) -> Self {
+        Self {
+            rpc,
+            tpu,
+            strategy: strategy.to_string(),
+        }
     }
 
     /// Send over the TPU, or over the RPC if the TPU client can't take it.
     async fn send_once(&self, transaction: &VersionedTransaction) -> Result<Signature, ChainError> {
         match self.tpu.send(transaction) {
-            Ok(signature) => Ok(signature),
+            Ok(signature) => {
+                tracing::info!(
+                    counter.mtx_tpu_sends = 1_u64,
+                    strategy = %self.strategy,
+                    route = "tpu",
+                    %signature,
+                    "sent to the leaders"
+                );
+                Ok(signature)
+            }
             Err(error) => {
-                tracing::warn!(%error, "the TPU didn't take a send; it goes through the RPC");
+                tracing::warn!(
+                    counter.mtx_tpu_sends = 1_u64,
+                    strategy = %self.strategy,
+                    route = "rpc",
+                    %error,
+                    "the TPU didn't take a send; it goes through the RPC"
+                );
                 self.rpc.send(transaction).await
             }
         }
@@ -276,7 +298,8 @@ impl ChainClient for TpuChainClient {
         transaction: &VersionedTransaction,
     ) -> Result<Signature, ChainError> {
         let signature = self.send_once(transaction).await?;
-        let deadline = Instant::now() + CONFIRM_WITHIN;
+        let sent_at = Instant::now();
+        let deadline = sent_at + CONFIRM_WITHIN;
         loop {
             let status = self
                 .rpc
@@ -300,6 +323,14 @@ impl ChainClient for TpuChainClient {
                     });
                 }
                 Some(status) if status.satisfies_commitment(CommitmentConfig::confirmed()) => {
+                    tracing::info!(
+                        histogram.mtx_tpu_confirm_ms =
+                            u64::try_from(sent_at.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        strategy = %self.strategy,
+                        landed_slot = status.slot,
+                        %signature,
+                        "a send landed"
+                    );
                     return Ok(signature);
                 }
                 _ => {}

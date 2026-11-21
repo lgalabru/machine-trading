@@ -9,6 +9,11 @@
       "state": "/home/sol/mtx/strategies.json",
       "rpc_url": "http://127.0.0.1:8899",
       "logs": "/home/sol/mtx/logs"
+    },
+    "telemetry": {
+      "log": "/home/sol/mtx/runtime.jsonl",
+      "filter": "info",
+      "environment": "mainnet-beta"
     }
   }
 }

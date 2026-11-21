@@ -1,0 +1,45 @@
+# OpenTelemetry Collector beside the node: takes the mtx runtime's OTLP on
+# localhost and forwards it to Grafana Cloud's OTLP gateway (traces to
+# Tempo, metrics to Mimir/Prometheus, both under service.name=mtx-runtime).
+#
+# Run with otelcol-contrib (https://github.com/open-telemetry/opentelemetry-collector-releases):
+#
+#   GRAFANA_OTLP_ENDPOINT=https://otlp-gateway-prod-eu-west-2.grafana.net/otlp \
+#   GRAFANA_OTLP_AUTH="$(printf '%s:%s' <instance id> <access policy token> | base64 -w0)" \
+#   otelcol-contrib --config ops/grafana/collector.yaml
+#
+# The runtime's plugin configuration points at it:
+#   "telemetry": { "log": ".../runtime.jsonl", "otlp_endpoint": "http://127.0.0.1:4318" }
+#
+# For a self-hosted Grafana, swap the exporter for Tempo's OTLP endpoint
+# and Prometheus's OTLP receiver (--web.enable-otlp-receiver).
+receivers:
+  otlp:
+    protocols:
+      http:
+        # Localhost only: the runtime is the only sender.
+        endpoint: 127.0.0.1:4318
+
+processors:
+  batch:
+    timeout: 5s
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 512
+
+exporters:
+  otlphttp/grafana:
+    endpoint: ${env:GRAFANA_OTLP_ENDPOINT}
+    headers:
+      Authorization: Basic ${env:GRAFANA_OTLP_AUTH}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/grafana]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/grafana]

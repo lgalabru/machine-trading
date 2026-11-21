@@ -94,6 +94,10 @@ const COMMANDS_WAITING_MAX: usize = 16;
 /// `mtx live` waits this long at most.
 const ACCEPT_LOOKS_EVERY: Duration = Duration::from_millis(50);
 
+/// How often the feed's metrics are recorded, in slots: every few seconds,
+/// a Grafana panel's resolution.
+const FEED_METRICS_EVERY_SLOTS: u64 = 10;
+
 /// How often held strategies wait to ask whether the node has caught up,
 /// in slots: a few seconds, so a starting node isn't asked every slot.
 const HEALTH_EVERY_SLOTS: u64 = 10;
@@ -445,6 +449,15 @@ impl Manager {
     /// Step every running strategy whose step is due at `slot`.
     async fn step(&mut self, slot: u64) {
         let progress = &self.shared.progress;
+        if slot.is_multiple_of(FEED_METRICS_EVERY_SLOTS) {
+            tracing::info!(
+                gauge.mtx_feed_slot = slot,
+                gauge.mtx_feed_slots_behind = progress.slots_behind(),
+                gauge.mtx_feed_dropped = progress.dropped(),
+                gauge.mtx_strategies = self.strategies.len() as u64,
+                "feed"
+            );
+        }
         let stale = match (progress.dropped(), progress.slots_behind()) {
             (0, behind) if behind <= FEED_SLOTS_BEHIND_MAX => None,
             (0, behind) => Some(format!("the feed is {behind} slots behind the chain")),
@@ -460,6 +473,13 @@ impl Manager {
                 .map(|(name, _)| name.clone())
                 .collect();
             for name in running {
+                tracing::warn!(
+                    counter.mtx_enforcer_pauses = 1_u64,
+                    strategy = %name,
+                    reason = "feed",
+                    why = %why,
+                    "the enforcer pauses a strategy"
+                );
                 if let Err(error) = self.pause(&name, OnPause::Cancel, why.clone()).await {
                     tracing::warn!(name, %error, "a strategy couldn't be paused");
                 }
@@ -474,6 +494,12 @@ impl Manager {
             stats.due = slot + strategy.spec.slots_per_step;
             let Ok(mut inner) = strategy.inner.clone().try_lock_owned() else {
                 stats.skipped += 1;
+                tracing::warn!(
+                    counter.mtx_strategy_steps_skipped = 1_u64,
+                    strategy = %name,
+                    slot,
+                    "a step is skipped: the one before still runs"
+                );
                 continue;
             };
             drop(stats);
@@ -482,93 +508,178 @@ impl Manager {
             let (mandate, close_on_breach) =
                 (strategy.spec.mandate.clone(), strategy.spec.close_on_breach);
             let instrument = instrument_of(&strategy.spec.symbol);
+            let shadow = strategy.spec.shadow;
             // The step's clock starts as its slot reaches the strategies.
             let started = std::time::Instant::now();
-            tokio::spawn(async move {
-                let inner = &mut *inner;
-                let Some(bot) = inner.bot.as_mut() else {
-                    return;
-                };
-                if !tokio::task::block_in_place(|| progress.settle(SETTLE_WITHIN)) {
-                    tracing::warn!(
-                        name,
-                        slot,
-                        "the feed is behind; the step reads what the cache holds"
-                    );
-                }
-                slot_cell.store(slot, Ordering::Release);
-                let step = mtx_core::Step::new(inner.k, slot, false);
-                let answered = bot.turn(&step, None).await;
-                let took_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                inner.k += 1;
-                let market = bot.last_market().cloned();
-                // After the trade: what the step left, into what the
-                // enforcer has seen, and the mandate's audit of it all.
-                if let Some(market) = &market {
-                    let observed = &mut inner.observed;
-                    observed.record(&instrument, market.position.size);
-                    observed.max_drawdown_usd = observed.max_drawdown_usd.max(market.drawdown);
-                    if market.resting_bids > 0.0 {
-                        observed.record_open_order(&instrument, mtx_core::Side::Buy);
+            let span = tracing::info_span!(
+                "strategy.step",
+                strategy = %name,
+                slot,
+                k = inner.k,
+                shadow,
+                answered = tracing::field::Empty,
+                step_ms = tracing::field::Empty,
+            );
+            tokio::spawn(tracing::Instrument::instrument(
+                async move {
+                    let inner = &mut *inner;
+                    let Some(bot) = inner.bot.as_mut() else {
+                        return;
+                    };
+                    if !tokio::task::block_in_place(|| progress.settle(SETTLE_WITHIN)) {
+                        tracing::warn!(
+                            name,
+                            slot,
+                            "the feed is behind; the step reads what the cache holds"
+                        );
                     }
-                    if market.resting_asks > 0.0 {
-                        observed.record_open_order(&instrument, mtx_core::Side::Sell);
-                    }
-                }
-                let breach = mandate.audit(&inner.observed);
-                let paused = {
-                    let mut stats = lock(&stats);
-                    stats.steps += u64::from(answered);
-                    stats.last_step_ms = Some(took_ms);
+                    slot_cell.store(slot, Ordering::Release);
+                    let step = mtx_core::Step::new(inner.k, slot, false);
+                    let answered = bot.turn(&step, None).await;
+                    let took_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    let current = tracing::Span::current();
+                    current.record("answered", answered);
+                    current.record("step_ms", took_ms);
+                    inner.k += 1;
+                    let market = bot.last_market().cloned();
+                    // After the trade: what the step left, into what the
+                    // enforcer has seen, and the mandate's audit of it all.
                     if let Some(market) = &market {
-                        // What became of the step before's orders, as this
-                        // step's market reports them.
-                        for send in &market.sends {
-                            match &send.state {
-                                mtx_kit::SendState::Landed(_) => stats.sends_landed += 1,
-                                mtx_kit::SendState::Failed { reason, .. }
-                                | mtx_kit::SendState::NotSent(reason) => {
-                                    stats.sends_failed += 1;
-                                    // The step's first failure, not the
-                                    // orders it stopped after it.
-                                    if reason != crate::desk::EARLIER_ORDER_FAILED {
-                                        stats.last_send_error = Some(reason.clone());
+                        let observed = &mut inner.observed;
+                        observed.record(&instrument, market.position.size);
+                        observed.max_drawdown_usd = observed.max_drawdown_usd.max(market.drawdown);
+                        if market.resting_bids > 0.0 {
+                            observed.record_open_order(&instrument, mtx_core::Side::Buy);
+                        }
+                        if market.resting_asks > 0.0 {
+                            observed.record_open_order(&instrument, mtx_core::Side::Sell);
+                        }
+                    }
+                    let breach = mandate.audit(&inner.observed);
+                    let paused = {
+                        let mut stats = lock(&stats);
+                        stats.steps += u64::from(answered);
+                        stats.last_step_ms = Some(took_ms);
+                        if let Some(market) = &market {
+                            // What became of the step before's orders, as this
+                            // step's market reports them.
+                            for send in &market.sends {
+                                let outcome = match &send.state {
+                                    mtx_kit::SendState::Landed(_) => "landed",
+                                    mtx_kit::SendState::Failed { .. } => "failed",
+                                    mtx_kit::SendState::NotSent(_) => "not_sent",
+                                    mtx_kit::SendState::Delayed => "delayed",
+                                    mtx_kit::SendState::Expired => "expired",
+                                };
+                                tracing::info!(
+                                    counter.mtx_strategy_sends = 1_u64,
+                                    strategy = %name,
+                                    outcome,
+                                    "a send's fate"
+                                );
+                                match &send.state {
+                                    mtx_kit::SendState::Landed(_) => stats.sends_landed += 1,
+                                    mtx_kit::SendState::Failed { reason, .. }
+                                    | mtx_kit::SendState::NotSent(reason) => {
+                                        stats.sends_failed += 1;
+                                        // The step's first failure, not the
+                                        // orders it stopped after it.
+                                        if reason != crate::desk::EARLIER_ORDER_FAILED {
+                                            stats.last_send_error = Some(reason.clone());
+                                        }
                                     }
+                                    mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => {}
                                 }
-                                mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => {}
                             }
+                            stats.last_slot = Some(market.slot);
+                            stats.position = Some(market.position.size);
+                            stats.pnl = Some(market.pnl);
+                            stats.drawdown = Some(market.drawdown);
                         }
-                        stats.last_slot = Some(market.slot);
-                        stats.position = Some(market.position.size);
-                        stats.pnl = Some(market.pnl);
-                        stats.drawdown = Some(market.drawdown);
-                    }
-                    if let Some(why) = &bot.stopped {
-                        stats.state = StrategyState::Stopped { why: why.clone() };
-                    }
-                    match (&breach, &stats.state) {
-                        (Some(breach), StrategyState::Running) => {
-                            stats.state = StrategyState::Paused {
-                                why: format!("the enforcer: {breach}"),
-                            };
-                            true
+                        if let Some(why) = &bot.stopped {
+                            stats.state = StrategyState::Stopped { why: why.clone() };
                         }
-                        _ => false,
+                        let paused = match (&breach, &stats.state) {
+                            (Some(breach), StrategyState::Running) => {
+                                tracing::warn!(
+                                    counter.mtx_enforcer_pauses = 1_u64,
+                                    strategy = %name,
+                                    reason = "mandate",
+                                    breach = %breach,
+                                    "the enforcer pauses a strategy"
+                                );
+                                stats.state = StrategyState::Paused {
+                                    why: format!("the enforcer: {breach}"),
+                                };
+                                true
+                            }
+                            _ => false,
+                        };
+                        tracing::info!(
+                            counter.mtx_strategy_steps = 1_u64,
+                            histogram.mtx_strategy_step_ms = took_ms,
+                            gauge.mtx_strategy_position = stats.position.unwrap_or(0.0),
+                            gauge.mtx_strategy_pnl_usd = stats.pnl.unwrap_or(0.0),
+                            gauge.mtx_strategy_drawdown_usd = stats.drawdown.unwrap_or(0.0),
+                            gauge.mtx_strategy_running =
+                                u64::from(stats.state == StrategyState::Running),
+                            strategy = %name,
+                            shadow,
+                            answered,
+                            "a strategy stepped"
+                        );
+                        paused
+                    };
+                    if paused {
+                        for failed in bot.cancel_all().await {
+                            tracing::warn!(name, failed, "an order couldn't be cancelled");
+                        }
+                        if close_on_breach && let Err(error) = bot.flatten(FLATTEN_SLIPPAGE).await {
+                            tracing::warn!(name, %error, "the position couldn't be closed");
+                        }
                     }
-                };
-                if paused {
-                    for failed in bot.cancel_all().await {
-                        tracing::warn!(name, failed, "an order couldn't be cancelled");
-                    }
-                    if close_on_breach && let Err(error) = bot.flatten(FLATTEN_SLIPPAGE).await {
-                        tracing::warn!(name, %error, "the position couldn't be closed");
-                    }
-                }
-            });
+                },
+                span,
+            ));
         }
     }
 
     async fn handle(&mut self, command: Command) -> Reply {
+        let kind = match &command {
+            Command::Status => "status",
+            Command::Pause { .. } => "pause",
+            Command::Resume { .. } => "resume",
+            Command::Mandate { .. } => "mandate",
+            Command::Add(_) => "add",
+            Command::Remove { .. } => "remove",
+            Command::Kill => "kill",
+        };
+        let span = tracing::info_span!("control.command", command = kind);
+        let reply = tracing::Instrument::instrument(self.handle_in_span(command), span).await;
+        let outcome = match &reply {
+            Reply::Ok { .. } => "ok",
+            Reply::Error { .. } => "error",
+        };
+        match &reply {
+            Reply::Error { error } if kind != "status" => tracing::warn!(
+                counter.mtx_control_commands = 1_u64,
+                command = kind,
+                outcome,
+                %error,
+                "a command was refused"
+            ),
+            _ if kind != "status" => tracing::info!(
+                counter.mtx_control_commands = 1_u64,
+                command = kind,
+                outcome,
+                "a command was done"
+            ),
+            _ => {}
+        }
+        reply
+    }
+
+    async fn handle_in_span(&mut self, command: Command) -> Reply {
         // Only a command that changes something rewrites the desired state.
         let changes = !matches!(command, Command::Status);
         let done = match command {
@@ -873,11 +984,15 @@ impl Manager {
             return Ok(Some(Arc::new(super::shadow::ShadowChain::new(
                 rpc(),
                 &journal,
+                &spec.name,
             )?)));
         }
         Ok(self.tpu.as_ref().map(|tpu| {
-            Arc::new(super::tpu::TpuChainClient::new(rpc(), tpu.clone()))
-                as Arc<dyn mtx_kit::chain::ChainClient>
+            Arc::new(super::tpu::TpuChainClient::new(
+                rpc(),
+                tpu.clone(),
+                &spec.name,
+            )) as Arc<dyn mtx_kit::chain::ChainClient>
         }))
     }
 

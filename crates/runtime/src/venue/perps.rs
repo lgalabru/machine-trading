@@ -281,7 +281,7 @@ impl Seat for PerpSeat {
             return match sent.state {
                 mtx_kit::SendState::Landed(_) => Ok(()),
                 mtx_kit::SendState::Failed { reason, .. } | mtx_kit::SendState::NotSent(reason) => {
-                    Err(reason.into())
+                    Err(reason)
                 }
                 mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => Ok(()),
             };

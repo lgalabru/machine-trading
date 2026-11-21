@@ -21,6 +21,7 @@ pub mod perp;
 pub mod session;
 pub mod shadow;
 pub mod strategies;
+pub mod telemetry;
 pub mod tpu;
 
 use std::{
@@ -82,6 +83,10 @@ pub struct Config {
     /// controlled through a socket ([`strategies`]): step 4.
     #[serde(default)]
     pub control: Option<strategies::ControlConfig>,
+    /// Logs, traces and metrics ([`telemetry`]): without it, the
+    /// runtime's events go nowhere.
+    #[serde(default)]
+    pub telemetry: Option<telemetry::TelemetryConfig>,
 }
 
 /// One account on one market, to read.
@@ -161,12 +166,23 @@ pub enum Read {
 #[derive(Debug)]
 pub struct Runtime {
     thread: JoinHandle<()>,
+    /// Flushed once the runtime's thread has ended, so its last events go
+    /// out.
+    telemetry: Option<telemetry::Telemetry>,
 }
 
 impl Runtime {
     /// Start the runtime `config` describes. The sender is the feed's
     /// input: hand it to whatever sees the chain.
     pub fn start(config: Config) -> Result<(Self, FeedSender), String> {
+        let telemetry = config.telemetry.as_ref().map(telemetry::init).transpose()?;
+        tracing::info!(
+            version = env!("CARGO_PKG_VERSION"),
+            markets = config.markets.len(),
+            control = config.control.is_some(),
+            session = config.session.is_some(),
+            "the runtime starts"
+        );
         let readers = config.readers()?;
         let journal = std::fs::File::create(&config.journal)
             .map_err(|e| format!("{}: {e}", config.journal.display()))?;
@@ -236,7 +252,7 @@ impl Runtime {
                 );
             })
             .map_err(|e| format!("the runtime's thread: {e}"))?;
-        Ok((Self { thread }, sender))
+        Ok((Self { thread, telemetry }, sender))
     }
 
     /// Wait for the runtime to end, once its senders are dropped. Its
@@ -245,6 +261,8 @@ impl Runtime {
         if self.thread.join().is_err() {
             tracing::error!("the runtime's thread panicked");
         }
+        tracing::info!("the runtime stopped");
+        drop(self.telemetry);
     }
 }
 
@@ -624,6 +642,7 @@ mod tests {
             markets: vec![market; MARKETS_MAX + 1],
             session: None,
             control: None,
+            telemetry: None,
         };
         assert!(config.readers().unwrap_err().contains("at most"));
     }

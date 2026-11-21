@@ -162,6 +162,7 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
                     "rpc_url": world.surfnet.rpc_url(),
                     "logs": dir.join("logs"),
                 },
+                "telemetry": { "log": dir.join("runtime.jsonl") },
             },
         })
         .to_string(),
@@ -186,6 +187,17 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
     // Added running, it steps on the slots.
     ask(&socket, add("a", true));
     until(&socket, "a steps", |s| one(s, "a").steps >= 3).await;
+
+    // Its telemetry: each step a span and a metric event, by strategy.
+    let telemetry = std::fs::read_to_string(dir.join("runtime.jsonl")).unwrap();
+    let stepped = telemetry
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|line| line["fields"]["message"] == "a strategy stepped")
+        .expect("a step's metric event in the runtime's log");
+    assert_eq!(stepped["fields"]["strategy"], "a");
+    assert!(stepped["fields"]["histogram.mtx_strategy_step_ms"].is_u64());
+    assert_eq!(stepped["span"]["name"], "strategy.step");
 
     // Paused, it doesn't.
     let paused = ask(

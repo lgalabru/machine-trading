@@ -176,7 +176,7 @@ async fn a_transfer_sent_over_the_tpu_lands_without_an_rpc_send() {
     }
 
     // Through the chain a desk trades on: sent over the TPU, confirmed.
-    let chain = TpuChainClient::new(RpcChainClient::new(url.clone()), tpu.clone());
+    let chain = TpuChainClient::new(RpcChainClient::new(url.clone()), tpu.clone(), "test");
     let again = Keypair::new();
     let blockhash = chain.get_latest_blockhash().await.unwrap();
     chain
