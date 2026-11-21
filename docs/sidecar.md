@@ -9,15 +9,20 @@ here is on the node; a sidecar runs on the same machine.
 
 | | What | Where |
 | --- | --- | --- |
-| **Commands** | add, pause, resume, mandate, remove, kill, status: one JSON line each way, one command a connection | the control socket, `control.socket`; `mtx_core::control` |
+| **Commands** | add, pause, resume, mandate, remove, kill, status: one JSON line each way, as many commands as a connection likes, refusals with a code | the control socket, `control.socket`; `mtx_core::control` |
 | **Events** | everything that happens, pushed as it happens: a hello, then slots, steps, paper fills and markouts, trades, pauses, commands | the event socket, `control.events`; `mtx_core::events` |
 | **Journals** | each strategy's steps, shadow sends and paper fills, in full | `<control.logs>/<name>.{steps,shadow,fills}.jsonl`; `crates/runtime/src/live/journal.rs` |
 | **Telemetry** | logs, traces and metrics | OTLP to `telemetry.otlp_endpoint`, a JSON log at `telemetry.log`; `ops/grafana` |
 
 A sidecar depends on `mtx-core` (a git dependency on this repository),
 which holds both protocols and a blocking client for each:
-`mtx_core::control::request` and `mtx_core::events::subscribe`. It holds
-no Solana code and no runtime.
+`mtx_core::control::Client` (one connection kept for every command;
+`request` for a one-off) and `mtx_core::events::subscribe`. It holds no
+Solana code and no runtime. `crates/core/tests/contract.rs` fixes every
+line of both protocols as it goes over the wire.
+
+Both sockets speak one protocol version, `mtx_core::events::PROTOCOL`
+(2), told in the event stream's hello.
 
 ## Turning it on
 
@@ -33,13 +38,28 @@ In the plugin's configuration, beside `control.socket`:
 }
 ```
 
-Without `events`, there is no event socket. Both sockets are files the
+Without `events`, there is no event socket.
+
+Beside them, what the runtime's speed depends on:
+
+- `workers` (4): the threads strategies step on, at once across
+  strategies; `cores` (none): cores to pin them to, away from the
+  validator's busiest.
+- `tpu.preflight` (false): a live strategy over the TPU sends without
+  waiting for its order to land (its `fate` comes on the event stream),
+  and without the node's simulation first unless this is on: a round trip
+  on every order, against the fee of a transaction that fails on chain.
+- The blockhash every transaction is signed on is the one the plugin last
+  saw produced, and a strategy's component is compiled once and kept in
+  wasmtime's code cache, so a restart or a new mandate doesn't compile it
+  again. Both sockets are files the
 validator's user owns: a sidecar runs as that user, or in its group.
 
 ## The event stream
 
-Connect to the event socket and read lines. Each is a `Line`: `at_ms` (the
-runtime's clock) and an `event`.
+Connect to the event socket and read lines. Each is a `Line`: `at_us`
+(microseconds, the runtime's clock, as the line was handed to the socket:
+on the same host, a sidecar reads its own delay off it) and an `event`.
 
 1. **`hello`** first: the protocol (`mtx_core::events::PROTOCOL`), the feed
    and every strategy's status, as `mtx live status` has them. A sidecar
@@ -50,12 +70,15 @@ runtime's clock) and an `event`.
 | Event | When | Carries |
 | --- | --- | --- |
 | `slot` | the runtime stepped on a bank slot (about 2.5 a second) | slot, slots behind the chain, feed events dropped |
-| `step` | a strategy's step ended | strategy, slot, step number, time, orders sent, position, PnL, drawdown, still running |
+| `step` | a strategy's step ended | strategy, slot, step number, orders sent, position, PnL, drawdown, still running, and its `timings` (below) |
+| `step_skipped` | a step came while the strategy's last still ran | strategy, slot |
+| `stopped` | a strategy can't step again: it trapped, or ran out of fuel or time | strategy, why |
+| `fate` | what became of a transaction a live strategy sent without waiting (over the TPU) | strategy, signature, landed, slot, the chain's error, microseconds from the send |
 | `paper_fill` | a shadow strategy's order filled on paper | model (`through`, `touch`), side, price, size, maker or taker, edge at the mid, paper position |
 | `markout` | a paper fill, 3, 25 and 150 slots on | model, fill slot, horizon, bps (positive: the market went its way) |
 | `trade` | a trade on a market a strategy runs on, as the validator ran it | symbol, slot, taker's side, price, size |
 | `paused` | the enforcer paused a strategy | strategy, `mandate` or `feed`, why |
-| `command` | a command that changes something was done or refused | the command, ok, error |
+| `command` | a command that changes something was done or refused | the command (an enum), and the refusal (`code`, `error`) if it was |
 | `lagged` | this connection fell behind and lost events | how many: read `status` again |
 
 **It never slows the runtime.** An event is serialized once, only when
@@ -68,20 +91,65 @@ disconnected. At most 16 connections at once.
 wrote itself. Nothing a stranger can put on the chain (a memo, a token's
 name) reaches a sidecar through an event.
 
-**Latency.** A `step` event leaves the runtime as the step ends, which is
-within a slot of the slot it stepped on; a `trade` at the next slot after
-the validator ran it. Both are a local socket write away from the
-sidecar.
+**A step's timings**, each stage in microseconds on the runtime's
+monotonic clock, from the validator's notice that the node has the slot's
+bank to the step's last send:
+
+| Stage | From, to |
+| --- | --- |
+| `feed_us` | the plugin's callback to the runtime's feed applying the slot |
+| `wake_us` | the feed to the strategies' loop starting the step |
+| `settle_us` | waiting for the feed to apply the writes before the slot |
+| `read_us` | reading the strategy's market from the account cache |
+| `call_us` | the strategy's `step`, in its wasm sandbox |
+| `send_us` | planning, checking against the mandate, signing and sending its orders |
+| `total_us` | the plugin's callback to the last send |
+
+Measured on mainnet (mtx-alpha, Phoenix SOL, two shadow strategies), as
+`mtx live latency` prints it:
+
+| | p50 | p90 |
+| --- | --- | --- |
+| total, the slot's bank to the step's last send | 526 µs | 723 µs |
+| feed | 5 µs | 7 µs |
+| read (the cache's lock: 5 µs) | 292 µs | 340 µs |
+| call | 81 µs | 96 µs |
+| send (no orders / orders) | 6 µs | 198 µs |
+| an event, runtime to sidecar | 23 µs | 61 µs |
+| a command round trip, kept connection | 20 µs | 23 µs |
+| a command round trip, one connection each | 145 µs | 201 µs |
+| a component's load, from the code cache | 1–2 ms | |
 
 `mtx live --socket … watch --events /home/sol/mtx/events.sock` prints the
-stream for a person (`--json` for the lines as sent).
+stream for a person (`--json` for the lines as sent), and `mtx live
+--socket … latency --events … --seconds 60` measures it, stage by stage,
+with command round trips.
 
 ## Acting
 
-A sidecar acts through the control socket, exactly as `mtx live` does.
-Every command it sends shows up on the event stream as a `command` event,
-for itself and for anyone else watching, so a person acting by hand and a
-sidecar acting on its own see each other.
+A sidecar acts through the control socket, exactly as `mtx live` does,
+and keeps its connection: commands on it are answered in order, in tens
+of microseconds. Every command it sends shows up on the event stream as a
+`command` event, for itself and for anyone else watching, so a person
+acting by hand and a sidecar acting on its own see each other.
+
+A refusal is `{"reply":"error","code":…,"error":…}`: a program branches on
+the code, a person reads the error. A code a newer runtime adds reads as
+`failed`.
+
+| Code | Why |
+| --- | --- |
+| `not_a_command` | the line isn't a command this runtime reads |
+| `unknown_strategy` | no strategy has that name |
+| `exists` | a strategy already has that name |
+| `too_many` | the runtime runs as many strategies as it may (32) |
+| `invalid` | a mandate that doesn't validate or doesn't allow the market, a step of no slots |
+| `unreadable` | a file it names (component, keypair, exchange) can't be read |
+| `start_failed` | its accounts couldn't be read from the node, or its component didn't start |
+| `orders_not_cancelled` | some of its resting orders couldn't be cancelled |
+| `not_persisted` | done, but the desired state couldn't be written: a restart won't remember it |
+| `stopped` | the runtime's strategies stopped (the plugin is unloading) |
+| `failed` | anything else; the error says what |
 
 - A command is applied at the strategy's next step boundary.
 - `add` names a component and a keypair by path on the node: a sidecar

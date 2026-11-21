@@ -96,6 +96,9 @@ histograms become `_bucket`, `_sum` and `_count`.
 | `mtx_tape_trades` | counter | strategy | Phoenix trades on the strategy's market, from the validator's transactions |
 | `mtx_tape_missed` | counter | strategy | tape transactions the paper book fell too far behind to read |
 | `mtx_tape_undecoded` | counter | strategy | tape transactions whose Phoenix records didn't decode |
+| `mtx_read_lock_us` | histogram | symbol | a market read's wait for the account cache's lock |
+| `mtx_read_decode_us` | histogram | symbol | a market read's decode, after the lock |
+| `mtx_journal_dropped` | counter | strategy | step journal lines dropped because the journal's thread fell behind |
 | `mtx_enforcer_pauses` | counter | strategy, reason | `mandate` (a breach) or `feed` (stale) |
 | `mtx_control_commands` | counter | command, outcome | `mtx live` commands that change something |
 | `mtx_feed_slot` | gauge | | the newest bank slot the runtime applied |
