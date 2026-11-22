@@ -920,6 +920,16 @@ impl Manager {
                 return;
             }
         };
+        if stored.len() > STRATEGIES_MAX {
+            // Only a state written by hand, or under a larger bound, holds
+            // more: what is past the bound is not restored, and the next
+            // write of the desired state forgets it.
+            tracing::error!(
+                stored = stored.len(),
+                max = STRATEGIES_MAX,
+                "the desired state holds more strategies than a runtime runs; the rest are dropped"
+            );
+        }
         self.held = stored
             .into_iter()
             .take(STRATEGIES_MAX)
@@ -1548,7 +1558,9 @@ impl Manager {
                 format!("a strategy is already named {}", spec.name),
             ));
         }
-        if self.strategies.len() + self.adding.len() >= STRATEGIES_MAX {
+        // Held strategies count: the desired state keeps them, and a restart
+        // brings back at most STRATEGIES_MAX of what it holds.
+        if self.strategies.len() + self.adding.len() + self.held.len() >= STRATEGIES_MAX {
             return Err(ControlError::new(
                 ErrorCode::TooMany,
                 format!("a runtime runs at most {STRATEGIES_MAX} strategies"),
@@ -1675,6 +1687,10 @@ impl Manager {
     /// hash, and whether it runs. Written beside the file and renamed over
     /// it, so a crash leaves the old state or the new, never half of one.
     fn persist(&self) -> Result<(), String> {
+        assert!(
+            self.strategies.len() + self.held.len() <= STRATEGIES_MAX,
+            "an add counts the running and the held strategies"
+        );
         let state = DesiredState {
             strategies: self
                 .strategies
@@ -1877,6 +1893,66 @@ mod tests {
         assert_eq!(back.strategies.len(), 1);
         assert_eq!(back.strategies[0].spec, state.strategies[0].spec);
         assert_eq!(back.strategies[0].component_sha256, "ab");
+    }
+
+    fn spec(name: &str) -> AddStrategy {
+        AddStrategy {
+            name: name.into(),
+            component: "/bots/carry.wasm".into(),
+            mandate: Mandate::perp("phoenix", "SOL", 1.0, 100.0),
+            keypair: "/keys/carry.json".into(),
+            exchange: "/data/exchange.json".into(),
+            symbol: "SOL".into(),
+            slots_per_step: 2,
+            run: true,
+            close_on_breach: false,
+            shadow: false,
+        }
+    }
+
+    fn manager() -> Manager {
+        let config: ControlConfig = serde_json::from_value(serde_json::json!({
+            "socket": "/nonexistent/control.sock",
+            "state": "/nonexistent/strategies.json",
+            "rpc_url": "http://127.0.0.1:1",
+            "logs": "/nonexistent/logs",
+        }))
+        .unwrap();
+        let (_, receiver) = super::super::feed::channel(Arc::default());
+        let shared = Shared {
+            cache: Arc::default(),
+            watch: Arc::default(),
+            progress: receiver.progress(),
+            events: super::super::events::Events::default(),
+            blockhash: Arc::default(),
+            readings: Arc::default(),
+            references: Arc::default(),
+        };
+        Manager::new(config, shared, None)
+    }
+
+    /// A strategy held because it couldn't be restored still takes a place:
+    /// the desired state never holds more than a restart brings back.
+    #[test]
+    fn held_strategies_count_against_the_bound() {
+        let mut manager = manager();
+        assert_eq!(manager.check_add(&spec("new"), false), Ok(()));
+        manager.held = (0..STRATEGIES_MAX)
+            .map(|n| {
+                let stored = Stored {
+                    spec: spec(&format!("held-{n}")),
+                    component_sha256: "ab".into(),
+                };
+                (stored, Some("not restored".into()))
+            })
+            .collect();
+        let refused = manager.check_add(&spec("new"), false).unwrap_err();
+        assert_eq!(refused.code, ErrorCode::TooMany);
+        manager.held.pop();
+        assert_eq!(manager.check_add(&spec("new"), false), Ok(()));
+        // A held name is taken, unless it is the one being restored.
+        let taken = manager.check_add(&spec("held-0"), false).unwrap_err();
+        assert_eq!(taken.code, ErrorCode::Exists);
     }
 
     #[test]
