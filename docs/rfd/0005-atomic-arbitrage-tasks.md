@@ -350,3 +350,30 @@ informed bot.
   Not drawn yet: the pools' depth, which varied fivefold over the
   research's week and needs a pool's liquidity and tick arrays scaled
   before the session starts.
+
+- 2026-11-22: `backrun-thin-pools` is a task (`bench/tasks/backrun-thin-pools`),
+  drawn by the `backrun-thin-pools` generator (`crates/grader/src/thin_pools.rs`)
+  on the ten pools of `snapshots/thin-pools-2026-11-21`. An amm session
+  now trades any pools whose first is SOL/USDC: every other token has a
+  fixed reference price in SOL (`venues.amm.reference_sol`), which values
+  the account and rule 11 and which the pool searchers trade back to; up to
+  twelve pools (`POOLS_MAX`), and as many lookup tables as the accounts
+  need. The snapshot's 279 accounts counted pool by pool are 229 once each,
+  so one table holds them: a three-leg cycle is 619 bytes, a four-swap
+  route 709. Cycle searchers search the graph (`amm::cycle::Graph`: every
+  simple cycle through SOL, gated by its marginal rate after fees, sized by
+  golden-section search on exact quotes), to `max_legs` legs; on two
+  SOL/USDC pools that is the old two-pool cycle, and `backrun-sol-usdc`'s
+  and `liquidation-flash`'s reports are unchanged but for their bots'
+  WebAssembly fuel counts. A trigger may be sized by its move
+  (`impact_bps`), halved until it fills where a pool's liquidity ends. The
+  graph holds no four-leg cycle that visits a token once (its only links
+  beside SOL are JitoSOL–JTO and GEOD–USDC), so the informed bot's deeper
+  search adds nothing here; its edge is the bid. The research's p90
+  impact (5,877 bp) and a 1,500-SOL cap opened cycles of up to 200 SOL on
+  these pools, ten times the research's largest backruns, so moves are cut
+  at 3,000 bp and triggers at 100 SOL's worth. On 72 hidden sessions the
+  reference (two and three legs, tipping half) made 0.57 of the informed
+  bot; one that looks only at a pair's two pools made 0.20 of the reference (v2 0.10), and one that tips 95% 0.10. The
+  epoch step is left out: no session has a stake-pool venue, and stepping
+  the rate offline needs a stake-pool override nobody writes yet.

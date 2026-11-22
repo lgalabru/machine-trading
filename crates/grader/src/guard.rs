@@ -842,6 +842,7 @@ async fn pool_send(
         PooledSend::Dropped | PooledSend::Delayed(_) => {
             engine
                 .submit(Submission {
+                    sender: crate::txlayer::engine::BOT.into(),
                     wires,
                     route,
                     bundle,

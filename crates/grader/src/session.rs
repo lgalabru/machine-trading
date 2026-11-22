@@ -274,6 +274,10 @@ pub struct SessionReport {
     /// the borrowers and liquidators did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lending: Option<crate::lending::LendingReport>,
+    /// An `amm` session: the wallet, the bot's fills and transactions, and
+    /// each trigger and searcher's send.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amm: Option<crate::amm::AmmReport>,
     /// Venue upkeep the venue refused on chain (see [`crate::crank`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
@@ -566,6 +570,13 @@ impl SessionReport {
         observed.takes =
             crate::taking::takes(&self.instrument, self.start_position, &self.making_fills);
         observed.takes_unjudged = self.takes_unjudged.clone();
+        if let Some(lending) = &self.lending {
+            observed.transactions = lending.transactions.clone();
+            observed.pools = lending.pools.clone();
+        }
+        if let Some(amm) = &self.amm {
+            amm.observe(&mut observed);
+        }
         observed
     }
 }
@@ -660,6 +671,9 @@ pub(crate) struct Prepared {
     /// [`crate::crank`]).
     pub cranks: Vec<Box<dyn crate::crank::VenueCrank>>,
     pub account: Box<dyn Account>,
+    /// What lands the scenario's triggers, if it has any: its steps then
+    /// end on them (see [`crate::trigger`]).
+    pub triggers: Option<Box<dyn crate::trigger::Triggers>>,
 }
 
 /// The bot's account as a session measures it, and what the session's
@@ -836,8 +850,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         roster,
         cranks: kind_cranks,
         mut account,
+        mut triggers,
     } = if scenario.lending.is_some() {
         crate::lending::prepare(&opts).await?
+    } else if scenario.amm.is_some() {
+        crate::amm::prepare(&opts).await?
     } else if scenario.spot.is_some() {
         crate::spot::prepare(&opts).await?
     } else {
@@ -868,6 +885,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             )
             .await?;
             guard.set_tx_layer(engine.clone());
+            cast.attach_tx(&engine);
             let wallet = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
             Some((engine, layer.clone(), wallet))
         }
@@ -880,7 +898,23 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
 
     let late_before = surfnet.coalesced_slots();
     *bot_started = true;
-    let steps = scenario.duration_slots.div_ceil(SLOTS_PER_STEP);
+    // A session with triggers ends a step on each (see [`crate::trigger`]);
+    // without, every step is two slots, as ever.
+    let schedule = match &triggers {
+        Some(triggers) => Some(
+            crate::trigger::schedule(scenario.duration_slots, &triggers.slots()).map_err(
+                |reason| Error::InvalidScenario {
+                    path: scenario.name.clone().into(),
+                    reason: format!("triggers: {reason}"),
+                },
+            )?,
+        ),
+        None => None,
+    };
+    let steps = match &schedule {
+        Some(schedule) => schedule.len() as u64,
+        None => scenario.duration_slots.div_ceil(SLOTS_PER_STEP),
+    };
     let walls = Walls::new(opts.trusted, steps);
     let user = opts.slot.map(|slot| BOT_USERS[slot]);
     // The task's variables (`mtx_kit::SESSION_VARS`): the regime, an off-hours
@@ -1080,7 +1114,16 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         if let Some(warp) = scenario.warps.iter().find(|w| w.step == k) {
             slot = crate::lending::warp(surfnet, &rpc, warp.slots).await?;
         }
-        let target = (slot + SLOTS_PER_STEP).min(end_slot);
+        // The trigger step before this one left its slot open to the
+        // turns' sends; this step's first block closes it.
+        if let (Some(_), Some((engine, ..))) = (&schedule, &tx) {
+            engine.set_trigger_open(false);
+        }
+        let span = schedule.as_ref().map(|schedule| schedule[k as usize]);
+        let target = match span {
+            Some(span) => base_slot + span.end_at,
+            None => (slot + SLOTS_PER_STEP).min(end_slot),
+        };
         let mut first = true;
         while slot < target {
             // Under the transaction layer, the slot's block: what its
@@ -1107,6 +1150,19 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             }
         }
         let at = slot - base_slot;
+        // A trigger step: the trigger lands in the slot the step ends on,
+        // which stays open for the turns' sends (see [`crate::trigger`]).
+        let trigger = match (span.and_then(|span| span.trigger), triggers.as_mut()) {
+            (Some(i), Some(triggers)) if closing.is_none() => {
+                let landed = triggers.land(i, k, slot, at).await?;
+                assert_eq!(landed.slot, slot, "a trigger lands in its step's open slot");
+                if let Some((engine, ..)) = &tx {
+                    engine.set_trigger_open(true);
+                }
+                Some(landed)
+            }
+            _ => None,
+        };
         // The bot's held sends land in this step's blocks, unless the risk
         // desk has taken the account over.
         if closing.is_none() {
@@ -1244,6 +1300,7 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         }
         guard.set_turn(true);
         let mut step = Step::new(k, slot, k + 1 == steps);
+        step.trigger = trigger;
         if let Some(bot) = wasm_bot.as_mut() {
             if let Some(now) = steps_seen.last() {
                 let peak = steps_seen
@@ -1400,7 +1457,11 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
         .await?;
     if let Some((engine, layer, start)) = &tx {
         let end = crate::txlayer::fees::Wallet::read(&rpc, &bot_key.pubkey())?;
-        report.tx_layer = Some(engine.report(Some(end.change_since(start))));
+        let layer_report = engine.report(Some(end.change_since(start)));
+        if let Some(amm) = report.amm.as_mut() {
+            amm.attribute(&layer_report, |signature| engine.fate(signature));
+        }
+        report.tx_layer = Some(layer_report);
         if let Some(sol_usd) = layer.sol_usd.filter(|_| layer.fees_in_pnl) {
             fees_in_pnl(
                 &mut report,

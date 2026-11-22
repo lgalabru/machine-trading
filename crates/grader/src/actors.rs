@@ -94,6 +94,14 @@ pub trait Actor: Send + Sync {
         None
     }
 
+    /// The session's transaction layer, once it starts: an actor that sends
+    /// through it puts its transactions in the same auction as the bot's,
+    /// under its own name ([`crate::txlayer::engine::Submission::sender`]).
+    /// Never called in a session without one.
+    fn attach_tx(&mut self, engine: Arc<crate::txlayer::TxEngine>) {
+        let _ = engine;
+    }
+
     /// Who is who among its parts, as identity facts the grader may tell the
     /// task's informed bot (see [`library::Roster`]): each is a kind and the
     /// names (a wallet's address, a client's id) it holds. Nothing by default.
@@ -163,6 +171,10 @@ impl Actor for OnMarket {
         self.actor.send_hook()
     }
 
+    fn attach_tx(&mut self, engine: Arc<crate::txlayer::TxEngine>) {
+        self.actor.attach_tx(engine);
+    }
+
     async fn report(&mut self, report: &mut ActorsReport) {
         let mut own = ActorsReport::default();
         self.actor.report(&mut own).await;
@@ -217,6 +229,13 @@ impl Cast {
     /// Read each step's flow from `watch`, for the actors that want it.
     pub fn watch(&mut self, watch: FlowWatch) {
         self.watch = Some(watch);
+    }
+
+    /// Hand every actor the session's transaction layer.
+    pub fn attach_tx(&mut self, engine: &Arc<crate::txlayer::TxEngine>) {
+        for actor in &mut self.actors {
+            actor.attach_tx(engine.clone());
+        }
     }
 
     /// The hooks the actors run around each of the bot's transactions.

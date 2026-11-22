@@ -15,7 +15,8 @@ bs58 = "0.5"
 flate2 = "1"
 libc.workspace = true
 mtx-core.workspace = true
-mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2"] }
+# Whirlpool and Raydium CLMM: the pools a recipe clones (src/pools.rs).
+mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2", "orca-whirlpool", "raydium-clmm"] }
 phoenix-rise.workspace = true
 reqwest.workspace = true
 serde.workspace = true

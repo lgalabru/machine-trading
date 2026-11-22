@@ -473,3 +473,40 @@ defend, no bot users, no keypair files.
   so that a second host can run a component
   ([RFD 0004](0004-strategies-on-mainnet.md)). The grader's `wasm` module
   is what a grade hands them. Grades are unchanged.
+- 2026-11-21: the interface, 0.3.0, for atomic routes
+  ([ADR 0004](../adr/0004-atomic-arbitrage-in-the-sheet.md)). 0.2.0 is
+  frozen in `wit/0.2.0`, as 0.1.0 is, and the host still loads both. Three
+  additions: `tx-options.atomic`, an id that joins a sheet's lines into
+  one transaction that lands whole or not at all; `flash(amount)` on a
+  lending reserve, a flash loan for the group, borrowed before its first
+  line and repaid with the reserve's fee after its last; and `push-price`
+  on a lending reserve, Scope's `refresh_price_list` for the entries the
+  reserve prices with. A group's lines must be next to each other on the
+  sheet, and it is planned whole: if the mandate's caps would cut or drop
+  any line of it, none is sent (a route's later legs would spend what its
+  first never got), and the note says so. The desk asks each line's seat
+  for its instructions (`Seat::instructions`) and lays the transaction out
+  so no index moves after it is used: the compute budget (limit, then the
+  price where the session applies one), every `push-price` line (Scope
+  takes a refresh only right after the budget), the flash borrow, the
+  other lines in sheet order, the repay naming the borrow's index. The
+  limit is the lines' own added up, unless the first line's options set
+  one; the first line's options send the group, and its seat signs it.
+  The transaction layer now changes a compute-budget instruction in place,
+  and adds a missing one after the others, never at index 0. Every line
+  of a group reports the group's status; a failed group stops the step,
+  as a failed line does. A pool's swap in a group skips the quote check
+  against the pool as it is now, since the group's earlier lines may move
+  it: the swap's threshold on chain judges it. On a mainnet fork, a
+  flash-funded Whirlpool-to-Raydium cycle with its last limit at the
+  loan's repayment fails on Raydium's `TooLittleOutputReceived` and
+  leaves nothing behind, and lands with a loose limit; a push and a swap
+  land together, the push first.
+- 2026-11-21: 0.3.0's `market` gains `trigger`, on a trigger step the
+  transaction the step ended behind (its signature, slot, pool, side and
+  size; [ADR 0004](../adr/0004-atomic-arbitrage-in-the-sheet.md)), and a
+  process bot's `Step` the same `trigger`. 0.3.0 hadn't shipped in a
+  release, so it changes in place: every 0.3.0 component is built again.
+  A component can now quote Whirlpool and Raydium CLMM pools itself, on
+  the kit's exact quotes, with the chain-free features
+  `orca-whirlpool-venue` and `raydium-clmm-venue` (`bots/backrun-probe`).

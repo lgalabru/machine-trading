@@ -2,6 +2,8 @@
 //! what became of each of the bot's sends, and what it paid. The blocks are
 //! in the session report, so a replay compares ordering too.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use super::{RouteKind, fees::FeeLedger};
@@ -17,6 +19,27 @@ pub struct TxLayerReport {
     pub fees: FeeLedger,
     /// Entries still pending when the session ended: they never landed.
     pub pending_at_end: usize,
+    /// What became of the actors' sends, by sender: each competed in the
+    /// same blocks as the bot's (see `docs/tx-layer.md`, "Actors'
+    /// sends"). Empty where no actor sends through the layer.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub senders: BTreeMap<String, SenderRecord>,
+}
+
+/// One actor's sends, counted by what became of them, and what its landed
+/// transactions paid, in lamports.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct SenderRecord {
+    pub sends: u64,
+    /// Landed and ran, landed and failed (paying its fee), failed without
+    /// running, expired, or still pending at the end.
+    pub landed: u64,
+    pub failed_on_chain: u64,
+    pub refused: u64,
+    pub expired: u64,
+    pub pending: u64,
+    pub fees: u64,
+    pub tips: u64,
 }
 
 /// One slot's block.
@@ -128,9 +151,11 @@ mod tests {
             }],
             fees: FeeLedger::default(),
             pending_at_end: 0,
+            senders: BTreeMap::new(),
         };
         let json = serde_json::to_string(&report).unwrap();
         assert!(!json.contains("refused") && !json.contains("resigned"));
+        assert!(!json.contains("senders"), "no actor sent");
         assert_eq!(
             serde_json::from_str::<TxLayerReport>(&json).unwrap(),
             report

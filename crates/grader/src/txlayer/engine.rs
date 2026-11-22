@@ -24,7 +24,7 @@ use super::{
     leader::Leaders,
     normal,
     pool::{Arrival, BASE_FEE, Entry, EntryState, Pool, PooledTx},
-    report::{BlockRecord, Landed, Refused, SendRecord, TxLayerReport},
+    report::{BlockRecord, Landed, Refused, SendRecord, SenderRecord, TxLayerReport},
 };
 
 /// The sender the bot's entries carry.
@@ -35,6 +35,11 @@ pub const BLOCKHASH_BLOCKS: u64 = 150;
 /// A send for the pool: one transaction, or a bundle of them, signed.
 #[derive(Debug, Clone)]
 pub struct Submission {
+    /// Who sent it: [`BOT`], or an actor's name (`kamino-liquidator/2`).
+    /// The builder ranks every sender's entries by the same rules; the
+    /// sender only names them in the report, draws their latency and
+    /// losses, and decides whose wallet the fee ledger follows (the bot's).
+    pub sender: String,
     pub wires: Vec<Vec<u8>>,
     pub route: RouteKind,
     pub bundle: bool,
@@ -110,6 +115,10 @@ struct State {
     /// The risk desk took the account over: nothing more is pooled or
     /// lands.
     closed: bool,
+    /// A trigger step's turns are under way: what is sent now reaches the
+    /// trigger's open slot with no route latency (see
+    /// [`TxEngine::set_trigger_open`]).
+    trigger_open: bool,
 }
 
 impl TxEngine {
@@ -159,6 +168,7 @@ impl TxEngine {
                 blocks: Vec::new(),
                 errors: BTreeMap::new(),
                 closed: false,
+                trigger_open: false,
             }),
         });
         engine.observe(base_slot).await?;
@@ -225,11 +235,23 @@ impl TxEngine {
         state.step_seq = 0;
     }
 
-    /// Put the bot's send in the pool. A transaction sent again with the
-    /// same signature is a rebroadcast: a lost delivery tries again, and it
-    /// never runs twice.
+    /// A trigger step's turns begin (`true`), or the step after it does
+    /// (`false`). While the trigger's slot is open, a send reaches it with
+    /// no route latency: the bot and the searchers react within the
+    /// trigger's slot, as mainnet's backrunners do (`docs/tx-layer.md`,
+    /// "Trigger steps"). What a sender adds itself (a scenario's latency
+    /// fault, a searcher's own latency) still applies, and so does every
+    /// route's chance of losing a delivery.
+    pub fn set_trigger_open(&self, open: bool) {
+        self.state().trigger_open = open;
+    }
+
+    /// Put a send in the pool: the bot's, or an actor's under its own name.
+    /// A transaction sent again with the same signature is a rebroadcast: a
+    /// lost delivery tries again, and it never runs twice.
     pub async fn submit(&self, submission: Submission) -> Result<Accepted, Refusal> {
         let refuse = |code, message: String| Refusal { code, message };
+        assert!(!submission.sender.is_empty(), "a send has a sender");
         if submission.wires.is_empty() || submission.wires.len() > jito::MAX_BUNDLE {
             return Err(refuse(
                 INVALID_PARAMS,
@@ -861,7 +883,29 @@ impl TxEngine {
                 }
             })
             .collect();
+        let mut senders: BTreeMap<String, SenderRecord> = BTreeMap::new();
+        for entry in state.pool.entries.iter().filter(|e| e.sender != BOT) {
+            let record = senders.entry(entry.sender.clone()).or_default();
+            record.sends += 1;
+            match &entry.state {
+                EntryState::Landed { ok: true, .. } => {
+                    record.landed += 1;
+                    record.fees += entry.fee();
+                    record.tips += entry.tip();
+                }
+                EntryState::Landed { ok: false, .. } => {
+                    record.failed_on_chain += 1;
+                    record.fees += entry.fee();
+                }
+                EntryState::Failed { .. } => record.refused += 1,
+                EntryState::Expired { .. } => record.expired += 1,
+                EntryState::Pending | EntryState::Lost | EntryState::Merged { .. } => {
+                    record.pending += 1;
+                }
+            }
+        }
         TxLayerReport {
+            senders,
             calibration: state.layer.calibration.clone(),
             blocks: state
                 .blocks
@@ -932,11 +976,14 @@ impl State {
         let route = self.route(submission.route);
         let now = self.slot;
         let seed = self.layer.seed;
+        let trigger_open = self.trigger_open;
         let landed = self.pool.landed();
-        let pending = self.pool.pending(BOT);
+        let sender = submission.sender.clone();
+        let pending = self.pool.pending(&sender);
         let max_pending = self.layer.max_pending;
         if let Some(entry) = self.pool.entries.iter_mut().find(|e| {
-            e.is_bundle() == submission.bundle
+            e.sender == sender
+                && e.is_bundle() == submission.bundle
                 && e.txs.iter().map(|t| &t.signature).eq(signatures.iter())
         }) {
             if matches!(entry.state, EntryState::Failed { .. }) {
@@ -959,13 +1006,16 @@ impl State {
                 entry.state = EntryState::Pending;
                 entry.dropped = submission.dropped;
                 entry.delivered = false;
-                let latency = latency(
-                    seed,
-                    &route,
-                    &entry.sender,
-                    entry.sender_seq,
-                    entry.attempts,
-                );
+                let latency = match trigger_open {
+                    true => 0,
+                    false => latency(
+                        seed,
+                        &route,
+                        &entry.sender,
+                        entry.sender_seq,
+                        entry.attempts,
+                    ),
+                };
                 entry.ready_slot = now + 1 + latency + submission.delay_slots;
             }
             return Ok(answer(&key));
@@ -981,7 +1031,7 @@ impl State {
                         .into(),
             });
         }
-        if self.pool.pending(BOT) >= self.layer.max_pending {
+        if pending >= self.layer.max_pending {
             return Err(Refusal {
                 code: TOO_MANY_REQUESTS,
                 message: format!(
@@ -995,7 +1045,6 @@ impl State {
             .map(|t| self.blockhashes.get(&t.blockhash).copied().unwrap_or(0))
             .min()
             .unwrap_or(0);
-        let sender = BOT.to_string();
         let sender_seq = {
             let seq = self.sender_seqs.entry(sender.clone()).or_default();
             *seq += 1;
@@ -1006,8 +1055,11 @@ impl State {
             seq: self.step_seq,
         };
         self.step_seq += 1;
-        let latency = latency(seed, &route, &sender, sender_seq, 1);
-        if route.fee_lamports > 0 {
+        let latency = match trigger_open {
+            true => 0,
+            false => latency(seed, &route, &sender, sender_seq, 1),
+        };
+        if sender == BOT && route.fee_lamports > 0 {
             self.ledger.route_fees += route.fee_lamports;
         }
         let id = self.pool.entries.len() as u64;

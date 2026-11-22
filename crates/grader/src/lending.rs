@@ -30,6 +30,18 @@
 //!    its account is worth.
 //!
 //! Liquidation races are settled by the actors' seeded order and delays.
+//! Under the transaction layer they are settled in its auction instead:
+//! the liquidators, and a keeper pushing Scope where a feed is `pushed`,
+//! send through the layer under their own names, at seeded latencies and
+//! bids ([`auction`]). A scenario's `venues.amm` adds pools, which the
+//! bot's seats trade and the session's lookup table holds ([`route`]).
+//! Mandate v0.3.0's rules 11 to 13 read the bot's transactions back from
+//! the chain ([`observe`]).
+
+mod arbitrage;
+pub mod auction;
+pub(crate) mod observe;
+pub mod route;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -39,12 +51,15 @@ use std::{
 
 use async_trait::async_trait;
 use mtx_core::{
-    mandate::{InstrumentRef, Kind, Mandate, Observed, PositionRange},
+    mandate::{
+        FlashBorrow, InstrumentRef, Kind, Mandate, Observed, ObservedPool, ObservedTransaction,
+        PositionRange, TransactionOutcome,
+    },
     turns::Step,
 };
 use mtx_kit::{
     BotEnv,
-    chain::{ChainClient, RpcChainClient},
+    chain::{AddressLookupTableAccount, ChainClient, RpcChainClient},
     token::TokenAccountInfo,
 };
 use serde::{Deserialize, Serialize};
@@ -63,7 +78,7 @@ use crate::{
     crank::{CrankOutcome, CrankStep, VenueCrank},
     error::io_error,
     guard::Guard,
-    oracles::{Feed, Oracles, ScopeOracle, Source, TwapMode},
+    oracles::{Feed, Oracles, ScopeMode, ScopeOracle, Source, TwapMode},
     scenario::{Scenario, SplitMix64},
     session::{
         self, Account, BOT_USERS, Done, IxRecord, Prepared, SLOTS_PER_STEP, SessionDir,
@@ -71,9 +86,11 @@ use crate::{
     },
     snapshot,
     spot::Wallet,
+    txlayer::TxEngine,
     venue::{
-        Venue,
-        kamino::{self, Books, Kamino, Reading, klend},
+        SeatChain, Venue,
+        amm::{Amm, Pool},
+        kamino::{self, Books, Kamino, Reading, klend, scope},
     },
     wasm::{Desk, Reader},
 };
@@ -81,13 +98,17 @@ use crate::{
 /// The venue every lending session trades.
 pub const VENUE: &str = "kamino";
 /// SOL each wallet the session makes holds for fees and rent.
-const FEE_SOL: f64 = 1.0;
+pub(crate) const FEE_SOL: f64 = 1.0;
 /// Most synthetic borrowers and liquidators a scenario may ask for.
 const MAX_BORROWERS: u32 = 32;
 const MAX_LIQUIDATORS: u32 = 5;
 /// A synthetic borrower borrows this share of what the reserve's loan to
 /// value allows, so rounding never refuses it.
 const BORROW_SHARE: f64 = 0.99;
+/// The widest log-normal spread of borrowers' sizes a scenario may ask
+/// for: mainnet's debts spread about 3.2 (a median of $165, a p90 of $10k,
+/// NOTES.md §1), and wider is a few whales and nothing else.
+const SIZE_SIGMA_MAX: f64 = 4.0;
 /// Health below which a borrower with a policy reacts.
 const WARNING_HEALTH: f64 = 1.05;
 /// The longest clock jump a scenario may make, in slots: thirty days.
@@ -115,6 +136,11 @@ pub struct Lending {
     pub borrowers: Option<Borrowers>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub liquidators: Option<Liquidators>,
+    /// The keeper that pushes Scope's pushed entries (a feed's `mode:
+    /// pushed`, see [`crate::oracles::ScopeMode`]). Absent, a session with
+    /// pushed feeds has one at its defaults: mainnet's cadence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keeper: Option<auction::ScopeKeeper>,
     /// What the reward divides the session's PnL by, as for spot sessions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound_usd: Option<f64>,
@@ -138,8 +164,15 @@ pub struct Borrowers {
     pub debt: String,
     /// The health each starts at, drawn uniformly from `[low, high]`.
     pub health: [f64; 2],
-    /// The collateral each deposits, in USD, drawn log-uniformly.
+    /// The collateral each deposits, in USD, drawn log-uniformly, or
+    /// log-normally when `size_sigma` is set.
     pub size_usd: [f64; 2],
+    /// Opt-in: draw each borrower's collateral log-normally instead, around
+    /// the range's geometric middle with this standard deviation of its
+    /// logarithm, and clipped to the range: mainnet's debts are log-normal
+    /// (NOTES.md §6, a median of $165 and a p90 of $10k).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_sigma: Option<f64>,
     /// The share that add a fifth to their collateral once their health
     /// falls below 1.05, and the share that repay half their debt then.
     /// The rest do nothing.
@@ -154,13 +187,21 @@ pub struct Borrowers {
 #[serde(deny_unknown_fields)]
 pub struct Liquidators {
     pub count: u32,
-    /// Steps each waits once it has seen an obligation it can liquidate,
-    /// drawn per liquidator from `[low, high]`: 0 acts in the step the
-    /// obligation turns, before the bot's turn.
-    pub delay_steps: [u64; 2],
+    /// Without the transaction layer: steps each waits once it has seen an
+    /// obligation it can liquidate, drawn per liquidator from `[low, high]`:
+    /// 0 acts in the step the obligation turns, before the bot's turn. Under
+    /// the layer, each bids in the slot auction instead, at a latency in
+    /// slots drawn from the research's (see [`auction`]), and this is
+    /// refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay_steps: Option<[u64; 2]>,
     /// Each one's wallet of the debt asset, in USD.
     #[serde(default = "default_liquidator_usd")]
     pub wallet_usd: f64,
+    /// Under the layer, how they race (see [`auction::Race`]). Absent, the
+    /// research's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub race: Option<auction::Race>,
 }
 
 fn default_liquidator_usd() -> f64 {
@@ -251,6 +292,13 @@ impl Lending {
             if !range_ok(b.size_usd, f64::MIN_POSITIVE) {
                 return Err("lending: borrowers.size_usd is a positive range".into());
             }
+            if b.size_sigma
+                .is_some_and(|s| !(s.is_finite() && s > 0.0 && s <= SIZE_SIGMA_MAX))
+            {
+                return Err(format!(
+                    "lending: borrowers.size_sigma is above 0 and at most {SIZE_SIGMA_MAX}"
+                ));
+            }
             let shares = [b.top_up_share, b.repay_share];
             if shares.iter().any(|s| !(0.0..=1.0).contains(s)) || shares.iter().sum::<f64>() > 1.0 {
                 return Err(
@@ -264,11 +312,14 @@ impl Lending {
                     "lending: liquidators.count is 1 to {MAX_LIQUIDATORS}"
                 ));
             }
-            if l.delay_steps[0] > l.delay_steps[1] {
+            if l.delay_steps.is_some_and(|[low, high]| low > high) {
                 return Err("lending: liquidators.delay_steps is a range".into());
             }
             if !(l.wallet_usd.is_finite() && l.wallet_usd > 0.0) {
                 return Err("lending: liquidators.wallet_usd must be positive".into());
+            }
+            if let Some(race) = &l.race {
+                race.validate()?;
             }
             if self.borrowers.is_none() {
                 return Err(
@@ -278,6 +329,9 @@ impl Lending {
         }
         if self.bound_usd.is_some_and(|b| !(b.is_finite() && b > 0.0)) {
             return Err("lending: bound_usd must be positive".into());
+        }
+        if let Some(keeper) = &self.keeper {
+            keeper.validate()?;
         }
         Ok(())
     }
@@ -322,6 +376,21 @@ pub struct LendingReport {
     /// liquidations, in the order they happened.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub actions: Vec<ActorAction>,
+    /// The bot's liquidations that landed and failed: another got there
+    /// first, mostly.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub liquidations_failed: u32,
+    /// Under mandate v0.3.0: each of the bot's transactions that landed or
+    /// failed, as rules 11 to 13 read it, and the session's pools with
+    /// their assets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transactions: Vec<ObservedTransaction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pools: Vec<ObservedPool>,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 /// One reserve of the account.
@@ -359,11 +428,24 @@ pub struct ActorAction {
     /// Why it failed, if it did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Under the transaction layer, a liquidation's slot in the session
+    /// where it landed, the latency drawn for it, what it bid (a tip, or a
+    /// priority fee), and whether it pushed Scope first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landed_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency_slots: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bid_lamports: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tipped: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pushed: bool,
 }
 
 type ActionLog = Arc<Mutex<Vec<ActorAction>>>;
 
-fn venue_error(label: impl Into<String>, reason: impl ToString) -> Error {
+pub(crate) fn venue_error(label: impl Into<String>, reason: impl ToString) -> Error {
     Error::Transaction {
         label: label.into(),
         reason: reason.to_string(),
@@ -498,7 +580,7 @@ pub fn gaps(warps: &[Warp]) -> (Vec<(u64, u64)>, u64) {
 }
 
 /// A whole token amount in atoms.
-fn atoms(units: f64, decimals: u32) -> u64 {
+pub(crate) fn atoms(units: f64, decimals: u32) -> u64 {
     (units * 10f64.powi(decimals as i32)).floor().max(0.0) as u64
 }
 
@@ -557,6 +639,173 @@ async fn act(
     instructions.push(klend::refresh_obligation(&market, &own, &touched));
     instructions.push(action);
     land(chain, books, &market, owner, label, instructions).await
+}
+
+/// The scenario's pools (`venues.amm`), one venue each of Orca's and
+/// Raydium's, read through the grader's endpoint.
+pub(crate) async fn connect_pools(
+    scenario: &Scenario,
+    chain: &Arc<dyn ChainClient>,
+) -> Result<Vec<Amm>> {
+    let instruments = scenario
+        .amm
+        .as_ref()
+        .map(crate::pools::AmmVenue::instruments)
+        .unwrap_or_default();
+    let mut venues = Vec::new();
+    for venue in crate::venue::amm::VENUES {
+        let of_venue: Vec<InstrumentRef> = instruments
+            .iter()
+            .filter(|i| i.venue == venue)
+            .cloned()
+            .collect();
+        if !of_venue.is_empty() {
+            venues.push(Amm::connect(venue, chain.clone(), &of_venue).await?);
+        }
+    }
+    let connected: usize = venues.iter().map(|v| v.pools().len()).sum();
+    assert_eq!(connected, instruments.len(), "every pool on its venue");
+    Ok(venues)
+}
+
+/// A session's pools trade only its reserves' assets, which the account
+/// values at the scenario's prices, and the mandate admits each with its
+/// assets (a wildcard's `assets` are checked here, against the pool's own).
+fn check_pools(pools: &[Pool], books: &Books, mandate: &Mandate) -> Result<()> {
+    for pool in pools {
+        let label = pool.instrument.to_string();
+        for token in [&pool.base, &pool.quote] {
+            if books.reserves.iter().all(|b| b.keys.mint != token.mint) {
+                return Err(venue_error(
+                    &label,
+                    format!(
+                        "{} isn't the asset of any of the session's reserves",
+                        token.mint
+                    ),
+                ));
+            }
+        }
+        let assets = [pool.base.mint.to_string(), pool.quote.mint.to_string()];
+        if mandate
+            .allowance_of(&pool.instrument, Some(&assets))
+            .is_none()
+        {
+            return Err(venue_error(
+                &label,
+                "the mandate's universe doesn't admit the pool with its assets",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Turn each pushed feed's entries (its price and its TWAP) into
+/// `FixedPrice` at what Scope holds now, before the lock: Scope's price
+/// stays where it is until someone pushes, and the scenario's overrides
+/// move the upstream in the mapping. A pushed feed must price a session
+/// reserve, and that reserve's price chain must be the feed's entry alone.
+async fn push_setup(
+    surfnet: &Surfnet,
+    rpc: &RpcClient,
+    chain: &dyn ChainClient,
+    oracles: &Oracles,
+    stored: &BTreeMap<Pubkey, klend::Reserve>,
+) -> Result<Vec<PushedReserve>> {
+    let mut pushed = Vec::new();
+    for feed in &oracles.feeds {
+        let Source::Scope(source) = &feed.source else {
+            continue;
+        };
+        if source.mode != ScopeMode::Pushed {
+            continue;
+        }
+        let prices: Pubkey = source
+            .account
+            .parse()
+            .map_err(|_| venue_error(&feed.name, "not an address"))?;
+        let readers: Vec<(&Pubkey, &klend::Reserve)> = stored
+            .iter()
+            .filter(|(_, r)| r.scope_prices == prices && r.price_chain[0] == source.index)
+            .collect();
+        if readers.is_empty() {
+            return Err(venue_error(
+                &feed.name,
+                "a pushed feed must price one of the session's reserves",
+            ));
+        }
+        let entries: Vec<u16> = std::iter::once(source.index)
+            .chain(source.twap_index)
+            .collect();
+        let data = rpc.get_account(&prices)?.data;
+        let found = scope::feed(chain, &prices)
+            .await
+            .map_err(|e| venue_error(&feed.name, e))?;
+        let mappings = rpc.get_account(&found.mappings)?;
+        let mut mapped = mappings.data.clone();
+        for entry in &entries {
+            let (value, exp) = scope_entry(&data, *entry)
+                .ok_or_else(|| venue_error(&feed.name, format!("no Scope entry {entry}")))?;
+            crate::scope::fix_entry(&mut mapped, *entry, crate::scope::Price { value, exp })
+                .map_err(|e| venue_error(&feed.name, e))?;
+        }
+        surfnet.cheatcodes().set_account(
+            &found.mappings,
+            mappings.lamports,
+            &mapped,
+            &mappings.owner,
+        )?;
+        for (address, reserve) in readers {
+            if reserve.price_chain[1..]
+                .iter()
+                .any(|e| *e != klend::NO_ENTRY)
+            {
+                return Err(venue_error(
+                    &feed.name,
+                    format!(
+                        "reserve {address} multiplies a chain of entries; a pushed feed prices from one"
+                    ),
+                ));
+            }
+            pushed.push(PushedReserve {
+                reserve: *address,
+                feed: found,
+                price_entry: source.index,
+                entries: entries.clone(),
+            });
+        }
+        info!(
+            feed = feed.name,
+            ?entries,
+            "Scope entries pushed, not written"
+        );
+    }
+    Ok(pushed)
+}
+
+/// The upstream price of each pushed reserve: its price entry's
+/// `FixedPrice` in Scope's mappings, as anyone reads it.
+async fn upstream_prices(
+    chain: &dyn ChainClient,
+    pushed: &[PushedReserve],
+) -> BTreeMap<Pubkey, f64> {
+    let mut prices = BTreeMap::new();
+    for p in pushed {
+        let entry = match chain.get_account(&p.feed.mappings).await {
+            Ok(Some(account)) => crate::scope::mapping_entry(&account.data, p.price_entry),
+            Ok(None) => None,
+            Err(error) => {
+                warn!(%error, "couldn't read Scope's mappings");
+                None
+            }
+        };
+        if let Some(entry) = entry {
+            let price = crate::scope::Price::from_generic(&entry.generic);
+            if price.exp <= crate::scope::PRICE_EXP_MAX {
+                prices.insert(p.reserve, price.to_f64());
+            }
+        }
+    }
+    prices
 }
 
 /// Set a lending session up, up to the bot's start; see the module docs.
@@ -637,6 +886,32 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     for (symbol, units) in &lending.wallet {
         fund(&bot.pubkey(), book(symbol)?, *units)?;
     }
+    // The layer's `native_sol` replaces the grant above, and Jito's tip
+    // accounts exist as on mainnet.
+    if let Some(layer) = &scenario.tx_layer {
+        crate::txlayer::setup(&surfnet, layer, &bot.pubkey())?;
+    }
+    let amm = connect_pools(scenario, &chain).await?;
+    let pools: Vec<Pool> = amm.iter().flat_map(|a| a.pools().to_vec()).collect();
+    check_pools(&pools, &books, &scenario.mandate)?;
+    // The pools' arbitrageur, with what its swaps take.
+    let arbitrageur = match pools.is_empty() {
+        true => None,
+        false => {
+            let keypair = opts.keys.keypair("pool-arbitrageur", 0);
+            cheats.fund_sol(&keypair.pubkey(), (FEE_SOL * 1e9) as u64)?;
+            for pool in &pools {
+                for (token, units) in [
+                    (&pool.base, arbitrage::BASE_UNITS),
+                    (&pool.quote, arbitrage::QUOTE_UNITS),
+                ] {
+                    let atoms = atoms(units, u32::from(token.asset.decimals));
+                    crate::spot::fund_mint(&surfnet, &keypair.pubkey(), &token.mint, atoms)?;
+                }
+            }
+            Some(keypair)
+        }
+    };
     for market in books.markets() {
         open_obligation(chain.as_ref(), &books, &market, &bot).await?;
     }
@@ -682,7 +957,18 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             let mut rng = SplitMix64(lending.seed ^ 0x6b61_6d69_6e6f ^ (u64::from(i) << 20));
             rng.next_u64();
             let health = rng.range_f64((spec.health[0], spec.health[1]));
-            let size_usd = rng.log_range_f64((spec.size_usd[0], spec.size_usd[1]));
+            let size_usd = match spec.size_sigma {
+                None => rng.log_range_f64((spec.size_usd[0], spec.size_usd[1])),
+                Some(sigma) => {
+                    let [low, high] = spec.size_usd;
+                    let middle = (low.ln() + high.ln()) / 2.0;
+                    (middle + sigma * rng.normal()).exp().clamp(low, high)
+                }
+            };
+            assert!(
+                size_usd >= spec.size_usd[0] * (1.0 - 1e-9)
+                    && size_usd <= spec.size_usd[1] * (1.0 + 1e-9)
+            );
             let draw = rng.next_f64();
             let policy = if draw < spec.top_up_share {
                 Policy::TopUp
@@ -767,6 +1053,13 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             });
         }
     }
+    // The auction's draws are keyed by each borrower's place, not by its
+    // key.
+    let borrower_index: BTreeMap<Pubkey, u64> = records
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| Some((r.obligation.parse().ok()?, i as u64)))
+        .collect();
     let mut liquidators = Vec::new();
     if let (Some(spec), Some(b)) = (&lending.liquidators, &lending.borrowers) {
         let debt = book(&b.debt)?;
@@ -777,8 +1070,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             let keypair = opts.keys.keypair("kamino-liquidator", i);
             cheats.fund_sol(&keypair.pubkey(), (FEE_SOL * 1e9) as u64)?;
             fund(&keypair.pubkey(), debt, spec.wallet_usd / d.price)?;
-            let span = spec.delay_steps[1] - spec.delay_steps[0] + 1;
-            let delay = spec.delay_steps[0] + rng.next_u64() % span;
+            // Under the layer the auction draws latencies instead (see
+            // [`auction`]); the draw is made either way, so a session's
+            // other draws don't move.
+            let [low, high] = spec.delay_steps.unwrap_or([0, 0]);
+            let delay = low + rng.next_u64() % (high - low + 1);
             liquidators.push(Liquidator {
                 name: format!("kamino-liquidator/{i}"),
                 keypair,
@@ -786,6 +1082,8 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 seen: BTreeMap::new(),
                 // A key for the race's order, drawn per liquidator.
                 order: rng.next_u64(),
+                index: i,
+                bid: auction::Bid::draw(lending.seed, i, &spec.race.unwrap_or_default()),
             });
         }
         liquidators.sort_by_key(|l| l.order);
@@ -817,6 +1115,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                         twap_index: None,
                         chain: Vec::new(),
                         twap: TwapMode::Hold,
+                        mode: ScopeMode::Written,
                     }),
                     anchor: None,
                     cadence_slots: crate::oracles::DEFAULT_CADENCE_SLOTS,
@@ -843,6 +1142,30 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     oracles
         .validate(scenario.duration_slots + warped)
         .map_err(|reason| venue_error("oracles", reason))?;
+    let pushed = push_setup(&surfnet, &rpc, chain.as_ref(), &oracles, &stored).await?;
+    // The table holds the pushed entries' sources as they now are.
+    let table = match pools.is_empty() {
+        true => None,
+        false => {
+            let accounts =
+                route::route_accounts(chain.as_ref(), &rpc, Some(&books), &pools, &bot.pubkey())
+                    .await?;
+            let address = opts.keys.keypair("session-lookup-table", 0).pubkey();
+            Some(route::write_table(&surfnet, &address, &accounts)?)
+        }
+    };
+    let scope_keeper = match pushed.is_empty() {
+        true => None,
+        false => {
+            let keypair = opts.keys.keypair("scope-keeper", 0);
+            cheats.fund_sol(&keypair.pubkey(), (FEE_SOL * 1e9) as u64)?;
+            Some(Keeper {
+                keypair,
+                spec: lending.keeper.unwrap_or_default(),
+                next_at: 0,
+            })
+        }
+    };
 
     let keeper = opts.keys.keypair("kamino-keeper", 0);
     surfnet
@@ -913,13 +1236,19 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     let mut account = LendingAccount {
         scenario: scenario.clone(),
         chain: chain.clone(),
+        internal_url: internal.url().to_string(),
         books: books.clone(),
         venue,
+        amm,
+        pools: pools.clone(),
+        table: table.clone(),
+        pushed: pushed.clone(),
+        inventory: Vec::new(),
         bot: bot.pubkey(),
         keeper: keeper.pubkey(),
         instruments: instruments.clone(),
-        start_prices,
-        feeds,
+        start_prices: start_prices.clone(),
+        feeds: feeds.clone(),
         observed: Observed::default(),
         start: None,
         last: None,
@@ -957,7 +1286,17 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         mandate_path: Some(workdir.write_mandate(&mandate)?),
     };
     let mut cast = Cast::default();
-    if !borrowers.is_empty() || !liquidators.is_empty() {
+    if let Some(keypair) = arbitrageur {
+        let reference = arbitrage::reference(&books, start_prices.clone(), feeds.clone());
+        cast.add(Box::new(arbitrage::PoolArbitrageur {
+            chain: chain.clone(),
+            keypair,
+            pools: pools.clone(),
+            tables: table.iter().cloned().collect(),
+            reference,
+        }));
+    }
+    if !borrowers.is_empty() || !liquidators.is_empty() || scope_keeper.is_some() {
         cast.add(Box::new(KaminoActors {
             chain: chain.clone(),
             books: books.clone(),
@@ -966,6 +1305,21 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             liquidators,
             step: 0,
             log,
+            seed: lending.seed,
+            base_slot,
+            engine: None,
+            pushed,
+            scope_keeper,
+            tables: table.into_iter().collect(),
+            borrower_index,
+            attempts: Vec::new(),
+            refused: BTreeSet::new(),
+            sol_usd: scenario.tx_layer.as_ref().and_then(|l| l.sol_usd),
+            race: lending
+                .liquidators
+                .as_ref()
+                .and_then(|l| l.race)
+                .unwrap_or_default(),
         }));
     }
     info!(
@@ -991,6 +1345,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         roster: Default::default(),
         cranks: vec![Box::new(KaminoCrank { books, keeper })],
         account: Box::new(account),
+        triggers: None,
     })
 }
 
@@ -1031,6 +1386,43 @@ struct Liquidator {
     /// The step it first saw each obligation liquidatable.
     seen: BTreeMap<Pubkey, u64>,
     order: u64,
+    /// Its place among the scenario's liquidators, which its auction draws
+    /// are keyed by, and how it bids there.
+    index: u32,
+    bid: auction::Bid,
+}
+
+/// Scope's keeper: it pushes every pushed entry on its cadence.
+struct Keeper {
+    keypair: Keypair,
+    spec: auction::ScopeKeeper,
+    /// Slots into the session of its next push.
+    next_at: u64,
+}
+
+/// A reserve whose Scope entries are pushed (a feed's `mode: pushed`): its
+/// feed, and its price and TWAP entries, each now a `FixedPrice` whose
+/// `generic` data holds the upstream.
+#[derive(Debug, Clone)]
+struct PushedReserve {
+    reserve: Pubkey,
+    feed: scope::Feed,
+    price_entry: u16,
+    entries: Vec<u16>,
+}
+
+/// A liquidation an actor sent into the layer, until it resolves.
+struct Attempt {
+    liquidator: usize,
+    obligation: Pubkey,
+    signature: String,
+    /// Units of the debt asset it repays.
+    amount: f64,
+    step: u64,
+    latency_slots: u64,
+    bid_lamports: u64,
+    tipped: bool,
+    pushed: bool,
 }
 
 /// The session's borrowers and competing liquidators, acting after the
@@ -1044,6 +1436,27 @@ struct KaminoActors {
     liquidators: Vec<Liquidator>,
     step: u64,
     log: ActionLog,
+    /// The scenario's lending seed: the auction's draws.
+    seed: u64,
+    /// The session's first slot, which reports count from.
+    base_slot: u64,
+    /// The transaction layer, once the session starts one: the keeper and
+    /// the liquidators then send through it.
+    engine: Option<Arc<TxEngine>>,
+    pushed: Vec<PushedReserve>,
+    scope_keeper: Option<Keeper>,
+    /// The session's lookup table, for the actors' transactions too.
+    tables: Vec<AddressLookupTableAccount>,
+    /// Each borrower's obligation and its place.
+    borrower_index: BTreeMap<Pubkey, u64>,
+    attempts: Vec<Attempt>,
+    /// Episodes `(liquidator, obligation, first step)` whose liquidation
+    /// failed its simulation: not tried again.
+    refused: BTreeSet<(usize, Pubkey, u64)>,
+    /// What a SOL is worth where no reserve prices it: the layer's.
+    sol_usd: Option<f64>,
+    /// How the liquidators race under the layer.
+    race: auction::Race,
 }
 
 impl KaminoActors {
@@ -1065,6 +1478,11 @@ impl KaminoActors {
             obligation: obligation.to_string(),
             amount,
             error: result.err(),
+            landed_at: None,
+            latency_slots: None,
+            bid_lamports: None,
+            tipped: false,
+            pushed: false,
         });
     }
 
@@ -1277,10 +1695,18 @@ impl KaminoActors {
 
 #[async_trait]
 impl Actor for KaminoActors {
-    async fn after_blocks(&mut self, _now: &Moment) {
+    async fn after_blocks(&mut self, now: &Moment) {
+        self.keeper_acts(now.at).await;
         self.borrowers_act().await;
-        self.liquidators_act().await;
+        match self.engine.clone() {
+            Some(engine) => self.liquidators_bid(&engine).await,
+            None => self.liquidators_act().await,
+        }
         self.step += 1;
+    }
+
+    fn attach_tx(&mut self, engine: Arc<TxEngine>) {
+        self.engine = Some(engine);
     }
 
     async fn report(&mut self, _report: &mut ActorsReport) {}
@@ -1351,8 +1777,19 @@ struct LendingReading {
 struct LendingAccount {
     scenario: Scenario,
     chain: Arc<dyn ChainClient>,
+    /// The grader's own endpoint, for reading transactions back.
+    internal_url: String,
     books: Arc<Books>,
     venue: Kamino,
+    /// The scenario's pools, by venue, and each pool.
+    amm: Vec<Amm>,
+    pools: Vec<Pool>,
+    /// The session's lookup table, where it has pools.
+    table: Option<AddressLookupTableAccount>,
+    pushed: Vec<PushedReserve>,
+    /// Under an inventory limit: what the account held other than its
+    /// numeraire at each step's reading, by slots into the session.
+    inventory: Vec<(u64, Option<f64>)>,
     bot: Pubkey,
     /// Pays for every refresh the grader simulates, so a bot with no SOL
     /// left is still measured.
@@ -1538,6 +1975,8 @@ impl LendingAccount {
                 .as_ref()
                 .and_then(klend::Obligation::health),
             stats,
+            best_bid: None,
+            best_ask: None,
         }
     }
 }
@@ -1567,6 +2006,10 @@ impl Account for LendingAccount {
         for (instrument, holding) in self.instruments.iter().zip(&now.holdings) {
             self.observed
                 .record(instrument, holding.supplied - holding.borrowed);
+        }
+        if self.scenario.mandate.limits.inventory.is_some() {
+            let other = self.other_holdings_usd(&now, at).await;
+            self.inventory.push((at, other));
         }
         if let Some(h) = now.health {
             self.min_health = Some(self.min_health.map_or(h, |m: f64| m.min(h)));
@@ -1630,18 +2073,70 @@ impl Account for LendingAccount {
         bot: &Keypair,
         env: &BotEnv,
         mandate: &Mandate,
-        _tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
+        tx: Option<std::sync::Arc<crate::txlayer::TxEngine>>,
     ) -> Result<Desk> {
+        // The bot's seats read through its guard's host side, and send
+        // there too: into the layer's pool, where the session has one.
+        let pool = tx.as_ref().map(|_| {
+            Arc::new(crate::txlayer::client::PoolClient::new(
+                host_url,
+                bot.insecure_clone(),
+            ))
+        });
+        let chain: Arc<dyn ChainClient> = match &pool {
+            Some(pool) => pool.clone(),
+            None => Arc::new(RpcChainClient::with_timeout(
+                host_url,
+                session::INTERNAL_RPC_TIMEOUT,
+            )),
+        };
+        let on = SeatChain {
+            chain,
+            pooled: pool.is_some(),
+            lookup_tables: self.table.iter().cloned().collect(),
+        };
         let mut seats = Vec::new();
         for instrument in &self.instruments {
             let market = self.venue.market(instrument).await?;
-            seats.push(market.seat(bot.insecure_clone(), host_url).await?);
+            seats.push(market.seat_on(bot.insecure_clone(), on.clone()).await?);
         }
-        let mut venues = mtx_kit::VenueInfo::of_mandate(mandate, &self.instruments[0], |i| {
-            self.instruments.contains(i)
-        });
+        for amm in &self.amm {
+            for pool in amm.pools() {
+                let market = amm.market(&pool.instrument).await?;
+                seats.push(market.seat_on(bot.insecure_clone(), on.clone()).await?);
+            }
+        }
+        // The reserves, as the mandate lists them; then the pools, which a
+        // wildcard may cover.
+        let mut venues: Vec<mtx_kit::VenueInfo> =
+            mtx_kit::VenueInfo::of_mandate(mandate, &self.instruments[0], |i| {
+                self.instruments.contains(i)
+            })
+            .into_iter()
+            .filter(|v| !v.id.ends_with(":*"))
+            .collect();
         for info in &mut venues {
             info.address = self.books.get(&info.id).map(|b| b.keys.address.to_string());
+        }
+        for pool in &self.pools {
+            if venues.iter().all(|v| v.id != pool.instrument.to_string()) {
+                venues.push(mtx_kit::VenueInfo {
+                    id: pool.instrument.to_string(),
+                    kind: pool.instrument.kind.into(),
+                    address: Some(pool.address.to_string()),
+                    tradable: true,
+                });
+            }
+        }
+        for info in &mut venues {
+            if let Some(pool) = self
+                .pools
+                .iter()
+                .find(|p| p.instrument.to_string() == info.id)
+            {
+                info.address = Some(pool.address.to_string());
+                info.tradable = true;
+            }
         }
         let start = self
             .start
@@ -1656,8 +2151,8 @@ impl Account for LendingAccount {
             authority: bot.pubkey().to_string(),
             reader: Reader::Lending { start },
             rfqs: None,
-            pool: None,
-            tx: None,
+            pool,
+            tx,
         })
     }
 
@@ -1673,16 +2168,30 @@ impl Account for LendingAccount {
                 .record(instrument, holding.supplied - holding.borrowed);
         }
         let start = self.start.clone().expect("a start reading");
-        let liquidations = done
-            .transactions
-            .iter()
-            .filter(|t| {
-                t.ok && t
-                    .instructions
-                    .iter()
-                    .any(|i| i.name.as_deref() == Some(LIQUIDATE))
-            })
-            .count() as u32;
+        let liquidating = |ok: bool| {
+            done.transactions
+                .iter()
+                .filter(|t| {
+                    t.ok == ok
+                        && t.at.is_some()
+                        && t.instructions
+                            .iter()
+                            .any(|i| i.name.as_deref() == Some(LIQUIDATE))
+                })
+                .count() as u32
+        };
+        let (liquidations, liquidations_failed) = (liquidating(true), liquidating(false));
+        if self.scenario.mandate.limits.inventory.is_some() {
+            let other = self.other_holdings_usd(&end, end_at).await;
+            self.inventory.push((end_at, other));
+        }
+        let (transactions, pools) = match self.scenario.mandate.checks_transactions() {
+            true => (
+                self.observed_transactions(&done.transactions)?,
+                self.observed_pools(),
+            ),
+            false => (Vec::new(), Vec::new()),
+        };
         let instrument = self.instruments[0].clone();
         let observed = std::mem::take(&mut self.observed);
         let end_value_usd = end.value_usd;
@@ -1740,7 +2249,11 @@ impl Account for LendingAccount {
                 liquidations,
                 borrowers: std::mem::take(&mut self.borrowers),
                 actions,
+                liquidations_failed,
+                transactions,
+                pools,
             }),
+            amm: None,
             tx_layer: None,
             crank_refusals: done.crank_refusals,
             markets: Vec::new(),
@@ -1765,21 +2278,177 @@ impl LendingAccount {
     /// What a strategy's session names as the venue: each reserve's keys,
     /// so it can find its own obligation and others'.
     fn metadata(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut metadata = serde_json::json!({
             "program": klend::PROGRAM_ID.to_string(),
-            "reserves": self.books.reserves.iter().map(|b| serde_json::json!({
-                "id": b.instrument.to_string(),
-                "reserve": b.keys.address.to_string(),
-                "market": b.keys.market.to_string(),
-                "mint": b.keys.mint.to_string(),
-                "decimals": b.decimals,
-                "scope_prices": b.keys.scope_prices.to_string(),
-            })).collect::<Vec<_>>(),
-        })
+            "reserves": self.books.reserves.iter().map(|b| {
+                let mut reserve = serde_json::json!({
+                    "id": b.instrument.to_string(),
+                    "reserve": b.keys.address.to_string(),
+                    "market": b.keys.market.to_string(),
+                    "mint": b.keys.mint.to_string(),
+                    "decimals": b.decimals,
+                    "scope_prices": b.keys.scope_prices.to_string(),
+                });
+                // A pushed reserve's upstream: the `FixedPrice` entry of
+                // its mappings, which anyone may read and push.
+                if let Some(p) = self.pushed.iter().find(|p| p.reserve == b.keys.address) {
+                    reserve["scope_mappings"] = p.feed.mappings.to_string().into();
+                    reserve["scope_entries"] = p.entries.clone().into();
+                    reserve["pushed"] = true.into();
+                }
+                reserve
+            }).collect::<Vec<_>>(),
+        });
+        // Left out where there are none, so a session without pools names
+        // its venue as before.
+        if !self.pools.is_empty() {
+            metadata["pools"] = self
+                .pools
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "id": p.instrument.to_string(),
+                        "address": p.address.to_string(),
+                        "base_mint": p.base.mint.to_string(),
+                        "quote_mint": p.quote.mint.to_string(),
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into();
+        }
+        if let Some(table) = &self.table {
+            metadata["lookup_table"] = table.key.to_string().into();
+        }
+        metadata
+    }
+
+    /// What the account holds, in USD at the scenario's prices, of
+    /// everything but the inventory limit's numeraire, `at` slots in: each
+    /// reserve's net supply and wallet, and the wallet's own SOL unless SOL
+    /// is the numeraire. `None` if it couldn't be read, which rule 11 reads
+    /// as broken.
+    async fn other_holdings_usd(&self, reading: &LendingReading, at: u64) -> Option<f64> {
+        let numeraire = &self.scenario.mandate.limits.inventory.as_ref()?.numeraire;
+        let mut other = 0.0;
+        let mut counted: BTreeSet<Pubkey> = BTreeSet::new();
+        for holding in &reading.holdings {
+            let book = self.books.get(&holding.instrument.to_string())?;
+            let wallet = match counted.insert(book.keys.mint) {
+                true => holding.wallet,
+                false => 0.0,
+            };
+            if book.keys.mint.to_string() != *numeraire {
+                other += (holding.supplied - holding.borrowed + wallet) * holding.price_usd;
+            }
+        }
+        if numeraire.as_str() != WRAPPED_SOL {
+            let lamports = self.chain.get_balance(&self.bot).await.ok()?;
+            other += lamports as f64 / 1e9 * self.sol_usd(at)?;
+        }
+        other.is_finite().then_some(other)
+    }
+
+    /// A SOL's price `at` slots in: the scenario's for the reserve of
+    /// wrapped SOL, or the layer's.
+    fn sol_usd(&self, at: u64) -> Option<f64> {
+        let wrapped = self
+            .books
+            .reserves
+            .iter()
+            .find(|b| b.keys.mint.to_string() == WRAPPED_SOL);
+        match wrapped {
+            Some(book) => Some(self.price_at(&book.keys.address, at)),
+            None => self.scenario.tx_layer.as_ref().and_then(|l| l.sol_usd),
+        }
+        .filter(|p| p.is_finite() && *p > 0.0)
+    }
+
+    /// Each of the bot's transactions that landed or failed, read back from
+    /// the chain, as rules 11 to 13 read it: costs at the scenario's SOL
+    /// price then, flash borrows by reserve, and, after a landed one, what
+    /// the account held beside the numeraire at the step's reading that
+    /// followed it (the session measures at steps, not between a step's
+    /// transactions).
+    fn observed_transactions(
+        &self,
+        records: &[session::TxRecord],
+    ) -> Result<Vec<ObservedTransaction>> {
+        let rpc =
+            mtx_kit::rpc_client_with_timeout(&self.internal_url, session::INTERNAL_RPC_TIMEOUT);
+        let mut out = Vec::new();
+        for record in records.iter().filter(|r| !r.duplicate) {
+            let (Some(signature), Some(at)) = (&record.signature, record.at) else {
+                continue;
+            };
+            let found = crate::chain::call(
+                &rpc,
+                "getTransaction",
+                serde_json::json!([signature, { "encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0 }]),
+            )?;
+            let costs = observe::costs(&found).ok_or_else(|| {
+                venue_error(
+                    "mandate",
+                    format!("transaction {signature} doesn't read back"),
+                )
+            })?;
+            let usd = |lamports: u64| {
+                self.sol_usd(at)
+                    .map_or(f64::NAN, |price| lamports as f64 / 1e9 * price)
+            };
+            let flash_borrows = costs
+                .flash_borrows
+                .iter()
+                .map(|(reserve, atoms)| match self.books.at(reserve) {
+                    Some(book) => FlashBorrow {
+                        reserve: book.instrument.clone(),
+                        amount: *atoms as f64 / 10f64.powi(book.decimals as i32),
+                    },
+                    None => FlashBorrow {
+                        reserve: instrument(&reserve.to_string()),
+                        amount: *atoms as f64,
+                    },
+                })
+                .collect();
+            let other_holdings_usd = match record.ok {
+                true => self
+                    .inventory
+                    .iter()
+                    .find(|(measured, _)| *measured >= at)
+                    .and_then(|(_, other)| *other),
+                false => None,
+            };
+            out.push(ObservedTransaction {
+                signature: signature.clone(),
+                slot: at,
+                outcome: match record.ok {
+                    true => TransactionOutcome::Landed,
+                    false => TransactionOutcome::Failed,
+                },
+                fee_usd: usd(costs.base_lamports),
+                priority_fee_usd: usd(costs.priority_lamports),
+                tip_usd: usd(costs.tip_lamports),
+                other_holdings_usd,
+                flash_borrows,
+            });
+        }
+        Ok(out)
+    }
+
+    /// The session's pools, each with its two assets.
+    fn observed_pools(&self) -> Vec<ObservedPool> {
+        self.pools
+            .iter()
+            .map(|p| ObservedPool {
+                instrument: p.instrument.clone(),
+                assets: [p.base.mint.to_string(), p.quote.mint.to_string()],
+            })
+            .collect()
     }
 }
 
 const LIQUIDATE: &str = "liquidate_obligation_and_redeem_reserve_collateral_v2";
+/// Wrapped SOL's mint, base58.
+const WRAPPED_SOL: &str = "So11111111111111111111111111111111111111112";
 
 /// klend's instructions a session's transactions use, by their tag.
 const NAMES: [&str; 11] = [
@@ -1847,11 +2516,7 @@ pub struct MarketsSpec {
 /// inside a session would move balances' meaning mid-session), and each
 /// pair exercised by a throwaway account: deposit, borrow, repay, withdraw.
 /// Returns the first collateral's price.
-pub(crate) async fn exercise(
-    surfnet: &Surfnet,
-    rpc: &RpcClient,
-    spec: &MarketsSpec,
-) -> Result<f64> {
+pub async fn exercise(surfnet: &Surfnet, rpc: &RpcClient, spec: &MarketsSpec) -> Result<f64> {
     let parse = |s: &String| -> Result<Pubkey> {
         s.parse()
             .map_err(|_| venue_error("kamino-markets", format!("{s} is not an address")))
@@ -2088,6 +2753,11 @@ mod tests {
                 obligation: Pubkey::new_unique().to_string(),
                 amount: 2.5,
                 error: None,
+                landed_at: Some(9),
+                latency_slots: Some(0),
+                bid_lamports: Some(12_000),
+                tipped: true,
+                pushed: true,
             }],
             ..LendingReport::default()
         };

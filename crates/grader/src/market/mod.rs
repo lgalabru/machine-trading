@@ -96,6 +96,7 @@ pub(crate) mod tests {
             oracles: None,
             lending: None,
             warps: Vec::new(),
+            amm: None,
         }
     }
 

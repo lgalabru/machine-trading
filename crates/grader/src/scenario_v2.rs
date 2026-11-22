@@ -8,7 +8,7 @@
 //! | section        | holds                                                        |
 //! |----------------|--------------------------------------------------------------|
 //! | `assets`       | the traded symbol, a spot wallet's starting balances         |
-//! | `venues`       | the perp venue's funding, the spot markets and their data, the lending markets |
+//! | `venues`       | the perp venue's funding, the spot markets and their data, the lending markets and the pools beside them |
 //! | `market_model` | the price path, the fair value, a closed period, the calibration record, the clock's jumps |
 //! | `oracles`      | the prices venues read, driven and failed on purpose         |
 //! | `actors`       | the competing maker, the grader's taker flow, the actor library |
@@ -58,6 +58,8 @@ const NET_CLOSE_TOLERANCE_PCT: f64 = 0.01;
 pub const SCHEMA: u32 = 2;
 
 /// What a lending scenario refuses beside its markets, in both versions.
+const AMM_ALONE: &str = "amm: an amm scenario trades its pools from its own wallet, valued on \
+     its path, and has no fair path, warps, other actors, oracles, order, faults or spot scoring";
 const LENDING_ALONE: &str = "lending: a lending scenario moves prices through its oracles only, \
      and has no path, market making, tape, order or spot scoring";
 
@@ -116,7 +118,8 @@ pub struct StartingWallet {
     pub quote: f64,
 }
 
-/// Where the bot trades. Exactly one of `perp`, `spot` and `lending`.
+/// Where the bot trades. Exactly one of `perp`, `spot` and `lending`, and
+/// `amm`'s pools beside `lending`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Venues {
@@ -129,6 +132,11 @@ pub struct Venues {
     /// [`crate::lending`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lending: Option<Lending>,
+    /// Cloned pools the session trades beside its lending markets: a
+    /// liquidation sells its collateral through them (see
+    /// [`crate::pools::AmmVenue`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amm: Option<crate::pools::AmmVenue>,
 }
 
 /// The perp venue (Phoenix) and what is set on it when the session starts.
@@ -386,6 +394,15 @@ impl Venues {
     pub fn validate(&self) -> Result<(), String> {
         if let Some(lending) = &self.lending {
             lending.validate()?;
+        }
+        if let Some(amm) = &self.amm {
+            amm.validate()?;
+            if self.lending.is_some() && amm.has_session_fields() {
+                return Err(
+                    "amm: beside lending, amm lists its pools only; the rest is an amm session's"
+                        .into(),
+                );
+            }
         }
         if let Some(funding) = self.perp.as_ref().and_then(|p| p.funding.as_ref())
             && (funding.interval_seconds == 0
@@ -685,9 +702,14 @@ impl ScenarioV2 {
             layer
                 .validate(self.duration_slots.div_ceil(SLOTS_BETWEEN_STEPS))
                 .map_err(|reason| format!("tx_layer: {reason}"))?;
-            if self.venues.spot.is_some() || self.venues.lending.is_some() {
-                return Err("tx_layer: only perp sessions take the transaction layer yet".into());
+            if self.venues.spot.is_some() {
+                return Err(
+                    "tx_layer: spot sessions don't take the transaction layer yet: their seats \
+                     don't send through its pool"
+                        .into(),
+                );
             }
+            self.liquidators_fit_the_layer(true)?;
             // An actor hooked on the bot's sends acts as each arrives, as if
             // it ran next: under the layer a send only enters the pool, and
             // lands when a block takes it.
@@ -699,10 +721,13 @@ impl ScenarioV2 {
                 .unwrap_or_default();
             if !hooked.is_empty() {
                 return Err(format!(
-                    "tx_layer: {} acts on the bot's sends as they arrive (on_send), and the transaction layer pools them until a block takes them; the two can't run together until pool-aware actors (PR 17b)",
+                    "tx_layer: {} acts on the bot's sends as they arrive (on_send), and the transaction layer pools them until a block takes them; under the layer an actor competes by sending into its auction instead, which this one doesn't yet",
                     hooked.join(", ")
                 ));
             }
+        }
+        if self.tx.as_ref().is_none_or(|tx| tx.layer.is_none()) {
+            self.liquidators_fit_the_layer(false)?;
         }
         self.venues_are_one_kind()?;
         self.markets_agree()?;
@@ -714,6 +739,8 @@ impl ScenarioV2 {
             self.spot_is_alone()?;
         } else if self.venues.lending.is_some() {
             self.lending_is_alone()?;
+        } else if self.is_amm() {
+            self.amm_is_alone()?;
         } else {
             self.spot_fields_are_for_spot()?;
         }
@@ -751,15 +778,88 @@ impl ScenarioV2 {
             perp,
             spot,
             lending,
+            amm,
         } = &self.venues;
-        match [perp.is_some(), spot.is_some(), lending.is_some()]
+        // `amm` is a kind of its own, or pools beside `lending`.
+        let amm_alone = amm.is_some() && lending.is_none();
+        match [perp.is_some(), spot.is_some(), lending.is_some(), amm_alone]
             .iter()
             .filter(|kind| **kind)
             .count()
         {
             1 => Ok(()),
-            _ => Err("venues: exactly one of perp, spot and lending".into()),
+            _ => Err(
+                "venues: exactly one of perp, spot, lending and amm (or amm's pools beside lending)"
+                    .into(),
+            ),
         }
+    }
+
+    /// A lending session's liquidators act on the slot under the
+    /// transaction layer, at latencies drawn from the research's, and on
+    /// the step without it, `delay_steps` after they see an obligation:
+    /// each way takes its own and refuses the other's.
+    fn liquidators_fit_the_layer(&self, layered: bool) -> Result<(), String> {
+        let Some(liquidators) = self
+            .venues
+            .lending
+            .as_ref()
+            .and_then(|l| l.liquidators.as_ref())
+        else {
+            return Ok(());
+        };
+        match (layered, liquidators.delay_steps.is_some()) {
+            (true, true) => Err(
+                "lending: under the transaction layer, liquidators draw their latency in slots; \
+                 delay_steps is for sessions without it"
+                    .into(),
+            ),
+            (false, false) => {
+                Err("lending: without the transaction layer, liquidators need delay_steps".into())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether it is an `amm` session: `venues.amm` on its own.
+    pub fn is_amm(&self) -> bool {
+        self.venues.amm.is_some()
+            && self.venues.lending.is_none()
+            && self.venues.perp.is_none()
+            && self.venues.spot.is_none()
+    }
+
+    /// An `amm` scenario trades its pools from the wallet its section gives
+    /// it, valued on the reference its path moves: no fair path, other
+    /// flow, oracles, order or spot scoring. It runs under the transaction
+    /// layer, whose auction its searchers bid in, and its triggers end
+    /// steps, so it has no execution faults, which count two-slot steps.
+    fn amm_is_alone(&self) -> Result<(), String> {
+        let market = &self.market_model;
+        if market.fair_path.is_some()
+            || market.closed_period.is_some()
+            || !market.warps.is_empty()
+            || !self.actors.is_empty()
+            || self.assets.wallet.is_some()
+            || !self.assets.start_positions.is_empty()
+            || self.oracles.is_some()
+            || self.order.is_some()
+            || self.scoring.bound_usd.is_some()
+            || self.scoring.participation.is_some()
+            || self.scoring.net.is_some()
+            || !self.scoring.close_out.is_empty()
+            || self.faults.is_some()
+        {
+            return Err(AMM_ALONE.into());
+        }
+        if self.tx.as_ref().is_none_or(|tx| tx.layer.is_none()) {
+            return Err("amm: an amm session runs under the transaction layer (tx.layer)".into());
+        }
+        if self.duration_slots == 0 {
+            return Err("amm: the session has no slots".into());
+        }
+        let amm = self.venues.amm.as_ref().expect("an amm session");
+        amm.validate_session(self.duration_slots)
     }
 
     /// A lending scenario trades Kamino's reserves from the wallet its
@@ -1347,12 +1447,26 @@ impl ScenarioV2 {
                 .universe
                 .iter()
                 .map(|a| a.instrument.clone())
+                .filter(|i| i.kind != Kind::Amm)
                 .collect();
             wanted.sort();
             universe.sort();
             if wanted != universe {
-                return Err("mandate: the universe must be exactly the lending reserves".into());
+                return Err(
+                    "mandate: the universe must be exactly the lending reserves, and pools".into(),
+                );
             }
+            self.mandate_covers_the_pools()?;
+        } else if self.is_amm() {
+            if self
+                .mandate
+                .universe
+                .iter()
+                .any(|a| a.instrument.kind != Kind::Amm)
+            {
+                return Err("mandate: an amm session's universe is its pools".into());
+            }
+            self.mandate_covers_the_pools()?;
         } else if self.venues.spot.is_some() {
             let mut wanted = self.venues.spot_instruments();
             let mut universe: Vec<InstrumentRef> = self
@@ -1446,7 +1560,7 @@ impl ScenarioV2 {
             );
         }
         // Only a perp session prices the account at each measurement.
-        if (self.venues.spot.is_some() || self.venues.lending.is_some())
+        if (self.venues.spot.is_some() || self.venues.lending.is_some() || self.is_amm())
             && self.mandate.checks_samples()
         {
             return Err(
@@ -1454,6 +1568,39 @@ impl ScenarioV2 {
                  a spot or lending session doesn't check them"
                     .into(),
             );
+        }
+        Ok(())
+    }
+
+    /// Every pool of a lending session's is in the universe, named or under
+    /// a wildcard of its venue (whose `assets` the session checks against
+    /// the pool's own when it starts), and every pool the universe names is
+    /// one of the session's.
+    fn mandate_covers_the_pools(&self) -> Result<(), String> {
+        let pools = self
+            .venues
+            .amm
+            .as_ref()
+            .map(crate::pools::AmmVenue::instruments)
+            .unwrap_or_default();
+        for pool in &pools {
+            let covered = self.mandate.universe.iter().any(|a| {
+                a.instrument == *pool || (a.is_wildcard() && a.instrument.venue == pool.venue)
+            });
+            if !covered {
+                return Err(format!(
+                    "mandate: the universe doesn't cover the pool {pool}"
+                ));
+            }
+        }
+        for allowance in &self.mandate.universe {
+            let named_pool = allowance.instrument.kind == Kind::Amm && !allowance.is_wildcard();
+            if named_pool && !pools.contains(&allowance.instrument) {
+                return Err(format!(
+                    "mandate: {} isn't one of the session's pools",
+                    allowance.instrument
+                ));
+            }
         }
         Ok(())
     }
@@ -1506,6 +1653,15 @@ impl ScenarioV2 {
             {
                 return Err(format!(
                     "oracles: {} is anchored to {instrument}, which isn't in the session",
+                    feed.name
+                ));
+            }
+            if let Source::Scope(scope) = &feed.source
+                && scope.mode == crate::oracles::ScopeMode::Pushed
+                && self.venues.lending.is_none()
+            {
+                return Err(format!(
+                    "oracles: {} is pushed; only a lending session pushes Scope",
                     feed.name
                 ));
             }
@@ -1815,6 +1971,7 @@ impl ScenarioV2 {
             market_model: record,
             oracles,
             lending: venues.lending,
+            amm: venues.amm,
             warps,
             actors: library,
             takers_pricing,
@@ -1842,6 +1999,19 @@ impl TryFrom<&Scenario> for ScenarioV2 {
         let (venues, wallet) = match &v1.spot {
             // Lending's v1 fields are its own section's; v2 has no place for
             // the others, so they are refused here as v2 refuses them.
+            // An amm session's fields are its section's, as lending's are.
+            None if v1.amm.is_some() && v1.lending.is_none() => {
+                if v1.funding.is_some() || v1.turn_data.is_some() {
+                    return Err(AMM_ALONE.into());
+                }
+                (
+                    Venues {
+                        amm: v1.amm.clone(),
+                        ..Venues::default()
+                    },
+                    None,
+                )
+            }
             None if v1.lending.is_some() => {
                 if v1.funding.is_some() || v1.turn_data.is_some() {
                     return Err(LENDING_ALONE.into());
@@ -1849,6 +2019,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                 (
                     Venues {
                         lending: v1.lending.clone(),
+                        amm: v1.amm.clone(),
                         ..Venues::default()
                     },
                     None,
@@ -1866,6 +2037,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                             turn_data: v1.turn_data.clone(),
                         }),
                         lending: v1.lending.clone(),
+                        amm: v1.amm.clone(),
                     },
                     Some(StartingWallet {
                         base: spot.base,
@@ -1891,6 +2063,7 @@ impl TryFrom<&Scenario> for ScenarioV2 {
                         }),
                         spot: None,
                         lending: None,
+                        amm: v1.amm.clone(),
                     },
                     None,
                 )
@@ -2121,6 +2294,7 @@ mod tests {
                 turn_data: None,
             }),
             lending: None,
+            amm: None,
         };
         s.assets = Assets {
             symbol: SYMBOL.into(),
@@ -2400,7 +2574,7 @@ mod tests {
         assert!(
             s.validate()
                 .unwrap_err()
-                .contains("exactly one of perp, spot and lending")
+                .contains("exactly one of perp, spot, lending and amm")
         );
         s.venues = Venues::default();
         assert!(s.validate().unwrap_err().contains("exactly one"));
@@ -3254,7 +3428,7 @@ mod tests {
         let mut s = v2(&lending("liquidation"));
         s.venues.spot = spot().venues.spot;
         s.assets.wallet = spot().assets.wallet;
-        refused(&s, "exactly one of perp, spot and lending");
+        refused(&s, "exactly one of perp, spot, lending and amm");
 
         let mut s = v2(&lending("liquidation"));
         s.market_model.path.push(Waypoint::at(4, -1.0));
@@ -3282,6 +3456,124 @@ mod tests {
         refused(&s, "only lending sessions jump the clock");
     }
 
+    /// Pools go beside a lending market, the mandate covers each (named or
+    /// under its venue's wildcard), and the section round-trips through v1.
+    #[test]
+    fn pools_sit_beside_a_lending_market() {
+        let refused = |s: &ScenarioV2, needle: &str| {
+            let error = s.validate().unwrap_err();
+            assert!(error.contains(needle), "{error}");
+        };
+        let pool = "orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE";
+        let mut s = v2(&lending("interest"));
+        s.venues.amm = Some(crate::pools::AmmVenue {
+            pools: vec![pool.into()],
+            ..Default::default()
+        });
+        refused(&s, "doesn't cover the pool");
+        s.mandate
+            .universe
+            .push(mtx_core::mandate::Allowance::wildcard("orca", None));
+        s.mandate.version = mtx_core::mandate::Version::V0_3_0;
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(v1.amm, s.venues.amm);
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+        // A v1 file can't say it: a save refuses, and v1's JSON leaves it out.
+        let path = std::env::temp_dir().join("pools-have-no-v1-form.json");
+        assert!(v1.save(&path).is_err());
+        assert!(!serde_json::to_string(&v1).unwrap().contains("Czfq3x"));
+        let mut twice = s.clone();
+        twice.venues.amm.as_mut().unwrap().pools.push(pool.into());
+        refused(&twice, "listed twice");
+        let mut not_a_pool = s.clone();
+        not_a_pool.venues.amm.as_mut().unwrap().pools = vec!["kamino:money-market:SOL".into()];
+        refused(&not_a_pool, "is not a pool of orca or raydium");
+        // Beside a perp, pools are a second kind.
+        let mut beside_perp = shock();
+        beside_perp.venues.amm = s.venues.amm.clone();
+        refused(&beside_perp, "exactly one of perp, spot, lending and amm");
+        // Beside lending, the amm session's fields are refused.
+        let mut seeded = s.clone();
+        seeded.venues.amm.as_mut().unwrap().seed = Some(1);
+        refused(&seeded, "beside lending, amm lists its pools only");
+    }
+
+    fn backrun() -> ScenarioV2 {
+        let path = format!(
+            "{}/../../bench/checks/amm/backrun-sol-usdc.json",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+    }
+
+    /// An amm session stands alone, under the transaction layer, with a
+    /// seed, actors on its own pools and triggers inside the session, and
+    /// round-trips through v1.
+    #[test]
+    fn an_amm_session_stands_alone_under_the_layer() {
+        let refused = |s: &ScenarioV2, needle: &str| {
+            let error = s.validate().unwrap_err();
+            assert!(error.contains(needle), "{error}");
+        };
+        let s = backrun();
+        assert!(s.is_amm());
+        s.validate().unwrap();
+        let v1 = s.clone().into_scenario().unwrap();
+        assert_eq!(ScenarioV2::try_from(&v1).unwrap(), s);
+
+        let mut unlayered = s.clone();
+        unlayered.tx = None;
+        refused(&unlayered, "runs under the transaction layer");
+        let mut unseeded = s.clone();
+        unseeded.venues.amm.as_mut().unwrap().seed = None;
+        refused(&unseeded, "needs a seed");
+        let mut late = s.clone();
+        let whale = late.venues.amm.as_mut().unwrap().whale.as_mut().unwrap();
+        whale.orders[0].chunks[0].slot = late.duration_slots;
+        refused(&late, "amm.whale: a trigger at slot");
+        let mut twice = s.clone();
+        let whale = twice.venues.amm.as_mut().unwrap().whale.as_mut().unwrap();
+        whale.orders[1].chunks[0].slot = whale.orders[0].chunks[0].slot;
+        refused(&twice, "amm.whale: a trigger at slot");
+        let mut elsewhere = s.clone();
+        let whale = elsewhere
+            .venues
+            .amm
+            .as_mut()
+            .unwrap()
+            .whale
+            .as_mut()
+            .unwrap();
+        whale.orders[0].pool = "orca:amm:11111111111111111111111111111111".into();
+        refused(&elsewhere, "isn't one of the session's pools");
+        let mut wide = s.clone();
+        wide.venues
+            .amm
+            .as_mut()
+            .unwrap()
+            .wallet
+            .insert("BONK".into(), 1.0);
+        refused(&wide, "the wallet holds SOL and USDC");
+        let mut eager = s.clone();
+        eager.venues.amm.as_mut().unwrap().searchers[0].bid_share = 1.5;
+        refused(&eager, "amm.searchers");
+        let mut faulty = s.clone();
+        faulty.faults = Some(crate::faults::Faults {
+            seed: 1,
+            latency: None,
+            congestion: None,
+            blockhash_expiry: None,
+            drop: None,
+            lost_confirmation: None,
+            rpc_unavailable: None,
+        });
+        refused(&faulty, "an amm scenario trades its pools");
+        let mut perp = s.clone();
+        perp.mandate.universe = shock().mandate.universe;
+        refused(&perp, "an amm session's universe is its pools");
+    }
+
     #[test]
     fn the_transaction_layer_lives_in_the_tx_section_and_round_trips_through_v1() {
         let mut s = shock();
@@ -3298,10 +3590,30 @@ mod tests {
         assert!(on_spot.validate().unwrap_err().starts_with("tx_layer:"));
         let mut on_lending = v2(&lending("interest"));
         on_lending.tx = s.tx.clone();
-        assert_eq!(
-            on_lending.validate().unwrap_err(),
-            "tx_layer: only perp sessions take the transaction layer yet"
+        on_lending
+            .validate()
+            .expect("a lending session takes the layer");
+        // Its liquidators bid in the auction, at latencies of their own.
+        let mut racing = v2(&lending("liquidation"));
+        racing.tx = s.tx.clone();
+        assert!(
+            racing
+                .validate()
+                .unwrap_err()
+                .contains("delay_steps is for sessions without it")
         );
+        racing
+            .venues
+            .lending
+            .as_mut()
+            .unwrap()
+            .liquidators
+            .as_mut()
+            .unwrap()
+            .delay_steps = None;
+        racing.validate().unwrap();
+        racing.tx = None;
+        assert!(racing.validate().unwrap_err().contains("need delay_steps"));
         s.tx.as_mut().unwrap().layer.as_mut().unwrap().validators = 0;
         assert!(s.validate().unwrap_err().starts_with("tx_layer:"));
     }
@@ -3323,7 +3635,7 @@ mod tests {
         let refused = s.validate().unwrap_err();
         assert!(
             refused.starts_with("tx_layer: actors.front_runners[0] acts on the bot's sends")
-                && refused.contains("PR 17b"),
+                && refused.contains("auction"),
             "{refused}"
         );
         // A v1 scenario, the same.

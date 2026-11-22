@@ -12,7 +12,9 @@ The code is in `crates/grader/src/txlayer/`.
 
 ## Collect, then build
 
-1. **Collect.** The bot's sends go into one pool:
+1. **Collect.** The bot's sends, and those of the actors that compete
+   through the layer (see [Actors' sends](#actors-sends)), go into one
+   pool:
    - a process bot's through its guard: `sendTransaction`, the staked route
      at `/staked` where the scenario offers one, and the mock block engine
      under `/api/v1/`;
@@ -204,16 +206,98 @@ That is a v1 file's top-level field. A v2 file (`"schema": 2`, see
   of the execution faults are dropped. The close itself goes through the
   grader's own endpoint, past the layer, and lands at once; its fees leave
   the bot's wallet and are booked in the ledger's `forced_close`.
-- **Session kinds.** Only perp sessions take the layer for now: a spot or
-  lending session with one is refused. Their seats join when they can send
-  through the pool.
+- **Session kinds.** Perp, lending and amm sessions take the layer; an amm
+  session needs it. In a lending session the bot's reserve and pool seats
+  send through the pool (an atomic group as one transaction), each send
+  reported `delayed` until a block says what became of it, and its
+  liquidators and Scope keeper bid in the same auction ([Actors'
+  sends](#actors-sends)); its borrowers' own actions, the keeper's reserve
+  refreshes and the pools' arbitrageur land at once, as in a session
+  without the layer. In an amm session the bot's pool seats send through
+  the pool, and the calm flow and the searchers bid in the auction; the
+  whale's chunks land at once ([Trigger steps](#trigger-steps)). A spot
+  session with one is refused: its seats don't send through the pool yet.
 - **Actors hooked on the bot's sends.** A front-runner with `on_send` (see
   `docs/actors.md`) acts on each of the bot's sends as it arrives, just
   before it would land. Under the layer a send only enters the pool, and
   lands when a block takes it, so a scenario can't have both: it is
-  refused when it loads, naming the actor. Actors that see the pool and
-  act inside the builder's blocks come with PR 17b. The library's other
-  actors run as usual.
+  refused when it loads, naming the actor. An actor competes under the
+  layer by sending into its auction instead, as a lending session's do.
+  The library's other actors run as usual.
+
+## Actors' sends
+
+An actor that competes with the bot for the same block space sends into the
+same pool (`TxEngine::submit` with a `sender`): a lending session's
+liquidators (`kamino-liquidator/<n>`) and its Scope keeper (`scope-keeper`),
+and an amm session's calm flow (`background`), cycle searchers
+(`cycle-searcher/<n>`) and pool searchers (`pool-searcher/<n>`), see
+`docs/actors.md`. Each entry carries its sender's name, and the builder
+ranks every entry by the same rules, whoever sent it: price per requested
+unit, then arrival, then the seeded hash of the sender and its sequence
+number. Bundles too: an actor's tip outbids the bot's the way another of
+the bot's would. Each sender draws its own route latencies and losses from
+the layer's seed, keyed by its name, and its own `max_pending`.
+
+- **Determinism.** An actor decides what to send from the chain as it is
+  after the step's blocks and from draws on the scenario's seeds, never wall
+  time, and sends before the bot's turn: its arrivals precede the bot's in
+  that step. A session replays its blocks exactly.
+- **The ledger** follows the bot's wallet alone: an actor's fees and tips
+  are not in `fees`.
+- **Ghosts** are unchanged: the background demand prices the block for
+  every sender alike.
+- **The report** gives each actor's sends in `senders`: how many landed,
+  landed and failed (paying their fee), failed without running (a refused
+  bundle, say), expired or were still pending, and the fees and tips of
+  those that landed. Each landed transaction in `blocks` names its sender.
+  A lending session's report also lists each liquidation an actor sent, with
+  the slot it landed in, its drawn latency, its bid and whether it pushed
+  Scope (`lending.actions`).
+
+## Trigger steps
+
+A scenario with triggers (an amm session's whale chunks,
+[ADR 0004](adr/0004-atomic-arbitrage-in-the-sheet.md)) ends a step on each
+(`crates/grader/src/trigger.rs`):
+
+1. **Where a step ends.** Each step ends when the chain reaches its last
+   slot: the layer has committed that slot's block so far, and the slot is
+   still open. What the session lands then, and what the turns send with
+   no latency, lands in that same slot, behind it, before the next step's
+   first block closes it. A step is two slots; a step that reaches a
+   trigger's slot ends there instead, so the one before may be shorter.
+   The steps are a function of the session's length and the triggers'
+   slots, so the hello announces their count and a replay meets the same
+   steps.
+2. **The trigger lands** through the grader's own endpoint, not the
+   auction: it is the whale's ordinary transaction, in the slot the
+   scenario names, at the head of what that slot holds from then on.
+3. **The turns.** The actors that react look at the state the trigger
+   left and send into the pool (the searchers, the calm flow); the account
+   is measured; then the bot's turn, whose `Step` names the trigger
+   (`trigger`: its signature, slot, pool, side and size; a component's
+   `market.trigger`).
+4. **The rest of the slot.** The next step's first block is the rest of
+   the trigger's slot: the builder ranks what reached it by the usual rules
+   (a Jito leader's bundles first, then priority per unit), and the ghosts
+   contend for it as for any other.
+
+**Latency in a trigger step.** While the trigger's slot is open
+(`TxEngine::set_trigger_open`), a send gets no route latency: it reaches the
+trigger's slot, as mainnet's backrunners do, who read shreds and land at
+the next position 12 times in 21. What a sender adds itself still applies:
+a scenario's latency fault on the bot's sends, and a searcher's own drawn
+`latency_slots`, which put its send that many slots later. A route's chance
+of losing a delivery still applies too. Sends in any other step take their
+route's latency as before.
+
+The layer counts a block one slot past the ledger's: the block it builds
+"for slot `s + 1`" is committed while the chain's slot is `s`, and
+`getTransaction` puts its transactions in slot `s`, with the trigger. The
+report's `blocks[].at` and a send's `slot` in the bot's statuses are the
+layer's count; `amm.triggers[].at`, the step's `trigger.slot` and the
+transactions' `at` are the ledger's.
 
 ## What the bot sees
 
@@ -265,6 +349,9 @@ The session report gains a `tx_layer` section:
 - **`sends`:** what became of each of the bot's sends: its step and sequence
   number, route, state, slot, fee, tip, delivery attempts, and times signed
   again.
+- **`senders`:** what became of each actor's sends (see
+  [Actors' sends](#actors-sends)); absent where no actor sends through the
+  layer.
 - **`fees`:** the ledger. It splits what the bot paid into base, priority,
   tips, failed transactions' fees, and route fees. It is checked against the
   wallet's SOL change, and `unexplained` is 0 when they agree. The risk
@@ -272,7 +359,10 @@ The session report gains a `tx_layer` section:
   tips of the bot's transactions that another key pays (a process bot can sign
   with a key of its own) are in `paid_by_others`, outside that check. SOL
   the bot moves out of its wallet itself (a transfer to another key) shows
-  in `unexplained`: the ledger explains fees, not trades.
+  in `unexplained`: the ledger explains fees, not trades. A token
+  account's lamports count as rent the bot can close, except the SOL a
+  wrapped-SOL account wraps, which is a holding the session values with the
+  rest of the account.
 
 `--replay` compares the whole report, so ordering is part of the replay
 check.

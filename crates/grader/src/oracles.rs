@@ -257,6 +257,9 @@ pub struct Context {
     /// The TWAP the source holds beside its price when the session starts,
     /// for a source that writes one.
     pub start_twap: Option<f64>,
+    /// A pushed Scope feed's `OracleMappings` account, which the feed
+    /// writes the upstream price into (see [`ScopeMode::Pushed`]).
+    pub scope_mappings: Option<Pubkey>,
 }
 
 impl Context {
@@ -371,11 +374,18 @@ impl Oracles {
                         p.address().map_err(|e| format!("oracles: {name}: {e}"))?
                     )
                 }
-                Source::Scope(s) => format!(
-                    "scope {} {}",
-                    s.address().map_err(|e| format!("oracles: {name}: {e}"))?,
-                    s.index
-                ),
+                Source::Scope(s) => {
+                    if s.mode == ScopeMode::Pushed && !s.chain.is_empty() {
+                        return Err(format!(
+                            "oracles: {name}: a pushed feed prices from one entry; its chain must be empty"
+                        ));
+                    }
+                    format!(
+                        "scope {} {}",
+                        s.address().map_err(|e| format!("oracles: {name}: {e}"))?,
+                        s.index
+                    )
+                }
                 Source::Phoenix(p) => format!("phoenix {}", p.symbol),
                 Source::Switchboard(_) => {
                     return Err(format!("oracles: {name}: Switchboard isn't wired yet"));
@@ -775,6 +785,35 @@ pub struct ScopeOracle {
     /// (`follow`: a manipulation drags the TWAP too).
     #[serde(default, skip_serializing_if = "TwapMode::is_hold")]
     pub twap: TwapMode,
+    /// Who moves Scope's price: the scenario (`written`, by default), or
+    /// whoever pushes it (`pushed`), ADR 0004's "an oracle bots can push".
+    #[serde(default, skip_serializing_if = "ScopeMode::is_written")]
+    pub mode: ScopeMode,
+}
+
+/// Who moves a Scope entry's price.
+///
+/// - `written`: the scenario's path is written into `OraclePrices` at
+///   each publication, as a keeper that never misses would.
+/// - `pushed`: the session turns the entry, and its TWAP entry, into
+///   `FixedPrice` (type 23) before the cheatcodes lock, and each
+///   publication writes the path (and an hour's EMA of it, for the TWAP)
+///   into the mapping's `generic` data instead: the upstream, which any
+///   bot can read. Scope's own price moves only when someone sends
+///   `refresh_price_list`: the session's keeper on mainnet's cadence, a
+///   competing liquidator, or the bot, pushing first.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScopeMode {
+    #[default]
+    Written,
+    Pushed,
+}
+
+impl ScopeMode {
+    fn is_written(&self) -> bool {
+        *self == ScopeMode::Written
+    }
 }
 
 /// What a Scope feed's TWAP averages.
@@ -850,6 +889,9 @@ impl OracleSource for ScopeOracle {
     }
 
     fn lower(&self, context: &Context, publications: &[Publication]) -> Result<Vec<Override>> {
+        if self.mode == ScopeMode::Pushed {
+            return self.lower_upstream(context, publications);
+        }
         let address = self.address().map_err(|e| oracle_error(&self.account, e))?;
         let scale = 10f64.powi(self.exp as i32);
         let stamp = |i: u16, p: &Publication| {
@@ -911,6 +953,52 @@ impl OracleSource for ScopeOracle {
                 }
             })
             .collect())
+    }
+}
+
+impl ScopeOracle {
+    /// A pushed feed's publications as writes of its upstream: the price,
+    /// and the TWAP as [`ScopeOracle::lower`] steps it, into the
+    /// `FixedPrice` entries' `generic` data of the feed's mappings, one
+    /// override per publication.
+    fn lower_upstream(
+        &self,
+        context: &Context,
+        publications: &[Publication],
+    ) -> Result<Vec<Override>> {
+        let mappings = context
+            .scope_mappings
+            .ok_or_else(|| oracle_error(&self.account, "a pushed feed needs its mappings"))?;
+        let price = |value: f64| {
+            crate::scope::Price::from_f64(value, self.exp)
+                .ok_or_else(|| oracle_error(&self.account, format!("{value} isn't a Scope price")))
+        };
+        let mut twap = context.start_twap.unwrap_or(context.start_price);
+        let mut last_slot = 0;
+        let mut out = Vec::with_capacity(publications.len());
+        for p in publications {
+            let mut values = crate::scope::generic_values(self.index, price(p.price)?);
+            if let Some(t) = self.twap_index {
+                let seconds = (p.slot - last_slot) as f64 * context.slot_time_ms as f64 / 1000.0;
+                let weight = 1.0 - (-seconds / TWAP_WINDOW_SECONDS).exp();
+                let target = match self.twap {
+                    TwapMode::Hold => p.ema_price,
+                    TwapMode::Follow => p.price,
+                };
+                twap += (target - twap) * weight;
+                values.extend(crate::scope::generic_values(t, price(twap)?));
+            }
+            last_slot = p.slot;
+            out.push(Override {
+                template_id: crate::scope::MAPPING_TEMPLATE,
+                account: mappings,
+                values: serde_json::Value::Object(values),
+                slot: p.slot,
+                label: format!("scope {} upstream @{}", self.index, p.slot),
+            });
+        }
+        assert_eq!(out.len(), publications.len());
+        Ok(out)
     }
 }
 
@@ -997,6 +1085,19 @@ pub fn overrides(
             }
             None => writer.start_price(rpc, world)?,
         };
+        let scope_mappings = match &feed.source {
+            Source::Scope(scope) if scope.mode == ScopeMode::Pushed => {
+                let address = scope.address().map_err(|e| oracle_error(&feed.name, e))?;
+                let data = rpc.get_account(&address)?.data;
+                let mappings = data
+                    .get(8..40)
+                    .and_then(|b| <[u8; 32]>::try_from(b).ok())
+                    .map(Pubkey::new_from_array)
+                    .ok_or_else(|| oracle_error(&feed.name, "not a Scope prices account"))?;
+                Some(mappings)
+            }
+            _ => None,
+        };
         let context = Context {
             base_slot,
             start_unix,
@@ -1005,6 +1106,7 @@ pub fn overrides(
             duration_slots,
             perp_asset_map: world.phoenix.map(|(map, _)| map),
             start_twap: writer.start_twap(rpc)?,
+            scope_mappings,
         };
         let publications = feed.plan_around(oracles.seed, index, duration_slots, start_price, gaps);
         all.extend(writer.lower(&context, &publications)?);
@@ -1109,6 +1211,7 @@ mod tests {
             duration_slots: 40,
             perp_asset_map: Some(Pubkey::new_unique()),
             start_twap: None,
+            scope_mappings: None,
         }
     }
 
@@ -1271,6 +1374,7 @@ mod tests {
             twap_index: None,
             chain: Vec::new(),
             twap: TwapMode::Hold,
+            mode: ScopeMode::Written,
         });
         let f = feed(source, vec![]);
         let plan = f.plan(1, 0, 8, 100.0);
@@ -1288,6 +1392,64 @@ mod tests {
         );
     }
 
+    /// A pushed feed writes the upstream into the mapping's `generic` data
+    /// of its price and TWAP entries, one override per publication, and
+    /// never Scope's prices.
+    #[test]
+    fn a_pushed_scope_feed_writes_its_upstream_into_the_mapping() {
+        let pushed = ScopeOracle {
+            account: Pubkey::new_unique().to_string(),
+            index: 3,
+            exp: 8,
+            twap_index: Some(455),
+            chain: Vec::new(),
+            twap: TwapMode::Hold,
+            mode: ScopeMode::Pushed,
+        };
+        let f = feed(Source::Scope(pushed.clone()), vec![]);
+        let plan = f.plan(1, 0, 40, 100.0);
+        assert!(
+            f.source.writer().lower(&context(), &plan).is_err(),
+            "no mappings, no writes"
+        );
+        let mappings = Pubkey::new_unique();
+        let with_mappings = Context {
+            scope_mappings: Some(mappings),
+            start_twap: Some(100.0),
+            ..context()
+        };
+        let lowered = f.source.writer().lower(&with_mappings, &plan).unwrap();
+        assert_eq!(lowered.len(), plan.len());
+        let at_end = lowered.last().unwrap();
+        assert_eq!(at_end.template_id, crate::scope::MAPPING_TEMPLATE);
+        assert_eq!(at_end.account, mappings);
+        let generic = |o: &Override, entry: u16| {
+            let bytes: Vec<u8> = (0..crate::scope::GENERIC_LEN)
+                .map(|i| o.values[format!("generic.{entry}.{i}")].as_u64().unwrap() as u8)
+                .collect();
+            crate::scope::Price::from_generic(&bytes.try_into().unwrap()).to_f64()
+        };
+        assert!((generic(at_end, 3) - 90.0).abs() < 1e-6, "the path's -10%");
+        let twap = generic(at_end, 455);
+        assert!(
+            twap < 100.0 && twap > 99.9,
+            "an hour's EMA barely moves: {twap}"
+        );
+        assert!(at_end.values.get("prices.3.price.value").is_none());
+        let mut chained = pushed;
+        chained.chain = vec![7];
+        let oracles = Oracles {
+            seed: 1,
+            feeds: vec![feed(Source::Scope(chained), vec![])],
+        };
+        assert!(
+            oracles
+                .validate(40)
+                .unwrap_err()
+                .contains("chain must be empty")
+        );
+    }
+
     #[test]
     fn scope_writes_a_lagging_twap_and_restamps_its_chain() {
         let scope = |twap| {
@@ -1298,6 +1460,7 @@ mod tests {
                 twap_index: Some(455),
                 chain: vec![3],
                 twap,
+                mode: ScopeMode::Written,
             })
         };
         let crash = Failure {

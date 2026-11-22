@@ -172,6 +172,95 @@ kamino-smoke:
     jq -e '.scenarios[0].lending.end[1].borrowed > 299' target/logs/kamino-drain.json > /dev/null
     echo "kamino-smoke: ok"
 
+# RFD 0005's liquidation-flash session (bench/checks/kamino/liquidation-flash.json,
+# on the atomic-arb snapshot): a pushed Scope price, four liquidators and a
+# keeper in the transaction layer's auction, two pools. A bot that does
+# nothing makes and breaks nothing; the probe, which pushes, flash borrows,
+# liquidates and sells in one transaction, lands some liquidations, loses
+# others to the liquidators, and keeps its v0.3.0 mandate.
+liquidation-flash-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/liquidation-probe/Justfile build
+    just --justfile bots/starter/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/atomic-arb-2026-11-21 \
+        --bot "bots/$1" --logs "target/logs/liquidation-flash-$1" --report "target/logs/liquidation-flash-$1.json" \
+        bench/checks/kamino/liquidation-flash.json > /dev/null
+    }
+    grade starter
+    jq -e '.scenarios[0] | .pnl_usd == 0 and .disqualified == null
+      and ([.lending.actions[] | select(.action == "liquidate" and .error == null)] | length) >= 1' \
+      target/logs/liquidation-flash-starter.json > /dev/null
+    grade liquidation-probe
+    jq -e '.scenarios[0] | .disqualified == null and .pnl_usd > 0 and .lending.liquidations >= 1
+      and ([.tx_layer.sends[] | select(.state == "failed")] | length) >= 1
+      and (.lending.transactions | length) >= 1' \
+      target/logs/liquidation-flash-liquidation-probe.json > /dev/null
+    echo "liquidation-flash-smoke: ok"
+
+# An amm session with trigger steps (bench/checks/amm/backrun-sol-usdc.json,
+# RFD 0005): a whale's chunks end steps with their slot open, and the bot,
+# three cycle searchers and a pool searcher race to backrun them in the
+# transaction layer's auction. Doing nothing makes nothing and breaks
+# nothing; the probe backruns in the trigger's own slot, wins some and
+# loses some to the searchers, profits, and replays byte for byte.
+backrun-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/backrun-probe/Justfile build
+    just --justfile bots/starter/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --replay 2 --snapshot snapshots/atomic-arb-2026-11-21 \
+        --bot "bots/$1" --logs "target/logs/backrun-$1" --report "target/logs/backrun-$1.json" \
+        bench/checks/amm/backrun-sol-usdc.json > /dev/null
+    }
+    grade starter
+    jq -e '.replay.identical and (.scenarios[0] | .pnl_usd == 0 and .disqualified == null
+      and (.amm.triggers | length) >= 5
+      and ([.amm.triggers[] | select(.winner != null)] | length) >= 3)' \
+      target/logs/backrun-starter.json > /dev/null
+    grade backrun-probe
+    jq -e '.replay.identical and (.scenarios[0] | .disqualified == null and .pnl_usd > 0
+      and ([.amm.triggers[] | select(.winner == "bot" and .winner_after_slots == 0)] | length) >= 1
+      and ([.amm.triggers[] | select(.winner != null and .winner != "bot")] | length) >= 1
+      and (.amm.transactions | length) >= 1 and (.amm.fills | length) >= 2)' \
+      target/logs/backrun-backrun-probe.json > /dev/null
+    echo "backrun-smoke: ok"
+
+# An amm session over ten thin pools and two lookup tables
+# (bench/checks/amm/backrun-thin-pools.json, RFD 0005 task 3): large swaps
+# on one pool at a time open cycles through the graph, and the bot, six
+# cycle searchers (two- and three-leg) and a pool searcher race to close
+# them. Doing nothing makes nothing and breaks nothing; the task's reference
+# closes a three-leg cycle in a trigger's own slot as one transaction,
+# profits, stays inside the mandate, and replays byte for byte.
+thin-pools-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bench/tasks/backrun-thin-pools/reference/Justfile build
+    just --justfile bots/starter/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --replay 2 --snapshot snapshots/thin-pools-2026-11-21 \
+        --bot "$1" --logs "target/logs/thin-pools-$2" --report "target/logs/thin-pools-$2.json" \
+        bench/checks/amm/backrun-thin-pools.json > /dev/null
+    }
+    grade bots/starter starter
+    jq -e '.replay.identical and (.scenarios[0] | .pnl_usd == 0 and .disqualified == null
+      and (.amm.triggers | length) == 5
+      and ([.amm.triggers[] | select(.winner != null)] | length) >= 2)' \
+      target/logs/thin-pools-starter.json > /dev/null
+    grade bench/tasks/backrun-thin-pools/reference reference
+    jq -e '.replay.identical and (.scenarios[0] | .disqualified == null and .pnl_usd > 0
+      and ([.amm.triggers[] | select(.winner == "bot" and .winner_after_slots == 0)] | length) >= 1
+      and ([.amm.fills | group_by(.signature)[] | length] | max) >= 3
+      and ([.amm.transactions[] | select(.other_holdings_usd > 5)] | length) == 0)' \
+      target/logs/thin-pools-reference.json > /dev/null
+    echo "thin-pools-smoke: ok"
+
 # The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
 # SPY, QQQ, with SPCX as the control): one TABLE line per check and market.
 actors-markets:

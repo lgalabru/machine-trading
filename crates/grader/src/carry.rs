@@ -512,6 +512,7 @@ impl CarryFamily {
             oracles: None,
             lending: None,
             warps: Vec::new(),
+            amm: None,
             order: None,
             participation: None,
             net: None,
