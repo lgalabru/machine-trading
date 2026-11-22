@@ -215,44 +215,27 @@ impl Runtime {
         let latest_blockhash = Arc::new(blockhash::LatestBlockhash::default());
         // The latest slot the feed reported, for the strategies' steps.
         let (slots, slots_seen) = tokio::sync::watch::channel(0u64);
-        let mut slot_events = None;
-        let mut strategies = None;
-        if let Some(control) = config.control.clone() {
-            let (events, received) = match control.tpu {
-                Some(_) => {
-                    let (events, received) = tpu::slot_events();
-                    (Some(events), Some(received))
-                }
-                None => (None, None),
-            };
-            slot_events = events;
-            strategies = Some(strategies::spawn(
-                control,
-                strategies::Inputs {
-                    shared: strategies::Shared {
-                        cache: cache.clone(),
-                        watch,
-                        progress: receiver.progress(),
-                        events: events::Events::default(),
-                        blockhash: latest_blockhash.clone(),
-                        readings: Arc::default(),
-                        references: Arc::default(),
-                    },
-                    slots: slots_seen,
-                    slot_events: received,
-                },
-            )?);
-        }
+        let (slot_events, strategies) = match config.control.clone() {
+            Some(control) => {
+                let shared = strategies::Shared {
+                    cache: cache.clone(),
+                    watch,
+                    progress: receiver.progress(),
+                    events: events::Events::default(),
+                    blockhash: latest_blockhash.clone(),
+                    readings: Arc::default(),
+                    references: Arc::default(),
+                };
+                let (events, thread) = spawn_strategies(control, shared, slots_seen)?;
+                (events, Some(thread))
+            }
+            None => (None, None),
+        };
         let thread = std::thread::Builder::new()
             .name("mtx-live".into())
             .spawn(move || {
                 if let Some(url) = &config.backfill_rpc_url {
-                    let mut backfilled = AccountCache::default();
-                    match backfill_blocking(url, &addresses, &mut backfilled) {
-                        Ok(found) => tracing::info!(found, of = addresses.len(), "backfilled"),
-                        Err(error) => tracing::warn!(%error, "the backfill failed"),
-                    }
-                    lock(&cache).merge(backfilled);
+                    backfill_into(url, &addresses, &cache);
                 }
                 ready.set();
                 run(
@@ -321,6 +304,31 @@ fn read_keypair(path: &Path) -> Result<solana_keypair::Keypair, String> {
         serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
     solana_keypair::Keypair::try_from(bytes.as_slice())
         .map_err(|_| format!("{} is not a keypair", path.display()))
+}
+
+/// Start the strategies' thread for `control`, stepped on `slots`: with the
+/// TPU's slot events' sender, when the strategies send over the TPU.
+fn spawn_strategies(
+    control: strategies::ControlConfig,
+    shared: strategies::Shared,
+    slots: tokio::sync::watch::Receiver<u64>,
+) -> Result<(Option<tpu::SlotEvents>, JoinHandle<()>), String> {
+    let (events, received) = match control.tpu {
+        Some(_) => {
+            let (events, received) = tpu::slot_events();
+            (Some(events), Some(received))
+        }
+        None => (None, None),
+    };
+    let thread = strategies::spawn(
+        control,
+        strategies::Inputs {
+            shared,
+            slots,
+            slot_events: received,
+        },
+    )?;
+    Ok((events, thread))
 }
 
 /// The status a journal line carries when a write, not a slot event,
@@ -518,6 +526,18 @@ pub async fn backfill(
         "one account found an address at most"
     );
     Ok(found)
+}
+
+/// Backfill `addresses` from the node at `url` into `cache`, at start. A
+/// backfill that fails leaves each market an error until the feed has told
+/// of every account it needs: the runtime runs on, said why.
+fn backfill_into(url: &str, addresses: &[Address], cache: &Mutex<AccountCache>) {
+    let mut backfilled = AccountCache::default();
+    match backfill_blocking(url, addresses, &mut backfilled) {
+        Ok(found) => tracing::info!(found, of = addresses.len(), "backfilled"),
+        Err(error) => tracing::warn!(%error, "the backfill failed"),
+    }
+    lock(cache).merge(backfilled);
 }
 
 fn backfill_blocking(
