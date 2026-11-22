@@ -1081,7 +1081,7 @@ impl Manager {
             if stats.state != StrategyState::Running || slot < stats.due {
                 continue;
             }
-            stats.due = slot + strategy.spec.slots_per_step;
+            stats.due = next_due(slot, strategy.spec.slots_per_step);
             let Ok(mut inner) = strategy.inner.clone().try_lock_owned() else {
                 stats.skipped += 1;
                 tracing::warn!(
@@ -1756,7 +1756,14 @@ fn limits(mandate: &Mandate, symbol: &str) -> Result<(f64, f64), String> {
     ))
 }
 
-/// `symbol`'s perpetual, as mandates name it.
+/// The slot a strategy that stepped at `slot` steps next. Saturating: a
+/// `slots_per_step` as large as a command may send would otherwise wrap in
+/// a release build to a slot already past, and step it every slot.
+fn next_due(slot: u64, slots_per_step: u64) -> u64 {
+    assert!(slots_per_step > 0, "an add refuses a step of no slots");
+    slot.saturating_add(slots_per_step)
+}
+
 fn micros(since: std::time::Instant) -> u64 {
     u64::try_from(since.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
@@ -1802,6 +1809,7 @@ fn step_timings(
     timings
 }
 
+/// `symbol`'s perpetual, as mandates name it.
 fn instrument_of(symbol: &str) -> InstrumentRef {
     InstrumentRef {
         venue: crate::venue::perps::VENUE.into(),
@@ -1953,6 +1961,13 @@ mod tests {
         // A held name is taken, unless it is the one being restored.
         let taken = manager.check_add(&spec("held-0"), false).unwrap_err();
         assert_eq!(taken.code, ErrorCode::Exists);
+    }
+
+    #[test]
+    fn a_strategy_s_next_step_is_after_this_one_whatever_its_period() {
+        assert_eq!(next_due(100, 2), 102);
+        assert_eq!(next_due(100, u64::MAX), u64::MAX);
+        assert!(next_due(u64::MAX - 1, 5) > u64::MAX - 1);
     }
 
     #[test]
