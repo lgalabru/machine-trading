@@ -171,6 +171,7 @@ fn serve(
             strategies,
         },
         Ok(Reply::Error { error }) => return Err(error.to_string()),
+        Ok(Reply::Markets { .. }) => unreachable!("status is answered with the strategies"),
         Err(_) => return Err("the runtime dropped the status".into()),
     };
     let mut text = serde_json::to_string(&Line {

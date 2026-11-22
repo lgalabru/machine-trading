@@ -70,18 +70,29 @@ pub fn per_slot(n: usize, every: u64) -> usize {
 /// The watched markets and where the round-robin is.
 pub struct Watching {
     markets: Vec<(String, PerpReader)>,
+    /// Each watched market as a survey reads it, for `markets`.
+    infos: Vec<mtx_core::market::MarketInfo>,
     every_slots: u64,
     cursor: usize,
 }
 
 impl Watching {
-    pub fn new(markets: Vec<(String, PerpReader)>, every_slots: u64) -> Self {
+    pub fn new(
+        markets: Vec<(String, PerpReader)>,
+        infos: Vec<mtx_core::market::MarketInfo>,
+        every_slots: u64,
+    ) -> Self {
         assert!(markets.len() <= WATCHED_MAX, "watched markets are bounded");
         Self {
             markets,
+            infos,
             every_slots: every_slots.max(EVERY_SLOTS_MIN),
             cursor: 0,
         }
+    }
+
+    pub fn markets(&self) -> &[mtx_core::market::MarketInfo] {
+        &self.infos
     }
 
     pub fn len(&self) -> usize {

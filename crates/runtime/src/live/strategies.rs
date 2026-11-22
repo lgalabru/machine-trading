@@ -792,7 +792,7 @@ impl Manager {
                 return;
             }
         };
-        let mut markets = Vec::new();
+        let (mut markets, mut infos) = (Vec::new(), Vec::new());
         for symbol in super::watching::symbols(&venue, &config.symbols) {
             let reader =
                 match PerpReader::new(venue.exchange().clone(), &symbol, &Pubkey::default()) {
@@ -816,6 +816,13 @@ impl Manager {
                     }
                 }
             }
+            if let Some(info) = venue
+                .markets()
+                .into_iter()
+                .find(|m| m.instrument.symbol == symbol)
+            {
+                infos.push(info);
+            }
             markets.push((symbol, reader));
         }
         tracing::info!(
@@ -823,7 +830,11 @@ impl Manager {
             every_slots = config.every_slots,
             "watching markets"
         );
-        self.watching = Some(super::watching::Watching::new(markets, config.every_slots));
+        self.watching = Some(super::watching::Watching::new(
+            markets,
+            infos,
+            config.every_slots,
+        ));
     }
 
     /// Read this slot's share of the watched markets, each told as a
@@ -1261,7 +1272,7 @@ impl Manager {
         }
         let error = match reply {
             Reply::Error { error } => Some(error.clone()),
-            Reply::Ok { .. } => None,
+            Reply::Ok { .. } | Reply::Markets { .. } => None,
         };
         match &error {
             Some(error) => tracing::warn!(
@@ -1298,10 +1309,19 @@ impl Manager {
     }
 
     async fn handle_in_span(&mut self, command: Command) -> Reply {
+        if matches!(command, Command::Markets) {
+            return Reply::Markets {
+                markets: self
+                    .watching
+                    .as_ref()
+                    .map(|w| w.markets().to_vec())
+                    .unwrap_or_default(),
+            };
+        }
         // Only a command that changes something rewrites the desired state.
         let changes = !matches!(command, Command::Status);
         let done = match command {
-            Command::Status => Ok(()),
+            Command::Status | Command::Markets => Ok(()),
             Command::Pause { name, orders } => {
                 self.each(name, |m, name| m.pause_by_command(name, orders))
                     .await
