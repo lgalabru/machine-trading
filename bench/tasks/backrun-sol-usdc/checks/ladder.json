@@ -1,0 +1,56 @@
+{
+  "family": "backrun-sol-usdc",
+  "count": 72,
+  "min_rule_odds": 0.85,
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "fixed-clip",
+      "dir": "bench/tasks/backrun-sol-usdc/checks/bots/fixed-clip"
+    },
+    {
+      "name": "overbidder",
+      "dir": "bench/tasks/backrun-sol-usdc/checks/bots/overbidder"
+    },
+    {
+      "name": "probe",
+      "dir": "bots/backrun-probe"
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/backrun-sol-usdc/reference"
+    },
+    {
+      "name": "informed",
+      "dir": "bench/tasks/backrun-sol-usdc/checks/bots/informed",
+      "tell_latent": true
+    }
+  ],
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
+  },
+  "gates": {
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop"
+    ]
+  },
+  "rules": [
+    "max(fixed-clip, overbidder) < reference",
+    "reference < informed"
+  ],
+  "exploits": {
+    "bots": [],
+    "max_profitable": 0.75,
+    "below": "informed"
+  },
+  "probes": {
+    "exempt": "the probe bots (bench/checks/probes) hold a Phoenix perp position: coin flips, martingales, levers and the breacher have no counterpart in a session whose only trades are atomic cycles that end in SOL under a $5 inventory limit. The task's own rungs (fixed-clip, a cycle that leaves most of each gap; overbidder, every race overpaid; probe, milestone E's backrun probe) stand in until an amm probe set exists"
+  }
+}

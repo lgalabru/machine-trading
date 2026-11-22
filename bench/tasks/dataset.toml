@@ -13,12 +13,24 @@ email = "ludo.galabru@solana.org"
 
 
 [[tasks]]
+name = "solana-foundation/backrun-sol-usdc"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[[tasks]]
+name = "solana-foundation/backrun-thin-pools"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[[tasks]]
 name = "solana-foundation/flash-crash-spcx"
 digest = "sha256:8b00095906e9f161c5d92b2b9c23921959d055ab70b660f4e9c163bf7a38605d"
 
 [[tasks]]
 name = "solana-foundation/funding-carry-spcx"
 digest = "sha256:808548f4d022facaec0f321318e0f54fc6346913657eda0dc9d827eadcfb98a7"
+
+[[tasks]]
+name = "solana-foundation/liquidation-flash"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [[tasks]]
 name = "solana-foundation/market-making-spcx"
