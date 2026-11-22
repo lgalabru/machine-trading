@@ -720,7 +720,7 @@ impl Ctx {
     async fn backfill(&self, reader: &PerpReader) -> Result<(), String> {
         let addresses = reader.addresses();
         for address in &addresses {
-            self.shared.watch.add(*address);
+            self.shared.watch.add(*address)?;
         }
         let chain = RpcChainClient::with_timeout(&self.config.rpc_url, BACKFILL_TIMEOUT);
         let mut found = AccountCache::default();

@@ -31,6 +31,10 @@ use super::feed::Accounts;
 /// takes at most: Phoenix's `/exchange` lists one of each today.
 const ARENA_ACCOUNTS_MAX: usize = 16;
 
+/// The most accounts one reader reads: the asset map, the trader, the
+/// orderbook and the splines, and the two arenas.
+pub const ADDRESSES_MAX: usize = 4 + 2 * ARENA_ACCOUNTS_MAX;
+
 /// One account's view of one perp market, and where it is read from.
 #[derive(Debug, Clone)]
 pub struct PerpReader {
@@ -137,7 +141,7 @@ impl PerpReader {
 
     /// The accounts a read needs: what the feed has to watch.
     pub fn addresses(&self) -> Vec<Address> {
-        [
+        let addresses: Vec<Address> = [
             self.asset_map,
             self.trader,
             self.orderbook,
@@ -146,7 +150,12 @@ impl PerpReader {
         .into_iter()
         .chain(self.global_trader_index.iter().copied())
         .chain(self.active_trader_buffer.iter().copied())
-        .collect()
+        .collect();
+        assert!(
+            addresses.len() <= ADDRESSES_MAX,
+            "the arenas are bounded at construction"
+        );
+        addresses
     }
 
     /// The market and the account as the cache holds them, at `slot` (a

@@ -153,7 +153,7 @@ impl Config {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Reading<'a> {
     pub slot: u64,
-    pub status: &'static str,
+    pub status: Status,
     pub symbol: &'a str,
     /// The reading, or why there is none.
     #[serde(flatten)]
@@ -327,6 +327,29 @@ fn read_keypair(path: &Path) -> Result<solana_keypair::Keypair, String> {
 /// made it ([`Config::journal_writes`]).
 pub const WRITE: &str = "write";
 
+/// What made a journal line: a slot reaching a status, or a write of a
+/// watched account. Written as the slot status's name, or [`WRITE`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Slot(mtx_core::feed::SlotStatus),
+    Write,
+}
+
+impl Status {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Slot(status) => status.as_str(),
+            Self::Write => WRITE,
+        }
+    }
+}
+
+impl Serialize for Status {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
 /// The runtime's loop: keep the accounts, and journal every market at
 /// every slot event (and after every write, if `journal_writes`), until
 /// the feed ends.
@@ -348,7 +371,7 @@ fn run(
                 if !(kept && journal_writes) {
                     continue;
                 }
-                (slot, WRITE)
+                (slot, Status::Write)
             }
             FeedEvent::Slot { slot, status, .. } => {
                 events.applied();
@@ -366,7 +389,7 @@ fn run(
                 if let Some(events) = &slots.events {
                     events.offer(slot, status);
                 }
-                (slot, status.as_str())
+                (slot, Status::Slot(status))
             }
             FeedEvent::Block {
                 slot, blockhash, ..
@@ -428,7 +451,7 @@ fn record(
     readers: &[PerpReader],
     cache: &AccountCache,
     slot: u64,
-    status: &'static str,
+    status: Status,
     dropped: u64,
 ) -> std::io::Result<()> {
     for reader in readers {
@@ -458,6 +481,10 @@ pub async fn backfill(
     addresses: &[Address],
     cache: &mut AccountCache,
 ) -> Result<usize, String> {
+    assert!(
+        addresses.len() <= feed::WATCHED_ADDRESSES_MAX,
+        "only watched accounts are backfilled"
+    );
     let slot = chain.get_slot().await.map_err(|e| e.to_string())?;
     let mut found = 0;
     for addresses in addresses.chunks(ACCOUNTS_PER_READ) {
@@ -486,6 +513,10 @@ pub async fn backfill(
             });
         }
     }
+    assert!(
+        found <= addresses.len(),
+        "one account found an address at most"
+    );
     Ok(found)
 }
 

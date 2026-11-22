@@ -78,6 +78,9 @@ impl Tape {
             transaction.calls.len() <= TAPE_INSTRUCTIONS_MAX,
             "the plugin bounds a transaction's calls"
         );
+        // Poisoned: a reader panicked holding it. The tape feeds paper
+        // fills only, so a transaction is dropped rather than trust it,
+        // and never a panic on the validator's thread.
         let Ok(mut ring) = self.ring.lock() else {
             return;
         };
@@ -86,11 +89,16 @@ impl Tape {
         }
         ring.transactions.push_back(transaction);
         ring.next += 1;
+        assert!(
+            ring.transactions.len() <= TAPE_TRANSACTIONS_MAX,
+            "the tape is a ring"
+        );
     }
 
     /// The transactions after `cursor`, and the cursor to read from next.
     /// A cursor of `None` starts at the tape's end: nothing before now.
     pub fn since(&self, cursor: Option<u64>) -> (Read, u64) {
+        // Poisoned: as in `push`, nothing is read from it.
         let Ok(ring) = self.ring.lock() else {
             return (Read::default(), cursor.unwrap_or(0));
         };
