@@ -1,0 +1,636 @@
+//! Building blocks for a market maker, pure and composable: where to quote
+//! off the book ([`touch_targets`]), how one-sided the takers have been
+//! ([`taker_flow`]), and when to stop quoting the side they hit
+//! ([`Guard`]). A strategy composes them in its `step`; each is a function
+//! of what it is given, so each is tested on its own.
+//!
+//! - **Quote off the book, not the oracle.** On Phoenix the book leads and
+//!   the oracle follows by seconds; a maker quoting around the oracle
+//!   crosses the book and takes. [`touch_targets`] joins the touch, steps a
+//!   tick inside only where the spread has room, skews against inventory,
+//!   steps back from a moving book and a far oracle, and never crosses.
+//! - **Watch the takers.** A maker is picked off by takers who know the
+//!   next tick: their orders come one-sided just before it moves.
+//!   [`taker_flow`] is the share of the recent taker volume that bought.
+//! - **Keep transactions few.** [`Momentum`] tracks the mid's recent move,
+//!   [`Requote`] says when quotes are worth replacing, and [`place`] sends
+//!   them post-only, sized against the cap.
+//! - **Stop quoting the side being hit.** When that share passes a
+//!   threshold, [`Guard`] says which side to pull, and holds it a while:
+//!   takers buying hard lift the asks before a rally, so the asks go.
+
+use std::collections::VecDeque;
+
+use mtx_core::Side;
+/// The tape's types: a trade, its taker's side, and the strategy's part
+/// in it, as `market.tape` holds them.
+pub use mtx_core::{
+    Side as TapeSide,
+    turns::{Role, Trade},
+};
+
+use crate::Orders;
+
+/// How [`touch_targets`] quotes. The defaults are the book maker's, fitted
+/// on mainnet's SOL perp (`bots/book-maker`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TouchConfig {
+    /// How far the inventory skew steps the adding side back at the cap,
+    /// in ticks: a tick per fifth of the cap.
+    pub skew_ticks_at_cap: f64,
+    /// Past this share of the cap, the side that adds isn't quoted.
+    pub inventory_limit: f64,
+    /// The mid's move past which the side it runs into steps back, and by
+    /// how many ticks: 3 bps is two ticks on SOL at $66.
+    pub momentum_bps: f64,
+    pub momentum_ticks: i64,
+    /// The oracle gap past which both sides step back, and by how much:
+    /// the live p95 is 11 bps.
+    pub basis_wide_bps: f64,
+    pub basis_wide_ticks: i64,
+}
+
+impl Default for TouchConfig {
+    fn default() -> Self {
+        Self {
+            skew_ticks_at_cap: 5.0,
+            inventory_limit: 0.75,
+            momentum_bps: 3.0,
+            momentum_ticks: 2,
+            basis_wide_bps: 12.0,
+            basis_wide_ticks: 1,
+        }
+    }
+}
+
+/// The book, the oracle and the position at a step.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct View {
+    pub best_bid: f64,
+    pub best_ask: f64,
+    pub oracle: f64,
+    /// Position over the cap, in [-1, 1].
+    pub inventory: f64,
+    /// The mid's move over the strategy's momentum window, in bps.
+    pub momentum_bps: f64,
+}
+
+/// Where to quote, in ticks: `None` for a side not quoted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Targets {
+    pub bid: Option<i64>,
+    pub ask: Option<i64>,
+}
+
+impl Targets {
+    /// These targets without the side `pull` names.
+    pub fn without(self, pull: Pull) -> Self {
+        match pull {
+            Pull::Neither => self,
+            Pull::Bids => Self { bid: None, ..self },
+            Pull::Asks => Self { ask: None, ..self },
+        }
+    }
+}
+
+/// The quotes for a view, in ticks: at the touch, a tick inside where the
+/// spread has room, stepped back for inventory, momentum and a wide oracle
+/// gap, and never crossing the book or each other.
+pub fn touch_targets(view: &View, tick: f64, config: &TouchConfig) -> Targets {
+    assert!(tick > 0.0, "a tick has a size");
+    assert!(view.best_ask > view.best_bid, "a book that isn't crossed");
+    let best_bid = (view.best_bid / tick).round() as i64;
+    let best_ask = (view.best_ask / tick).round() as i64;
+    // A tick inside each side only if the two can't meet.
+    let room = best_ask - best_bid >= 3;
+    let mut bid = best_bid + i64::from(room);
+    let mut ask = best_ask - i64::from(room);
+
+    let skew = (view.inventory.abs() * config.skew_ticks_at_cap).round() as i64;
+    if view.inventory > 0.0 {
+        bid -= skew;
+    } else {
+        ask += skew;
+    }
+    if view.momentum_bps > config.momentum_bps {
+        ask += config.momentum_ticks;
+    } else if view.momentum_bps < -config.momentum_bps {
+        bid -= config.momentum_ticks;
+    }
+    if view.oracle > 0.0 {
+        let mid = (best_bid + best_ask) as f64 * tick / 2.0;
+        let basis_bps = (mid / view.oracle - 1.0) * 10_000.0;
+        if basis_bps.abs() > config.basis_wide_bps {
+            bid -= config.basis_wide_ticks;
+            ask += config.basis_wide_ticks;
+        }
+    }
+    // Post-only refuses a crossing quote anyway; keep it off the book's far
+    // side so it isn't refused.
+    bid = bid.min(best_ask - 1);
+    ask = ask.max(best_bid + 1);
+    let targets = Targets {
+        bid: (view.inventory < config.inventory_limit).then_some(bid),
+        ask: (view.inventory > -config.inventory_limit).then_some(ask),
+    };
+    if let (Some(bid), Some(ask)) = (targets.bid, targets.ask) {
+        assert!(bid < ask, "the quotes don't cross: {bid} {ask}");
+    }
+    targets
+}
+
+/// The takers' recent flow: the share of their volume that bought, from
+/// -1 (all sold) to +1 (all bought), and how much volume that is.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Flow {
+    pub share: f64,
+    pub volume: f64,
+}
+
+/// The takers' flow in the `window_slots` up to and including `slot`,
+/// from `tape`, leaving out the strategy's own trades. `None` if nothing
+/// else traded then.
+pub fn taker_flow(tape: &[Trade], slot: u64, window_slots: u64) -> Option<Flow> {
+    let from = slot.saturating_sub(window_slots.saturating_sub(1));
+    let (mut signed, mut volume) = (0.0, 0.0);
+    for trade in tape {
+        let theirs = trade.own.is_none() || trade.own == Some(Role::Maker);
+        if !(theirs && (from..=slot).contains(&trade.slot) && trade.base.is_finite()) {
+            continue;
+        }
+        let size = trade.base.abs();
+        volume += size;
+        signed += match trade.side {
+            Side::Buy => size,
+            Side::Sell => -size,
+        };
+    }
+    (volume > 0.0).then(|| Flow {
+        share: (signed / volume).clamp(-1.0, 1.0),
+        volume,
+    })
+}
+
+/// Which side to stop quoting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pull {
+    Neither,
+    /// Takers are selling: the bids are hit before the price falls.
+    Bids,
+    /// Takers are buying: the asks are lifted before the price rises.
+    Asks,
+}
+
+/// When [`Guard`] pulls a side.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GuardConfig {
+    /// The flow's share past which it pulls: 0.6 is four fifths of the
+    /// volume one way.
+    pub threshold: f64,
+    /// Less volume than this, in base units, says nothing.
+    pub volume_min: f64,
+    /// How long a pull holds after the flow last passed the threshold.
+    pub hold_slots: u64,
+}
+
+/// Pulls the side one-sided takers hit, and holds it for
+/// [`GuardConfig::hold_slots`] after the flow last called for it. A flow
+/// the other way past the threshold turns the pull at once.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Guard {
+    config: GuardConfig,
+    pulled: Option<(Pull, u64)>,
+}
+
+impl Guard {
+    pub fn new(config: GuardConfig) -> Self {
+        assert!(
+            (0.0..=1.0).contains(&config.threshold),
+            "a threshold is a share: {}",
+            config.threshold
+        );
+        assert!(config.volume_min >= 0.0, "a volume is not negative");
+        Self {
+            config,
+            pulled: None,
+        }
+    }
+
+    /// The side to pull at `slot`, given the flow then.
+    pub fn update(&mut self, slot: u64, flow: Option<Flow>) -> Pull {
+        let called = flow
+            .filter(|f| f.volume >= self.config.volume_min)
+            .and_then(|f| match f.share {
+                s if s >= self.config.threshold => Some(Pull::Asks),
+                s if s <= -self.config.threshold => Some(Pull::Bids),
+                _ => None,
+            });
+        if let Some(pull) = called {
+            self.pulled = Some((pull, slot.saturating_add(self.config.hold_slots)));
+        }
+        match self.pulled {
+            Some((pull, until)) if slot < until => pull,
+            _ => {
+                self.pulled = None;
+                Pull::Neither
+            }
+        }
+    }
+}
+
+/// The mid's move over the last few steps, in bps.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Momentum {
+    steps: usize,
+    mids: VecDeque<f64>,
+}
+
+impl Momentum {
+    /// The move over `steps` steps.
+    pub fn new(steps: usize) -> Self {
+        assert!(steps > 0, "a window of at least a step");
+        Self {
+            steps,
+            mids: VecDeque::with_capacity(steps + 1),
+        }
+    }
+
+    /// Take this step's mid; the move from `steps` steps ago, in bps.
+    pub fn push(&mut self, mid: f64) -> f64 {
+        assert!(mid > 0.0 && mid.is_finite(), "a mid is a price: {mid}");
+        self.mids.push_back(mid);
+        while self.mids.len() > self.steps + 1 {
+            self.mids.pop_front();
+        }
+        debug_assert!(self.mids.len() <= self.steps + 1);
+        match self.mids.front() {
+            Some(first) => (mid / first - 1.0) * 10_000.0,
+            None => 0.0,
+        }
+    }
+}
+
+/// When quotes are worth replacing: a target moved, or they are older than
+/// `every_slots` (a quote the book refused as crossing comes back).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Requote {
+    every_slots: u64,
+    last: Option<(u64, Targets)>,
+}
+
+impl Requote {
+    pub fn new(every_slots: u64) -> Self {
+        Self {
+            every_slots,
+            last: None,
+        }
+    }
+
+    /// Whether to replace the quotes at `slot` with `targets`; if so, they
+    /// are taken as placed.
+    pub fn due(&mut self, slot: u64, targets: Targets) -> bool {
+        let due = self.last.is_none_or(|(at, placed)| {
+            placed != targets || slot >= at.saturating_add(self.every_slots)
+        });
+        if due {
+            self.last = Some((slot, targets));
+        }
+        due
+    }
+}
+
+/// How [`place`] sizes quotes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Sizing {
+    /// Each quote's size, base units.
+    pub size: f64,
+    /// The position cap, base units.
+    pub cap: f64,
+    /// A quote under this isn't sent: a venue's base lot.
+    pub size_min: f64,
+}
+
+/// Cancel what rests and quote `targets`, post-only, each side sized so a
+/// fill can't take the position past the cap. What it sent: (bid, ask)
+/// sizes, 0 for a side not quoted.
+pub fn place(
+    orders: &mut Orders,
+    targets: Targets,
+    tick: f64,
+    held: f64,
+    sizing: Sizing,
+) -> (f64, f64) {
+    assert!(tick > 0.0 && sizing.cap > 0.0, "a tick and a cap");
+    orders.cancel_all();
+    let room_to_buy = (sizing.cap - held).max(0.0);
+    let room_to_sell = (sizing.cap + held).max(0.0);
+    let mut sent = (0.0, 0.0);
+    if let Some(bid) = targets.bid {
+        let size = sizing.size.min(room_to_buy);
+        if size >= sizing.size_min {
+            orders.bid(bid as f64 * tick, size).post_only();
+            sent.0 = size;
+        }
+    }
+    if let Some(ask) = targets.ask {
+        let size = sizing.size.min(room_to_sell);
+        if size >= sizing.size_min {
+            orders.ask(ask as f64 * tick, size).post_only();
+            sent.1 = size;
+        }
+    }
+    // A quote never takes the position further past the cap; one already
+    // past it (a forced fill) is only ever quoted back.
+    debug_assert!(sent.0 == 0.0 || held + sent.0 <= sizing.cap + 1e-9);
+    debug_assert!(sent.1 == 0.0 || held - sent.1 >= -sizing.cap - 1e-9);
+    sent
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    const TICK: f64 = 0.01;
+
+    fn trade(slot: u64, side: Side, base: f64) -> Trade {
+        Trade {
+            venue: "phoenix".into(),
+            market: Some("phoenix:perp:SOL".into()),
+            side,
+            price: 70.8,
+            base,
+            slot,
+            taker: None,
+            maker: None,
+            own: None,
+        }
+    }
+
+    fn views() -> impl Strategy<Value = View> {
+        (
+            6000i64..7000,
+            1i64..8,
+            -1.0f64..=1.0,
+            -20.0f64..20.0,
+            -0.003f64..0.003,
+        )
+            .prop_map(|(bid, width, inventory, momentum_bps, gap)| {
+                let (best_bid, best_ask) = (bid as f64 * TICK, (bid + width) as f64 * TICK);
+                View {
+                    best_bid,
+                    best_ask,
+                    oracle: (best_bid + best_ask) / 2.0 * (1.0 + gap),
+                    inventory,
+                    momentum_bps,
+                }
+            })
+    }
+
+    fn tapes() -> impl Strategy<Value = Vec<Trade>> {
+        prop::collection::vec(
+            (0u64..100, any::<bool>(), 0.001f64..50.0).prop_map(|(slot, buy, base)| {
+                trade(slot, if buy { Side::Buy } else { Side::Sell }, base)
+            }),
+            0..60,
+        )
+    }
+
+    proptest! {
+        /// Whatever the view, the quotes stay off the book's far side and
+        /// apart, and the side that adds goes past the inventory limit.
+        #[test]
+        fn touch_never_crosses(view in views()) {
+            let config = TouchConfig::default();
+            let t = touch_targets(&view, TICK, &config);
+            let best_bid = (view.best_bid / TICK).round() as i64;
+            let best_ask = (view.best_ask / TICK).round() as i64;
+            prop_assert!(t.bid.is_none_or(|b| b < best_ask));
+            prop_assert!(t.ask.is_none_or(|a| a > best_bid));
+            if let (Some(b), Some(a)) = (t.bid, t.ask) { prop_assert!(b < a); }
+            prop_assert_eq!(t.bid.is_none(), view.inventory >= config.inventory_limit);
+            prop_assert_eq!(t.ask.is_none(), view.inventory <= -config.inventory_limit);
+        }
+
+        /// A bid never improves on the touch by more than a tick, nor an
+        /// ask: a maker joins or betters the book, it doesn't jump ahead.
+        #[test]
+        fn touch_stays_near_the_book(view in views()) {
+            let t = touch_targets(&view, TICK, &TouchConfig::default());
+            prop_assert!(t.bid.is_none_or(|b| b <= (view.best_bid / TICK).round() as i64 + 1));
+            prop_assert!(t.ask.is_none_or(|a| a >= (view.best_ask / TICK).round() as i64 - 1));
+        }
+
+        /// Pulling only ever removes a side.
+        #[test]
+        fn pulling_removes_and_never_adds(view in views()) {
+            let t = touch_targets(&view, TICK, &TouchConfig::default());
+            for pull in [Pull::Neither, Pull::Bids, Pull::Asks] {
+                let p = t.without(pull);
+                prop_assert!(p.bid.is_none() || p.bid == t.bid);
+                prop_assert!(p.ask.is_none() || p.ask == t.ask);
+            }
+            prop_assert_eq!(t.without(Pull::Neither), t);
+        }
+
+        /// The flow is a share, its volume the window's, and mirroring the
+        /// takers' sides mirrors it.
+        #[test]
+        fn flow_is_a_share_that_mirrors(tape in tapes(), slot in 0u64..110, window in 1u64..30) {
+            let in_window: Vec<&Trade> = tape.iter().filter(|t| t.slot + window > slot && t.slot <= slot).collect();
+            let flow = taker_flow(&tape, slot, window);
+            prop_assert_eq!(flow.is_some(), !in_window.is_empty());
+            let mirrored: Vec<Trade> = tape.iter().map(|t| Trade {
+                side: if t.side == Side::Buy { Side::Sell } else { Side::Buy }, ..t.clone()
+            }).collect();
+            if let (Some(f), Some(m)) = (flow, taker_flow(&mirrored, slot, window)) {
+                prop_assert!((-1.0..=1.0).contains(&f.share));
+                prop_assert!((f.share + m.share).abs() < 1e-9);
+                let volume: f64 = in_window.iter().map(|t| t.base).sum();
+                prop_assert!((f.volume - volume).abs() < 1e-6);
+            }
+        }
+
+        /// A guard pulls only past its threshold and enough volume, holds
+        /// a pull exactly its hold, and quiet flow releases it after.
+        #[test]
+        fn the_guard_pulls_past_the_threshold_and_holds(
+            share in -1.0f64..=1.0, volume in 0.0f64..10.0, slot in 0u64..1000, hold in 1u64..20,
+        ) {
+            let config = GuardConfig { threshold: 0.6, volume_min: 1.0, hold_slots: hold };
+            let mut guard = Guard::new(config);
+            let pull = guard.update(slot, Some(Flow { share, volume }));
+            let expected = match (volume >= 1.0, share) {
+                (true, s) if s >= 0.6 => Pull::Asks,
+                (true, s) if s <= -0.6 => Pull::Bids,
+                _ => Pull::Neither,
+            };
+            prop_assert_eq!(pull, expected);
+            for later in 1..hold {
+                prop_assert_eq!(guard.update(slot + later, None), expected);
+            }
+            prop_assert_eq!(guard.update(slot + hold, None), Pull::Neither);
+        }
+    }
+
+    proptest! {
+        /// The momentum is the move from the window's first mid: zero for a
+        /// flat market, and it forgets what left the window.
+        #[test]
+        fn momentum_is_the_move_over_its_window(mids in prop::collection::vec(1.0f64..200.0, 1..40), steps in 1usize..8) {
+            let mut momentum = Momentum::new(steps);
+            let mut last = 0.0;
+            for &mid in &mids { last = momentum.push(mid); }
+            let first = mids[mids.len().saturating_sub(steps + 1)];
+            let expected = (mids[mids.len() - 1] / first - 1.0) * 10_000.0;
+            prop_assert!((last - expected).abs() < 1e-6);
+            let mut flat = Momentum::new(steps);
+            for _ in 0..10 { prop_assert_eq!(flat.push(66.5), 0.0); }
+        }
+
+        /// A requote is due for new targets, or once the quotes are old,
+        /// and not otherwise.
+        #[test]
+        fn requotes_come_when_targets_move_or_age(every in 1u64..50, gap in 0u64..100, bid in 0i64..10, moved in any::<bool>()) {
+            let mut requote = Requote::new(every);
+            let first = Targets { bid: Some(bid), ask: Some(bid + 2) };
+            prop_assert!(requote.due(100, first));
+            let next = if moved { Targets { bid: Some(bid - 1), ..first } } else { first };
+            prop_assert_eq!(requote.due(100 + gap, next), moved || gap >= every);
+        }
+
+        /// What is placed never takes the position past the cap, whatever
+        /// it holds.
+        #[test]
+        fn placing_respects_the_cap(held in -1.5f64..1.5, size in 0.0f64..2.0) {
+            let sizing = Sizing { size, cap: 1.0, size_min: 0.001 };
+            let mut orders = Orders::default();
+            let (bid, ask) = place(&mut orders, Targets { bid: Some(6654), ask: Some(6655) }, TICK, held, sizing);
+            prop_assert!(bid >= 0.0 && ask >= 0.0);
+            prop_assert!(held + bid <= 1.0 + 1e-9 || bid == 0.0);
+            prop_assert!(held - ask >= -1.0 - 1e-9 || ask == 0.0);
+        }
+    }
+
+    /// Found by the property test: a position already past the cap (a
+    /// forced fill) is only quoted back, never further.
+    #[test]
+    fn past_the_cap_only_the_way_back_is_quoted() {
+        let sizing = Sizing {
+            size: 0.5,
+            cap: 1.0,
+            size_min: 0.001,
+        };
+        let mut orders = Orders::default();
+        let both = Targets {
+            bid: Some(6654),
+            ask: Some(6655),
+        };
+        assert_eq!(place(&mut orders, both, TICK, 1.2, sizing), (0.0, 0.5));
+        assert_eq!(place(&mut orders, both, TICK, -1.2, sizing), (0.5, 0.0));
+    }
+
+    #[test]
+    fn own_taker_trades_are_left_out() {
+        let mut mine = trade(10, Side::Buy, 5.0);
+        mine.own = Some(Role::Taker);
+        let tape = vec![mine, trade(10, Side::Sell, 1.0)];
+        let flow = taker_flow(&tape, 10, 4).unwrap();
+        assert_eq!(flow.share, -1.0);
+        assert_eq!(flow.volume, 1.0);
+        // A trade where the strategy made is still the taker's flow.
+        let mut made = trade(10, Side::Buy, 2.0);
+        made.own = Some(Role::Maker);
+        assert_eq!(taker_flow(&[made], 10, 4).unwrap().share, 1.0);
+    }
+
+    #[test]
+    fn a_turn_in_the_flow_turns_the_pull_at_once() {
+        let mut guard = Guard::new(GuardConfig {
+            threshold: 0.6,
+            volume_min: 0.0,
+            hold_slots: 10,
+        });
+        let buying = Some(Flow {
+            share: 0.9,
+            volume: 3.0,
+        });
+        let selling = Some(Flow {
+            share: -0.9,
+            volume: 3.0,
+        });
+        assert_eq!(guard.update(1, buying), Pull::Asks);
+        assert_eq!(guard.update(2, selling), Pull::Bids);
+        assert_eq!(guard.update(11, None), Pull::Bids);
+        assert_eq!(guard.update(12, None), Pull::Neither);
+    }
+
+    /// The book maker's own cases, now here.
+    #[test]
+    fn the_book_makers_cases_hold() {
+        let config = TouchConfig::default();
+        let view = |bid: f64, ask: f64| View {
+            best_bid: bid,
+            best_ask: ask,
+            oracle: (bid + ask) / 2.0,
+            inventory: 0.0,
+            momentum_bps: 0.0,
+        };
+        let t = |v: View| touch_targets(&v, TICK, &config);
+        assert_eq!(
+            t(view(66.54, 66.55)),
+            Targets {
+                bid: Some(6654),
+                ask: Some(6655)
+            }
+        );
+        assert_eq!(
+            t(view(66.50, 66.55)),
+            Targets {
+                bid: Some(6651),
+                ask: Some(6654)
+            }
+        );
+        assert_eq!(
+            t(view(66.50, 66.52)),
+            Targets {
+                bid: Some(6650),
+                ask: Some(6652)
+            }
+        );
+        let far = View {
+            oracle: 66.445,
+            ..view(66.54, 66.55)
+        };
+        assert_eq!(
+            t(far),
+            Targets {
+                bid: Some(6653),
+                ask: Some(6656)
+            }
+        );
+        let long = View {
+            inventory: 0.4,
+            ..view(66.54, 66.55)
+        };
+        assert_eq!(
+            t(long),
+            Targets {
+                bid: Some(6652),
+                ask: Some(6655)
+            }
+        );
+        let rally = View {
+            momentum_bps: 4.0,
+            ..view(66.54, 66.55)
+        };
+        assert_eq!(
+            t(rally),
+            Targets {
+                bid: Some(6654),
+                ask: Some(6657)
+            }
+        );
+    }
+}

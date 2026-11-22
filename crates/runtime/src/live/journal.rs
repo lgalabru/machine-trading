@@ -536,6 +536,35 @@ pub struct Trade {
     pub size: f64,
 }
 
+/// The trades a strategy's step is shown at most: the newest. A step is
+/// two slots, and SOL's busiest slots trade a few dozen times; this is
+/// minutes of a quiet market and seconds of the wildest.
+pub const STEP_TAPE_MAX: usize = 2048;
+
+/// Trades as a strategy's step reads them (`market.tape`): on `market` (an
+/// instrument, as the session's venues name it), oldest first, the newest
+/// [`STEP_TAPE_MAX`] of them.
+pub fn step_tape(trades: &[Trade], market: &str) -> Vec<mtx_kit::turns::Trade> {
+    let newest = &trades[trades.len().saturating_sub(STEP_TAPE_MAX)..];
+    newest
+        .iter()
+        .map(|trade| mtx_kit::turns::Trade {
+            venue: crate::venue::perps::VENUE.into(),
+            market: Some(market.to_string()),
+            side: match trade.taker {
+                Side::Bid => mtx_core::Side::Buy,
+                Side::Ask => mtx_core::Side::Sell,
+            },
+            price: trade.price,
+            base: trade.size,
+            slot: trade.slot,
+            taker: None,
+            maker: None,
+            own: None,
+        })
+        .collect()
+}
+
 /// Whether a fill made or took liquidity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Liquidity {
@@ -1004,6 +1033,89 @@ fn open_append(path: &Path) -> Result<std::fs::File, String> {
         .append(true)
         .open(path)
         .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tape_tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    fn trades() -> impl Strategy<Value = Vec<Trade>> {
+        prop::collection::vec(
+            (
+                0u64..1_000_000,
+                any::<bool>(),
+                1.0f64..200.0,
+                0.001f64..100.0,
+            )
+                .prop_map(|(slot, bid, price, size)| Trade {
+                    slot,
+                    taker: if bid { Side::Bid } else { Side::Ask },
+                    price,
+                    size,
+                }),
+            0..3000,
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// The step's tape is the newest trades, in their order, at most
+        /// STEP_TAPE_MAX, each with its taker's side, price and size.
+        #[test]
+        fn the_steps_tape_is_the_newest_trades_in_order(trades in trades()) {
+            let tape = step_tape(&trades, "phoenix:perp:SOL");
+            prop_assert_eq!(tape.len(), trades.len().min(STEP_TAPE_MAX));
+            let newest = &trades[trades.len() - tape.len()..];
+            for (t, r) in tape.iter().zip(newest) {
+                prop_assert_eq!(t.slot, r.slot);
+                prop_assert_eq!(t.price, r.price);
+                prop_assert_eq!(t.base, r.size);
+                prop_assert_eq!(t.side == mtx_core::Side::Buy, r.taker == Side::Bid);
+                prop_assert_eq!(t.market.as_deref(), Some("phoenix:perp:SOL"));
+                prop_assert!(t.own.is_none());
+            }
+        }
+    }
+
+    /// A strategy's session names its market as the step's tape does: the
+    /// trades reach `market.tape`, and only its market's.
+    #[test]
+    fn the_tape_reaches_the_strategys_market() {
+        let mandate = mtx_core::Mandate::perp("phoenix", "SOL", 2.5, 300.0);
+        let sol = mtx_core::mandate::InstrumentRef {
+            venue: crate::venue::perps::VENUE.into(),
+            kind: mtx_core::mandate::Kind::Perp,
+            symbol: "SOL".into(),
+        };
+        let venues = mtx_kit::VenueInfo::of_perp_markets(&mandate, [(sol.clone(), None)]);
+        let trades = [Trade {
+            slot: 7,
+            taker: Side::Bid,
+            price: 70.8,
+            size: 2.0,
+        }];
+        let mut tape = step_tape(&trades, &sol.to_string());
+        tape.extend(step_tape(&trades, "phoenix:perp:ETH"));
+        let reports = mtx_kit::Reports {
+            tape: true,
+            ..Default::default()
+        };
+        let (views, _) = mtx_kit::venue_views(
+            &venues,
+            reports,
+            None,
+            None,
+            mtx_kit::Position::default(),
+            &tape,
+            &[],
+        );
+        let seen = views[0].tape.as_ref().expect("the tape is reported");
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].slot, 7);
+    }
 }
 
 #[cfg(test)]

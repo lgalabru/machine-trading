@@ -92,6 +92,7 @@ pub fn listen(
     socket: &Path,
     events: Events,
     commands: mpsc::Sender<Request>,
+    connections: Arc<super::stopping::Connections>,
 ) -> Result<(), String> {
     match std::fs::remove_file(socket) {
         Ok(()) => {}
@@ -102,12 +103,13 @@ pub fn listen(
     // stop, and it sees `commands` closed and ends.
     let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
     let open = Arc::new(AtomicUsize::new(0));
-    std::thread::Builder::new()
-        .name("mtx-live-events".into())
-        .spawn(move || {
+    let kept = connections.clone();
+    connections
+        .spawn("mtx-live-events", move || {
+            let connections = kept;
             loop {
                 let accepted = listener.accept();
-                if commands.is_closed() {
+                if commands.is_closed() || connections.stopped() {
                     return;
                 }
                 match accepted {
@@ -119,17 +121,21 @@ pub fn listen(
                             );
                             continue;
                         }
+                        if let Err(error) = connections.keep(&stream) {
+                            tracing::warn!(%error, "an event connection can't be kept");
+                            continue;
+                        }
                         open.fetch_add(1, Ordering::AcqRel);
-                        let (events, commands, open) =
-                            (events.clone(), commands.clone(), open.clone());
-                        let spawned = std::thread::Builder::new()
-                            .name("mtx-live-event-writer".into())
-                            .spawn(move || {
-                                if let Err(error) = serve(stream, &events, &commands) {
-                                    tracing::info!(%error, "an event connection ended");
-                                }
-                                open.fetch_sub(1, Ordering::AcqRel);
-                            });
+                        // Subscribed here, so the writer holds no sender:
+                        // once the runtime's are dropped, its queue closes.
+                        let received = events.subscribe();
+                        let (commands, open) = (commands.clone(), open.clone());
+                        let spawned = connections.spawn("mtx-live-event-writer", move || {
+                            if let Err(error) = serve(stream, received, &commands) {
+                                tracing::info!(%error, "an event connection ended");
+                            }
+                            open.fetch_sub(1, Ordering::AcqRel);
+                        });
                         if let Err(error) = spawned {
                             tracing::warn!(%error, "an event connection's thread didn't start");
                         }
@@ -145,16 +151,15 @@ pub fn listen(
 /// One connection: its hello, then every event until either side stops.
 fn serve(
     stream: UnixStream,
-    events: &Events,
+    mut received: broadcast::Receiver<Arc<str>>,
     commands: &mpsc::Sender<Request>,
 ) -> Result<(), String> {
     stream.set_nonblocking(false).map_err(|e| e.to_string())?;
     stream
         .set_write_timeout(Some(WRITE_TIMEOUT))
         .map_err(|e| e.to_string())?;
-    // Subscribed before the status is read: an event between the two is
-    // seen twice, never missed.
-    let mut received = events.subscribe();
+    // Subscribed (by the listener) before the status is read: an event
+    // between the two is seen twice, never missed.
     let (reply, replied) = oneshot::channel();
     commands
         .blocking_send((Command::Status, reply))
@@ -256,7 +261,7 @@ mod tests {
             behind: 0,
             dropped: 0,
         });
-        listen(&socket, events.clone(), strategies()).unwrap();
+        listen(&socket, events.clone(), strategies(), Arc::default()).unwrap();
         let mut lines = connect(&socket);
         let hello = lines.next().unwrap().unwrap();
         assert!(matches!(
@@ -287,7 +292,7 @@ mod tests {
     fn a_reader_that_falls_behind_is_told_and_never_holds_the_runtime() {
         let socket = socket("lagged");
         let events = Events::default();
-        listen(&socket, events.clone(), strategies()).unwrap();
+        listen(&socket, events.clone(), strategies(), Arc::default()).unwrap();
         let mut lines = connect(&socket);
         assert!(matches!(
             lines.next().unwrap().unwrap().event,

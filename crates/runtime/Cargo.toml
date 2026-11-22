@@ -56,6 +56,8 @@ rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }
 tokio.workspace = true
 
 [dev-dependencies]
+# Property tests (the step's tape, live/journal.rs).
+proptest = "1"
 # A chain held in memory, for the backfill's tests.
 mtx-kit = { workspace = true, features = ["test-util"] }
 solana-account = "4"
