@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 599d2a27e3cd72a79fb72879f9e457b7b4397e67b4ba579f2f31e02cd4fe700b # shrinks to mids = [60.0], window = 1
+cc be037a55b618d400b1ce8ae0dfd70436e59266b425be1eb4bac057ab447dd5bf # shrinks to fills = [(false, false), (true, false), (true, false)], size_share = 0.576247009060568

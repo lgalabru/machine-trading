@@ -30,7 +30,7 @@
 
 use mtx_kit::{
     log,
-    making::{Momentum, Requote, Sizing, TouchConfig, View, place, touch_targets},
+    making::{Momentum, Requote, Sizing, TouchConfig, View, place, quotes, touch_targets},
     prelude::*,
     venue::PhoenixVenue,
 };
@@ -102,8 +102,9 @@ impl Strategy for BookMaker {
             momentum_bps: self.momentum.push((best_bid + best_ask) / 2.0),
         };
         let targets = touch_targets(&view, self.tick, &TouchConfig::default());
-        if requote.due(market.slot, targets) {
-            place(orders, targets, self.tick, held, sizing);
+        let quotes = quotes(targets, held, sizing);
+        if requote.due(market.slot, quotes) {
+            place(orders, quotes, self.tick);
         }
         Ok(())
     }

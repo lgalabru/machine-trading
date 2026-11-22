@@ -24,7 +24,7 @@ use mtx_kit::{
     log,
     making::{
         Guard, GuardConfig, Lead, Momentum, Pull, Requote, Sizing, TouchConfig, View, lead_call,
-        place, taker_flow, touch_targets, venue_mid,
+        place, quotes, taker_flow, touch_targets, venue_mid,
     },
     prelude::*,
     venue::PhoenixVenue,
@@ -149,8 +149,9 @@ impl Strategy for LeadMaker {
         let targets = touch_targets(&view, self.tick, &TouchConfig::default())
             .without(by_flow)
             .without(by_lead);
-        if requote.due(market.slot, targets) {
-            place(orders, targets, self.tick, held, sizing);
+        let quotes = quotes(targets, held, sizing);
+        if requote.due(market.slot, quotes) {
+            place(orders, quotes, self.tick);
         }
         Ok(())
     }

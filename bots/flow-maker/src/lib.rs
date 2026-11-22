@@ -24,8 +24,8 @@
 use mtx_kit::{
     log,
     making::{
-        Guard, GuardConfig, Momentum, Pull, Requote, Sizing, TouchConfig, View, place, taker_flow,
-        touch_targets,
+        Guard, GuardConfig, Momentum, Pull, Requote, Sizing, TouchConfig, View, place, quotes,
+        taker_flow, touch_targets,
     },
     prelude::*,
     venue::PhoenixVenue,
@@ -149,8 +149,9 @@ impl Strategy for FlowMaker {
             self.pulled = Some(pull);
         }
         let targets = touch_targets(&view, self.tick, &TouchConfig::default()).without(pull);
-        if requote.due(market.slot, targets) {
-            place(orders, targets, self.tick, held, sizing);
+        let quotes = quotes(targets, held, sizing);
+        if requote.due(market.slot, quotes) {
+            place(orders, quotes, self.tick);
         }
         Ok(())
     }
