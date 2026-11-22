@@ -16,6 +16,9 @@ use mtx_core::{
 pub enum LiveCommand {
     /// Every strategy: its state, position, PnL, steps and skipped steps.
     Status,
+    /// The markets the runtime watches without trading them
+    /// (`control.watch`): tick, lot, fees.
+    Markets,
     /// Stop stepping a strategy, or every one. Its resting orders are
     /// cancelled and its position kept, unless told otherwise.
     Pause {
@@ -126,6 +129,25 @@ pub fn run(socket: &Path, command: LiveCommand, json: bool) -> Result<()> {
                     feed.slot, feed.behind, feed.dropped
                 );
                 print!("{}", table(&strategies));
+            }
+            Ok(())
+        }
+        Reply::Markets { markets } => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&markets)?);
+            } else {
+                println!("{} watched markets", markets.len());
+                for m in &markets {
+                    println!(
+                        "  {:<24} tick {:<12} lot {:<10} maker {:+.2} bp  taker {:+.2} bp{}",
+                        m.instrument.to_string(),
+                        m.tick,
+                        m.lot,
+                        m.maker_fee_bps,
+                        m.taker_fee_bps,
+                        if m.active { "" } else { "  (not trading)" }
+                    );
+                }
             }
             Ok(())
         }
@@ -362,6 +384,7 @@ fn latency(control: &Path, events: &Path, seconds: u64, json: bool) -> Result<()
 fn to_request(command: LiveCommand) -> Result<Command> {
     Ok(match command {
         LiveCommand::Status => Command::Status,
+        LiveCommand::Markets => Command::Markets,
         LiveCommand::Watch { .. } | LiveCommand::Latency { .. } => {
             unreachable!("reads events, sends no command")
         }

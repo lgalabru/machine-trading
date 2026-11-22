@@ -248,6 +248,21 @@ fn every_reply_is_the_line_the_contract_says() {
             r#"{"reply":"error","code":"exists","error":"a strategy is already named a"}"#,
         ),
     ];
+    let markets = Reply::Markets {
+        markets: vec![mtx_core::market::MarketInfo {
+            instrument: "phoenix:perp:MEGA".parse().unwrap(),
+            address: None,
+            tick: 0.00001,
+            lot: 1.0,
+            maker_fee_bps: 0.5,
+            taker_fee_bps: 3.5,
+            active: true,
+        }],
+    };
+    let line = r#"{"reply":"markets","markets":[{"instrument":"phoenix:perp:MEGA","tick":0.00001,"lot":1.0,"maker_fee_bps":0.5,"taker_fee_bps":3.5,"active":true}]}"#;
+    assert_eq!(serde_json::to_string(&markets).unwrap(), line);
+    assert_eq!(serde_json::from_str::<Reply>(line).unwrap(), markets);
+    assert!(!CommandKind::Markets.changes());
     for (reply, expected) in replies {
         assert_eq!(serde_json::to_string(&reply).unwrap(), expected);
         assert_eq!(serde_json::from_str::<Reply>(expected).unwrap(), reply);
