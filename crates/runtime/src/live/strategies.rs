@@ -1461,6 +1461,7 @@ impl Manager {
                 format!("a runtime runs at most {STRATEGIES_MAX} strategies"),
             ));
         }
+        check_name(&spec.name)?;
         if spec.slots_per_step == 0 {
             return Err(invalid(
                 "a strategy steps every slot at most: slots_per_step is at least 1".into(),
@@ -1894,6 +1895,29 @@ fn limits(mandate: &Mandate, symbol: &str) -> Result<(f64, f64), String> {
     ))
 }
 
+/// The most bytes of a strategy's name: it names its files in the logs
+/// directory (`<name>.steps.jsonl`, the longest), well under a file
+/// system's 255-byte names.
+const STRATEGY_NAME_BYTES_MAX: usize = 128;
+
+/// Whether `name` can name a strategy: its files go in the logs directory as
+/// `<name>.log` and the like, so it is a plain file name there, no path. A
+/// `/` would put them in another directory, and a name that is a path from
+/// the root would put them anywhere (`Path::join` replaces with one).
+fn check_name(name: &str) -> Done {
+    if name.is_empty() || name.len() > STRATEGY_NAME_BYTES_MAX {
+        return Err(invalid(format!(
+            "a strategy's name is 1 to {STRATEGY_NAME_BYTES_MAX} bytes"
+        )));
+    }
+    if name == "." || name == ".." || name.contains(['/', '\\', '\0']) {
+        return Err(invalid(format!(
+            "a strategy's name {name:?} names its log files: no path, no `/`"
+        )));
+    }
+    Ok(())
+}
+
 /// The slot a strategy that stepped at `slot` steps next. Saturating: a
 /// `slots_per_step` as large as a command may send would otherwise wrap in
 /// a release build to a slot already past, and step it every slot.
@@ -2099,6 +2123,22 @@ mod tests {
         assert_eq!(next_due(100, 2), 102);
         assert_eq!(next_due(100, u64::MAX), u64::MAX);
         assert!(next_due(u64::MAX - 1, 5) > u64::MAX - 1);
+    }
+
+    /// A name is a file name in the logs directory, never a path out of it.
+    #[test]
+    fn a_strategy_s_name_names_no_path() {
+        let manager = manager();
+        for name in ["carry", "maker-1", "my bot", "SOL.v2"] {
+            assert_eq!(manager.check_add(&spec(name), false), Ok(()), "{name}");
+        }
+        let long = "x".repeat(STRATEGY_NAME_BYTES_MAX + 1);
+        for name in [
+            "", ".", "..", "../state", "/tmp/x", "a/b", "a\\b", "a\0b", &long,
+        ] {
+            let refused = manager.check_add(&spec(name), false).unwrap_err();
+            assert_eq!(refused.code, ErrorCode::Invalid, "{name:?}");
+        }
     }
 
     #[test]
