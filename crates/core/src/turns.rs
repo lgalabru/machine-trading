@@ -231,6 +231,12 @@ pub fn read_variables(stream: &mut impl Read) -> std::io::Result<Vec<(String, St
     serde_json::from_slice(&line).map_err(std::io::Error::other)
 }
 
+/// The most bytes of one message from the grader. The largest is a step's,
+/// whose tape holds at most a few thousand trades and whose depth a few
+/// venues' books: well under a megabyte; past this, the grader is not one.
+#[cfg(unix)]
+pub const TURN_LINE_BYTES_MAX: usize = 16 << 20;
+
 /// The bot's end of the turn socket. Unix only: a component has no socket,
 /// the grader calls it.
 #[cfg(unix)]
@@ -339,8 +345,17 @@ impl Turns {
 
     fn read(&mut self) -> Result<Option<Message>> {
         let mut line = String::new();
-        if self.reader.read_line(&mut line).map_err(io)? == 0 {
+        let read = (&mut self.reader)
+            .take(TURN_LINE_BYTES_MAX as u64 + 1)
+            .read_line(&mut line)
+            .map_err(io)?;
+        if read == 0 {
             return Ok(None);
+        }
+        if read > TURN_LINE_BYTES_MAX {
+            return Err(turn_error(format!(
+                "a message past {TURN_LINE_BYTES_MAX} bytes"
+            )));
         }
         Ok(Some(serde_json::from_str(&line)?))
     }
@@ -421,6 +436,25 @@ mod tests {
         }
         send(&mut grader, Message::End);
         assert_eq!(bot.join().unwrap(), vec![0, 1]);
+    }
+
+    /// A grader line past the bound is refused, not read without end.
+    #[test]
+    fn a_message_past_the_bound_is_an_error() {
+        let (bot, grader) = UnixStream::pair().unwrap();
+        let writer = std::thread::spawn(move || {
+            let mut grader = grader;
+            // Past the bound with no newline: the bot stops reading at it.
+            let chunk = vec![b' '; 1 << 20];
+            for _ in 0..=(TURN_LINE_BYTES_MAX >> 20) {
+                if grader.write_all(&chunk).is_err() {
+                    break;
+                }
+            }
+        });
+        let refused = Turns::over(bot).err().expect("refused");
+        assert!(refused.to_string().contains("past"), "{refused}");
+        writer.join().unwrap();
     }
 
     #[test]
