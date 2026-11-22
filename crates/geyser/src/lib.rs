@@ -89,6 +89,7 @@ impl GeyserPlugin for MtxGeyser {
     /// The host is done with the plugin: the feed ends, and the runtime
     /// finishes what it was handed, so its journal is whole.
     fn on_unload(&mut self) {
+        // Not loaded (a load that failed): nothing runs, nothing to stop.
         let Some(Running { feed, runtime }) = self.running.take() else {
             return;
         };
@@ -232,6 +233,10 @@ impl GeyserPlugin for MtxGeyser {
             if calls.is_empty() {
                 return Ok(());
             }
+            assert!(
+                calls.len() <= TAPE_INSTRUCTIONS_MAX,
+                "the loop above stops at the tape's bound"
+            );
             let signature: [u8; 64] = info
                 .signature
                 .as_ref()
