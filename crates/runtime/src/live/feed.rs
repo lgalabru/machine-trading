@@ -24,6 +24,14 @@ use mtx_core::feed::{AccountWrite, Address, FeedEvent};
 /// 1 KiB accounts at worst.
 pub const FEED_EVENTS_MAX: usize = 1 << 16;
 
+/// The most accounts the runtime watches. A market's reader needs at most
+/// [`super::perp::ADDRESSES_MAX`] accounts, and the runtime reads up to
+/// [`super::MARKETS_MAX`] configured markets, 32 strategies' and 256 watched
+/// ones: 352 markets, 12,672 accounts if none were shared (most are: a
+/// market's arena is every market's). Room for strategies added again
+/// under new keys.
+pub const WATCHED_ADDRESSES_MAX: usize = 16_384;
+
 /// The accounts the runtime wants: the sender drops every other write
 /// before copying it.
 #[derive(Debug, Default)]
@@ -35,18 +43,31 @@ pub struct Watch {
 
 impl Watch {
     pub fn new(addresses: impl IntoIterator<Item = Address>) -> Self {
+        let addresses: HashSet<Address> = addresses.into_iter().collect();
+        assert!(
+            addresses.len() <= WATCHED_ADDRESSES_MAX,
+            "the configured markets are bounded well under the watch's bound"
+        );
         Self {
-            addresses: RwLock::new(addresses.into_iter().collect()),
+            addresses: RwLock::new(addresses),
             tape: super::tape::Tape::default(),
         }
     }
 
     /// Watch one more account: a strategy added while the runtime runs.
-    pub fn add(&self, address: Address) {
-        self.addresses
+    /// Refused past [`WATCHED_ADDRESSES_MAX`].
+    pub fn add(&self, address: Address) -> Result<(), String> {
+        let mut addresses = self
+            .addresses
             .write()
-            .expect("the watch lock is never held across a panic")
-            .insert(address);
+            .expect("the watch lock is never held across a panic");
+        if addresses.len() >= WATCHED_ADDRESSES_MAX && !addresses.contains(&address) {
+            return Err(format!(
+                "the runtime watches {WATCHED_ADDRESSES_MAX} accounts already"
+            ));
+        }
+        addresses.insert(address);
+        Ok(())
     }
 
     /// Whether `address` is watched. Anything that isn't 32 bytes isn't.
@@ -94,6 +115,11 @@ pub fn banked(status: mtx_core::feed::SlotStatus) -> bool {
 /// step ever looks back.
 pub const SLOT_CLOCKS_MAX: usize = 512;
 
+/// How many of the newest clocks a slot's notice is checked against: a slot
+/// is told of under a few banked statuses in a row (created, processed,
+/// confirmed), so a repeat is always among the last few.
+const SLOT_CLOCKS_RECENT: usize = 8;
+
 /// When the validator first told the plugin of each recent slot, and when
 /// the runtime's feed applied a banked status of it: where a step's
 /// [`mtx_core::events::StepTimings`] start.
@@ -112,10 +138,17 @@ pub struct SlotClock {
 impl SlotClocks {
     /// The validator told of `slot`: kept the first time only.
     fn notified(&self, slot: u64, at: std::time::Instant) {
+        // Poisoned: a thread panicked holding it. Clocks are a step's
+        // timings, not its inputs, so none is kept rather than trust it.
         let Ok(mut slots) = self.slots.lock() else {
             return;
         };
-        if slots.iter().rev().take(8).any(|c| c.slot == slot) {
+        if slots
+            .iter()
+            .rev()
+            .take(SLOT_CLOCKS_RECENT)
+            .any(|c| c.slot == slot)
+        {
             return;
         }
         if slots.len() == SLOT_CLOCKS_MAX {
@@ -126,10 +159,12 @@ impl SlotClocks {
             notified: at,
             applied: None,
         });
+        assert!(slots.len() <= SLOT_CLOCKS_MAX, "the clocks are a ring");
     }
 
     /// The feed applied a banked status of `slot`: kept the first time.
     pub fn applied(&self, slot: u64, at: std::time::Instant) {
+        // Poisoned: as in `notified`, a timing is left out.
         let Ok(mut slots) = self.slots.lock() else {
             return;
         };
@@ -141,6 +176,7 @@ impl SlotClocks {
     }
 
     pub fn get(&self, slot: u64) -> Option<SlotClock> {
+        // Poisoned: no clock, and the step is timed from its wake.
         let slots = self.slots.lock().ok()?;
         slots.iter().rev().find(|c| c.slot == slot).copied()
     }
@@ -172,6 +208,7 @@ impl FeedSender {
             Ok(()) => {
                 self.sent.fetch_add(1, Ordering::Release);
             }
+            // The runtime stopped: nothing reads the cache, so nothing is lost.
             Err(TrySendError::Disconnected(_)) => {}
             Err(TrySendError::Full(_)) => {
                 self.dropped.fetch_add(1, Ordering::Relaxed);
@@ -250,6 +287,7 @@ impl FeedProgress {
 impl FeedReceiver {
     /// The next event, waiting for it: `None` once every sender is gone.
     pub fn next(&self) -> Option<FeedEvent> {
+        // `recv` fails only when every sender is gone: the feed's end.
         self.events.recv().ok()
     }
 
@@ -376,6 +414,12 @@ impl AccountCache {
     }
 
     fn keep(&mut self, address: Address, write: Held) -> bool {
+        // The sender copies only watched accounts, and the backfill reads
+        // only those: the cache is bounded by the watch.
+        debug_assert!(
+            self.accounts.len() <= WATCHED_ADDRESSES_MAX,
+            "the cache holds watched accounts only"
+        );
         let is_latest = self.accounts.get(&address).is_none_or(|held| {
             (write.slot, write.write_version) >= (held.slot, held.write_version)
         });
@@ -463,8 +507,20 @@ mod tests {
         assert!(watch.has(&[1; 32]));
         assert!(!watch.has(&[2; 32]));
         assert!(!watch.has(&[1; 31]), "not an address");
-        watch.add([2; 32]);
+        watch.add([2; 32]).unwrap();
         assert!(watch.has(&[2; 32]));
+    }
+
+    #[test]
+    fn the_watch_refuses_accounts_past_its_bound_but_not_one_it_has() {
+        let watch = Watch::new((0..WATCHED_ADDRESSES_MAX as u32).map(|n| {
+            let mut address = [0; 32];
+            address[..4].copy_from_slice(&n.to_le_bytes());
+            address
+        }));
+        assert!(watch.add([0xff; 32]).is_err());
+        assert!(watch.add([0; 32]).is_ok(), "already watched");
+        assert!(!watch.has(&[0xff; 32]));
     }
 
     #[test]

@@ -569,11 +569,20 @@ pub async fn fire_and_forget_step(
     Ok(signature)
 }
 
+/// The most polls for a transaction's record: a minute of one-second polls,
+/// a blockhash's life; past it a transaction that hasn't shown won't.
+pub const RECEIPT_ATTEMPTS_MAX: u32 = 60;
+
 async fn fetch_receipt(
     client: &dyn ChainClient,
     signature: &Signature,
     options: ExecuteOptions,
 ) -> Result<Option<TransactionSummary>, ChainError> {
+    assert!(
+        options.receipt_attempts <= RECEIPT_ATTEMPTS_MAX,
+        "receipt polls are bounded: {} asked",
+        options.receipt_attempts
+    );
     for attempt in 0..options.receipt_attempts {
         if let Some(summary) = client.get_transaction(signature).await? {
             return Ok(Some(summary));

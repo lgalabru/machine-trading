@@ -52,6 +52,14 @@ Beside them, what the runtime's speed depends on:
   its terms restrict some locations, the United States among them). Each
   quote received is journaled to `<logs>/reference-<source>-<pair>.jsonl`.
   No account, nothing sent but the subscription.
+- `watch` (none): markets watched without trading them, for a sidecar
+  that surveys every market (`live::watching`):
+  `{"exchange": "/home/sol/mtx/exchange.json", "symbols": [], "every_slots": 25}`.
+  No symbols watches every market that trades now. Each market's accounts
+  join the cache; a few are read each slot after the steps, so each is
+  read once in `every_slots` (at least 5) and told as a `quote`, with its
+  trades as `trade` events. `mtx_kit::venue::PhoenixVenue::markets` lists
+  them as `mtx_core::market::MarketInfo` (tick, lot, fees).
 - `tpu.preflight` (false): a live strategy over the TPU sends without
   waiting for its order to land (its `fate` comes on the event stream),
   and without the node's simulation first unless this is on: a round trip
@@ -87,6 +95,7 @@ on the same host, a sidecar reads its own delay off it) and an `event`.
 | `paused` | the enforcer paused a strategy | strategy, `mandate` or `feed`, why |
 | `command` | a command that changes something was done or refused | the command (an enum), and the refusal (`code`, `error`) if it was |
 | `lagged` | this connection fell behind and lost events | how many: read `status` again |
+| `quote` | a watched market was read (`control.watch`) | symbol, slot, best bid and ask (null on an empty side), mark |
 
 **It never slows the runtime.** An event is serialized once, only when
 someone listens, into a queue of 8192; each connection has its own writer

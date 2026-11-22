@@ -43,6 +43,7 @@ pub mod fill;
 pub mod holding;
 pub mod instrument;
 pub mod mandate;
+pub mod market;
 pub mod meter;
 pub mod order;
 pub mod position;
