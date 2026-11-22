@@ -1,0 +1,88 @@
+schema_version = "1.4"
+# The bot is all the verifier receives from the agent's environment.
+artifacts = [{ source = "/app/bot", exclude = ["target"] }]
+
+[task]
+name = "solana-foundation/liquidation-flash"
+version = "0.1.0"
+description = "Write a bot that liquidates unhealthy Kamino obligations (SOL collateral, USDC debt) on the main market with a flash loan, pushing Scope's price and selling the seized SOL through Orca's or Raydium's SOL/USDC pool in the same transaction, on an offline copy of Solana mainnet."
+keywords = ["solana", "trading", "kamino", "lending", "liquidation", "flash-loan", "atomic-arbitrage", "jito", "surfpool", "rust"]
+
+[[task.authors]]
+name = "Ludo Galabru"
+email = "ludo.galabru@solana.org"
+
+[metadata]
+difficulty = "hard"
+category = "trading"
+# Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
+snapshot = "atomic-arb-2026-11-21"
+
+[metadata.mtx]
+# What the repository's lists are written from (`mtx task sync`).
+generator = "liquidation-flash"
+anchor = "liquidation-flash"
+# Lending sessions, atomic groups and pushed prices reach only strategy
+# components: the image builds both anchors' bot.wasm and grades with them.
+component_anchors = true
+emoji = "🌊"
+market = "Kamino main market, SOL/USDC"
+summary = "reads SOL upstream of Kamino's oracle, pushes the price, liquidates with a flash loan and sells the seized SOL in one transaction, bidding only what it must to land first"
+skill = "reads the price upstream of Kamino's oracle, sees an obligation cross its liquidation threshold before the oracle shows it, and pushes the update, liquidates with a flash loan and sells the collateral in one transaction, bidding only what it must to land ahead of competing liquidators"
+# Lines only the answers hold, for `just leak-audit`.
+leak_needles = ["0.45 × 1.45 ≈ 0.65 outbids", "weighs the chance no rival above it races it"]
+headline = "v2"
+
+[verifier]
+# Seventy-two hidden sessions drawn from the batch's secret, graded with
+# the reference and then the informed bot on the same sessions first, four
+# sessions at a time each, then the bot's, four at a time. The world moves
+# only between the bot's turns, so a session takes as long as the bot
+# thinks: about ten seconds for the anchors (150 steps), a few minutes at
+# worst. Every session is graded, a breached one too (scoring v2).
+timeout_sec = 14400.0
+environment_mode = "separate"
+# The grader replays everything from the snapshot; it needs no network, and
+# a bot must not reach one.
+network_mode = "no-network"
+
+[verifier.env]
+# The batch's secret: the hidden set is drawn from it inside the verifier.
+# Set it on the host (`just bench` draws one per batch); the verifier
+# refuses to grade without it.
+MTX_EVAL_SEED = "${MTX_EVAL_SEED:-}"
+
+[agent]
+timeout_sec = 3600.0
+# Created in the base image; owns /app, the shared target dir and its cargo home.
+user = "agent"
+# While it works, the agent reaches its model (the bench adds the key proxy's
+# address) and the crates registry, and nothing else: ghcr.io and github.com
+# hold the full grader and the reference bots. The install before it runs
+# keeps [environment]'s network. `just network-probe` checks it.
+network_mode = "allowlist"
+allowed_hosts = ["crates.io", "index.crates.io", "static.crates.io"]
+
+[verifier.environment]
+# The verifier's image, built by `just image` from tests/: the runtime
+# image with this task's tests in it. The rest as [environment].
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.13.0-liquidation-flash-verifier"
+network_mode = "public"
+build_timeout_sec = 1800.0
+cpus = 4
+memory_mb = 6144
+os = "linux"
+
+[environment]
+# Built by `just image` from environment/ (pinned by `just release`):
+# Harbor builds nothing when a trial starts. Building the tasks' images
+# there, at once, has put one task's files into another's image.
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.13.0-liquidation-flash"
+# Agents need package registries and their model API. The chain they trade
+# on is a local, offline sandbox either way.
+network_mode = "public"
+build_timeout_sec = 1800.0
+cpus = 4
+memory_mb = 6144
+os = "linux"
+
