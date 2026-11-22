@@ -77,7 +77,7 @@ impl Source {
                 serde_json::json!({
                     "type": "subscribe",
                     "product_ids": [pair.to_ascii_uppercase()],
-                    "channels": ["ticker"],
+                    "channels": ["ticker", "heartbeat"],
                 })
                 .to_string(),
             ),
@@ -127,6 +127,16 @@ impl Latest {
         );
         if let Ok(mut quotes) = self.quotes.lock() {
             quotes.insert(id.to_string(), quote);
+        }
+    }
+
+    /// The stream is alive at `now_unix_ms` without a new quote (a
+    /// heartbeat): the last quote still stands, and ages from now.
+    pub fn touch(&self, id: &str, now_unix_ms: u64) {
+        if let Ok(mut quotes) = self.quotes.lock()
+            && let Some(quote) = quotes.get_mut(id)
+        {
+            quote.received_unix_ms = quote.received_unix_ms.max(now_unix_ms);
         }
     }
 
@@ -261,9 +271,12 @@ async fn stream(
             Ok(Some(Err(error))) => return Err(error.to_string()),
             Ok(Some(Ok(message))) => message,
         };
-        if let tokio_tungstenite::tungstenite::Message::Text(text) = message
-            && let Some((bid, ask)) = parse(config.source, &text)
-        {
+        let tokio_tungstenite::tungstenite::Message::Text(text) = message else {
+            continue;
+        };
+        if is_heartbeat(config.source, &text) {
+            latest.touch(id, now_unix_ms());
+        } else if let Some((bid, ask)) = parse(config.source, &text) {
             let received_unix_ms = now_unix_ms();
             latest.set(
                 id,
@@ -319,6 +332,21 @@ pub fn parse(source: Source, text: &str) -> Option<(f64, f64)> {
             let ticker: Ticker = serde_json::from_str(text).ok()?;
             (ticker.r#type == "ticker").then_some(())?;
             quote(&ticker.best_bid, &ticker.best_ask)
+        }
+    }
+}
+
+/// Whether a message says only that the stream is alive: Coinbase's
+/// ticker sends nothing between trades, its heartbeat every second.
+pub fn is_heartbeat(source: Source, text: &str) -> bool {
+    match source {
+        Source::Binance => false,
+        Source::Coinbase => {
+            #[derive(Deserialize)]
+            struct Typed {
+                r#type: String,
+            }
+            serde_json::from_str::<Typed>(text).is_ok_and(|t| t.r#type == "heartbeat")
         }
     }
 }
@@ -416,6 +444,34 @@ mod tests {
         let journal =
             std::fs::read_to_string(logs.join("reference-coinbase-SOL-USD.jsonl")).unwrap();
         assert!(journal.lines().count() >= 1);
+    }
+
+    /// A heartbeat keeps the last quote showing past its own age, and
+    /// does nothing before there is a quote.
+    #[test]
+    fn a_heartbeat_keeps_the_quote_fresh() {
+        let latest = Latest::default();
+        latest.touch("coinbase:spot:SOL-USD", 10_000);
+        assert!(latest.views_at(10_000).is_empty());
+        latest.set(
+            "coinbase:spot:SOL-USD",
+            Quote {
+                bid: 69.0,
+                ask: 69.01,
+                received_unix_ms: 1_000,
+            },
+        );
+        assert!(latest.views_at(1_000 + STALE_MS + 1).is_empty());
+        latest.touch("coinbase:spot:SOL-USD", 5_000);
+        assert_eq!(latest.views_at(5_000 + STALE_MS).len(), 1);
+        assert!(is_heartbeat(
+            Source::Coinbase,
+            r#"{"type":"heartbeat","sequence":90,"last_trade_id":20,"product_id":"SOL-USD","time":"2026-11-22T05:45:11.295Z"}"#
+        ));
+        assert!(!is_heartbeat(
+            Source::Coinbase,
+            r#"{"type":"ticker","best_bid":"69","best_ask":"69.01"}"#
+        ));
     }
 
     proptest! {
