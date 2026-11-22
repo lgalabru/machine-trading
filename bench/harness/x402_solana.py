@@ -578,23 +578,26 @@ def pay(send, wallet: Wallet, network: str, cap: float, ledger: Ledger):
         except Exception:
             ledger.release(price)
             raise
-        connection, response, resent = _send_signed(send, header)
-        if retried(response.status):
-            try:
+        # From here the payment may settle: a transport failure, whether sending
+        # or reading an answer, must not reach the agent as something its
+        # client retries (a new call, paid again).
+        try:
+            connection, response, resent = _send_signed(send, header)
+            if retried(response.status):
                 data = response.read()
-            except (OSError, http.client.HTTPException) as e:
-                raise PaymentRefused(
-                    f"a paid call failed ({response.status}, then {type(e).__name__}); it may have been charged, "
-                    "so it isn't retried", 424, retry=False,
-                ) from None
-            if not_charged(refusal(data)):
-                ledger.release(price)
-                return connection, _Replay(response, data), 0.0
-            # Charged, or it may have been: a retry would pay again.
-            return connection, _Replay(response, data, paid=True), price
-        if response.status != 402:
-            return connection, response, price
-        data = response.read()
+                if not_charged(refusal(data)):
+                    ledger.release(price)
+                    return connection, _Replay(response, data), 0.0
+                # Charged, or it may have been: a retry would pay again.
+                return connection, _Replay(response, data, paid=True), price
+            if response.status != 402:
+                return connection, response, price
+            data = response.read()
+        except (OSError, http.client.HTTPException) as e:
+            raise PaymentRefused(
+                f"a paid call failed in transit ({type(e).__name__}); it may have been charged, so it isn't retried",
+                424, retry=False,
+            ) from None
         connection.close()
         refused = refusal(data)
         # After a resend, the 402 may be the gateway refusing a signature it
@@ -623,12 +626,9 @@ def _send_signed(send, header: str):
     for attempt in range(2):
         try:
             connection, response = send({"PAYMENT-SIGNATURE": header})
-        except (OSError, http.client.HTTPException) as e:
+        except (OSError, http.client.HTTPException):
             if attempt:
-                raise PaymentRefused(
-                    f"the provider didn't answer a paid call ({type(e).__name__}); it may have been charged, "
-                    "so it isn't retried", 424, retry=False,
-                ) from None
+                raise  # pay() answers it as a paid call that may have settled
             continue
         if attempt or response.status not in STATUS_5XX:
             return connection, response, bool(attempt)

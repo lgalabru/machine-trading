@@ -260,6 +260,18 @@ class Gateway(BaseHTTPRequestHandler):
             return self.answer(429, {"error": "upstream cooldown", "payment_status": "not_charged"})
         if model == "stub/odd":
             return self.answer(520, {"error": "unknown"})
+        if model in ("stub/cut-5xx", "stub/cut-402", "stub/cut-400"):
+            # Paid; the head of an error arrives, its body never does.
+            status = {"stub/cut-5xx": 503, "stub/cut-402": 402, "stub/cut-400": 400}[model]
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", "500")
+            self.end_headers()
+            self.wfile.write(b'{"error": "trunc')
+            self.wfile.flush()
+            self.close_connection = True
+            self.connection.shutdown(socket.SHUT_RDWR)
+            return None
         stream = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n'
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -270,7 +282,7 @@ class Gateway(BaseHTTPRequestHandler):
 
 MODELS = [
     "ok", "free", "replay", "settle", "broke", "dear", "flaky", "charged", "down", "drop", "drop-once", "limited",
-    "cooling", "odd", "devnet", "room",
+    "cooling", "odd", "cut-5xx", "cut-402", "cut-400", "devnet", "room",
 ]
 
 
@@ -461,6 +473,14 @@ class Proxy(unittest.TestCase):
             status, headers, _ = self.call(url, name)
             self.assertEqual(status, 424, name)
             self.assertTrue(self.no_retry(headers), name)
+
+    def test_a_paid_answer_cut_off_mid_body_is_not_retried(self):
+        _, url = self.start()
+        for name in ("cut-5xx", "cut-402", "cut-400"):
+            status, headers, data = self.call(url, name)
+            self.assertEqual(status, 424, name)
+            self.assertTrue(self.no_retry(headers), name)
+            self.assertIn(b"may have been charged", data, name)
 
     def test_a_failure_that_proves_nothing_was_charged_stays_retryable(self):
         proxy, url = self.start(budget=0.0015)

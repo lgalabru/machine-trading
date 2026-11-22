@@ -308,6 +308,7 @@ class Proxy(BaseHTTPRequestHandler):
 
         started = False
         side = "upstream"
+        paid = 0.0
         try:
             if route["wallet"]:
                 try:
@@ -364,6 +365,10 @@ class Proxy(BaseHTTPRequestHandler):
                 # broken stream rather than a second status inside it.
                 print(f"upstream broke mid-answer route={name}: {type(e).__name__}", file=sys.stderr, flush=True)
                 self.close_connection = True
+            elif paid:
+                # Paid, and the answer failed before it began: a retry would pay again.
+                self.refuse(Refused(424, f"a paid call failed in transit ({type(e).__name__}); it may have been "
+                                         "charged, so it isn't retried", name, retry=False))
             else:
                 self.refuse(Refused(502, f"upstream: {type(e).__name__}", name))
         finally:
