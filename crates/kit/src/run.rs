@@ -190,6 +190,7 @@ async fn session<S: Strategy>(mut strategy: S) -> BotResult {
             rfqs: Vec::new(),
             notes: std::mem::take(&mut notes),
             fees: None,
+            trigger: step.trigger,
         };
         let mut orders = Orders::new();
         match strategy.step(&market, &mut orders) {

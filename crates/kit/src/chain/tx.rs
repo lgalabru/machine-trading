@@ -73,6 +73,9 @@ pub struct TransactionPlan {
     pub instructions: Vec<Instruction>,
     /// Compute-unit limit requested.
     pub compute_unit_limit: u32,
+    /// The priority fee, micro-lamports per compute unit, if the
+    /// transaction sets one.
+    pub compute_unit_price: Option<u64>,
     /// Address lookup tables its accounts may come from: with any, it is a
     /// v0 transaction.
     pub lookup_tables: Vec<AddressLookupTableAccount>,
@@ -85,8 +88,23 @@ impl TransactionPlan {
             labels: vec![group.label.clone()],
             instructions: group.instructions.clone(),
             compute_unit_limit,
+            compute_unit_price: None,
             lookup_tables: Vec::new(),
         }
+    }
+
+    /// The same transaction, paying `price` micro-lamports per compute
+    /// unit: a second compute-budget instruction, after the limit.
+    pub fn with_compute_unit_price(mut self, price: u64) -> Self {
+        self.compute_unit_price = Some(price);
+        self
+    }
+
+    /// How many compute-budget instructions [`TransactionPlan::all_instructions`]
+    /// puts before [`TransactionPlan::instructions`]: the index of the first
+    /// of them in the transaction.
+    pub fn budget_len(&self) -> usize {
+        1 + usize::from(self.compute_unit_price.is_some())
     }
 
     /// The same transaction, its accounts looked up in `tables`: a v0
@@ -108,12 +126,17 @@ impl TransactionPlan {
         self.labels.join(" + ")
     }
 
-    /// Full instruction list including the compute-budget prefix.
+    /// Full instruction list including the compute-budget prefix: the limit,
+    /// then the price if there is one.
     pub fn all_instructions(&self) -> Vec<Instruction> {
-        let mut all = Vec::with_capacity(self.instructions.len() + 1);
+        let mut all = Vec::with_capacity(self.instructions.len() + self.budget_len());
         all.push(ComputeBudgetInstruction::set_compute_unit_limit(
             self.compute_unit_limit,
         ));
+        if let Some(price) = self.compute_unit_price {
+            all.push(ComputeBudgetInstruction::set_compute_unit_price(price));
+        }
+        assert_eq!(all.len(), self.budget_len(), "the budget comes first");
         all.extend(self.instructions.iter().cloned());
         all
     }
