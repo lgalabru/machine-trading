@@ -47,6 +47,7 @@ fn ask(socket: &Path, command: Command) -> Vec<StrategyStatus> {
     match control::request(socket, &command).expect("the runtime answers") {
         Reply::Ok { strategies, .. } => strategies,
         Reply::Error { error } => panic!("{command:?} refused: {error}"),
+        Reply::Markets { .. } => panic!("{command:?} answered with markets"),
     }
 }
 
