@@ -225,6 +225,20 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
             Event::Lagged { dropped } => {
                 format!("lagged: {dropped} events lost; run `mtx live status`")
             }
+            Event::Quote {
+                symbol,
+                best_bid,
+                best_ask,
+                mark,
+                ..
+            } => {
+                let side = |p: &Option<f64>| p.map_or("–".to_string(), |p| format!("{p}"));
+                format!(
+                    "{symbol}: {} / {} (mark {mark})",
+                    side(best_bid),
+                    side(best_ask)
+                )
+            }
         };
         println!("{text}");
     }

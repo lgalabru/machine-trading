@@ -176,6 +176,16 @@ fn lines() -> Vec<(Event, &'static str)> {
             r#"{"at_us":1,"event":"command","command":"upgrade"}"#,
         ),
         (
+            Event::Quote {
+                symbol: "MEGA".into(),
+                slot: 472500000,
+                best_bid: Some(0.04661),
+                best_ask: None,
+                mark: 0.04666,
+            },
+            r#"{"at_us":1,"event":"quote","symbol":"MEGA","slot":472500000,"best_bid":0.04661,"best_ask":null,"mark":0.04666}"#,
+        ),
+        (
             Event::Lagged { dropped: 12 },
             r#"{"at_us":1,"event":"lagged","dropped":12}"#,
         ),

@@ -91,6 +91,10 @@ pub struct ControlConfig {
     /// (`live::reference`): none by default.
     #[serde(default)]
     pub references: Vec<super::reference::ReferenceConfig>,
+    /// Markets watched without trading them, each told as a `quote` and
+    /// its trades (`live::watching`): none by default.
+    #[serde(default)]
+    pub watch: Option<super::watching::WatchConfig>,
 }
 
 /// Four: a step is a fraction of a millisecond of one core, and four let
@@ -248,6 +252,7 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<std::thread::JoinH
                 };
                 let mut manager = Manager::new(config, shared, tpu);
                 manager.restore().await;
+                manager.start_watching().await;
                 manager.serve(slots, received).await;
             });
             // The commands' receiver is gone with the manager: the
@@ -630,12 +635,21 @@ impl Ctx {
 
     /// Where a strategy's journal reads its market's trades.
     fn tape_reader(&self, spec: &AddStrategy) -> Result<super::journal::TapeReader, String> {
-        let json = std::fs::read_to_string(&spec.exchange)
-            .map_err(|e| format!("{}: {e}", spec.exchange.display()))?;
+        self.tape_reader_for(&spec.exchange, &spec.symbol)
+    }
+
+    /// Where `symbol`'s trades are read, from the `/exchange` at `exchange`.
+    fn tape_reader_for(
+        &self,
+        exchange: &Path,
+        symbol: &str,
+    ) -> Result<super::journal::TapeReader, String> {
+        let json = std::fs::read_to_string(exchange)
+            .map_err(|e| format!("{}: {e}", exchange.display()))?;
         let venue = mtx_kit::venue::PhoenixVenue::from_json(&json)?;
         let market =
             mtx_kit::protocols::phoenix::eternal::PhoenixExchange::new(venue.exchange().clone())
-                .market(&spec.symbol)
+                .market(symbol)
                 .map_err(|e| e.to_string())?;
         Ok(super::journal::TapeReader::new(
             self.shared.watch.clone(),
@@ -723,6 +737,8 @@ struct Manager {
     /// The trades of each market a strategy runs on, by symbol, read once
     /// for the event socket however many strategies share the market.
     tapes: BTreeMap<String, super::journal::TapeReader>,
+    /// The markets watched without trading them (`control.watch`).
+    watching: Option<super::watching::Watching>,
     /// Strategies being added, off the loop: their names are taken.
     adding: std::collections::BTreeSet<String>,
     /// Where an `add`'s task hands back the strategy it prepared.
@@ -739,6 +755,7 @@ impl Manager {
             held: Vec::new(),
             slot: 0,
             tapes: BTreeMap::new(),
+            watching: None,
             adding: std::collections::BTreeSet::new(),
             prepared: {
                 let (sender, receiver) = mpsc::channel(STRATEGIES_MAX);
@@ -758,6 +775,81 @@ impl Manager {
     /// Tell the event socket the trades on every market a strategy runs
     /// on, since the last slot. A market whose exchange file can't be read
     /// has no trades to tell, and its strategy fails on the same file.
+    /// Start watching `control.watch`'s markets: their accounts into the
+    /// feed and the cache, their trades onto the event stream. A market that
+    /// can't be read is left out, and said so.
+    async fn start_watching(&mut self) {
+        let Some(config) = self.config.watch.clone() else {
+            return;
+        };
+        let venue = match std::fs::read_to_string(&config.exchange)
+            .map_err(|e| format!("{}: {e}", config.exchange.display()))
+            .and_then(|json| mtx_kit::venue::PhoenixVenue::from_json(&json))
+        {
+            Ok(venue) => venue,
+            Err(error) => {
+                tracing::error!(%error, "the watched markets can't be listed; none is watched");
+                return;
+            }
+        };
+        let mut markets = Vec::new();
+        for symbol in super::watching::symbols(&venue, &config.symbols) {
+            let reader =
+                match PerpReader::new(venue.exchange().clone(), &symbol, &Pubkey::default()) {
+                    Ok(reader) => reader.flat_without_account(),
+                    Err(error) => {
+                        tracing::warn!(symbol, %error, "a watched market can't be read");
+                        continue;
+                    }
+                };
+            if let Err(error) = self.ctx().backfill(&reader).await {
+                tracing::warn!(symbol, %error, "a watched market's accounts weren't found");
+                continue;
+            }
+            if !self.tapes.contains_key(&symbol) {
+                match self.ctx().tape_reader_for(&config.exchange, &symbol) {
+                    Ok(tape) => {
+                        self.tapes.insert(symbol.clone(), tape);
+                    }
+                    Err(error) => {
+                        tracing::warn!(symbol, %error, "a watched market's trades can't be read")
+                    }
+                }
+            }
+            markets.push((symbol, reader));
+        }
+        tracing::info!(
+            markets = markets.len(),
+            every_slots = config.every_slots,
+            "watching markets"
+        );
+        self.watching = Some(super::watching::Watching::new(markets, config.every_slots));
+    }
+
+    /// Read this slot's share of the watched markets, each told as a
+    /// `quote`: only when someone listens.
+    fn emit_quotes(&mut self, slot: u64) {
+        let Some(watching) = self.watching.as_mut() else {
+            return;
+        };
+        for (symbol, reader) in watching.due() {
+            let reading = {
+                let cache = lock(&self.shared.cache);
+                reader.read(&*cache, slot)
+            };
+            match reading {
+                Ok(reading) => self.shared.events.emit(Event::Quote {
+                    symbol: symbol.clone(),
+                    slot,
+                    best_bid: reading.best_bid,
+                    best_ask: reading.best_ask,
+                    mark: reading.mark,
+                }),
+                Err(error) => tracing::debug!(symbol, %error, "a watched market wasn't read"),
+            }
+        }
+    }
+
     fn emit_trades(&mut self) {
         let wanted: Vec<AddStrategy> = self
             .strategies
@@ -883,8 +975,10 @@ impl Manager {
                     }
                     self.step(self.slot).await;
                     // After the steps are on their way: decoding the tape
-                    // for the event stream is no strategy's business.
+                    // and the watched markets for the event stream is no
+                    // strategy's business.
                     self.emit_trades();
+                    self.emit_quotes(self.slot);
                 }
                 request = commands.recv() => {
                     let Some((command, reply)) = request else {

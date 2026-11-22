@@ -29,6 +29,7 @@ pub mod strategies;
 pub mod tape;
 pub mod telemetry;
 pub mod tpu;
+pub mod watching;
 
 use std::{
     io::{BufWriter, Write},

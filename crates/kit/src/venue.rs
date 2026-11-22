@@ -47,6 +47,32 @@ impl PhoenixVenue {
             .ok_or_else(|| format!("no market {symbol}"))
     }
 
+    /// Every market the venue lists, as a survey reads them: tick and lot
+    /// in units, fees in bps, and whether it trades now (Phoenix's
+    /// `active`; post-only, paused and closed markets don't take a maker's
+    /// fills as a survey means them).
+    pub fn markets(&self) -> Vec<mtx_core::market::MarketInfo> {
+        self.exchange
+            .markets
+            .iter()
+            .filter_map(|m| {
+                let instrument = format!("phoenix:perp:{}", m.symbol).parse().ok()?;
+                Some(mtx_core::market::MarketInfo {
+                    instrument,
+                    address: Some(m.market_pubkey.clone()),
+                    tick: ticks_to_usd(m, 1),
+                    lot: lots_to_base_units(m, 1),
+                    maker_fee_bps: m.maker_fee * 10_000.0,
+                    taker_fee_bps: m.taker_fee * 10_000.0,
+                    active: matches!(
+                        m.market_status,
+                        phoenix_rise::types::market::MarketStatus::Active
+                    ),
+                })
+            })
+            .collect()
+    }
+
     /// The perp asset map, which holds every market's oracle and mark.
     pub fn perp_asset_map(&self) -> Result<Pubkey, String> {
         key(&self.exchange.keys.perp_asset_map)
@@ -956,4 +982,31 @@ fn initial_margin(market: &ExchangeMarketConfig, unit_price: i128, lots: u64) ->
 /// Base lots from a signed count, none below zero.
 fn lots_from(lots: i128) -> u64 {
     u64::try_from(lots.max(0)).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod survey_tests {
+    use super::*;
+
+    /// Every market in an `/exchange` snapshot comes out as a survey reads
+    /// it: its id, its tick and lot in units, its fees in bps.
+    #[test]
+    fn every_market_reads_as_market_info() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let json =
+            std::fs::read_to_string(root.join("snapshots/phoenix-spcx-2026-10-29/exchange.json"))
+                .unwrap();
+        let venue = PhoenixVenue::from_json(&json).unwrap();
+        let markets = venue.markets();
+        assert_eq!(markets.len(), venue.exchange().markets.len());
+        let tao = markets
+            .iter()
+            .find(|m| m.instrument.to_string() == "phoenix:perp:TAO")
+            .unwrap();
+        // TAO: tick size 100 at 3 base-lot decimals is $0.10; a lot 0.001.
+        assert!((tao.tick - 0.1).abs() < 1e-12 && (tao.lot - 0.001).abs() < 1e-12);
+        assert!((tao.maker_fee_bps - 0.5).abs() < 1e-9 && (tao.taker_fee_bps - 3.5).abs() < 1e-9);
+        assert!(tao.active && tao.address.is_some());
+        assert!(markets.iter().all(|m| m.tick > 0.0 && m.lot > 0.0));
+    }
 }
