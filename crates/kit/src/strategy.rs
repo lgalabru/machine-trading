@@ -1648,13 +1648,6 @@ fn plan_lines<'a>(
     // The atomic group being planned, and what to go back to if it is
     // refused.
     let mut open: Option<OpenGroup> = None;
-    let room = |l: &Ledger, side: Side| {
-        let (buy, sell) = mtx_core::mandate::position_room(l.cap, l.position, l.bids, l.asks);
-        match side {
-            Side::Bid => buy,
-            Side::Ask => sell,
-        }
-    };
     for (line, (intent, options)) in lines.into_iter().enumerate() {
         let group = options.tx.and_then(|tx| tx.atomic);
         if open.as_ref().map(|o| o.id) != group {
@@ -1698,315 +1691,14 @@ fn plan_lines<'a>(
         };
         let before = ledgers[index].clone();
         let first = planned.len();
-        'line: {
-            let l = &mut ledgers[index];
-            let mut push = |action: Action| {
-                planned.push(Planned {
-                    line,
-                    venue: venue.clone(),
-                    client_id: options.client_id,
-                    action,
-                    reduce_only: options.reduce_only,
-                    expires_slot: options.expires_slot,
-                    tx: options.tx,
-                })
-            };
-            let reduce =
-                |size: f64, l: &Ledger, side: Side, what: &str, notes: &mut Vec<String>| {
-                    let room = l.reduce_room(side);
-                    if options.reduce_only && size > room {
-                        notes.push(format!(
-                    "reduce-only {what} of {size} cut to {room}, so as not to grow the position"
-                ));
-                        room
-                    } else {
-                        size
-                    }
-                };
-            if let Some(what) = not_a_number(intent) {
-                notes.push(format!(
-                    "{what} with an amount or a price that isn't a number: not sent"
-                ));
-                break 'line;
-            }
-            match intent {
-                &Intent::Target {
-                    position: target,
-                    execution,
-                } => {
-                    if target.is_nan() {
-                        notes.push("a target needs a position: not trading".into());
-                        break 'line;
-                    }
-                    let cap = l.cap;
-                    let wanted = target.clamp(-cap, cap);
-                    if wanted != target {
-                        notes.push(format!(
-                            "target {target} is past the cap {cap}: aiming at {wanted}"
-                        ));
-                    }
-                    if !(execution.slice > 0.0 && execution.min_trade > 0.0) {
-                        notes.push(
-                            "a target needs a positive slice and min_trade: not trading".into(),
-                        );
-                        break 'line;
-                    }
-                    if execution.max_per_step.is_nan() || execution.max_per_step <= 0.0 {
-                        notes.push("a target needs a positive max_per_step: not trading".into());
-                        break 'line;
-                    }
-                    let mark = match &venue {
-                        None => market.mark,
-                        Some(id) => match view.and_then(|v| v.best_bid.zip(v.best_ask)) {
-                            Some((bid, ask)) => (bid + ask) / 2.0,
-                            None => {
-                                notes.push(format!(
-                                    "target on {id}: no bid and ask to price it at: not trading"
-                                ));
-                                break 'line;
-                            }
-                        },
-                    };
-                    let mut missing = (wanted - l.position)
-                        .clamp(-execution.max_per_step, execution.max_per_step);
-                    if let Some(share) = options.participation {
-                        if !(share > 0.0 && share <= 1.0) {
-                            notes.push(format!(
-                                "participation {share} must be in (0, 1]: not trading"
-                            ));
-                            break 'line;
-                        }
-                        // No tape is no volume seen: nothing to take a share of.
-                        let volume = view
-                            .and_then(|v| v.tape.as_ref())
-                            .map(|tape| tape.iter().fold(0.0, |volume, t| volume + t.base));
-                        if volume.is_none() {
-                            notes.push(
-                            "participation needs the venue's tape, which this session doesn't report: not trading"
-                                .into(),
-                        );
-                        }
-                        let most = share * volume.unwrap_or(0.0);
-                        if missing.abs() > most {
-                            if volume.is_some() {
-                                notes.push(format!(
-                                "participation {share} of the step's volume: trading {most} of {}",
-                                missing.abs()
-                            ));
-                            }
-                            missing = missing.signum() * most;
-                        }
-                    }
-                    // Resting orders could fill too: trade only what keeps the
-                    // position within the cap if they do.
-                    let side = if missing > 0.0 { Side::Bid } else { Side::Ask };
-                    let room = room(l, side);
-                    if missing.abs() > room {
-                        notes.push(format!(
-                        "target {target} would leave the position past the cap if the resting orders filled: trading {room} of {}",
-                        missing.abs()
-                    ));
-                        missing = missing.signum() * room;
-                    }
-                    missing =
-                        missing.signum() * reduce(missing.abs(), l, side, "target", &mut notes);
-                    let mut orders = 0;
-                    while missing.abs() >= execution.min_trade {
-                        if orders == MAX_TARGET_ORDERS {
-                            notes.push(format!(
-                                "target {target}: at most {MAX_TARGET_ORDERS} orders a step; {} waits",
-                                missing.abs()
-                            ));
-                            break;
-                        }
-                        orders += 1;
-                        let size =
-                            (missing.abs() / execution.min_trade).floor() * execution.min_trade;
-                        let size = size.min(execution.slice);
-                        let side = if missing > 0.0 { Side::Bid } else { Side::Ask };
-                        let limit = match side {
-                            Side::Bid => mark * (1.0 + execution.slippage_bps / 10_000.0),
-                            Side::Ask => mark * (1.0 - execution.slippage_bps / 10_000.0),
-                        };
-                        push(Action::Market {
-                            side,
-                            size,
-                            limit: round_cents(limit),
-                        });
-                        l.took(side, size);
-                        missing -= signed(side, size);
-                    }
-                }
-                &Intent::Market { side, size, limit } => {
-                    let size = cut(size, room(l, side), "market order", &mut notes);
-                    let size = reduce(size, l, side, "market order", &mut notes);
-                    if size > 0.0 {
-                        push(Action::Market { side, size, limit });
-                        l.took(side, size);
-                    }
-                }
-                &Intent::Swap {
-                    side,
-                    amount,
-                    unit,
-                    limit,
-                } => {
-                    // In base units, at the limit price for a quote amount.
-                    let base = match unit {
-                        AmountUnit::Base => amount,
-                        AmountUnit::Quote if limit > 0.0 => amount / limit,
-                        AmountUnit::Quote => {
-                            notes.push(
-                                "a swap in the quote asset needs a positive limit: not trading"
-                                    .into(),
-                            );
-                            break 'line;
-                        }
-                    };
-                    let size = cut(base, room(l, side), "swap", &mut notes);
-                    let size = reduce(size, l, side, "swap", &mut notes);
-                    if size > 0.0 {
-                        push(Action::Swap {
-                            side,
-                            amount: if size < base {
-                                amount * size / base
-                            } else {
-                                amount
-                            },
-                            unit,
-                            limit,
-                        });
-                        l.took(side, size);
-                    }
-                }
-                &Intent::Limit { side, price, size } => {
-                    let size = cut(size, room(l, side), "resting order", &mut notes);
-                    let size = reduce(size, l, side, "resting order", &mut notes);
-                    if size > 0.0 {
-                        match options.time_in_force {
-                            TimeInForce::Ioc => {
-                                push(Action::Market {
-                                    side,
-                                    size,
-                                    limit: price,
-                                });
-                                l.took(side, size);
-                            }
-                            tif => {
-                                push(if tif == TimeInForce::PostOnly {
-                                    Action::PostOnly { side, price, size }
-                                } else {
-                                    Action::Limit { side, price, size }
-                                });
-                                match side {
-                                    Side::Bid => l.bids += size,
-                                    Side::Ask => l.asks += size,
-                                }
-                            }
-                        }
-                    }
-                }
-                &Intent::Quote { bid, ask, size } => {
-                    if options.time_in_force == TimeInForce::Ioc {
-                        notes.push("a quote rests: immediate-or-cancel doesn't apply".into());
-                    }
-                    let post_only = options.time_in_force == TimeInForce::PostOnly;
-                    let rest = |side, price, size| {
-                        if post_only {
-                            Action::PostOnly { side, price, size }
-                        } else {
-                            Action::Limit { side, price, size }
-                        }
-                    };
-                    push(Action::CancelAll);
-                    (l.bids, l.asks) = (0.0, 0.0);
-                    let bid_size = cut(size, room(l, Side::Bid), "bid", &mut notes);
-                    let ask_size = cut(size, room(l, Side::Ask), "ask", &mut notes);
-                    let bid_size = reduce(bid_size, l, Side::Bid, "bid", &mut notes);
-                    let ask_size = reduce(ask_size, l, Side::Ask, "ask", &mut notes);
-                    if bid_size > 0.0 {
-                        push(rest(Side::Bid, bid, bid_size));
-                        l.bids += bid_size;
-                    }
-                    if ask_size > 0.0 {
-                        push(rest(Side::Ask, ask, ask_size));
-                        l.asks += ask_size;
-                    }
-                }
-                Intent::CancelAll => {
-                    push(Action::CancelAll);
-                    (l.bids, l.asks) = (0.0, 0.0);
-                }
-                &Intent::Cancel { client_id } => push(Action::Cancel { client_id }),
-                Intent::Respond { id, bid, ask, size } => push(Action::Respond {
-                    id: id.clone(),
-                    bid: *bid,
-                    ask: *ask,
-                    size: *size,
-                }),
-                Intent::AddLiquidity {
-                    base,
-                    quote,
-                    range,
-                    position,
-                    shape,
-                } => push(Action::AddLiquidity {
-                    base: *base,
-                    quote: *quote,
-                    range: *range,
-                    position: position.clone(),
-                    shape: *shape,
-                }),
-                Intent::RemoveLiquidity {
-                    position,
-                    share,
-                    min_base,
-                    min_quote,
-                } => push(Action::RemoveLiquidity {
-                    position: position.clone(),
-                    share: *share,
-                    min_base: *min_base,
-                    min_quote: *min_quote,
-                }),
-                &Intent::Deposit { amount } => push(Action::Deposit { amount }),
-                &Intent::Withdraw { amount } => push(Action::Withdraw { amount }),
-                &Intent::Borrow { amount } => push(Action::Borrow { amount }),
-                &Intent::Repay { amount } => push(Action::Repay { amount }),
-                Intent::Liquidate {
-                    obligation,
-                    collateral,
-                    repay,
-                    min_received,
-                } => push(Action::Liquidate {
-                    obligation: obligation.clone(),
-                    collateral: collateral.clone(),
-                    repay: *repay,
-                    min_received: *min_received,
-                }),
-                // A flash loan is never a position: it is repaid in the
-                // transaction that took it.
-                &Intent::Flash { amount } => {
-                    let Some(group) = open.as_mut() else {
-                        notes.push(
-                            "a flash loan lives only inside an atomic group: not sent".into(),
-                        );
-                        break 'line;
-                    };
-                    // Not a number was dropped above.
-                    if amount <= 0.0 {
-                        notes.push(format!("a flash loan of {amount}: not sent"));
-                        break 'line;
-                    }
-                    group.flashes += 1;
-                    if group.flashes > 1 {
-                        notes.push(format!("atomic group {}: at most one flash loan", group.id));
-                        break 'line;
-                    }
-                    push(Action::Flash { amount })
-                }
-                Intent::PushPrice => push(Action::PushPrice),
-            }
+        LinePlan {
+            line,
+            venue: &venue,
+            options,
+            planned: &mut planned,
+            notes: &mut notes,
         }
+        .plan(intent, &mut ledgers[index], market, view, open.as_mut());
         // A line the session won't execute counts for nothing.
         if planned[first..]
             .iter()
@@ -2019,6 +1711,420 @@ fn plan_lines<'a>(
         ended.close(&mut planned, &mut ledgers, &mut notes, executes);
     }
     (planned, notes)
+}
+
+/// The room `l` leaves on `side` within its cap, if every resting order
+/// filled.
+fn ledger_room(l: &Ledger, side: Side) -> f64 {
+    let (buy, sell) = mtx_core::mandate::position_room(l.cap, l.position, l.bids, l.asks);
+    match side {
+        Side::Bid => buy,
+        Side::Ask => sell,
+    }
+}
+
+/// One line of a sheet being planned: where its orders go, and the notes
+/// on what was cut or refused.
+struct LinePlan<'p> {
+    line: usize,
+    venue: &'p Option<String>,
+    options: &'p LineOptions,
+    planned: &'p mut Vec<Planned>,
+    notes: &'p mut Vec<String>,
+}
+
+impl LinePlan<'_> {
+    /// Plan `intent` against its venue's ledger `l`: each order it makes,
+    /// cut to the cap and the line's options. A line that can't be traded
+    /// plans nothing, and a note says why.
+    fn plan(
+        &mut self,
+        intent: &Intent,
+        l: &mut Ledger,
+        market: &Market,
+        view: Option<&VenueView>,
+        open: Option<&mut OpenGroup>,
+    ) {
+        if let Some(what) = not_a_number(intent) {
+            self.note(format!(
+                "{what} with an amount or a price that isn't a number: not sent"
+            ));
+            return;
+        }
+        match intent {
+            &Intent::Target {
+                position: target,
+                execution,
+            } => self.target(target, execution, l, market, view),
+            &Intent::Market { side, size, limit } => {
+                let size = cut(size, ledger_room(l, side), "market order", self.notes);
+                let size = self.reduce(size, l, side, "market order");
+                if size > 0.0 {
+                    self.push(Action::Market { side, size, limit });
+                    l.took(side, size);
+                }
+            }
+            &Intent::Swap {
+                side,
+                amount,
+                unit,
+                limit,
+            } => self.swap(side, amount, unit, limit, l),
+            &Intent::Limit { side, price, size } => self.limit(side, price, size, l),
+            &Intent::Quote { bid, ask, size } => self.quote(bid, ask, size, l),
+            Intent::CancelAll => {
+                self.push(Action::CancelAll);
+                (l.bids, l.asks) = (0.0, 0.0);
+            }
+            &Intent::Flash { amount } => self.flash(amount, open),
+            // The rest move no position the ledger counts: sent as asked.
+            Intent::Cancel { .. }
+            | Intent::Respond { .. }
+            | Intent::AddLiquidity { .. }
+            | Intent::RemoveLiquidity { .. }
+            | Intent::Deposit { .. }
+            | Intent::Withdraw { .. }
+            | Intent::Borrow { .. }
+            | Intent::Repay { .. }
+            | Intent::Liquidate { .. }
+            | Intent::PushPrice => self.push(as_sent(intent)),
+        }
+    }
+
+    fn push(&mut self, action: Action) {
+        self.planned.push(Planned {
+            line: self.line,
+            venue: self.venue.clone(),
+            client_id: self.options.client_id,
+            action,
+            reduce_only: self.options.reduce_only,
+            expires_slot: self.options.expires_slot,
+            tx: self.options.tx,
+        });
+    }
+
+    fn note(&mut self, note: String) {
+        self.notes.push(note);
+    }
+
+    /// `size` on `side`, cut so a reduce-only line doesn't grow the
+    /// position.
+    fn reduce(&mut self, size: f64, l: &Ledger, side: Side, what: &str) -> f64 {
+        let room = l.reduce_room(side);
+        if self.options.reduce_only && size > room {
+            self.note(format!(
+                "reduce-only {what} of {size} cut to {room}, so as not to grow the position"
+            ));
+            room
+        } else {
+            size
+        }
+    }
+
+    /// A target position: market orders toward it this step, within the
+    /// cap, the step's pace and its share of the volume.
+    fn target(
+        &mut self,
+        target: f64,
+        execution: Execution,
+        l: &mut Ledger,
+        market: &Market,
+        view: Option<&VenueView>,
+    ) {
+        if target.is_nan() {
+            self.note("a target needs a position: not trading".into());
+            return;
+        }
+        let cap = l.cap;
+        let wanted = target.clamp(-cap, cap);
+        if wanted != target {
+            self.note(format!(
+                "target {target} is past the cap {cap}: aiming at {wanted}"
+            ));
+        }
+        if !(execution.slice > 0.0 && execution.min_trade > 0.0) {
+            self.note("a target needs a positive slice and min_trade: not trading".into());
+            return;
+        }
+        if execution.max_per_step.is_nan() || execution.max_per_step <= 0.0 {
+            self.note("a target needs a positive max_per_step: not trading".into());
+            return;
+        }
+        let mark = match self.venue {
+            None => market.mark,
+            Some(id) => match view.and_then(|v| v.best_bid.zip(v.best_ask)) {
+                Some((bid, ask)) => (bid + ask) / 2.0,
+                None => {
+                    self.note(format!(
+                        "target on {id}: no bid and ask to price it at: not trading"
+                    ));
+                    return;
+                }
+            },
+        };
+        let missing = (wanted - l.position).clamp(-execution.max_per_step, execution.max_per_step);
+        let Some(missing) = self.participate(missing, view) else {
+            return;
+        };
+        // Resting orders could fill too: trade only what keeps the
+        // position within the cap if they do.
+        let side = if missing > 0.0 { Side::Bid } else { Side::Ask };
+        let room = ledger_room(l, side);
+        let mut missing = missing;
+        if missing.abs() > room {
+            self.note(format!(
+                "target {target} would leave the position past the cap if the resting orders filled: trading {room} of {}",
+                missing.abs()
+            ));
+            missing = missing.signum() * room;
+        }
+        missing = missing.signum() * self.reduce(missing.abs(), l, side, "target");
+        self.target_orders(target, missing, execution, mark, l);
+    }
+
+    /// `missing`, cut to the line's share of the venue's volume this step,
+    /// if it asks for one: `None` if the share isn't one.
+    fn participate(&mut self, missing: f64, view: Option<&VenueView>) -> Option<f64> {
+        let Some(share) = self.options.participation else {
+            return Some(missing);
+        };
+        if !(share > 0.0 && share <= 1.0) {
+            self.note(format!(
+                "participation {share} must be in (0, 1]: not trading"
+            ));
+            return None;
+        }
+        // No tape is no volume seen: nothing to take a share of.
+        let volume = view
+            .and_then(|v| v.tape.as_ref())
+            .map(|tape| tape.iter().fold(0.0, |volume, t| volume + t.base));
+        if volume.is_none() {
+            self.note(
+                "participation needs the venue's tape, which this session doesn't report: not trading"
+                    .into(),
+            );
+        }
+        let most = share * volume.unwrap_or(0.0);
+        if missing.abs() <= most {
+            return Some(missing);
+        }
+        if volume.is_some() {
+            self.note(format!(
+                "participation {share} of the step's volume: trading {most} of {}",
+                missing.abs()
+            ));
+        }
+        Some(missing.signum() * most)
+    }
+
+    /// The market orders that trade `missing` toward `target`: slices of at
+    /// most `execution.slice`, whole `min_trade`s, at most
+    /// [`MAX_TARGET_ORDERS`] of them.
+    fn target_orders(
+        &mut self,
+        target: f64,
+        mut missing: f64,
+        execution: Execution,
+        mark: f64,
+        l: &mut Ledger,
+    ) {
+        let mut orders = 0;
+        while missing.abs() >= execution.min_trade {
+            if orders == MAX_TARGET_ORDERS {
+                self.note(format!(
+                    "target {target}: at most {MAX_TARGET_ORDERS} orders a step; {} waits",
+                    missing.abs()
+                ));
+                break;
+            }
+            orders += 1;
+            let size = (missing.abs() / execution.min_trade).floor() * execution.min_trade;
+            let size = size.min(execution.slice);
+            let side = if missing > 0.0 { Side::Bid } else { Side::Ask };
+            let limit = match side {
+                Side::Bid => mark * (1.0 + execution.slippage_bps / 10_000.0),
+                Side::Ask => mark * (1.0 - execution.slippage_bps / 10_000.0),
+            };
+            self.push(Action::Market {
+                side,
+                size,
+                limit: round_cents(limit),
+            });
+            l.took(side, size);
+            missing -= signed(side, size);
+        }
+        assert!(orders <= MAX_TARGET_ORDERS, "a target's orders are bounded");
+    }
+
+    /// A swap, in base units at its limit for a quote amount, cut to the cap.
+    fn swap(&mut self, side: Side, amount: f64, unit: AmountUnit, limit: f64, l: &mut Ledger) {
+        let base = match unit {
+            AmountUnit::Base => amount,
+            AmountUnit::Quote if limit > 0.0 => amount / limit,
+            AmountUnit::Quote => {
+                self.note("a swap in the quote asset needs a positive limit: not trading".into());
+                return;
+            }
+        };
+        let size = cut(base, ledger_room(l, side), "swap", self.notes);
+        let size = self.reduce(size, l, side, "swap");
+        if size > 0.0 {
+            self.push(Action::Swap {
+                side,
+                amount: if size < base {
+                    amount * size / base
+                } else {
+                    amount
+                },
+                unit,
+                limit,
+            });
+            l.took(side, size);
+        }
+    }
+
+    /// A limit order, cut to the cap: one that is immediate-or-cancel takes
+    /// at its price, any other rests.
+    fn limit(&mut self, side: Side, price: f64, size: f64, l: &mut Ledger) {
+        let size = cut(size, ledger_room(l, side), "resting order", self.notes);
+        let size = self.reduce(size, l, side, "resting order");
+        if size <= 0.0 {
+            return;
+        }
+        match self.options.time_in_force {
+            TimeInForce::Ioc => {
+                self.push(Action::Market {
+                    side,
+                    size,
+                    limit: price,
+                });
+                l.took(side, size);
+            }
+            tif => {
+                self.push(if tif == TimeInForce::PostOnly {
+                    Action::PostOnly { side, price, size }
+                } else {
+                    Action::Limit { side, price, size }
+                });
+                match side {
+                    Side::Bid => l.bids += size,
+                    Side::Ask => l.asks += size,
+                }
+            }
+        }
+    }
+
+    /// A two-sided quote: every resting order cancelled, then a bid and an
+    /// ask, each cut to the cap.
+    fn quote(&mut self, bid: f64, ask: f64, size: f64, l: &mut Ledger) {
+        if self.options.time_in_force == TimeInForce::Ioc {
+            self.note("a quote rests: immediate-or-cancel doesn't apply".into());
+        }
+        let post_only = self.options.time_in_force == TimeInForce::PostOnly;
+        let rest = |side, price, size| {
+            if post_only {
+                Action::PostOnly { side, price, size }
+            } else {
+                Action::Limit { side, price, size }
+            }
+        };
+        self.push(Action::CancelAll);
+        (l.bids, l.asks) = (0.0, 0.0);
+        let bid_size = cut(size, ledger_room(l, Side::Bid), "bid", self.notes);
+        let ask_size = cut(size, ledger_room(l, Side::Ask), "ask", self.notes);
+        let bid_size = self.reduce(bid_size, l, Side::Bid, "bid");
+        let ask_size = self.reduce(ask_size, l, Side::Ask, "ask");
+        if bid_size > 0.0 {
+            self.push(rest(Side::Bid, bid, bid_size));
+            l.bids += bid_size;
+        }
+        if ask_size > 0.0 {
+            self.push(rest(Side::Ask, ask, ask_size));
+            l.asks += ask_size;
+        }
+    }
+
+    /// A flash loan: never a position, since it is repaid in the
+    /// transaction that took it, so only inside an atomic group, one a
+    /// group.
+    fn flash(&mut self, amount: f64, open: Option<&mut OpenGroup>) {
+        let Some(group) = open else {
+            self.note("a flash loan lives only inside an atomic group: not sent".into());
+            return;
+        };
+        // Not a number was dropped before.
+        if amount <= 0.0 {
+            self.note(format!("a flash loan of {amount}: not sent"));
+            return;
+        }
+        group.flashes += 1;
+        if group.flashes > 1 {
+            self.note(format!("atomic group {}: at most one flash loan", group.id));
+            return;
+        }
+        self.push(Action::Flash { amount });
+    }
+}
+
+/// The action an intent the ledger doesn't count is sent as: its fields as
+/// they are.
+fn as_sent(intent: &Intent) -> Action {
+    match intent {
+        &Intent::Cancel { client_id } => Action::Cancel { client_id },
+        Intent::Respond { id, bid, ask, size } => Action::Respond {
+            id: id.clone(),
+            bid: *bid,
+            ask: *ask,
+            size: *size,
+        },
+        Intent::AddLiquidity {
+            base,
+            quote,
+            range,
+            position,
+            shape,
+        } => Action::AddLiquidity {
+            base: *base,
+            quote: *quote,
+            range: *range,
+            position: position.clone(),
+            shape: *shape,
+        },
+        Intent::RemoveLiquidity {
+            position,
+            share,
+            min_base,
+            min_quote,
+        } => Action::RemoveLiquidity {
+            position: position.clone(),
+            share: *share,
+            min_base: *min_base,
+            min_quote: *min_quote,
+        },
+        &Intent::Deposit { amount } => Action::Deposit { amount },
+        &Intent::Withdraw { amount } => Action::Withdraw { amount },
+        &Intent::Borrow { amount } => Action::Borrow { amount },
+        &Intent::Repay { amount } => Action::Repay { amount },
+        Intent::Liquidate {
+            obligation,
+            collateral,
+            repay,
+            min_received,
+        } => Action::Liquidate {
+            obligation: obligation.clone(),
+            collateral: collateral.clone(),
+            repay: *repay,
+            min_received: *min_received,
+        },
+        Intent::PushPrice => Action::PushPrice,
+        Intent::Target { .. }
+        | Intent::Market { .. }
+        | Intent::Swap { .. }
+        | Intent::Limit { .. }
+        | Intent::Quote { .. }
+        | Intent::CancelAll
+        | Intent::Flash { .. } => unreachable!("LinePlan::plan plans what the ledger counts"),
+    }
 }
 
 /// The most lines one atomic group may hold: a transaction is at most 1,232
