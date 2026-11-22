@@ -30,7 +30,6 @@ use mtx_kit::chain::{
 use serde::Deserialize;
 use solana_account::Account;
 use solana_commitment_config::CommitmentConfig;
-use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
 use solana_tpu_client_next::{
     ClientBuilder, TransactionSender,
@@ -90,6 +89,13 @@ const CONFIRM_WITHIN: Duration = Duration::from_secs(75);
 /// How often a sent transaction's status is asked for while it's watched.
 const CONFIRM_LOOKS_EVERY: Duration = Duration::from_millis(400);
 
+/// Sends watched for their fate at once, across every strategy: each asks
+/// the node once every [`CONFIRM_LOOKS_EVERY`] for up to [`CONFIRM_WITHIN`].
+/// Thirty-two strategies sending four orders every two slots, none landing,
+/// keep about 12,000 in flight; past this bound a send's fate is told as
+/// unknown at once rather than asked for.
+const CONFIRMS_IN_FLIGHT_MAX: usize = 16_384;
+
 /// The leader tracker's view of the slots: what the feed hands it.
 #[derive(Debug, Clone)]
 pub struct SlotEvents(mpsc::Sender<SlotEvent>);
@@ -118,6 +124,9 @@ pub fn slot_events() -> (SlotEvents, mpsc::Receiver<SlotEvent>) {
 /// A running TPU client: what sends, and what keeps its connections.
 pub struct Tpu {
     sender: TransactionSender,
+    /// A permit for each send watched for its fate
+    /// ([`CONFIRMS_IN_FLIGHT_MAX`]).
+    confirms: Arc<tokio::sync::Semaphore>,
     /// Holds the connection workers and the leader tracker; they stop
     /// with the token.
     _client: Client,
@@ -146,7 +155,7 @@ impl Tpu {
             ));
         }
         let identity = match &config.identity {
-            Some(path) => Some(read_keypair(path)?),
+            Some(path) => Some(super::read_keypair(path)?),
             None => None,
         };
         let cancel = CancellationToken::new();
@@ -181,6 +190,7 @@ impl Tpu {
             .map_err(|e| format!("the TPU client: {e}"))?;
         Ok(Self {
             sender,
+            confirms: Arc::new(tokio::sync::Semaphore::new(CONFIRMS_IN_FLIGHT_MAX)),
             _client: client,
             cancel,
         })
@@ -343,8 +353,14 @@ impl ChainClient for TpuChainClient {
         let sent_at = Instant::now();
         let (rpc, strategy, events) =
             (self.rpc.clone(), self.strategy.clone(), self.events.clone());
+        let permit = self.tpu.confirms.clone().try_acquire_owned();
         tokio::spawn(async move {
-            let fate = confirm(&rpc, &strategy, signature, sent_at).await;
+            let fate = match permit {
+                Ok(_permit) => confirm(&rpc, &strategy, signature, sent_at).await,
+                Err(_) => Fate::Unknown(format!(
+                    "not watched: {CONFIRMS_IN_FLIGHT_MAX} sends are watched already"
+                )),
+            };
             let after_us = u64::try_from(sent_at.elapsed().as_micros()).unwrap_or(u64::MAX);
             let (landed, slot, error) = match fate {
                 Fate::Landed { slot } => (true, Some(slot), None),
@@ -437,13 +453,6 @@ async fn confirm(
         }
         tokio::time::sleep(CONFIRM_LOOKS_EVERY).await;
     }
-}
-
-fn read_keypair(path: &std::path::Path) -> Result<Keypair, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let bytes: Vec<u8> =
-        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    Keypair::try_from(bytes.as_slice()).map_err(|_| format!("{} is not a keypair", path.display()))
 }
 
 #[cfg(test)]

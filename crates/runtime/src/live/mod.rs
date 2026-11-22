@@ -298,6 +298,31 @@ impl Runtime {
     }
 }
 
+/// The most bytes a keypair file may hold: a Solana CLI keypair is a JSON
+/// array of 64 numbers, under 300 bytes; this leaves room for whitespace.
+const KEYPAIR_FILE_BYTES_MAX: u64 = 4096;
+
+/// The keypair in the Solana CLI's JSON file at `path`, read up to
+/// [`KEYPAIR_FILE_BYTES_MAX`] bytes.
+fn read_keypair(path: &Path) -> Result<solana_keypair::Keypair, String> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut text = String::new();
+    file.take(KEYPAIR_FILE_BYTES_MAX + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if text.len() as u64 > KEYPAIR_FILE_BYTES_MAX {
+        return Err(format!(
+            "{} is past {KEYPAIR_FILE_BYTES_MAX} bytes: not a keypair",
+            path.display()
+        ));
+    }
+    let bytes: Vec<u8> =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    solana_keypair::Keypair::try_from(bytes.as_slice())
+        .map_err(|_| format!("{} is not a keypair", path.display()))
+}
+
 /// The status a journal line carries when a write, not a slot event,
 /// made it ([`Config::journal_writes`]).
 pub const WRITE: &str = "write";
