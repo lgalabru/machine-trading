@@ -603,8 +603,8 @@ mod tests {
                 let placed = quotes(Targets { bid: Some(6654), ask: Some(6655) }, seen, sizing);
                 let before = resting;
                 resting = placed;
-                if bid_fills { if let Some((_, s)) = before.bid { held += s; } }
-                if ask_fills { if let Some((_, s)) = before.ask { held -= s; } }
+                if bid_fills && let Some((_, s)) = before.bid { held += s; }
+                if ask_fills && let Some((_, s)) = before.ask { held -= s; }
                 prop_assert!(held.abs() <= 1.0 + 1e-9, "held {held}");
                 seen = held;
             }
