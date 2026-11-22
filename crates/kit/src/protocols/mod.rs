@@ -6,6 +6,15 @@
 //! | [`phoenix`] | [`phoenix::eternal`] | `PhoenixDriver` | perp `Position` | `PhoenixEternalMeter` |
 //! | [`phoenix`] | [`phoenix::v1`] | `PhoenixV1Driver` | `SpotBalances` | `PhoenixV1Meter` |
 //! | [`openbook`] | [`openbook::v2`] | `OpenBookV2Driver` | `SpotBalances` | `OpenBookV2Meter` |
+//! | `orca` | `orca::whirlpool` (feature `orca-whirlpool`) | `swap_v2` instructions from an exact quote | wallet tokens | — |
+//! | `raydium` | `raydium::clmm` (feature `raydium-clmm`) | `swap_v2` instructions from an exact quote | wallet tokens | — |
+//!
+//! The two concentrated-liquidity adapters are building blocks for atomic
+//! arbitrage (`docs/rfd/0005-atomic-arbitrage-tasks.md`): each decodes its
+//! pool and tick arrays, quotes a swap exactly as its program executes it,
+//! and builds the swap instruction. Neither is an `ExecutionDriver` yet: a
+//! route is several swaps in one transaction, which the instrument model
+//! doesn't have (`specs/instruments/amm.md`).
 //!
 //! An adapter maps its program onto the [`core`](crate::core) model, as
 //! `docs/rfd/0001-instrument-traits.md` lays out: its markets become
@@ -22,12 +31,18 @@
 pub mod fills;
 #[cfg(feature = "openbook-v2-venue")]
 pub mod openbook;
+#[cfg(feature = "orca-whirlpool-venue")]
+pub mod orca;
 #[cfg(any(feature = "phoenix", feature = "phoenix-v1-venue"))]
 pub mod phoenix;
 #[cfg(feature = "pyth")]
 pub mod pyth;
+#[cfg(feature = "raydium-clmm-venue")]
+pub mod raydium;
 #[cfg(any(feature = "openbook-v2", feature = "phoenix-v1"))]
 pub mod spot;
+#[cfg(any(feature = "orca-whirlpool-venue", feature = "raydium-clmm-venue"))]
+pub(crate) mod wide;
 
 /// Account data that didn't have the shape its program writes: what a
 /// decoder that needs no chain reports. The chain's
@@ -112,6 +127,11 @@ pub(crate) fn holdings_from_atoms(
 /// Wrapped SOL's mint. A profile counts SOL held in its token account, not
 /// the wallet's native SOL, which pays the transaction fees.
 #[cfg(feature = "spot-venue")]
+// The pools' venue features take spot-venue's addresses, not this.
+#[cfg_attr(
+    not(any(feature = "openbook-v2-venue", feature = "phoenix-v1-venue")),
+    allow(dead_code)
+)]
 pub(crate) const WRAPPED_SOL_MINT: solana_pubkey::Pubkey =
     solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
 
