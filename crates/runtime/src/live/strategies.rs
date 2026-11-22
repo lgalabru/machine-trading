@@ -87,6 +87,10 @@ pub struct ControlConfig {
     /// removed first.
     #[serde(default)]
     pub events: Option<PathBuf>,
+    /// Exchanges' public prices, read as venues by every strategy
+    /// (`live::reference`): none by default.
+    #[serde(default)]
+    pub references: Vec<super::reference::ReferenceConfig>,
 }
 
 /// Four: a step is a fraction of a millisecond of one core, and four let
@@ -175,6 +179,9 @@ pub struct Shared {
     pub blockhash: Arc<super::blockhash::LatestBlockhash>,
     /// Market readings, shared across strategies.
     pub readings: Arc<super::bot::Readings>,
+    /// The exchanges' latest prices (`control.references`), as every
+    /// strategy reads them.
+    pub references: Arc<super::reference::Latest>,
 }
 
 /// What the strategies' thread starts with besides the configuration.
@@ -208,6 +215,12 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<std::thread::JoinH
             connections.clone(),
         )?;
     }
+    super::reference::spawn(
+        &config.references,
+        shared.references.clone(),
+        &config.logs,
+        &connections,
+    )?;
     let sockets = (config.socket.clone(), config.events.clone());
     let thread = std::thread::Builder::new()
         .name("mtx-live-strategies".into())
@@ -597,6 +610,8 @@ impl Ctx {
             log: Box::new(log),
             sends: self.sends(spec)?,
             paper_position: paper_position.clone(),
+            references: (!self.config.references.is_empty())
+                .then(|| self.shared.references.clone()),
             dispatch: self.dispatch(spec),
             observer: Some(Arc::new(
                 super::journal::Journal::open(

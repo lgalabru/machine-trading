@@ -12,6 +12,11 @@
 //! - **Watch the takers.** A maker is picked off by takers who know the
 //!   next tick: their orders come one-sided just before it moves.
 //!   [`taker_flow`] is the share of the recent taker volume that bought.
+//! - **Watch the exchanges.** SOL's price is made off-chain and Phoenix
+//!   follows about half a second later: a maker's fills right after the
+//!   exchange moved against them are the worst. [`Lead`] tracks a reference
+//!   venue's mid (an exchange, as the live runtime shows it in
+//!   `market.venues`) and [`lead_call`] says which side its move runs into.
 //! - **Keep transactions few.** [`Momentum`] tracks the mid's recent move,
 //!   [`Requote`] says when quotes are worth replacing, and [`place`] sends
 //!   them post-only, sized against the cap.
@@ -225,7 +230,14 @@ impl Guard {
                 s if s <= -self.config.threshold => Some(Pull::Bids),
                 _ => None,
             });
-        if let Some(pull) = called {
+        self.hold(slot, called)
+    }
+
+    /// The side to pull at `slot`, given what some signal called for then
+    /// (`None`: nothing new), held [`GuardConfig::hold_slots`] after the
+    /// last call. A call the other way turns the pull at once.
+    pub fn hold(&mut self, slot: u64, called: Option<Pull>) -> Pull {
+        if let Some(pull) = called.filter(|p| *p != Pull::Neither) {
             self.pulled = Some((pull, slot.saturating_add(self.config.hold_slots)));
         }
         match self.pulled {
@@ -236,6 +248,66 @@ impl Guard {
             }
         }
     }
+}
+
+/// A reference venue's mid (an exchange's book, as `market.venues` shows
+/// it), and its move over the last `window_slots` slots.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Lead {
+    window_slots: u64,
+    mids: VecDeque<(u64, f64)>,
+}
+
+impl Lead {
+    pub fn new(window_slots: u64) -> Self {
+        assert!(window_slots > 0, "a window of at least a slot");
+        Self {
+            window_slots,
+            mids: VecDeque::new(),
+        }
+    }
+
+    /// Take the reference's mid at `slot`; its move since the newest mid
+    /// at least `window_slots` before, in bps. `None` until the history
+    /// covers the window, and for a slot without a reference (the stream
+    /// down or stale), which also forgets what came before: a gap isn't a
+    /// move.
+    pub fn push(&mut self, slot: u64, mid: Option<f64>) -> Option<f64> {
+        let Some(mid) = mid.filter(|m| m.is_finite() && *m > 0.0) else {
+            self.mids.clear();
+            return None;
+        };
+        if self.mids.back().is_some_and(|(s, _)| *s >= slot) {
+            self.mids.pop_back();
+        }
+        self.mids.push_back((slot, mid));
+        // The window's start; none yet this early in the chain's slots.
+        let from = slot.checked_sub(self.window_slots)?;
+        // Keep the newest mid at or before the window's start, and after.
+        while self.mids.len() > 1 && self.mids[1].0 <= from {
+            self.mids.pop_front();
+        }
+        let (first_slot, first) = *self.mids.front()?;
+        (first_slot <= from).then(|| (mid / first - 1.0) * 10_000.0)
+    }
+}
+
+/// The side a reference's move runs into: a rise past `threshold_bps`
+/// lifts the asks before the book follows, a fall hits the bids.
+pub fn lead_call(move_bps: Option<f64>, threshold_bps: f64) -> Option<Pull> {
+    assert!(threshold_bps > 0.0, "a threshold is a move");
+    match move_bps? {
+        m if m >= threshold_bps => Some(Pull::Asks),
+        m if m <= -threshold_bps => Some(Pull::Bids),
+        _ => None,
+    }
+}
+
+/// The mid of the venue named `id` in `venues`, if it has a book.
+pub fn venue_mid(venues: &[crate::VenueView], id: &str) -> Option<f64> {
+    let venue = venues.iter().find(|v| v.id == id)?;
+    let (bid, ask) = (venue.best_bid?, venue.best_ask?);
+    (bid > 0.0 && ask >= bid).then_some((bid + ask) / 2.0)
 }
 
 /// The mid's move over the last few steps, in bps.
@@ -529,6 +601,55 @@ mod tests {
         };
         assert_eq!(place(&mut orders, both, TICK, 1.2, sizing), (0.0, 0.5));
         assert_eq!(place(&mut orders, both, TICK, -1.2, sizing), (0.5, 0.0));
+    }
+
+    proptest! {
+        /// The lead is the move since the newest mid at least the window
+        /// back, it waits for the window, and a gap forgets the history.
+        #[test]
+        fn the_lead_is_the_move_over_its_window(mids in prop::collection::vec(60.0f64..80.0, 1..30), window in 1u64..8) {
+            let mut lead = Lead::new(window);
+            let mut last = None;
+            for (i, &m) in mids.iter().enumerate() {
+                last = lead.push(i as u64, Some(m));
+            }
+            let n = mids.len() as u64;
+            match last {
+                Some(moved) => {
+                    prop_assert!(n > window);
+                    let first = mids[(n - 1 - window) as usize];
+                    prop_assert!((moved - (mids[mids.len() - 1] / first - 1.0) * 10_000.0).abs() < 1e-9);
+                }
+                None => prop_assert!(n <= window),
+            }
+            prop_assert_eq!(lead.push(n, None), None);
+            prop_assert_eq!(lead.push(n + 1, Some(70.0)), None);
+        }
+
+        /// A call is symmetric, and nothing under the threshold calls.
+        #[test]
+        fn lead_calls_are_symmetric(m in -10.0f64..10.0, threshold in 0.1f64..5.0) {
+            let up = lead_call(Some(m), threshold);
+            let down = lead_call(Some(-m), threshold);
+            match up {
+                Some(Pull::Asks) => prop_assert_eq!(down, Some(Pull::Bids)),
+                Some(Pull::Bids) => prop_assert_eq!(down, Some(Pull::Asks)),
+                _ => { prop_assert_eq!(up, None); prop_assert_eq!(down, None); prop_assert!(m.abs() < threshold); }
+            }
+            prop_assert_eq!(lead_call(None, threshold), None);
+        }
+    }
+
+    #[test]
+    fn a_venue_mid_is_found_by_name() {
+        let venues = vec![crate::VenueView {
+            id: "coinbase:spot:SOL-USD".into(),
+            best_bid: Some(69.04),
+            best_ask: Some(69.06),
+            ..Default::default()
+        }];
+        assert!((venue_mid(&venues, "coinbase:spot:SOL-USD").unwrap() - 69.05).abs() < 1e-9);
+        assert_eq!(venue_mid(&venues, "binance:spot:SOLUSDT"), None);
     }
 
     #[test]

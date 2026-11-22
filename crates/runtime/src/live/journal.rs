@@ -1053,14 +1053,14 @@ fn signed_bps(side: Side, price: f64, mid: f64) -> f64 {
 }
 
 /// A JSON-lines file, appended to, moved aside past [`JOURNAL_BYTES_MAX`].
-struct Appender {
+pub(crate) struct Appender {
     path: PathBuf,
     file: std::fs::File,
     bytes: u64,
 }
 
 impl Appender {
-    fn open(path: PathBuf) -> Result<Self, String> {
+    pub(crate) fn open(path: PathBuf) -> Result<Self, String> {
         let file = open_append(&path)?;
         let bytes = file.metadata().map_or(0, |m| m.len());
         Ok(Self { path, file, bytes })
@@ -1068,7 +1068,7 @@ impl Appender {
 
     /// A failed write is logged, not returned: the journal mustn't stop a
     /// strategy.
-    fn write(&mut self, line: &Value) {
+    pub(crate) fn write(&mut self, line: &Value) {
         let mut text = line.to_string();
         text.push('\n');
         if self.bytes + text.len() as u64 > JOURNAL_BYTES_MAX

@@ -61,6 +61,8 @@ pub struct BotSpec<'a> {
     /// A shadow's paper position, read as its own (the chain's is flat:
     /// it sends nothing). `None` for a live strategy.
     pub paper_position: Option<Arc<super::journal::PaperPosition>>,
+    /// The exchanges' prices it reads as venues, if the runtime has any.
+    pub references: Option<Arc<super::reference::Latest>>,
     /// Whether an order waits to land before the step goes on. Through
     /// `sends`, a live strategy fires and forgets: a step can't wait on
     /// each of its orders.
@@ -143,6 +145,9 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
             reader: Reader::Live(reads),
             sends: None,
             rfqs: None,
+            references: spec.references.map(|latest| {
+                Arc::new(super::reference::References(latest)) as Arc<dyn crate::desk::References>
+            }),
         },
         spec.log,
         spec.observer,

@@ -45,6 +45,13 @@ Beside them, what the runtime's speed depends on:
 - `workers` (4): the threads strategies step on, at once across
   strategies; `cores` (none): cores to pin them to, away from the
   validator's busiest.
+- `references` (none): exchanges' public prices, each shown to every
+  strategy as a read-only venue in `market.venues` (`live::reference`):
+  `[{"source": "coinbase", "pair": "SOL-USD"}]`. Sources: `coinbase`
+  (Coinbase Exchange's public ticker) and `binance` (its `bookTicker`;
+  its terms restrict some locations, the United States among them). Each
+  quote received is journaled to `<logs>/reference-<source>-<pair>.jsonl`.
+  No account, nothing sent but the subscription.
 - `tpu.preflight` (false): a live strategy over the TPU sends without
   waiting for its order to land (its `fate` comes on the event stream),
   and without the node's simulation first unless this is on: a round trip

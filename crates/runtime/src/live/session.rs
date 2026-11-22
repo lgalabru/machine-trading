@@ -216,6 +216,7 @@ async fn play(
         readings: Default::default(),
         // A session's bot trades on its own account, never on paper.
         paper_position: None,
+        references: None,
         dispatch: mtx_kit::protocols::phoenix::eternal::Dispatch::Confirm,
     })
     .await?;
