@@ -330,19 +330,27 @@ fn listen(
                             );
                             continue;
                         }
-                        if let Err(error) = connections.keep(&stream) {
-                            tracing::warn!(%error, "a control connection can't be kept");
-                            continue;
-                        }
+                        let kept = match connections.keep(&stream) {
+                            Ok(kept) => kept,
+                            Err(error) => {
+                                tracing::warn!(%error, "a control connection can't be kept");
+                                continue;
+                            }
+                        };
                         open.fetch_add(1, Ordering::AcqRel);
-                        let (commands, open) = (commands.clone(), open.clone());
+                        let (commands, opened) = (commands.clone(), open.clone());
                         let spawned = connections.spawn("mtx-live-control-connection", move || {
                             if let Err(error) = answer(stream, &commands) {
                                 tracing::warn!(%error, "a control connection failed");
                             }
-                            open.fetch_sub(1, Ordering::AcqRel);
+                            // Shut for the peer too, whichever side ended it.
+                            drop(kept);
+                            opened.fetch_sub(1, Ordering::AcqRel);
                         });
                         if let Err(error) = spawned {
+                            // The connection went with the thread that
+                            // never ran: it no longer counts.
+                            open.fetch_sub(1, Ordering::AcqRel);
                             tracing::warn!(%error, "a control connection's thread didn't start");
                         }
                     }
