@@ -221,6 +221,15 @@ pub trait ChainClient: Send + Sync {
     }
 }
 
+/// The signatures one `getSignaturesForAddress` page holds: the RPC's own
+/// limit.
+const SIGNATURES_PER_PAGE: usize = 1_000;
+
+/// The pages [`ChainClient::signatures_for_address`] reads at most: 100,000
+/// signatures, far more than any market takes between two reads of its
+/// fills; past it the read is refused rather than paged without end.
+const SIGNATURE_PAGES_MAX: usize = 100;
+
 /// [`ChainClient`] over JSON-RPC at `confirmed` commitment.
 ///
 /// `confirmed` rather than the client default `finalized`: on a local test
@@ -660,14 +669,14 @@ impl ChainClient for RpcChainClient {
         after_slot: u64,
     ) -> Result<Vec<(Signature, u64)>, ChainError> {
         // Newest first, a page at a time, until a page reaches back to
-        // `after_slot`.
+        // `after_slot`: at most SIGNATURE_PAGES_MAX pages.
         let mut found = Vec::new();
         let mut before = None;
-        loop {
+        for _ in 0..SIGNATURE_PAGES_MAX {
             let config = GetConfirmedSignaturesForAddress2Config {
                 before,
                 until: None,
-                limit: Some(1_000),
+                limit: Some(SIGNATURES_PER_PAGE),
                 commitment: Some(CommitmentConfig::confirmed()),
             };
             let page = self
@@ -675,7 +684,11 @@ impl ChainClient for RpcChainClient {
                 .get_signatures_for_address_with_config(address, config)
                 .await
                 .map_err(|e| self.rpc_err(e))?;
-            let full = page.len() == 1_000;
+            assert!(
+                page.len() <= SIGNATURES_PER_PAGE,
+                "a node answers at most the page it was asked"
+            );
+            let full = page.len() == SIGNATURES_PER_PAGE;
             let mut reached = false;
             for entry in &page {
                 if entry.slot <= after_slot {
@@ -693,12 +706,19 @@ impl ChainClient for RpcChainClient {
                 found.push((signature, entry.slot));
             }
             match page.last() {
+                // Every entry of a full page that didn't reach back parsed
+                // above, its last too.
                 Some(last) if full && !reached => before = last.signature.parse().ok(),
-                _ => break,
+                _ => {
+                    found.reverse();
+                    return Ok(found);
+                }
             }
         }
-        found.reverse();
-        Ok(found)
+        Err(ChainError::Rpc(format!(
+            "{address} has more than {} signatures since slot {after_slot}",
+            SIGNATURE_PAGES_MAX * SIGNATURES_PER_PAGE
+        )))
     }
 }
 
