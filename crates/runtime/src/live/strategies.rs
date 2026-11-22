@@ -563,6 +563,10 @@ impl Ctx {
             Some(_) => end_slot.saturating_sub(start_slot) / spec.slots_per_step,
             None => NO_TERM_STEPS,
         };
+        // A shadow reads its strict paper book's position as its own.
+        let paper_position = spec
+            .shadow
+            .then(|| Arc::new(super::journal::PaperPosition::default()));
         bot::start(BotSpec {
             component: &spec.component,
             rpc_url: &self.config.rpc_url,
@@ -592,6 +596,7 @@ impl Ctx {
             readings: self.shared.readings.clone(),
             log: Box::new(log),
             sends: self.sends(spec)?,
+            paper_position: paper_position.clone(),
             dispatch: self.dispatch(spec),
             observer: Some(Arc::new(
                 super::journal::Journal::open(
@@ -601,6 +606,7 @@ impl Ctx {
                     Some(self.tape_reader(spec)?),
                     self.shared.events.clone(),
                 )?
+                .sharing_position_if(paper_position.clone())
                 .behind()?,
             )),
         })
