@@ -14,8 +14,9 @@
 //! The same idea won GPT-6 Astra's market-making bot its score on the
 //! bench (0.12.0), where a trained model read the takers' flow before a
 //! jump. That model learned the bench's generator; this guard takes only
-//! the mechanism, with thresholds to be set from mainnet's own history
-//! (`luthor study`).
+//! the mechanism, with thresholds from mainnet's own history (`luthor
+//! study`, see [`GUARD`]): it helps the few fills that follow one-sided
+//! flow, which on SOL are few.
 //!
 //! Everything it does is `mtx_kit::making`'s, composed here: each block is
 //! tested on its own there.
@@ -48,9 +49,16 @@ const FLOW_WINDOW_SLOTS: u64 = 8;
 
 /// When to pull a side: four fifths of at least 1 SOL of taker volume one
 /// way, held 8 slots (about 3 seconds, a 10-second markout's third).
-// TODO(flow-maker): set from `luthor study --strategy mm-sol-book` once a
-// day of mainnet's tape is recorded (2026-11-22); these are a first guess
-// shaped like the bench bot's (a short window, a strong share).
+///
+/// Measured with `luthor study` on 6,938 of the book maker's maker fills
+/// on mainnet (2026-11-21/22, overnight): over 8 slots, fills after flow
+/// against them marked out at -0.85 bp [-1.16, -0.54] against -0.55 bp
+/// [-0.62, -0.48] for fills after no trade. The window separates them best
+/// (3 slots has too few, 16 blurs them), the share is nearly always all
+/// one way (SOL's trades are few and large, a median of 4.9 SOL), so the
+/// threshold matters little and 1 SOL is a trade's size. The catch: only
+/// 6% of fills follow any trade, so the guard moves the mean by about
+/// 0.02 bp. Most bad fills are hit by the very trade that moves the price.
 const GUARD: GuardConfig = GuardConfig {
     threshold: 0.6,
     volume_min: 1.0,
