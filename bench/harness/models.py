@@ -115,7 +115,7 @@ def request_for(found: dict, key: str) -> urllib.request.Request:
     )
 
 
-def paid_preflight(name: str, found: dict, key: str) -> bool:
+def paid_preflight(name: str, found: dict, key: str, ledger: "x402_solana.Ledger") -> bool:
     """One paid call of at most 64 tokens on an x402 route: the wallet's secret reads, the
     model is known, the quote is payable and the wallet can pay it."""
     try:
@@ -137,7 +137,7 @@ def paid_preflight(name: str, found: dict, key: str) -> bool:
     cap = float(found.get("max_usd", DEFAULT_MAX_USD))
     network = x402_solana.network_id(found.get("network", "solana"))
     try:
-        connection, response, paid = x402_solana.pay(send, wallet, network, cap, x402_solana.Ledger())
+        connection, response, paid = x402_solana.pay(send, wallet, network, cap, ledger)
         try:
             data = response.read()
         finally:
@@ -158,6 +158,7 @@ def paid_preflight(name: str, found: dict, key: str) -> bool:
 
 def preflight(names: list[str]) -> int:
     failed = 0
+    ledger = None
     for name in names:
         found = entry(name)
         key = os.environ.get(found["key"], "")
@@ -166,7 +167,15 @@ def preflight(names: list[str]) -> int:
             failed += 1
             continue
         if found.get("pay"):
-            failed += not paid_preflight(name, found, key)
+            if ledger is None:
+                try:
+                    # The batch's budget, shared with its key proxy through MTX_X402_LEDGER.
+                    ledger = x402_solana.Ledger.from_env()
+                except ValueError as e:
+                    print(f"FAIL {name}: {e}")
+                    failed += 1
+                    continue
+            failed += not paid_preflight(name, found, key, ledger)
             continue
         try:
             with urllib.request.urlopen(request_for(found, key), timeout=60) as response:

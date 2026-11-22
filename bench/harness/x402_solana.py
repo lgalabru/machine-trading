@@ -467,13 +467,45 @@ def reports_payment(response, body: dict) -> bool:
 class Ledger:
     """What the batch has signed for, in USD, against an optional budget. A
     payment is held before it is signed and let go if the gateway proves it
-    never moved; anything else counts, since it may have settled."""
+    never moved; anything else counts, since it may have settled.
 
-    def __init__(self, budget: float | None = None):
+    With a `path`, the ledger starts from what that file holds and writes
+    every change back, so the batch's paid preflight and its key proxy, one
+    after the other, spend against the same budget (MTX_X402_LEDGER)."""
+
+    def __init__(self, budget: float | None = None, path: str | None = None):
         self.budget = budget
+        self.path = path
         self.spent = 0.0
         self.calls = 0
         self.lock = threading.Lock()
+        if path and os.path.exists(path):
+            try:
+                with open(path) as f:
+                    saved = json.load(f)
+                self.spent, self.calls = float(saved["spent"]), int(saved["calls"])
+            except (OSError, ValueError, KeyError, TypeError):
+                raise ValueError(f"the x402 ledger {path} can't be read") from None
+
+    @classmethod
+    def from_env(cls) -> "Ledger":
+        """The batch's ledger: MTX_X402_BUDGET_USD and MTX_X402_LEDGER."""
+        budget = os.environ.get("MTX_X402_BUDGET_USD", "").strip()
+        try:
+            limit = float(budget) if budget else None
+        except ValueError:
+            raise ValueError("MTX_X402_BUDGET_USD must be a number of US dollars") from None
+        if limit is not None and not limit >= 0:
+            raise ValueError("MTX_X402_BUDGET_USD must be a number of US dollars")
+        return cls(limit, os.environ.get("MTX_X402_LEDGER") or None)
+
+    def _save(self) -> None:
+        if not self.path:
+            return
+        temporary = f"{self.path}.{os.getpid()}.tmp"
+        with open(temporary, "w") as f:
+            json.dump({"spent": round(self.spent, 9), "calls": self.calls}, f)
+        os.replace(temporary, self.path)
 
     def hold(self, amount: float) -> None:
         with self.lock:
@@ -484,11 +516,13 @@ class Ledger:
                 )
             self.spent += amount
             self.calls += 1
+            self._save()
 
     def release(self, amount: float) -> None:
         with self.lock:
             self.spent -= amount
             self.calls -= 1
+            self._save()
 
 
 # A refused payment the gateway proves never moved is signed again, on a new
@@ -534,10 +568,13 @@ def pay(send, wallet: Wallet, network: str, cap: float, ledger: Ledger):
         if response.status in STATUS_5XX:
             data = response.read()
             if reports_payment(response, refusal(data)):
-                return connection, _Replay(response, data), price
+                return connection, _Replay(response, data, paid=True), price
             connection.close()
             connection, response = send({"PAYMENT-SIGNATURE": header})
             resent = True
+            if response.status >= 500:
+                # Twice failed on one signature: it may have settled.
+                return connection, _Replay(response, response.read(), paid=True), price
         if response.status != 402:
             return connection, response, price
         data = response.read()
@@ -561,11 +598,19 @@ def pay(send, wallet: Wallet, network: str, cap: float, ledger: Ledger):
 
 
 class _Replay:
-    """A response whose body was already read, relayed as is."""
+    """A response whose body was already read, relayed as is, unless it failed
+    after a payment that did or may have settled (`paid`). Then it goes to the
+    agent as 424 with `x-should-retry: false`: an OpenAI or Anthropic client
+    retries a 5xx on its own (they retry 408, 409, 429 and 5xx, and honour the
+    header), and each retry would be a new call, paid again."""
 
-    def __init__(self, response, data: bytes):
+    def __init__(self, response, data: bytes, paid: bool = False):
         self.status, self.reason, self._data = response.status, response.reason, data
         self._headers = response.getheaders()
+        if paid:
+            self.status, self.reason = 424, "Failed Dependency"
+            self._headers = [(k, v) for k, v in self._headers if k.lower() != "x-should-retry"]
+            self._headers.append(("x-should-retry", "false"))
 
     def getheader(self, name, default=None):
         for k, v in self._headers:

@@ -169,6 +169,17 @@ class Signer(unittest.TestCase):
             self.assertFalse(x.safe_to_resign(body), body)
         self.assertTrue(x.out_of_funds({"reason": "insufficient_funds"}))
 
+    def test_ledger_persists_between_processes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "ledger.json")
+            x.Ledger(1.0, path).hold(0.25)
+            again = x.Ledger(1.0, path)
+            self.assertEqual((again.spent, again.calls), (0.25, 1))
+            with open(path, "w") as f:
+                f.write("{")
+            with self.assertRaises(ValueError):
+                x.Ledger(1.0, path)
+
     def test_ledger_holds_and_releases(self):
         ledger = x.Ledger(budget=0.0025)
         ledger.hold(0.001)
@@ -235,6 +246,8 @@ class Gateway(BaseHTTPRequestHandler):
             return self.answer(502, {"error": "bad gateway"})
         if model == "stub/charged":
             return self.answer(500, {"error": "upstream failed", "payment_status": "settled", "tx_hash": "abc"})
+        if model == "stub/down":
+            return self.answer(502, {"error": "bad gateway"})
         stream = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n'
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -243,7 +256,7 @@ class Gateway(BaseHTTPRequestHandler):
         self.wfile.write(stream)
 
 
-MODELS = ["ok", "free", "replay", "settle", "broke", "dear", "flaky", "charged", "devnet", "room"]
+MODELS = ["ok", "free", "replay", "settle", "broke", "dear", "flaky", "charged", "down", "devnet", "room"]
 
 
 class Proxy(unittest.TestCase):
@@ -391,10 +404,48 @@ class Proxy(unittest.TestCase):
 
     def test_never_resends_a_5xx_that_reports_a_payment(self):
         _, url = self.start()
-        status, _, data = self.call(url, "charged")
-        self.assertEqual(status, 500)
+        status, headers, data = self.call(url, "charged")
+        # Not a 5xx: the agent's client would retry it, and pay again.
+        self.assertEqual(status, 424)
+        self.assertEqual({k.lower(): v for k, v in headers.items()}.get("x-should-retry"), "false")
         self.assertIn(b"upstream failed", data)
         self.assertEqual(sum(bool(s["signature"]) for s in self.calls_to("charged")), 1)
+
+    def test_a_5xx_still_failing_after_the_resend_is_not_retried(self):
+        _, url = self.start()
+        status, headers, _ = self.call(url, "down")
+        self.assertEqual(status, 424)
+        self.assertEqual({k.lower(): v for k, v in headers.items()}.get("x-should-retry"), "false")
+        signatures = [s["signature"] for s in self.calls_to("down") if s["signature"]]
+        self.assertEqual(len(signatures), 2)
+        self.assertEqual(signatures[0], signatures[1])
+
+    def test_preflight_and_proxy_share_the_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = os.path.join(tmp, "x402-ledger.json")
+            # The preflight spends $0.001 of $0.0015...
+            first = x.Ledger(0.0015, ledger)
+            first.hold(0.001)
+            # ...so the proxy, started after it, has room for no second $0.001 call.
+            self.env["MTX_X402_LEDGER"] = ledger
+            try:
+                _, url = self.start(budget=0.0015)
+                status, _, data = self.call(url, "ok")
+            finally:
+                del self.env["MTX_X402_LEDGER"]
+            self.assertEqual(status, 402)
+            self.assertIn(b"x402 budget spent", data)
+            self.assertFalse(any(s["signature"] for s in self.calls_to("ok")))
+
+    def test_a_zero_budget_refuses_the_preflight(self):
+        registry, models.REGISTRY = models.REGISTRY, Path(self.tmp.name) / "models.toml"
+        self.addCleanup(setattr, models, "REGISTRY", registry)
+        found = models.entry("pay-ok")
+        upstream_before = len(Gateway.seen)
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = x.Ledger(0.0, os.path.join(tmp, "x402-ledger.json"))
+            self.assertFalse(models.paid_preflight("pay-ok", found, KEYPAIR, ledger))
+        self.assertFalse(any(s["signature"] for s in Gateway.seen[upstream_before:]))
 
     def test_batch_budget(self):
         _, url = self.start(budget=0.0015)

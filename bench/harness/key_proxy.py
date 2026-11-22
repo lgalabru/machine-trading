@@ -107,8 +107,9 @@ ACCOUNT_HEADERS = {
     # x402: the settlement's receipt names the paying wallet.
     "payment-response", "x-payment-response", "x-payment-receipt",
 }
-# What every x402 route's payments may add up to in a batch, in USD; unset,
-# only each route's cap a call bounds them.
+# What every x402 route's payments may add up to in a batch, in USD
+# (MTX_X402_BUDGET_USD), counted from what the batch's preflight already paid
+# (MTX_X402_LEDGER); unset, only each route's cap a call bounds them.
 LEDGER = x402_solana.Ledger()
 
 class Refused(Exception):
@@ -329,6 +330,9 @@ class Proxy(BaseHTTPRequestHandler):
                 side = "client"
                 self.send_response(response.status, response.reason)
                 self.send_header("Content-Type", response.getheader("Content-Type", "application/json"))
+                if response.getheader("x-should-retry") == "false":
+                    # Failed after a payment that may have settled: a retry would pay again.
+                    self.send_header("x-should-retry", "false")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -417,12 +421,11 @@ def main():
     Proxy.timeout = float(os.environ.get("MTX_PROXY_HEAD_TIMEOUT", HEAD_TIMEOUT))
     Proxy.head_deadline = float(os.environ.get("MTX_PROXY_HEAD_DEADLINE", HEAD_DEADLINE))
     Proxy.client_timeout = float(os.environ.get("MTX_PROXY_CLIENT_TIMEOUT", CLIENT_TIMEOUT))
-    budget = os.environ.get("MTX_X402_BUDGET_USD", "").strip()
-    if budget:
-        try:
-            LEDGER.budget = float(budget)
-        except ValueError:
-            sys.exit("MTX_X402_BUDGET_USD must be a number of US dollars")
+    global LEDGER
+    try:
+        LEDGER = x402_solana.Ledger.from_env()
+    except ValueError as e:
+        sys.exit(str(e))
     server = Server((args.host, args.port), Proxy)
     server.routes = routes_for(args.models)
     for name, route in server.routes.items():

@@ -530,6 +530,12 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     for model in {{models}}; do
       case "$model" in native:*) ;; *) hermes_models+=("${model#hermes:}") ;; esac
     done
+    # What the x402 routes pay, the preflight's calls included, counts against
+    # one MTX_X402_BUDGET_USD: the preflight and the key proxy share a ledger,
+    # kept in the batch as x402-ledger.json.
+    MTX_X402_LEDGER="$(mktemp)"
+    rm -f "$MTX_X402_LEDGER"
+    export MTX_X402_LEDGER
     if [ "${#hermes_models[@]}" -gt 0 ]; then
       python3 -I bench/harness/models.py preflight "${hermes_models[@]}"
     fi
@@ -541,6 +547,8 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     dataset="solana-foundation/machine-trading${version:+@$version}"
     batch="jobs/bench/$(date +%Y%m%d-%H%M%S)-x{{limit}}"
     mkdir -p "$batch"
+    [ ! -e "$MTX_X402_LEDGER" ] || mv "$MTX_X402_LEDGER" "$batch/x402-ledger.json"
+    MTX_X402_LEDGER="$PWD/$batch/x402-ledger.json"
     # One secret per batch: every trial is graded on the same hidden set,
     # drawn inside its verifier. Kept (owner-only) so a void trial can be
     # re-run on the same set: MTX_EVAL_SEED="$(cat <batch>/.seed)" just bench ...
