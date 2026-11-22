@@ -1,0 +1,27 @@
+{
+  "version": "v0.3.0",
+  "universe": [
+    {
+      "instrument": "orca:amm:*",
+      "assets": [
+        "So11111111111111111111111111111111111111112",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+      ]
+    },
+    {
+      "instrument": "raydium:amm:*",
+      "assets": [
+        "So11111111111111111111111111111111111111112",
+        "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+      ]
+    }
+  ],
+  "limits": {
+    "max_drawdown_usd": 200.0,
+    "inventory": {
+      "numeraire": "So11111111111111111111111111111111111111112",
+      "max_other_usd": 5.0
+    },
+    "max_costs_usd": 500.0
+  }
+}
