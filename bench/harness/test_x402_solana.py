@@ -260,6 +260,15 @@ class Gateway(BaseHTTPRequestHandler):
             return self.answer(429, {"error": "upstream cooldown", "payment_status": "not_charged"})
         if model == "stub/odd":
             return self.answer(520, {"error": "unknown"})
+        if model == "stub/lost-then-cleared":
+            # The first send's answer is lost; the resend is cleared, which says nothing of the first.
+            if signed == 1:
+                return self.answer(502, {"error": "bad gateway"})
+            return self.answer(429, {"error": "upstream cooldown", "payment_status": "not_charged"})
+        if model == "stub/cleared-twice":
+            return self.answer(503 if signed == 1 else 429, {"error": "cooldown", "payment_status": "not_charged"})
+        if model == "stub/bad-request":
+            return self.answer(400, {"error": "messages must not be empty", "payment_status": "not_charged"})
         if model in ("stub/cut-5xx", "stub/cut-402", "stub/cut-400"):
             # Paid; the head of an error arrives, its body never does.
             status = {"stub/cut-5xx": 503, "stub/cut-402": 402, "stub/cut-400": 400}[model]
@@ -282,7 +291,8 @@ class Gateway(BaseHTTPRequestHandler):
 
 MODELS = [
     "ok", "free", "replay", "settle", "broke", "dear", "flaky", "charged", "down", "drop", "drop-once", "limited",
-    "cooling", "odd", "cut-5xx", "cut-402", "cut-400", "devnet", "room",
+    "cooling", "odd", "cut-5xx", "cut-402", "cut-400", "lost-then-cleared", "cleared-twice", "bad-request",
+    "devnet", "room",
 ]
 
 
@@ -488,6 +498,30 @@ class Proxy(unittest.TestCase):
         self.assertEqual(status, 429)
         self.assertFalse(self.no_retry(headers))
         # Its hold was let go: the budget still has room for a paid call.
+        self.assertEqual(self.call(url, "ok")[0], 200)
+
+    def test_a_cleared_resend_says_nothing_of_the_first_send(self):
+        _, url = self.start(budget=0.0015)
+        status, headers, _ = self.call(url, "lost-then-cleared")
+        self.assertEqual(status, 424)
+        self.assertTrue(self.no_retry(headers))
+        # The first send may have settled: its charge stays on the budget.
+        status, _, data = self.call(url, "ok")
+        self.assertEqual(status, 402)
+        self.assertIn(b"x402 budget spent", data)
+
+    def test_both_sends_cleared_is_cleared(self):
+        _, url = self.start(budget=0.0015)
+        status, headers, _ = self.call(url, "cleared-twice")
+        self.assertEqual(status, 429)
+        self.assertFalse(self.no_retry(headers))
+        self.assertEqual(self.call(url, "ok")[0], 200)
+
+    def test_a_cleared_client_error_gives_its_hold_back(self):
+        _, url = self.start(budget=0.0015)
+        status, _, data = self.call(url, "bad-request")
+        self.assertEqual(status, 400)
+        self.assertIn(b"must not be empty", data)
         self.assertEqual(self.call(url, "ok")[0], 200)
 
     def test_preflight_and_proxy_share_the_budget(self):

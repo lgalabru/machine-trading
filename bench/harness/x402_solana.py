@@ -582,17 +582,19 @@ def pay(send, wallet: Wallet, network: str, cap: float, ledger: Ledger):
         # or reading an answer, must not reach the agent as something its
         # client retries (a new call, paid again).
         try:
-            connection, response, resent = _send_signed(send, header)
-            if retried(response.status):
-                data = response.read()
-                if not_charged(refusal(data)):
-                    ledger.release(price)
-                    return connection, _Replay(response, data), 0.0
-                # Charged, or it may have been: a retry would pay again.
-                return connection, _Replay(response, data, paid=True), price
-            if response.status != 402:
+            connection, response, earlier_uncertain = _send_signed(send, header)
+            if response.status < 400:
                 return connection, response, price
             data = response.read()
+            # Nothing was charged only if this answer says so and no earlier
+            # send of the same signature may have settled.
+            cleared = not_charged(refusal(data)) and not earlier_uncertain
+            if response.status != 402:
+                if cleared:
+                    ledger.release(price)
+                # Unless cleared, a retried status would pay again.
+                answer = _Replay(response, data, paid=retried(response.status) and not cleared)
+                return connection, answer, 0.0 if cleared else price
         except (OSError, http.client.HTTPException) as e:
             raise PaymentRefused(
                 f"a paid call failed in transit ({type(e).__name__}); it may have been charged, so it isn't retried",
@@ -600,41 +602,50 @@ def pay(send, wallet: Wallet, network: str, cap: float, ledger: Ledger):
             ) from None
         connection.close()
         refused = refusal(data)
-        # After a resend, the 402 may be the gateway refusing a signature it
-        # already settled on the first send: never signed again.
-        if not resent and safe_to_resign(refused):
+        # After a resend whose first send may have settled, the 402 may be the
+        # gateway refusing a signature it already settled: never signed again,
+        # and its charge kept.
+        if not earlier_uncertain and (cleared or safe_to_resign(refused)):
             ledger.release(price)
-            if attempt < RESIGNS:
+            if safe_to_resign(refused) and attempt < RESIGNS:
                 time.sleep(RESIGN_BACKOFF[min(attempt, len(RESIGN_BACKOFF) - 1)])
                 connection, response = send({})
                 if response.status != 402:
                     return connection, response, 0.0
                 continue
-        detail = str(refused.get("message") or refused.get("error") or refused.get("reason") or "")[:200]
+        detail = _detail(refused)
         if out_of_funds(refused):
             raise PaymentRefused(f"x402 wallet is out of USDC: fund {wallet.address} on Solana ({detail})")
         raise PaymentRefused(f"the provider refused the x402 payment: {detail}")
     raise PaymentRefused("the provider refused the x402 payment")
 
 
+def _detail(body: dict) -> str:
+    return str(body.get("message") or body.get("error") or body.get("reason") or "")[:200]
+
+
 def _send_signed(send, header: str):
     """Send a signed call. A 5xx that doesn't report its payment, or a
     connection that fails before any answer, gets one more send with the same
     signature, which settles at most once. Returns (connection, response,
-    whether it was sent again). A second transport failure means the payment
-    may have settled with no answer: PaymentRefused, not to be retried."""
+    whether an earlier send of it may have settled: only that send's own
+    `not_charged` answer says it didn't). A second transport failure is
+    raised: pay() answers it as a paid call that may have settled."""
+    earlier_uncertain = False
     for attempt in range(2):
         try:
             connection, response = send({"PAYMENT-SIGNATURE": header})
         except (OSError, http.client.HTTPException):
             if attempt:
-                raise  # pay() answers it as a paid call that may have settled
+                raise
+            earlier_uncertain = True
             continue
         if attempt or response.status not in STATUS_5XX:
-            return connection, response, bool(attempt)
+            return connection, response, earlier_uncertain
         data = response.read()
         if reports_payment(response, refusal(data)):
             return connection, _Replay(response, data), False
+        earlier_uncertain = not not_charged(refusal(data))
         connection.close()
     raise AssertionError("unreachable")
 
