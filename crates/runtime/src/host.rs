@@ -81,6 +81,12 @@ pub const FUEL_PER_CALL: u64 = 10_000_000_000;
 /// the funding-carry reference spends, the most of the references.
 pub const FUEL_PER_STEP: u64 = 2_000_000_000;
 
+/// The most lines one `step` may return. A market maker's ladder on a few
+/// venues is tens of lines, and the desk sends each in turn, one transaction
+/// apiece: past this, the step is refused whole as a failed one, rather than
+/// its sheet sent for longer than a slot.
+pub const LINES_PER_STEP_MAX: usize = 1024;
+
 /// The most linear memory a strategy may grow to, in bytes, all of its
 /// memories together.
 pub const MEMORY_BYTES: usize = 1 << 30;
@@ -789,30 +795,35 @@ impl<R: RawSend> WasmStrategy<R> {
             return Outcome::Trapped(Self::spent());
         }
         let timer = self.arm();
-        let result = match &self.strategy {
-            Bindings::V3(s) => s
-                .call_step(&mut self.store, &wit3::market(market))
-                .await
-                .map(|r| r.map(|intents| intents.into_iter().map(wit3::line).collect())),
-            Bindings::V2(s) => s
-                .call_step(&mut self.store, &wit2::market(market))
-                .await
-                .map(|r| r.map(|intents| intents.into_iter().map(wit2::line).collect())),
-            Bindings::V1(s) => s
-                .call_step(&mut self.store, wit1::market(market))
-                .await
-                .map(|r| {
-                    r.map(|intents| {
-                        intents
-                            .into_iter()
-                            .map(|i| (wit1::intent(i), LineOptions::default()))
-                            .collect()
-                    })
-                }),
-        };
+        let result: wasmtime::Result<Result<Vec<(Intent, LineOptions)>, String>> =
+            match &self.strategy {
+                Bindings::V3(s) => s
+                    .call_step(&mut self.store, &wit3::market(market))
+                    .await
+                    .map(|r| r.map(|intents| intents.into_iter().map(wit3::line).collect())),
+                Bindings::V2(s) => s
+                    .call_step(&mut self.store, &wit2::market(market))
+                    .await
+                    .map(|r| r.map(|intents| intents.into_iter().map(wit2::line).collect())),
+                Bindings::V1(s) => s
+                    .call_step(&mut self.store, wit1::market(market))
+                    .await
+                    .map(|r| {
+                        r.map(|intents| {
+                            intents
+                                .into_iter()
+                                .map(|i| (wit1::intent(i), LineOptions::default()))
+                                .collect()
+                        })
+                    }),
+            };
         timer.inspect(tokio::task::JoinHandle::abort);
         self.charge();
         match result {
+            Ok(Ok(lines)) if lines.len() > LINES_PER_STEP_MAX => Outcome::Failed(format!(
+                "{} lines, and a step returns at most {LINES_PER_STEP_MAX}",
+                lines.len()
+            )),
             Ok(Ok(lines)) => Outcome::Done(lines),
             Ok(Err(e)) => Outcome::Failed(e),
             Err(trap) => Outcome::Trapped(format!("{trap:#}")),

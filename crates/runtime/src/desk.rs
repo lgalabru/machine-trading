@@ -114,6 +114,33 @@ pub struct StepTrace {
     pub account: Option<Account>,
 }
 
+impl StepTrace {
+    /// A step's trace as its call left it: what it printed and spent, before
+    /// its sheet is planned and sent.
+    fn of_call(
+        market: &mtx_kit::Market,
+        printed: &[String],
+        fuel: u64,
+        rpc_calls: u32,
+        steps: u64,
+        account: Option<Account>,
+    ) -> Self {
+        Self {
+            steps,
+            market: market.clone(),
+            printed: printed.to_vec(),
+            failed: None,
+            intents: Vec::new(),
+            options: Vec::new(),
+            notes: Vec::new(),
+            sent: Vec::new(),
+            fuel,
+            rpc_calls,
+            account,
+        }
+    }
+}
+
 /// Watches a component's session step by step: `mtx bot run --debug`. It
 /// may block (to wait for a key): the world waits for the strategy.
 pub trait StepObserver: Send + Sync {
@@ -244,6 +271,53 @@ fn seat_in<'a>(seats: &'a [Box<dyn Seat>], venue: Option<&str>) -> Option<&'a dy
         Some(id) => seats.iter().find(|s| s.market() == id),
     }
     .map(|seat| seat.as_ref())
+}
+
+/// What a session reads of its own market at a step, before the views.
+struct OwnRead {
+    mark: f64,
+    oracle: f64,
+    index: f64,
+    best_bid: Option<f64>,
+    best_ask: Option<f64>,
+    position: mtx_kit::Position,
+}
+
+impl OwnRead {
+    /// A measured wallet's market, at the wallet's price: its position the
+    /// base it holds, entered at the session's starting price.
+    fn at_price(
+        wallet: &Wallet,
+        start: &Wallet,
+        best_bid: Option<f64>,
+        best_ask: Option<f64>,
+    ) -> Self {
+        let price = wallet.price_usd;
+        Self {
+            mark: price,
+            oracle: price,
+            index: price,
+            best_bid,
+            best_ask,
+            position: mtx_kit::Position {
+                size: wallet.base,
+                entry_usd: start.price_usd,
+            },
+        }
+    }
+}
+
+/// The signature a status of the step's sends is pooled under, if any: a
+/// line's landed signature, or a raw send's from the raw desk's pool.
+fn pooled_signature(status: &SendStatus, raw_pooled: &[(u32, String)]) -> Option<String> {
+    match (&status.state, status.source) {
+        (SendState::Landed(signature), _) => Some(signature.clone()),
+        (SendState::Delayed, SendSource::Raw(id)) => raw_pooled
+            .iter()
+            .find(|(raw, _)| *raw == id)
+            .map(|(_, signature)| signature.to_string()),
+        _ => None,
+    }
 }
 
 /// The atomic group a planned order is in, if any.
@@ -457,83 +531,14 @@ impl<R: RawDesk> WasmBot<R> {
     ) -> Option<mtx_kit::Market> {
         let (k, slot, last) = (step.k, step.slot, step.last);
         self.resolve();
-        let (mark, oracle, index, best_bid, best_ask, position) = match &self.desk.reader {
-            Reader::Perp(_) | Reader::Live(_) => {
-                let read = match &self.desk.reader {
-                    Reader::Perp(trader) => (
-                        trader.top().await.map_err(|e| e.to_string()),
-                        trader.oracle_usd().await.map_err(|e| e.to_string()),
-                        trader.position().await.map_err(|e| e.to_string()),
-                    ),
-                    Reader::Live(reads) => (
-                        reads.top().await,
-                        reads.oracle_usd().await,
-                        reads.position().await,
-                    ),
-                    _ => unreachable!("the arm matched a perp reader"),
-                };
-                let (top, oracle, position) = match read {
-                    (Ok(top), Ok(oracle), Ok(position)) => (top, oracle, position),
-                    (top, oracle, position) => {
-                        tracing::warn!(step = k, mark = ?top.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
-                        return None;
-                    }
-                };
-                let mark = top.mark;
-                if let Some(previous) = self.last_mark {
-                    self.pnl += position.size * (mark - previous);
-                }
-                self.last_mark = Some(mark);
-                (
-                    mark,
-                    oracle,
-                    top.index,
-                    top.best_bid,
-                    top.best_ask,
-                    position,
-                )
-            }
-            Reader::Lending { start } => {
-                let Some(wallet) = wallet else {
-                    tracing::warn!(step = k, "no reading of the account; skipping the step");
-                    return None;
-                };
-                self.pnl = wallet.value_usd - start.value_usd;
-                let position = mtx_kit::Position {
-                    size: wallet.base,
-                    entry_usd: start.price_usd,
-                };
-                let price = wallet.price_usd;
-                (price, price, price, None, None, position)
-            }
-            Reader::Wallet { start } => {
-                let Some(wallet) = wallet else {
-                    tracing::warn!(step = k, "no reading of the wallet; skipping the step");
-                    return None;
-                };
-                let Some(Ok((best_bid, best_ask))) = (match self.desk.seats.first() {
-                    Some(seat) => Some(seat.top().await),
-                    None => None,
-                }) else {
-                    tracing::warn!(step = k, "couldn't read the book; skipping the step");
-                    return None;
-                };
-                self.pnl = wallet.value_usd - start.value_usd;
-                let position = mtx_kit::Position {
-                    size: wallet.base,
-                    entry_usd: start.price_usd,
-                };
-                let price = wallet.price_usd;
-                (price, price, price, best_bid, best_ask, position)
-            }
-        };
+        let read = self.read_own(k, wallet).await?;
         self.peak_pnl = self.peak_pnl.max(self.pnl);
         let (mut venues, mut fills) = mtx_kit::venue_views(
             &self.session.venues,
             self.session.reports,
-            best_bid,
-            best_ask,
-            position,
+            read.best_bid,
+            read.best_ask,
+            read.position,
             &step.tape,
             &step.depth,
         );
@@ -541,75 +546,18 @@ impl<R: RawDesk> WasmBot<R> {
         if let Some(board) = &self.desk.rfqs {
             fills.extend(board.take_fills());
         }
-        // A perp account's other markets (a session on several): each
-        // seat's own position and top.
-        if matches!(self.desk.reader, Reader::Perp(_) | Reader::Live(_)) {
-            for view in venues.iter_mut().skip(1) {
-                let Some(seat) = self
-                    .desk
-                    .seats
-                    .iter()
-                    .skip(1)
-                    .find(|s| s.market() == view.id)
-                else {
-                    continue;
-                };
-                if let Ok(size) = seat.position().await {
-                    view.position = Some(mtx_kit::Position {
-                        size,
-                        ..Default::default()
-                    });
-                }
-                if view.best_bid.is_none()
-                    && view.best_ask.is_none()
-                    && let Ok((bid, ask)) = seat.top().await
-                {
-                    (view.best_bid, view.best_ask) = (bid, ask);
-                }
+        match (&self.desk.reader, wallet) {
+            (Reader::Perp(_) | Reader::Live(_), _) => {
+                Self::perp_views(&self.desk.seats, &mut venues).await
             }
-        }
-        // A measured wallet's other markets: the same SOL held, and each
-        // seat's own top, where the step's depth didn't give one.
-        if let (Reader::Lending { .. }, Some(wallet)) = (&self.desk.reader, wallet) {
-            for view in &mut venues {
-                let Some(reading) = wallet.venues.iter().find(|r| r.id == view.id) else {
-                    continue;
-                };
-                view.position = None;
-                view.stats = reading.stats.clone();
-                // A pool of the account's (an amm session's) has prices
-                // and no lending position.
-                let pool = self
-                    .session
-                    .venues
-                    .iter()
-                    .any(|v| v.id == view.id && v.kind == mtx_kit::MarketKind::Amm);
-                if pool {
-                    (view.best_bid, view.best_ask) = (reading.best_bid, reading.best_ask);
-                    continue;
-                }
-                view.lending = Some(mtx_kit::LendingPosition {
-                    supplied: reading.supplied,
-                    borrowed: reading.borrowed,
-                    health: reading.health,
-                });
-            }
+            (Reader::Lending { .. }, Some(wallet)) => self.lending_views(&mut venues, wallet),
+            (Reader::Lending { .. }, None) | (Reader::Wallet { .. }, _) => {}
         }
         if let Some(references) = &self.desk.references {
             venues.extend(references.views());
         }
         if matches!(self.desk.reader, Reader::Wallet { .. }) {
-            for view in venues.iter_mut().skip(1) {
-                view.position = Some(position);
-                if view.best_bid.is_some() || view.best_ask.is_some() {
-                    continue;
-                }
-                if let Some(seat) = self.desk.seats.iter().find(|s| s.market() == view.id)
-                    && let Ok((bid, ask)) = seat.top().await
-                {
-                    (view.best_bid, view.best_ask) = (bid, ask);
-                }
-            }
+            Self::wallet_views(&self.desk.seats, &mut venues, read.position).await;
         }
         Some(mtx_kit::Market {
             k,
@@ -617,12 +565,12 @@ impl<R: RawDesk> WasmBot<R> {
             last,
             steps_left: self.session.steps.saturating_sub(k + 1),
             slots_left: self.session.end_slot.saturating_sub(slot),
-            mark,
-            oracle,
-            index,
-            best_bid,
-            best_ask,
-            position,
+            mark: read.mark,
+            oracle: read.oracle,
+            index: read.index,
+            best_bid: read.best_bid,
+            best_ask: read.best_ask,
+            position: read.position,
             cap: self.session.cap,
             max_drawdown: self.session.max_drawdown,
             resting_bids: self.resting.0,
@@ -646,6 +594,150 @@ impl<R: RawDesk> WasmBot<R> {
             fees: self.desk.sends.as_ref().map(|sends| sends.fee_view()),
             trigger: step.trigger.clone(),
         })
+    }
+
+    /// The session's own market at step `k`, and its PnL brought up to date:
+    /// `None`, said why, if it couldn't be read.
+    async fn read_own(&mut self, k: u64, wallet: Option<&Wallet>) -> Option<OwnRead> {
+        match &self.desk.reader {
+            Reader::Perp(_) | Reader::Live(_) => self.read_perp(k).await,
+            Reader::Lending { start } => {
+                let Some(wallet) = wallet else {
+                    tracing::warn!(step = k, "no reading of the account; skipping the step");
+                    return None;
+                };
+                self.pnl = wallet.value_usd - start.value_usd;
+                Some(OwnRead::at_price(wallet, start, None, None))
+            }
+            Reader::Wallet { start } => {
+                let Some(wallet) = wallet else {
+                    tracing::warn!(step = k, "no reading of the wallet; skipping the step");
+                    return None;
+                };
+                let Some(Ok((best_bid, best_ask))) = (match self.desk.seats.first() {
+                    Some(seat) => Some(seat.top().await),
+                    None => None,
+                }) else {
+                    tracing::warn!(step = k, "couldn't read the book; skipping the step");
+                    return None;
+                };
+                self.pnl = wallet.value_usd - start.value_usd;
+                Some(OwnRead::at_price(wallet, start, best_bid, best_ask))
+            }
+        }
+    }
+
+    /// A perp session's market: its top, oracle and position, the PnL marked
+    /// to the move since the last read.
+    async fn read_perp(&mut self, k: u64) -> Option<OwnRead> {
+        let read = match &self.desk.reader {
+            Reader::Perp(trader) => (
+                trader.top().await.map_err(|e| e.to_string()),
+                trader.oracle_usd().await.map_err(|e| e.to_string()),
+                trader.position().await.map_err(|e| e.to_string()),
+            ),
+            Reader::Live(reads) => (
+                reads.top().await,
+                reads.oracle_usd().await,
+                reads.position().await,
+            ),
+            Reader::Lending { .. } | Reader::Wallet { .. } => {
+                unreachable!("read_own reads a perp only with a perp reader")
+            }
+        };
+        let (top, oracle, position) = match read {
+            (Ok(top), Ok(oracle), Ok(position)) => (top, oracle, position),
+            (top, oracle, position) => {
+                tracing::warn!(step = k, mark = ?top.err(), oracle = ?oracle.err(), position = ?position.err(), "couldn't read the market; skipping the step");
+                return None;
+            }
+        };
+        if let Some(previous) = self.last_mark {
+            self.pnl += position.size * (top.mark - previous);
+        }
+        self.last_mark = Some(top.mark);
+        Some(OwnRead {
+            mark: top.mark,
+            oracle,
+            index: top.index,
+            best_bid: top.best_bid,
+            best_ask: top.best_ask,
+            position,
+        })
+    }
+
+    /// A perp account's other markets (a session on several): each seat's
+    /// own position and top. A seat that can't say leaves its view as the
+    /// step's tape and depth made it: the strategy sees no position there.
+    /// Takes the seats, not the bot: a future that holds `&self` across its
+    /// reads would need the bot shared between threads.
+    async fn perp_views(seats: &[Box<dyn Seat>], venues: &mut [mtx_kit::VenueView]) {
+        for view in venues.iter_mut().skip(1) {
+            let Some(seat) = seats.iter().skip(1).find(|s| s.market() == view.id) else {
+                continue;
+            };
+            if let Ok(size) = seat.position().await {
+                view.position = Some(mtx_kit::Position {
+                    size,
+                    ..Default::default()
+                });
+            }
+            if view.best_bid.is_none()
+                && view.best_ask.is_none()
+                && let Ok((bid, ask)) = seat.top().await
+            {
+                (view.best_bid, view.best_ask) = (bid, ask);
+            }
+        }
+    }
+
+    /// A measured wallet's other markets: the same SOL held, and each
+    /// reading's lending position, or a pool's prices.
+    fn lending_views(&self, venues: &mut [mtx_kit::VenueView], wallet: &Wallet) {
+        for view in venues {
+            let Some(reading) = wallet.venues.iter().find(|r| r.id == view.id) else {
+                continue;
+            };
+            view.position = None;
+            view.stats = reading.stats.clone();
+            // A pool of the account's (an amm session's) has prices
+            // and no lending position.
+            let pool = self
+                .session
+                .venues
+                .iter()
+                .any(|v| v.id == view.id && v.kind == mtx_kit::MarketKind::Amm);
+            if pool {
+                (view.best_bid, view.best_ask) = (reading.best_bid, reading.best_ask);
+                continue;
+            }
+            view.lending = Some(mtx_kit::LendingPosition {
+                supplied: reading.supplied,
+                borrowed: reading.borrowed,
+                health: reading.health,
+            });
+        }
+    }
+
+    /// A wallet session's other markets: the wallet's position, and each
+    /// seat's own top where the step's depth didn't give one (a seat that
+    /// can't say leaves it empty).
+    async fn wallet_views(
+        seats: &[Box<dyn Seat>],
+        venues: &mut [mtx_kit::VenueView],
+        position: mtx_kit::Position,
+    ) {
+        for view in venues.iter_mut().skip(1) {
+            view.position = Some(position);
+            if view.best_bid.is_some() || view.best_ask.is_some() {
+                continue;
+            }
+            if let Some(seat) = seats.iter().find(|s| s.market() == view.id)
+                && let Ok((bid, ask)) = seat.top().await
+            {
+                (view.best_bid, view.best_ask) = (bid, ask);
+            }
+        }
     }
 
     /// What became of the sends that hadn't landed yet: each
@@ -745,19 +837,14 @@ impl<R: RawDesk> WasmBot<R> {
         self.sends.extend(dropped.into_iter().flatten());
         let mut trace = self.observer.as_ref().map(|_| {
             let (printed, fuel, rpc_calls) = strategy.last_call();
-            StepTrace {
-                steps: self.session.steps,
-                market: market.clone(),
-                printed: printed.to_vec(),
-                failed: None,
-                intents: Vec::new(),
-                options: Vec::new(),
-                notes: Vec::new(),
-                sent: Vec::new(),
+            StepTrace::of_call(
+                &market,
+                printed,
                 fuel,
                 rpc_calls,
-                account: self.account,
-            }
+                self.session.steps,
+                self.account,
+            )
         });
         let lines = match outcome {
             Outcome::Done(lines) => lines,
@@ -771,16 +858,50 @@ impl<R: RawDesk> WasmBot<R> {
                 return true;
             }
             Outcome::Trapped(e) => {
-                tracing::warn!(step = k, error = %e, "the strategy trapped; it plays no more of the session");
-                self.stopped = Some(format!("trapped at step {k}: {e}"));
-                self.last = Some(market);
-                self.observe(trace.map(|t| StepTrace {
-                    failed: Some(format!("trapped: {e}; it plays no more of the session")),
-                    ..t
-                }));
+                self.stop_trapped(k, market, trace, &e);
                 return false;
             }
         };
+        let planned = self.plan(k, lines, &market, trace.as_mut());
+        self.last = Some(market);
+        let planned_count = planned.len();
+        self.send_sheet(k, planned, trace.as_mut()).await;
+        assert!(
+            self.sends.len() >= planned_count,
+            "every planned line has a status"
+        );
+        let from = self.sends.len() - planned_count;
+        self.flush_after_sheet(from).await;
+        self.last_timings.send_us = micros(sending);
+        self.observe(trace);
+        true
+    }
+
+    /// The strategy trapped at step `k`: it plays no more of the session.
+    fn stop_trapped(&mut self, k: u64, market: mtx_kit::Market, trace: Option<StepTrace>, e: &str) {
+        tracing::warn!(step = k, error = %e, "the strategy trapped; it plays no more of the session");
+        self.stopped = Some(format!("trapped at step {k}: {e}"));
+        self.last = Some(market);
+        self.observe(trace.map(|t| StepTrace {
+            failed: Some(format!("trapped: {e}; it plays no more of the session")),
+            ..t
+        }));
+    }
+
+    /// The strategy's `lines` as orders, cut to the mandate's caps on what
+    /// the session executes: the planned sheet, its notes kept for the next
+    /// market and the trace, and the taking guard started on `market`.
+    fn plan(
+        &mut self,
+        k: u64,
+        lines: Vec<(mtx_kit::Intent, mtx_kit::LineOptions)>,
+        market: &mtx_kit::Market,
+        trace: Option<&mut StepTrace>,
+    ) -> Vec<Planned> {
+        assert!(
+            lines.len() <= crate::host::LINES_PER_STEP_MAX,
+            "the host refuses a step past its lines' bound"
+        );
         let mut orders = mtx_kit::Orders::new();
         for (intent, options) in lines {
             if options.tx.is_some() {
@@ -791,27 +912,38 @@ impl<R: RawDesk> WasmBot<R> {
         // Only what the session executes counts toward the cap.
         // Each venue's lines are cut to its own cap in the mandate.
         let (planned, notes) =
-            mtx_kit::plan_sheet_under(&orders, &market, &self.session.mandate, |venue, action| {
+            mtx_kit::plan_sheet_under(&orders, market, &self.session.mandate, |venue, action| {
                 self.seat(venue).is_some_and(|seat| seat.executes(action))
             });
         for note in &notes {
             tracing::warn!(step = k, "{note}");
         }
-        if let Some(trace) = trace.as_mut() {
+        if let Some(trace) = trace {
             (trace.intents, trace.options) = orders.into_lines().into_iter().unzip();
             trace.notes = notes.clone();
         }
         self.notes = notes;
         if let Some(guard) = self.taking.as_mut() {
-            guard.begin(&market);
+            guard.begin(market);
         }
-        self.last = Some(market);
+        planned
+    }
+
+    /// Send the planned sheet, in order: each line alone or each atomic
+    /// group as one transaction, none after the first that fails. Every line
+    /// gets a status, a group's lines the group's; what reached the chain
+    /// updates the ledger of resting orders.
+    async fn send_sheet(
+        &mut self,
+        k: u64,
+        planned: Vec<Planned>,
+        mut trace: Option<&mut StepTrace>,
+    ) {
         let own = self.session.venues[0].id.clone();
         // The orders that reached the chain, the one that failed included:
         // the ledger of what rests only over-counts.
         let mut tried = Vec::new();
         let mut failed = false;
-        let planned_count = planned.len();
         let mut planned = planned.into_iter().peekable();
         while let Some(first) = planned.next() {
             // A line alone, or an atomic group: the planner keeps a group's
@@ -846,12 +978,15 @@ impl<R: RawDesk> WasmBot<R> {
                     expires_slot,
                     ..
                 } = planned;
-                if let Some(trace) = trace.as_mut() {
+                if let Some(trace) = trace.as_deref_mut() {
                     trace.sent.push((action.clone(), state.clone()));
                 }
                 self.sends.push(SendStatus {
                     step: k,
-                    source: SendSource::Line(line as u32),
+                    source: SendSource::Line(
+                        u32::try_from(line)
+                            .expect("a step's lines are bounded by LINES_PER_STEP_MAX"),
+                    ),
                     venue: venue.unwrap_or_else(|| own.clone()),
                     client_id,
                     order: Some(action),
@@ -865,8 +1000,13 @@ impl<R: RawDesk> WasmBot<R> {
         }
         self.last_orders = u32::try_from(tried.len()).unwrap_or(u32::MAX);
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
-        let from = self.sends.len() - planned_count;
-        // Raw sends go after the sheet, whatever became of it.
+    }
+
+    /// After the sheet, whatever became of it: the raw sends, then the
+    /// step's bundles, a failed bundle failing what it carried. Under the
+    /// transaction layer, what the step sent from `from` on is in the pool:
+    /// delayed, until a later step says what became of it.
+    async fn flush_after_sheet(&mut self, from: usize) {
         let mut raw_pooled = Vec::new();
         if let (Some(raw), Reader::Perp(trader)) = (
             self.strategy.as_mut().and_then(WasmStrategy::raw_sender),
@@ -875,64 +1015,45 @@ impl<R: RawDesk> WasmBot<R> {
             self.sends.extend(raw.flush(&trader.keypair).await);
             raw_pooled = raw.take_pooled();
         }
-        // The step's bundles go once the sheet and the raw sends are all in
-        // them.
-        if let Some(pool) = &self.desk.sends {
-            pool.set_options(None);
-            for (signatures, failed) in pool.flush_bundles().await {
-                let Some(reason) = failed else {
-                    continue;
-                };
-                for status in &mut self.sends[from..] {
-                    let signature = match (&status.state, status.source) {
-                        (SendState::Landed(signature), _) => Some(signature.clone()),
-                        (SendState::Delayed, SendSource::Raw(id)) => raw_pooled
-                            .iter()
-                            .find(|(raw, _)| *raw == id)
-                            .map(|(_, signature)| signature.to_string()),
-                        _ => None,
-                    };
-                    if signature.is_some_and(|s| signatures.contains(&s)) {
-                        status.state = SendState::Failed {
-                            reason: reason.clone(),
-                            signature: None,
-                        };
-                    }
-                }
-            }
-        }
-        // Under the transaction layer, what the step sent is in the pool:
-        // delayed, until a later step says what became of it.
-        if self.desk.sends.is_some() {
+        let Some(pool) = &self.desk.sends else {
+            return;
+        };
+        pool.set_options(None);
+        for (signatures, failed) in pool.flush_bundles().await {
+            let Some(reason) = failed else {
+                continue;
+            };
             for status in &mut self.sends[from..] {
-                let signature = match (&status.state, status.source) {
-                    (SendState::Landed(signature), _) => Some(signature.clone()),
-                    (SendState::Delayed, SendSource::Raw(id)) => raw_pooled
-                        .iter()
-                        .find(|(raw, _)| *raw == id)
-                        .map(|(_, signature)| signature.to_string()),
-                    _ => None,
-                };
-                if let Some(signature) = signature {
-                    status.state = SendState::Delayed;
-                    self.pending.push((status.clone(), signature));
+                if pooled_signature(status, &raw_pooled).is_some_and(|s| signatures.contains(&s)) {
+                    status.state = SendState::Failed {
+                        reason: reason.clone(),
+                        signature: None,
+                    };
                 }
             }
         }
-        self.last_timings.send_us = micros(sending);
-        self.observe(trace);
-        true
+        for status in &mut self.sends[from..] {
+            if let Some(signature) = pooled_signature(status, &raw_pooled) {
+                status.state = SendState::Delayed;
+                self.pending.push((status.clone(), signature));
+            }
+        }
+    }
+
+    /// Whether `planned`, on `own` market, is refused by the taking guard,
+    /// and why.
+    fn refused_take(&mut self, planned: &Planned, own: &str) -> Option<String> {
+        let on_own = planned.venue.as_ref().is_none_or(|venue| venue == own);
+        match self.taking.as_mut().filter(|_| on_own) {
+            Some(guard) => guard.check(&planned.action, planned.reduce_only).err(),
+            None => None,
+        }
     }
 
     /// Send one line alone through its market's seat, after the taking
     /// check: what became of it, and whether it reached the chain.
     async fn send_line(&mut self, k: u64, planned: &Planned, own: &str) -> (SendState, bool) {
-        let on_own = planned.venue.as_ref().is_none_or(|venue| venue == own);
-        let refused = match self.taking.as_mut().filter(|_| on_own) {
-            Some(guard) => guard.check(&planned.action, planned.reduce_only).err(),
-            None => None,
-        };
-        if let Some(reason) = refused {
+        if let Some(reason) = self.refused_take(planned, own) {
             tracing::info!(step = k, action = ?planned.action, "{reason}");
             return (SendState::NotSent(reason), false);
         }
@@ -963,12 +1084,7 @@ impl<R: RawDesk> WasmBot<R> {
     async fn send_group(&mut self, k: u64, group: &[Planned], own: &str) -> (SendState, bool) {
         assert!(!group.is_empty(), "a group has lines");
         for planned in group {
-            let on_own = planned.venue.as_ref().is_none_or(|venue| venue == own);
-            let refused = match self.taking.as_mut().filter(|_| on_own) {
-                Some(guard) => guard.check(&planned.action, planned.reduce_only).err(),
-                None => None,
-            };
-            if let Some(reason) = refused {
+            if let Some(reason) = self.refused_take(planned, own) {
                 tracing::info!(step = k, line = planned.line, "{reason}");
                 return (
                     SendState::NotSent(format!("line {}: {reason}", planned.line)),
