@@ -545,6 +545,12 @@ impl State {
     /// The best bid and ask: what a small swap's base costs, and what it
     /// sells for, fees included. A side the pool can't fill has none.
     pub fn top(&self, pool: &Pool) -> (Option<f64>, Option<f64>) {
+        // A mint past MINT_DECIMALS_MAX is refused when it is read, so a
+        // whole token's atoms fit a u64.
+        assert!(
+            pool.base.asset.decimals <= MINT_DECIMALS_MAX,
+            "a pool's mints were read under the decimals' bound"
+        );
         let scale = 10u64.pow(pool.base.asset.decimals.into());
         let small = (scale / TOP_SWAP_BASE_DIVISOR).max(1);
         let price = |direction, mode| {

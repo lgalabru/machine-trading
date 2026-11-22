@@ -580,8 +580,8 @@ impl Market for ReserveMarket {
         let (supplied, borrowed) = self.reading(owner).await?.balance(&self.book);
         Ok(vec![Holding::MoneyMarket(LendingBalance {
             asset: self.book.asset.clone(),
-            supplied: decimal(supplied),
-            borrowed: decimal(borrowed),
+            supplied: decimal(supplied, &self.book.instrument, "supply")?,
+            borrowed: decimal(borrowed, &self.book.instrument, "debt")?,
         })])
     }
 
@@ -604,7 +604,7 @@ impl Market for ReserveMarket {
             let Holding::MoneyMarket(balance) = holding else {
                 return Ok(None);
             };
-            value += balance.net() * decimal(reserve.price);
+            value += balance.net() * decimal(reserve.price, &self.book.instrument, "price")?;
         }
         Ok(Some(value))
     }
@@ -627,8 +627,16 @@ impl Market for ReserveMarket {
     }
 }
 
-fn decimal(value: f64) -> Decimal {
-    Decimal::from_f64_retain(value).unwrap_or_default()
+/// `value` as a decimal, for `what` on `instrument`: an error if it isn't a
+/// finite number (a reserve that decoded wrong), never a silent zero that
+/// would value a holding at nothing.
+fn decimal(value: f64, instrument: &InstrumentRef, what: &str) -> Result<Decimal> {
+    Decimal::from_f64_retain(value).ok_or_else(|| {
+        venue_error(
+            instrument.to_string(),
+            format!("its {what} ({value}) isn't a finite number"),
+        )
+    })
 }
 
 /// An account at one reserve, signed by the grader: it supplies, withdraws,
