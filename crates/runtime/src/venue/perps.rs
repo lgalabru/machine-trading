@@ -285,13 +285,13 @@ impl Seat for PerpSeat {
             .place_market(side, size, limit)
             .await
             .map_err(|e| e.to_string())?;
-        *self.last.lock().expect("seat lock") = Some(signature.to_string());
+        *lock(&self.last) = Some(signature.to_string());
         Ok(())
     }
 
     /// The signature of the last market order [`Seat::take`] landed.
     fn last_signature(&self) -> Option<String> {
-        self.last.lock().expect("seat lock").clone()
+        lock(&self.last).clone()
     }
 
     async fn rest(&self, side: Side, price: f64, size: f64) -> SeatResult {
@@ -455,7 +455,7 @@ impl UniquePerpSeat {
             .execute(&plan, &self.signer)
             .await
             .map_err(|e| e.to_string())?;
-        *self.last.lock().expect("seat lock") = Some(signature.to_string());
+        *lock(&self.last) = Some(signature.to_string());
         Ok(())
     }
 
@@ -560,6 +560,13 @@ impl Seat for UniquePerpSeat {
     }
 
     fn last_signature(&self) -> Option<String> {
-        self.last.lock().expect("seat lock").clone()
+        lock(&self.last).clone()
     }
+}
+/// A seat's last signature, locked. Its holders only copy a string in or
+/// out, so a lock a panic poisoned still holds a whole one.
+fn lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
