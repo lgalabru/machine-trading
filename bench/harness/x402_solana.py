@@ -30,6 +30,7 @@ can't cure (no USDC, no token account).
 import base64
 import binascii
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -301,9 +302,9 @@ class PaymentRefused(Exception):
     """A payment the proxy won't make, or the gateway refused for good. The
     reason is safe to show the agent: it names no secret."""
 
-    def __init__(self, reason: str, status: int = 402):
+    def __init__(self, reason: str, status: int = 402, retry: bool = True):
         super().__init__(reason)
-        self.reason, self.status = reason, status
+        self.reason, self.status, self.retry = reason, status, retry
 
 
 def network_id(name: str) -> str:
@@ -530,6 +531,20 @@ class Ledger:
 RESIGNS = 4
 RESIGN_BACKOFF = (0.25, 0.5, 1.0, 2.0)
 STATUS_5XX = {500, 502, 503, 504}
+# What the agent's client retries on its own (the OpenAI and Anthropic SDKs:
+# 408, 409, 429 and any 5xx). After a signed call each retry is a new call,
+# paid again, so none of these reaches it unless the gateway says nothing was
+# charged.
+RETRIED = {408, 409, 429}
+
+
+def retried(status: int) -> bool:
+    return status in RETRIED or status >= 500
+
+
+def not_charged(body: dict) -> bool:
+    """Whether a failed signed call's body proves nothing was charged."""
+    return body.get("payment_status") == "not_charged"
 
 
 def pay(send, wallet: Wallet, network: str, cap: float, ledger: Ledger):
@@ -563,18 +578,20 @@ def pay(send, wallet: Wallet, network: str, cap: float, ledger: Ledger):
         except Exception:
             ledger.release(price)
             raise
-        connection, response = send({"PAYMENT-SIGNATURE": header})
-        resent = False
-        if response.status in STATUS_5XX:
-            data = response.read()
-            if reports_payment(response, refusal(data)):
-                return connection, _Replay(response, data, paid=True), price
-            connection.close()
-            connection, response = send({"PAYMENT-SIGNATURE": header})
-            resent = True
-            if response.status >= 500:
-                # Twice failed on one signature: it may have settled.
-                return connection, _Replay(response, response.read(), paid=True), price
+        connection, response, resent = _send_signed(send, header)
+        if retried(response.status):
+            try:
+                data = response.read()
+            except (OSError, http.client.HTTPException) as e:
+                raise PaymentRefused(
+                    f"a paid call failed ({response.status}, then {type(e).__name__}); it may have been charged, "
+                    "so it isn't retried", 424, retry=False,
+                ) from None
+            if not_charged(refusal(data)):
+                ledger.release(price)
+                return connection, _Replay(response, data), 0.0
+            # Charged, or it may have been: a retry would pay again.
+            return connection, _Replay(response, data, paid=True), price
         if response.status != 402:
             return connection, response, price
         data = response.read()
@@ -595,6 +612,31 @@ def pay(send, wallet: Wallet, network: str, cap: float, ledger: Ledger):
             raise PaymentRefused(f"x402 wallet is out of USDC: fund {wallet.address} on Solana ({detail})")
         raise PaymentRefused(f"the provider refused the x402 payment: {detail}")
     raise PaymentRefused("the provider refused the x402 payment")
+
+
+def _send_signed(send, header: str):
+    """Send a signed call. A 5xx that doesn't report its payment, or a
+    connection that fails before any answer, gets one more send with the same
+    signature, which settles at most once. Returns (connection, response,
+    whether it was sent again). A second transport failure means the payment
+    may have settled with no answer: PaymentRefused, not to be retried."""
+    for attempt in range(2):
+        try:
+            connection, response = send({"PAYMENT-SIGNATURE": header})
+        except (OSError, http.client.HTTPException) as e:
+            if attempt:
+                raise PaymentRefused(
+                    f"the provider didn't answer a paid call ({type(e).__name__}); it may have been charged, "
+                    "so it isn't retried", 424, retry=False,
+                ) from None
+            continue
+        if attempt or response.status not in STATUS_5XX:
+            return connection, response, bool(attempt)
+        data = response.read()
+        if reports_payment(response, refusal(data)):
+            return connection, _Replay(response, data), False
+        connection.close()
+    raise AssertionError("unreachable")
 
 
 class _Replay:

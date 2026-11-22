@@ -77,11 +77,13 @@ solana-keygen's JSON array) and pays for each call itself
 A refused payment is signed again, on a new quote, only when the gateway
 proves nothing was broadcast (a nonce replay, an underpaid or expired
 quote), never after settlement began; a 5xx to a signed call is sent once
-more with the same signature, which settles at most once. A call that fails
-after its payment did or may have settled (a 5xx reporting the payment, or
-one still failing after that resend) reaches the agent as 424 with
-`x-should-retry: false`, not as a 5xx its client would retry and pay for
-again. Each payment is logged in the batch's `proxy.log` (route, USD, the
+more with the same signature, which settles at most once, and so is a
+signed call whose connection fails before any answer. After a signature
+has gone out, no answer the agent's client would retry on its own (408,
+409, 429, any 5xx, or no answer at all) reaches it as such: each retry
+would be a new call, paid again. It gets 424 with `x-should-retry: false`
+instead, and the ledger keeps the charge, unless the gateway's answer says
+nothing was charged (`payment_status: not_charged`). Each payment is logged in the batch's `proxy.log` (route, USD, the
 batch's running total), and the budget counts the preflight's calls too:
 `just bench` keeps one ledger for both, `x402-ledger.json` in the batch.
 A wallet out of USDC, or a spent budget, stops the batch like a provider's

@@ -15,6 +15,7 @@ import hashlib
 import http.client
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -248,6 +249,17 @@ class Gateway(BaseHTTPRequestHandler):
             return self.answer(500, {"error": "upstream failed", "payment_status": "settled", "tx_hash": "abc"})
         if model == "stub/down":
             return self.answer(502, {"error": "bad gateway"})
+        if model == "stub/drop" or (model == "stub/drop-once" and signed == 1):
+            # Paid, then gone before any answer.
+            self.close_connection = True
+            self.connection.shutdown(socket.SHUT_RDWR)
+            return None
+        if model == "stub/limited":
+            return self.answer(429, {"error": "rate limited", "payment_status": "settled"})
+        if model == "stub/cooling":
+            return self.answer(429, {"error": "upstream cooldown", "payment_status": "not_charged"})
+        if model == "stub/odd":
+            return self.answer(520, {"error": "unknown"})
         stream = b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n'
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -256,7 +268,10 @@ class Gateway(BaseHTTPRequestHandler):
         self.wfile.write(stream)
 
 
-MODELS = ["ok", "free", "replay", "settle", "broke", "dear", "flaky", "charged", "down", "devnet", "room"]
+MODELS = [
+    "ok", "free", "replay", "settle", "broke", "dear", "flaky", "charged", "down", "drop", "drop-once", "limited",
+    "cooling", "odd", "devnet", "room",
+]
 
 
 class Proxy(unittest.TestCase):
@@ -419,6 +434,41 @@ class Proxy(unittest.TestCase):
         signatures = [s["signature"] for s in self.calls_to("down") if s["signature"]]
         self.assertEqual(len(signatures), 2)
         self.assertEqual(signatures[0], signatures[1])
+
+    def no_retry(self, headers):
+        return {k.lower(): v for k, v in headers.items()}.get("x-should-retry") == "false"
+
+    def test_a_paid_call_that_never_answers_is_not_retried(self):
+        proxy, url = self.start()
+        status, headers, data = self.call(url, "drop")
+        self.assertEqual(status, 424)
+        self.assertTrue(self.no_retry(headers))
+        self.assertIn(b"may have been charged", data)
+        signatures = [s["signature"] for s in self.calls_to("drop") if s["signature"]]
+        self.assertEqual(len(signatures), 2)
+        self.assertEqual(signatures[0], signatures[1])
+
+    def test_a_dropped_paid_call_is_resent_with_the_same_signature(self):
+        _, url = self.start()
+        self.assertEqual(self.call(url, "drop-once")[0], 200)
+        signatures = [s["signature"] for s in self.calls_to("drop-once") if s["signature"]]
+        self.assertEqual(len(signatures), 2)
+        self.assertEqual(signatures[0], signatures[1])
+
+    def test_every_status_a_client_retries_is_held_back_after_a_payment(self):
+        _, url = self.start()
+        for name in ("limited", "odd"):
+            status, headers, _ = self.call(url, name)
+            self.assertEqual(status, 424, name)
+            self.assertTrue(self.no_retry(headers), name)
+
+    def test_a_failure_that_proves_nothing_was_charged_stays_retryable(self):
+        proxy, url = self.start(budget=0.0015)
+        status, headers, _ = self.call(url, "cooling")
+        self.assertEqual(status, 429)
+        self.assertFalse(self.no_retry(headers))
+        # Its hold was let go: the budget still has room for a paid call.
+        self.assertEqual(self.call(url, "ok")[0], 200)
 
     def test_preflight_and_proxy_share_the_budget(self):
         with tempfile.TemporaryDirectory() as tmp:

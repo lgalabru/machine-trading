@@ -113,9 +113,9 @@ ACCOUNT_HEADERS = {
 LEDGER = x402_solana.Ledger()
 
 class Refused(Exception):
-    def __init__(self, status, reason, route="-"):
+    def __init__(self, status, reason, route="-", retry=True):
         super().__init__(reason)
-        self.status, self.reason, self.route = status, reason, route
+        self.status, self.reason, self.route, self.retry = status, reason, route, retry
 
 
 class Server(ThreadingHTTPServer):
@@ -227,6 +227,8 @@ class Proxy(BaseHTTPRequestHandler):
         data = json.dumps({"error": {"message": refused.reason, "type": "proxy_error"}}).encode()
         self.send_response(refused.status)
         self.send_header("Content-Type", "application/json")
+        if not getattr(refused, "retry", True):
+            self.send_header("x-should-retry", "false")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -313,7 +315,7 @@ class Proxy(BaseHTTPRequestHandler):
                         send, route["wallet"], route["network"], route["max_usd"], LEDGER
                     )
                 except x402_solana.PaymentRefused as refused:
-                    self.refuse(Refused(refused.status, refused.reason, name))
+                    self.refuse(Refused(refused.status, refused.reason, name, refused.retry))
                     return
                 if paid:
                     print(
