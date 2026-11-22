@@ -125,6 +125,8 @@ impl TapeReader {
         }
         fills
             .iter()
+            // A fill whose decimals don't read as numbers, or that is
+            // empty, fills no paper quote: it is left out.
             .filter_map(|fill| {
                 let price: f64 = fill.price.to_string().parse().ok()?;
                 let size: f64 = fill.quantity.to_string().parse().ok()?;
@@ -495,6 +497,14 @@ fn horizon_name(slots: u64) -> &'static str {
     }
 }
 
+/// A lock whose holders only copy a position in or out, so one poisoned
+/// by a panic elsewhere still holds a whole position.
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -715,13 +725,11 @@ pub struct PaperPosition {
 
 impl PaperPosition {
     pub fn get(&self) -> mtx_kit::Position {
-        self.held.lock().map(|p| *p).unwrap_or_default()
+        *lock(&self.held)
     }
 
     fn set(&self, size: f64, entry_usd: f64) {
-        if let Ok(mut held) = self.held.lock() {
-            *held = mtx_kit::Position { size, entry_usd };
-        }
+        *lock(&self.held) = mtx_kit::Position { size, entry_usd };
     }
 }
 
