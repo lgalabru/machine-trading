@@ -72,6 +72,8 @@ pub struct Journal {
     events: super::events::Events,
     steps: Mutex<Appender>,
     paper: Option<Mutex<Paper>>,
+    /// Where a shadow strategy reads its paper position.
+    position: Option<Arc<PaperPosition>>,
 }
 
 struct Paper {
@@ -170,7 +172,15 @@ impl Journal {
             events,
             steps: Mutex::new(steps),
             paper,
+            position: None,
         })
+    }
+
+    /// Hand the strict paper book's position to `position`, if any, after
+    /// each step: a shadow strategy reads it as its own.
+    pub fn sharing_position_if(mut self, position: Option<Arc<PaperPosition>>) -> Self {
+        self.position = position;
+        self
     }
 
     fn paper_step(&self, trace: &StepTrace, unix_ms: u64) {
@@ -203,6 +213,11 @@ impl Journal {
                     "the paper book",
                 );
             }
+        }
+        if let Some(position) = &self.position {
+            let strict = &books[0];
+            debug_assert_eq!(strict.model, FillModel::Through);
+            position.set(strict.position, strict.entry_usd);
         }
         if !trades.is_empty() {
             tracing::info!(counter.mtx_tape_trades = trades.len() as u64, strategy = %self.strategy, "the market's trades");
@@ -526,6 +541,26 @@ impl FillModel {
     }
 }
 
+/// Smaller than any venue's base lot: a position this close to flat is
+/// rounding, and flat.
+const POSITION_DUST: f64 = 1e-9;
+
+/// The average entry after a fill of `signed` at `price` on a position of
+/// `held` entered at `entry`: a fill that adds averages in, one that
+/// reduces leaves it, one that flips starts the new side at `price`.
+pub fn entry_after(held: f64, entry: f64, signed: f64, price: f64) -> f64 {
+    let after = held + signed;
+    if after.abs() < POSITION_DUST {
+        0.0
+    } else if held == 0.0 || held.signum() != after.signum() {
+        price
+    } else if held.signum() == signed.signum() {
+        (held * entry + signed * price) / after
+    } else {
+        entry
+    }
+}
+
 /// A real trade on the market: the taker's side (a taker's sale,
 /// [`Side::Ask`], hits bids), its price and size.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -664,6 +699,30 @@ pub struct PaperBook {
     /// The paper position, base units, and the cash its fills paid.
     pub position: f64,
     cash: f64,
+    /// The open position's average entry price: 0 when flat.
+    pub entry_usd: f64,
+}
+
+/// A shadow strategy's paper position, as its strict (`through`) paper
+/// book holds it after each step: what the strategy reads as its own
+/// position. A shadow sends nothing, so the chain's position is always
+/// flat: without this, it never learns it filled, its inventory controls
+/// never act, and its paper position drifts past any cap.
+#[derive(Debug, Default)]
+pub struct PaperPosition {
+    held: Mutex<mtx_kit::Position>,
+}
+
+impl PaperPosition {
+    pub fn get(&self) -> mtx_kit::Position {
+        self.held.lock().map(|p| *p).unwrap_or_default()
+    }
+
+    fn set(&self, size: f64, entry_usd: f64) {
+        if let Ok(mut held) = self.held.lock() {
+            *held = mtx_kit::Position { size, entry_usd };
+        }
+    }
 }
 
 impl PaperBook {
@@ -706,6 +765,7 @@ impl PaperBook {
     }
 
     /// The paper PnL at `mid`: cash plus the position marked there.
+    /// (`cash + position * entry_usd` is what the closed trades made.)
     pub fn pnl(&self, mid: f64) -> f64 {
         self.cash + self.position * mid
     }
@@ -927,8 +987,14 @@ impl PaperBook {
             Side::Bid => size,
             Side::Ask => -size,
         };
+        self.entry_usd = entry_after(self.position, self.entry_usd, signed, price);
         self.position += signed;
         self.cash -= signed * price;
+        // Rounding leaves dust where a position closed: flat is flat.
+        if self.position.abs() < POSITION_DUST {
+            self.position = 0.0;
+            self.entry_usd = 0.0;
+        }
         let fill = Fill {
             slot,
             unix_ms,
@@ -1115,6 +1181,72 @@ mod tape_tests {
         let seen = views[0].tape.as_ref().expect("the tape is reported");
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].slot, 7);
+    }
+}
+
+#[cfg(test)]
+mod position_tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    proptest! {
+        /// Average-cost accounting: whatever the fills, the cash plus the
+        /// open position at its entry is what the closed trades made,
+        /// counted fill by fill; flat has no entry; a reducing fill leaves
+        /// the entry alone.
+        #[test]
+        fn the_entry_keeps_the_books_balanced(fills in prop::collection::vec((-5i32..=5, 90.0f64..110.0), 1..60)) {
+            let (mut held, mut entry, mut cash, mut realized) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+            for (lots, price) in fills {
+                let signed = f64::from(lots) * 0.1;
+                if signed == 0.0 { continue; }
+                // What the closed part made, at the entry before this fill.
+                if held != 0.0 && held.signum() != signed.signum() {
+                    let closed = signed.abs().min(held.abs());
+                    realized += (price - entry) * closed * held.signum();
+                }
+                let before = entry;
+                entry = entry_after(held, entry, signed, price);
+                let reduced = held != 0.0 && held.signum() != signed.signum() && signed.abs() < held.abs() && (held + signed).abs() >= POSITION_DUST;
+                held += signed;
+                if held.abs() < POSITION_DUST { held = 0.0; }
+                cash -= signed * price;
+                if held == 0.0 { prop_assert_eq!(entry, 0.0); }
+                if reduced { prop_assert_eq!(entry, before); }
+                prop_assert!((cash + held * entry - realized).abs() < 1e-6, "cash {cash} held {held} entry {entry} realized {realized}");
+            }
+        }
+    }
+
+    /// The strict paper book's fills set what a shadow reads as its
+    /// position, entry included.
+    #[test]
+    fn a_shadow_reads_its_paper_fills() {
+        let mut book = PaperBook::new(FillModel::Through);
+        let take = vec![(
+            Action::Limit {
+                side: Side::Bid,
+                price: 102.0,
+                size: 0.3,
+            },
+            SendState::Landed("sig".into()),
+        )];
+        book.step(
+            100,
+            0,
+            Top {
+                bid: Some(99.0),
+                ask: Some(101.0),
+            },
+            &[],
+            &take,
+        );
+        let shared = PaperPosition::default();
+        shared.set(book.position, book.entry_usd);
+        let read = shared.get();
+        assert!((read.size - 0.3).abs() < 1e-9);
+        assert_eq!(read.entry_usd, 101.0);
     }
 }
 

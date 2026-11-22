@@ -58,6 +58,9 @@ pub struct BotSpec<'a> {
     pub sends: Option<Arc<dyn mtx_kit::chain::ChainClient>>,
     /// Watches each step: the strategy's journals ([`super::journal`]).
     pub observer: Option<Arc<dyn crate::desk::StepObserver>>,
+    /// A shadow's paper position, read as its own (the chain's is flat:
+    /// it sends nothing). `None` for a live strategy.
+    pub paper_position: Option<Arc<super::journal::PaperPosition>>,
     /// Whether an order waits to land before the step goes on. Through
     /// `sends`, a live strategy fires and forgets: a step can't wait on
     /// each of its orders.
@@ -104,6 +107,7 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
         slot: spec.slot,
         readings: spec.readings,
         last: Mutex::new(None),
+        paper_position: spec.paper_position,
     });
     // Post-only orders are checked against the cache's book: the trader's
     // own read simulates against its account, which a shadow strategy's
@@ -162,6 +166,8 @@ struct CacheReads {
     /// Phoenix's SOL book). One decode a step, every answer from the same
     /// snapshot.
     last: Mutex<Option<(u64, PerpReading)>>,
+    /// A shadow's paper position, read in place of the chain's.
+    paper_position: Option<Arc<super::journal::PaperPosition>>,
 }
 
 impl CacheReads {
@@ -249,6 +255,9 @@ impl PerpReads for CacheReads {
     }
 
     async fn position(&self) -> Result<mtx_kit::Position, String> {
+        if let Some(paper) = &self.paper_position {
+            return Ok(paper.get());
+        }
         let reading = self.read()?;
         Ok(mtx_kit::Position {
             size: reading.position,
