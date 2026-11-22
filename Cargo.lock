@@ -5410,6 +5410,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-lead-maker"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+ "proptest",
+]
+
+[[package]]
 name = "mtx-bot-maker"
 version = "0.1.0"
 dependencies = [
@@ -5672,6 +5680,7 @@ dependencies = [
  "bytes 1.12.1",
  "chrono",
  "core_affinity",
+ "futures-util",
  "mtx-core",
  "mtx-kit",
  "opentelemetry",
@@ -5683,6 +5692,7 @@ dependencies = [
  "proptest",
  "rand 0.10.3",
  "reqwest 0.12.28",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -5699,12 +5709,14 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-stream",
+ "tokio-tungstenite 0.28.0",
  "tokio-util 0.7.20",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "wasmtime",
  "wasmtime-wasi",
+ "webpki-roots 1.0.11",
  "wincode",
 ]
 

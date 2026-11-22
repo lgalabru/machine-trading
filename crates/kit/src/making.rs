@@ -12,6 +12,11 @@
 //! - **Watch the takers.** A maker is picked off by takers who know the
 //!   next tick: their orders come one-sided just before it moves.
 //!   [`taker_flow`] is the share of the recent taker volume that bought.
+//! - **Watch the exchanges.** SOL's price is made off-chain and Phoenix
+//!   follows about half a second later: a maker's fills right after the
+//!   exchange moved against them are the worst. [`Lead`] tracks a reference
+//!   venue's mid (an exchange, as the live runtime shows it in
+//!   `market.venues`) and [`lead_call`] says which side its move runs into.
 //! - **Keep transactions few.** [`Momentum`] tracks the mid's recent move,
 //!   [`Requote`] says when quotes are worth replacing, and [`place`] sends
 //!   them post-only, sized against the cap.
@@ -225,7 +230,14 @@ impl Guard {
                 s if s <= -self.config.threshold => Some(Pull::Bids),
                 _ => None,
             });
-        if let Some(pull) = called {
+        self.hold(slot, called)
+    }
+
+    /// The side to pull at `slot`, given what some signal called for then
+    /// (`None`: nothing new), held [`GuardConfig::hold_slots`] after the
+    /// last call. A call the other way turns the pull at once.
+    pub fn hold(&mut self, slot: u64, called: Option<Pull>) -> Pull {
+        if let Some(pull) = called.filter(|p| *p != Pull::Neither) {
             self.pulled = Some((pull, slot.saturating_add(self.config.hold_slots)));
         }
         match self.pulled {
@@ -236,6 +248,66 @@ impl Guard {
             }
         }
     }
+}
+
+/// A reference venue's mid (an exchange's book, as `market.venues` shows
+/// it), and its move over the last `window_slots` slots.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Lead {
+    window_slots: u64,
+    mids: VecDeque<(u64, f64)>,
+}
+
+impl Lead {
+    pub fn new(window_slots: u64) -> Self {
+        assert!(window_slots > 0, "a window of at least a slot");
+        Self {
+            window_slots,
+            mids: VecDeque::new(),
+        }
+    }
+
+    /// Take the reference's mid at `slot`; its move since the newest mid
+    /// at least `window_slots` before, in bps. `None` until the history
+    /// covers the window, and for a slot without a reference (the stream
+    /// down or stale), which also forgets what came before: a gap isn't a
+    /// move.
+    pub fn push(&mut self, slot: u64, mid: Option<f64>) -> Option<f64> {
+        let Some(mid) = mid.filter(|m| m.is_finite() && *m > 0.0) else {
+            self.mids.clear();
+            return None;
+        };
+        if self.mids.back().is_some_and(|(s, _)| *s >= slot) {
+            self.mids.pop_back();
+        }
+        self.mids.push_back((slot, mid));
+        // The window's start; none yet this early in the chain's slots.
+        let from = slot.checked_sub(self.window_slots)?;
+        // Keep the newest mid at or before the window's start, and after.
+        while self.mids.len() > 1 && self.mids[1].0 <= from {
+            self.mids.pop_front();
+        }
+        let (first_slot, first) = *self.mids.front()?;
+        (first_slot <= from).then(|| (mid / first - 1.0) * 10_000.0)
+    }
+}
+
+/// The side a reference's move runs into: a rise past `threshold_bps`
+/// lifts the asks before the book follows, a fall hits the bids.
+pub fn lead_call(move_bps: Option<f64>, threshold_bps: f64) -> Option<Pull> {
+    assert!(threshold_bps > 0.0, "a threshold is a move");
+    match move_bps? {
+        m if m >= threshold_bps => Some(Pull::Asks),
+        m if m <= -threshold_bps => Some(Pull::Bids),
+        _ => None,
+    }
+}
+
+/// The mid of the venue named `id` in `venues`, if it has a book.
+pub fn venue_mid(venues: &[crate::VenueView], id: &str) -> Option<f64> {
+    let venue = venues.iter().find(|v| v.id == id)?;
+    let (bid, ask) = (venue.best_bid?, venue.best_ask?);
+    (bid > 0.0 && ask >= bid).then_some((bid + ask) / 2.0)
 }
 
 /// The mid's move over the last few steps, in bps.
@@ -270,12 +342,13 @@ impl Momentum {
     }
 }
 
-/// When quotes are worth replacing: a target moved, or they are older than
-/// `every_slots` (a quote the book refused as crossing comes back).
+/// When quotes are worth replacing: a price or a size changed (a fill
+/// changes what a side may quote), or they are older than `every_slots` (a
+/// quote the book refused as crossing comes back).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Requote {
     every_slots: u64,
-    last: Option<(u64, Targets)>,
+    last: Option<(u64, Quotes)>,
 }
 
 impl Requote {
@@ -286,20 +359,20 @@ impl Requote {
         }
     }
 
-    /// Whether to replace the quotes at `slot` with `targets`; if so, they
+    /// Whether to replace what rests at `slot` with `quotes`; if so, they
     /// are taken as placed.
-    pub fn due(&mut self, slot: u64, targets: Targets) -> bool {
+    pub fn due(&mut self, slot: u64, quotes: Quotes) -> bool {
         let due = self.last.is_none_or(|(at, placed)| {
-            placed != targets || slot >= at.saturating_add(self.every_slots)
+            placed != quotes || slot >= at.saturating_add(self.every_slots)
         });
         if due {
-            self.last = Some((slot, targets));
+            self.last = Some((slot, quotes));
         }
         due
     }
 }
 
-/// How [`place`] sizes quotes.
+/// How [`quotes`] sizes them.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sizing {
     /// Each quote's size, base units.
@@ -310,40 +383,55 @@ pub struct Sizing {
     pub size_min: f64,
 }
 
-/// Cancel what rests and quote `targets`, post-only, each side sized so a
-/// fill can't take the position past the cap. What it sent: (bid, ask)
-/// sizes, 0 for a side not quoted.
-pub fn place(
-    orders: &mut Orders,
-    targets: Targets,
-    tick: f64,
-    held: f64,
-    sizing: Sizing,
-) -> (f64, f64) {
-    assert!(tick > 0.0 && sizing.cap > 0.0, "a tick and a cap");
+/// What to rest: each side's price in ticks and size, `None` for a side
+/// not quoted.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Quotes {
+    pub bid: Option<(i64, f64)>,
+    pub ask: Option<(i64, f64)>,
+}
+
+/// `targets` sized against the cap. A strategy sees its position a step
+/// late (the fills since its last step are applied after it decides), so
+/// the quote resting on a side may have filled unseen: each side's size
+/// leaves room for that one, and no unseen fill and new fill together can
+/// take the position past the cap.
+pub fn quotes(targets: Targets, held: f64, sizing: Sizing) -> Quotes {
+    assert!(sizing.cap > 0.0 && sizing.size >= 0.0, "a cap and a size");
+    let in_flight = sizing.size;
+    let room_to_buy = (sizing.cap - held - in_flight).max(0.0);
+    let room_to_sell = (sizing.cap + held - in_flight).max(0.0);
+    let side = |price: Option<i64>, room: f64| {
+        let size = sizing.size.min(room);
+        price.filter(|_| size >= sizing.size_min).map(|p| (p, size))
+    };
+    let quotes = Quotes {
+        bid: side(targets.bid, room_to_buy),
+        ask: side(targets.ask, room_to_sell),
+    };
+    debug_assert!(
+        quotes
+            .bid
+            .is_none_or(|(_, s)| held + s + in_flight <= sizing.cap + 1e-9)
+    );
+    debug_assert!(
+        quotes
+            .ask
+            .is_none_or(|(_, s)| held - s - in_flight >= -sizing.cap - 1e-9)
+    );
+    quotes
+}
+
+/// Cancel what rests and rest `quotes`, post-only.
+pub fn place(orders: &mut Orders, quotes: Quotes, tick: f64) {
+    assert!(tick > 0.0, "a tick has a size");
     orders.cancel_all();
-    let room_to_buy = (sizing.cap - held).max(0.0);
-    let room_to_sell = (sizing.cap + held).max(0.0);
-    let mut sent = (0.0, 0.0);
-    if let Some(bid) = targets.bid {
-        let size = sizing.size.min(room_to_buy);
-        if size >= sizing.size_min {
-            orders.bid(bid as f64 * tick, size).post_only();
-            sent.0 = size;
-        }
+    if let Some((bid, size)) = quotes.bid {
+        orders.bid(bid as f64 * tick, size).post_only();
     }
-    if let Some(ask) = targets.ask {
-        let size = sizing.size.min(room_to_sell);
-        if size >= sizing.size_min {
-            orders.ask(ask as f64 * tick, size).post_only();
-            sent.1 = size;
-        }
+    if let Some((ask, size)) = quotes.ask {
+        orders.ask(ask as f64 * tick, size).post_only();
     }
-    // A quote never takes the position further past the cap; one already
-    // past it (a forced fill) is only ever quoted back.
-    debug_assert!(sent.0 == 0.0 || held + sent.0 <= sizing.cap + 1e-9);
-    debug_assert!(sent.1 == 0.0 || held - sent.1 >= -sizing.cap - 1e-9);
-    sent
 }
 
 #[cfg(test)]
@@ -489,27 +577,37 @@ mod tests {
             for _ in 0..10 { prop_assert_eq!(flat.push(66.5), 0.0); }
         }
 
-        /// A requote is due for new targets, or once the quotes are old,
-        /// and not otherwise.
+        /// A requote is due for new prices or sizes, or once the quotes are
+        /// old, and not otherwise.
         #[test]
-        fn requotes_come_when_targets_move_or_age(every in 1u64..50, gap in 0u64..100, bid in 0i64..10, moved in any::<bool>()) {
+        fn requotes_come_when_quotes_change_or_age(every in 1u64..50, gap in 0u64..100, bid in 0i64..10, moved in any::<bool>(), resized in any::<bool>()) {
             let mut requote = Requote::new(every);
-            let first = Targets { bid: Some(bid), ask: Some(bid + 2) };
+            let first = Quotes { bid: Some((bid, 1.0)), ask: Some((bid + 2, 1.0)) };
             prop_assert!(requote.due(100, first));
-            let next = if moved { Targets { bid: Some(bid - 1), ..first } } else { first };
-            prop_assert_eq!(requote.due(100 + gap, next), moved || gap >= every);
+            let mut next = first;
+            if moved { next.bid = Some((bid - 1, 1.0)); }
+            if resized { next.ask = Some((bid + 2, 0.5)); }
+            prop_assert_eq!(requote.due(100 + gap, next), moved || resized || gap >= every);
         }
 
-        /// What is placed never takes the position past the cap, whatever
-        /// it holds.
+        /// Seen a step late, with every resting quote filling at random
+        /// between steps, the position never passes the cap.
         #[test]
-        fn placing_respects_the_cap(held in -1.5f64..1.5, size in 0.0f64..2.0) {
-            let sizing = Sizing { size, cap: 1.0, size_min: 0.001 };
-            let mut orders = Orders::default();
-            let (bid, ask) = place(&mut orders, Targets { bid: Some(6654), ask: Some(6655) }, TICK, held, sizing);
-            prop_assert!(bid >= 0.0 && ask >= 0.0);
-            prop_assert!(held + bid <= 1.0 + 1e-9 || bid == 0.0);
-            prop_assert!(held - ask >= -1.0 - 1e-9 || ask == 0.0);
+        fn a_position_seen_late_never_passes_the_cap(fills in prop::collection::vec((any::<bool>(), any::<bool>()), 1..200), size_share in 0.05f64..1.0) {
+            let sizing = Sizing { size: size_share, cap: 1.0, size_min: 0.001 };
+            let (mut held, mut seen) = (0.0f64, 0.0f64);
+            let mut resting = Quotes { bid: None, ask: None };
+            for (bid_fills, ask_fills) in fills {
+                // The step decides on what it saw; then the trades since fill
+                // what rested, and only after that does it see them.
+                let placed = quotes(Targets { bid: Some(6654), ask: Some(6655) }, seen, sizing);
+                let before = resting;
+                resting = placed;
+                if bid_fills && let Some((_, s)) = before.bid { held += s; }
+                if ask_fills && let Some((_, s)) = before.ask { held -= s; }
+                prop_assert!(held.abs() <= 1.0 + 1e-9, "held {held}");
+                seen = held;
+            }
         }
     }
 
@@ -522,13 +620,66 @@ mod tests {
             cap: 1.0,
             size_min: 0.001,
         };
-        let mut orders = Orders::default();
         let both = Targets {
             bid: Some(6654),
             ask: Some(6655),
         };
-        assert_eq!(place(&mut orders, both, TICK, 1.2, sizing), (0.0, 0.5));
-        assert_eq!(place(&mut orders, both, TICK, -1.2, sizing), (0.5, 0.0));
+        let long = quotes(both, 1.2, sizing);
+        assert_eq!((long.bid, long.ask), (None, Some((6655, 0.5))));
+        let short = quotes(both, -1.2, sizing);
+        assert_eq!((short.bid, short.ask), (Some((6654, 0.5)), None));
+        let mut orders = Orders::default();
+        place(&mut orders, long, TICK);
+        assert_eq!(orders.intents().len(), 2, "a cancel and the ask");
+    }
+
+    proptest! {
+        /// The lead is the move since the newest mid at least the window
+        /// back, it waits for the window, and a gap forgets the history.
+        #[test]
+        fn the_lead_is_the_move_over_its_window(mids in prop::collection::vec(60.0f64..80.0, 1..30), window in 1u64..8) {
+            let mut lead = Lead::new(window);
+            let mut last = None;
+            for (i, &m) in mids.iter().enumerate() {
+                last = lead.push(i as u64, Some(m));
+            }
+            let n = mids.len() as u64;
+            match last {
+                Some(moved) => {
+                    prop_assert!(n > window);
+                    let first = mids[(n - 1 - window) as usize];
+                    prop_assert!((moved - (mids[mids.len() - 1] / first - 1.0) * 10_000.0).abs() < 1e-9);
+                }
+                None => prop_assert!(n <= window),
+            }
+            prop_assert_eq!(lead.push(n, None), None);
+            prop_assert_eq!(lead.push(n + 1, Some(70.0)), None);
+        }
+
+        /// A call is symmetric, and nothing under the threshold calls.
+        #[test]
+        fn lead_calls_are_symmetric(m in -10.0f64..10.0, threshold in 0.1f64..5.0) {
+            let up = lead_call(Some(m), threshold);
+            let down = lead_call(Some(-m), threshold);
+            match up {
+                Some(Pull::Asks) => prop_assert_eq!(down, Some(Pull::Bids)),
+                Some(Pull::Bids) => prop_assert_eq!(down, Some(Pull::Asks)),
+                _ => { prop_assert_eq!(up, None); prop_assert_eq!(down, None); prop_assert!(m.abs() < threshold); }
+            }
+            prop_assert_eq!(lead_call(None, threshold), None);
+        }
+    }
+
+    #[test]
+    fn a_venue_mid_is_found_by_name() {
+        let venues = vec![crate::VenueView {
+            id: "coinbase:spot:SOL-USD".into(),
+            best_bid: Some(69.04),
+            best_ask: Some(69.06),
+            ..Default::default()
+        }];
+        assert!((venue_mid(&venues, "coinbase:spot:SOL-USD").unwrap() - 69.05).abs() < 1e-9);
+        assert_eq!(venue_mid(&venues, "binance:spot:SOLUSDT"), None);
     }
 
     #[test]

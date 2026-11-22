@@ -421,6 +421,18 @@ each market's lines to that market's own cap in the mandate. A process bot
 on `mtx_kit::run` trades only `MTX_SYMBOL`'s market; to trade the others,
 it reads `MTX_MARKETS` and sends to them itself.
 
+On mainnet, the live runtime can also show **reference venues**: an
+exchange's public book for the market the strategy trades, as a read-only
+venue in `market.venues` named `<source>:spot:<pair>`
+(`coinbase:spot:SOL-USD`), with its best bid and ask and its age in
+milliseconds in `stats` (`age_ms`). It is never in `session.venues` and
+can't be traded: no line goes to it, it holds no position. A quote older
+than two seconds isn't shown at all, so a strategy treats a missing
+reference as no information, not as a price. `mtx_kit::making::venue_mid`
+reads its mid and `Lead` its move over the last slots (`bots/lead-maker`).
+The node's operator turns references on (`control.references`, see
+`docs/sidecar.md`); the grader's scenarios show none.
+
 A perp scenario that starts the bot holding a position, or gives it an
 order to work, says so:
 

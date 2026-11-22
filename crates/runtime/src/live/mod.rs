@@ -21,6 +21,7 @@ pub mod events;
 pub mod feed;
 pub mod journal;
 pub mod perp;
+pub mod reference;
 pub mod session;
 pub mod shadow;
 pub mod stopping;
@@ -234,6 +235,7 @@ impl Runtime {
                         events: events::Events::default(),
                         blockhash: latest_blockhash.clone(),
                         readings: Arc::default(),
+                        references: Arc::default(),
                     },
                     slots: slots_seen,
                     slot_events: received,
