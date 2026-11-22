@@ -185,6 +185,15 @@ pub struct Desk {
     /// The requests for quotes open to the strategy, where clients send
     /// any.
     pub rfqs: Option<std::sync::Arc<dyn Rfqs>>,
+    /// Prices from elsewhere (an exchange's book) the strategy reads as
+    /// venues of their own, read-only: the live runtime's references.
+    pub references: Option<std::sync::Arc<dyn References>>,
+}
+
+/// Prices from elsewhere, as read-only venues in `market.venues`: none
+/// traded, no position, only a best bid and ask and their age.
+pub trait References: Send + Sync {
+    fn views(&self) -> Vec<mtx_kit::VenueView>;
 }
 
 /// How a component's market is read at each turn.
@@ -585,6 +594,9 @@ impl<R: RawDesk> WasmBot<R> {
                     health: reading.health,
                 });
             }
+        }
+        if let Some(references) = &self.desk.references {
+            venues.extend(references.views());
         }
         if matches!(self.desk.reader, Reader::Wallet { .. }) {
             for view in venues.iter_mut().skip(1) {

@@ -87,6 +87,10 @@ pub struct ControlConfig {
     /// removed first.
     #[serde(default)]
     pub events: Option<PathBuf>,
+    /// Exchanges' public prices, read as venues by every strategy
+    /// (`live::reference`): none by default.
+    #[serde(default)]
+    pub references: Vec<super::reference::ReferenceConfig>,
 }
 
 /// Four: a step is a fraction of a millisecond of one core, and four let
@@ -175,6 +179,9 @@ pub struct Shared {
     pub blockhash: Arc<super::blockhash::LatestBlockhash>,
     /// Market readings, shared across strategies.
     pub readings: Arc<super::bot::Readings>,
+    /// The exchanges' latest prices (`control.references`), as every
+    /// strategy reads them.
+    pub references: Arc<super::reference::Latest>,
 }
 
 /// What the strategies' thread starts with besides the configuration.
@@ -190,7 +197,7 @@ pub struct Inputs {
 
 /// Start the strategies' thread: restore the desired state, then step the
 /// running strategies on `slots`, and serve commands on the socket.
-pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
+pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<std::thread::JoinHandle<()>, String> {
     let Inputs {
         shared,
         slots,
@@ -198,12 +205,24 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
     } = inputs;
     std::fs::create_dir_all(&config.logs).map_err(|e| format!("{}: {e}", config.logs.display()))?;
     let (commands, received) = mpsc::channel(COMMANDS_WAITING_MAX);
-    listen(&config.socket, commands.clone())?;
+    let connections = Arc::new(super::stopping::Connections::default());
+    listen(&config.socket, commands.clone(), connections.clone())?;
     if let Some(socket) = &config.events {
-        super::events::listen(socket, shared.events.clone(), commands.clone())?;
+        super::events::listen(
+            socket,
+            shared.events.clone(),
+            commands.clone(),
+            connections.clone(),
+        )?;
     }
+    super::reference::spawn(
+        &config.references,
+        shared.references.clone(),
+        &config.logs,
+        &connections,
+    )?;
     let sockets = (config.socket.clone(), config.events.clone());
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("mtx-live-strategies".into())
         .spawn(move || {
             let runtime = match strategies_runtime(&config) {
@@ -237,9 +256,15 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<(), String> {
             if let Some(events) = &sockets.1 {
                 wake(events);
             }
+            // Every connection shut and every socket thread joined: a
+            // sidecar's kept connection sees the runtime close it.
+            let left = connections.stop();
+            if left > 0 {
+                tracing::error!(left, "socket threads still ran after the strategies stopped");
+            }
         })
         .map_err(|e| format!("the strategies' thread: {e}"))?;
-    Ok(())
+    Ok(thread)
 }
 
 /// The strategies' async runtime: its worker threads, pinned to the cores
@@ -267,7 +292,11 @@ type Request = super::events::Request;
 /// Take commands on `socket`, on threads of their own, and hand each to
 /// the manager. A connection may carry many commands, each answered before
 /// the next is read: a sidecar connects once.
-fn listen(socket: &Path, commands: mpsc::Sender<Request>) -> Result<(), String> {
+fn listen(
+    socket: &Path,
+    commands: mpsc::Sender<Request>,
+    connections: Arc<super::stopping::Connections>,
+) -> Result<(), String> {
     match std::fs::remove_file(socket) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -278,12 +307,13 @@ fn listen(socket: &Path, commands: mpsc::Sender<Request>) -> Result<(), String> 
     // sees them gone and ends ([`wake`]).
     let listener = UnixListener::bind(socket).map_err(|e| format!("{}: {e}", socket.display()))?;
     let open = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    std::thread::Builder::new()
-        .name("mtx-live-control".into())
-        .spawn(move || {
+    let kept = connections.clone();
+    connections
+        .spawn("mtx-live-control", move || {
+            let connections = kept;
             loop {
                 let accepted = listener.accept();
-                if commands.is_closed() {
+                if commands.is_closed() || connections.stopped() {
                     return;
                 }
                 match accepted {
@@ -295,16 +325,18 @@ fn listen(socket: &Path, commands: mpsc::Sender<Request>) -> Result<(), String> 
                             );
                             continue;
                         }
+                        if let Err(error) = connections.keep(&stream) {
+                            tracing::warn!(%error, "a control connection can't be kept");
+                            continue;
+                        }
                         open.fetch_add(1, Ordering::AcqRel);
                         let (commands, open) = (commands.clone(), open.clone());
-                        let spawned = std::thread::Builder::new()
-                            .name("mtx-live-control-connection".into())
-                            .spawn(move || {
-                                if let Err(error) = answer(stream, &commands) {
-                                    tracing::warn!(%error, "a control connection failed");
-                                }
-                                open.fetch_sub(1, Ordering::AcqRel);
-                            });
+                        let spawned = connections.spawn("mtx-live-control-connection", move || {
+                            if let Err(error) = answer(stream, &commands) {
+                                tracing::warn!(%error, "a control connection failed");
+                            }
+                            open.fetch_sub(1, Ordering::AcqRel);
+                        });
                         if let Err(error) = spawned {
                             tracing::warn!(%error, "a control connection's thread didn't start");
                         }
@@ -392,6 +424,10 @@ struct Inner {
     k: u64,
     /// What the enforcer has seen of it under its current mandate.
     observed: Observed,
+    /// Its market's trades, read each step into `market.tape`. `None` if
+    /// the exchange file couldn't be read for them: it steps on, blind to
+    /// the tape.
+    tape: Option<super::journal::TapeReader>,
 }
 
 #[derive(Debug, Clone)]
@@ -465,6 +501,13 @@ impl Ctx {
                 bot: None,
                 k: 0,
                 observed: Observed::default(),
+                tape: match self.tape_reader(&spec) {
+                    Ok(reader) => Some(reader),
+                    Err(error) => {
+                        tracing::warn!(strategy = spec.name, %error, "its market's tape can't be read; it steps without it");
+                        None
+                    }
+                },
             })),
             stats: Arc::new(Mutex::new(Stats {
                 state: StrategyState::Paused {
@@ -533,6 +576,10 @@ impl Ctx {
             Some(_) => end_slot.saturating_sub(start_slot) / spec.slots_per_step,
             None => NO_TERM_STEPS,
         };
+        // A shadow reads its strict paper book's position as its own.
+        let paper_position = spec
+            .shadow
+            .then(|| Arc::new(super::journal::PaperPosition::default()));
         bot::start(BotSpec {
             component: &spec.component,
             rpc_url: &self.config.rpc_url,
@@ -546,7 +593,11 @@ impl Ctx {
                 slots_per_step: spec.slots_per_step,
                 start_slot,
                 vars: Vec::new(),
-                reports: mtx_kit::Reports::default(),
+                // The tape: its market's trades since its last step.
+                reports: mtx_kit::Reports {
+                    tape: true,
+                    ..mtx_kit::Reports::default()
+                },
                 step_deadline: Some(Duration::from_millis(self.config.step_deadline_ms)),
             },
             end_slot,
@@ -558,6 +609,9 @@ impl Ctx {
             readings: self.shared.readings.clone(),
             log: Box::new(log),
             sends: self.sends(spec)?,
+            paper_position: paper_position.clone(),
+            references: (!self.config.references.is_empty())
+                .then(|| self.shared.references.clone()),
             dispatch: self.dispatch(spec),
             observer: Some(Arc::new(
                 super::journal::Journal::open(
@@ -567,6 +621,7 @@ impl Ctx {
                     Some(self.tape_reader(spec)?),
                     self.shared.events.clone(),
                 )?
+                .sharing_position_if(paper_position.clone())
                 .behind()?,
             )),
         })
@@ -955,7 +1010,11 @@ impl Manager {
                         );
                     }
                     slot_cell.store(slot, Ordering::Release);
-                    let step = mtx_core::Step::new(inner.k, slot, false);
+                    let mut step = mtx_core::Step::new(inner.k, slot, false);
+                    if let Some(tape) = inner.tape.as_mut() {
+                        step.tape =
+                            super::journal::step_tape(&tape.trades(&name), &instrument.to_string());
+                    }
                     let answered = bot.turn(&step, None).await;
                     let ended = std::time::Instant::now();
                     let took_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -1161,6 +1220,7 @@ impl Manager {
                 .await
             }
             Command::Mandate { name, mandate } => self.change_mandate(&name, mandate).await,
+            Command::Upgrade { name, component } => self.upgrade(&name, component).await,
             Command::Add(spec) => self.add(spec, None).await,
             Command::Remove { name } => self.remove(&name).await,
         };
@@ -1276,6 +1336,67 @@ impl Manager {
             return Err(ControlError::new(ErrorCode::StartFailed, why));
         }
         Ok(())
+    }
+
+    /// Swap `name`'s component: end it, start the new one in its place
+    /// (same name, key, mandate and state), and if that fails start the old
+    /// one again, so a bad build costs a restart, not the strategy.
+    async fn upgrade(&mut self, name: &str, component: PathBuf) -> Done {
+        let bytes = std::fs::read(&component).map_err(|e| unreadable(&component, e))?;
+        let component_sha256 = format!("{:x}", Sha256::digest(&bytes));
+        let start_slot = self.slot;
+        let strategy = self.get(name)?;
+        let mut spec = strategy.spec.clone();
+        spec.component = component;
+        let mut inner = strategy.inner.lock().await;
+        if let Some(mut bot) = inner.bot.take() {
+            bot.end().await;
+        }
+        // A component that didn't load or whose `start` trapped still
+        // makes a bot, stopped: for an upgrade, that is a failed start.
+        let started = match self.ctx().start_bot(&spec, strategy, start_slot).await {
+            Ok(mut bot) => match bot.stopped.clone() {
+                Some(why) => {
+                    bot.end().await;
+                    Err(why)
+                }
+                None => Ok(bot),
+            },
+            Err(why) => Err(why),
+        };
+        let (bot, failed) = match started {
+            Ok(bot) => (Ok(bot), None),
+            Err(why) => {
+                tracing::warn!(strategy = name, %why, "the new component didn't start; the old one starts again");
+                let old = self
+                    .ctx()
+                    .start_bot(&strategy.spec, strategy, start_slot)
+                    .await;
+                (old, Some(why))
+            }
+        };
+        let stopped = bot.as_ref().err().cloned();
+        inner.bot = bot.ok();
+        inner.k = 0;
+        drop(inner);
+        let strategy = self
+            .strategies
+            .get_mut(name)
+            .expect("the strategy was got above");
+        if failed.is_none() {
+            strategy.spec = spec;
+            strategy.component_sha256 = component_sha256;
+        }
+        if let Some(why) = stopped {
+            lock(&strategy.stats).state = StrategyState::Stopped { why: why.clone() };
+        }
+        match failed {
+            Some(why) => Err(ControlError::new(
+                ErrorCode::StartFailed,
+                format!("the new component didn't start ({why}); the old one runs again"),
+            )),
+            None => Ok(()),
+        }
     }
 
     /// Compile, start and keep `spec`: paused unless it runs. `restored`

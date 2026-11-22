@@ -108,6 +108,7 @@ pub async fn start(
         reader: desk.reader,
         sends,
         rfqs: desk.rfqs.map(|board| Arc::new(board) as Arc<dyn Rfqs>),
+        references: None,
     };
     Ok(WasmBot::start(
         path,

@@ -55,7 +55,18 @@ wasmtime-wasi = "50.0.1"
 rand = { version = "0.10.1", default-features = false, features = ["std_rng"] }
 tokio.workspace = true
 
+# An exchange's public price stream (live::reference): already in the
+# tree through solana-pubsub-client, with the same TLS.
+tokio-tungstenite = { version = "0.28", optional = true, default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", optional = true, default-features = false, features = ["std"] }
+# Its TLS with an explicit crypto provider: both ring and aws-lc are in the
+# tree, and rustls won't pick one for the process (nor should a plugin).
+rustls = { version = "0.23", optional = true, default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = { version = "1", optional = true }
+
 [dev-dependencies]
+# Property tests (the step's tape, live/journal.rs).
+proptest = "1"
 # A chain held in memory, for the backfill's tests.
 mtx-kit = { workspace = true, features = ["test-util"] }
 # The kit's mainnet pool fixtures, gzipped base64 (src/venue/amm.rs).
@@ -73,4 +84,4 @@ required-features = ["live"]
 # The runtime that runs strategies against a live chain
 # (docs/rfd/0004-strategies-on-mainnet.md): the feed, the account cache and
 # the readers over it. Off in the grader.
-live = ["dep:chrono", "dep:core_affinity", "dep:solana-tpu-client-next", "dep:tokio-util", "dep:tokio-stream", "dep:bytes", "dep:wincode", "dep:solana-rpc-client", "dep:solana-account", "dep:solana-commitment-config", "dep:tracing-subscriber", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions", "dep:opentelemetry-appender-tracing"]
+live = ["dep:tokio-tungstenite", "dep:futures-util", "dep:rustls", "dep:webpki-roots", "dep:chrono", "dep:core_affinity", "dep:solana-tpu-client-next", "dep:tokio-util", "dep:tokio-stream", "dep:bytes", "dep:wincode", "dep:solana-rpc-client", "dep:solana-account", "dep:solana-commitment-config", "dep:tracing-subscriber", "dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-semantic-conventions", "dep:opentelemetry-appender-tracing"]

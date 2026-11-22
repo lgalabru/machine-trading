@@ -39,6 +39,14 @@ pub enum LiveCommand {
         /// The mandate file.
         mandate: PathBuf,
     },
+    /// Swap a strategy's component for a new build: same name, key and
+    /// mandate, no runtime restart. The old one comes back if the new one
+    /// doesn't start.
+    Upgrade {
+        name: String,
+        /// The new component (`bot.wasm`), as the node's runtime reads it.
+        component: PathBuf,
+    },
     /// Start a strategy component under a mandate, with its own key. It
     /// begins paused unless `--run`.
     Add {
@@ -385,6 +393,7 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             shadow,
         }),
         LiveCommand::Remove { name } => Command::Remove { name },
+        LiveCommand::Upgrade { name, component } => Command::Upgrade { name, component },
         LiveCommand::Kill => Command::Kill,
     })
 }

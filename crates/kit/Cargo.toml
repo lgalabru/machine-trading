@@ -149,6 +149,8 @@ candle-core = { version = "0.9", default-features = false, optional = true }
 candle-nn = { version = "0.9", default-features = false, optional = true }
 
 [dev-dependencies]
+# Property tests for the making blocks (src/making.rs).
+proptest = "1"
 # Encodes Phoenix's market events, for tests that decode them.
 borsh = "1.7"
 rust_decimal_macros = "1.39"

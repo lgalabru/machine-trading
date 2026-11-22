@@ -72,6 +72,8 @@ pub struct Journal {
     events: super::events::Events,
     steps: Mutex<Appender>,
     paper: Option<Mutex<Paper>>,
+    /// Where a shadow strategy reads its paper position.
+    position: Option<Arc<PaperPosition>>,
 }
 
 struct Paper {
@@ -170,7 +172,15 @@ impl Journal {
             events,
             steps: Mutex::new(steps),
             paper,
+            position: None,
         })
+    }
+
+    /// Hand the strict paper book's position to `position`, if any, after
+    /// each step: a shadow strategy reads it as its own.
+    pub fn sharing_position_if(mut self, position: Option<Arc<PaperPosition>>) -> Self {
+        self.position = position;
+        self
     }
 
     fn paper_step(&self, trace: &StepTrace, unix_ms: u64) {
@@ -203,6 +213,11 @@ impl Journal {
                     "the paper book",
                 );
             }
+        }
+        if let Some(position) = &self.position {
+            let strict = &books[0];
+            debug_assert_eq!(strict.model, FillModel::Through);
+            position.set(strict.position, strict.entry_usd);
         }
         if !trades.is_empty() {
             tracing::info!(counter.mtx_tape_trades = trades.len() as u64, strategy = %self.strategy, "the market's trades");
@@ -526,6 +541,26 @@ impl FillModel {
     }
 }
 
+/// Smaller than any venue's base lot: a position this close to flat is
+/// rounding, and flat.
+const POSITION_DUST: f64 = 1e-9;
+
+/// The average entry after a fill of `signed` at `price` on a position of
+/// `held` entered at `entry`: a fill that adds averages in, one that
+/// reduces leaves it, one that flips starts the new side at `price`.
+pub fn entry_after(held: f64, entry: f64, signed: f64, price: f64) -> f64 {
+    let after = held + signed;
+    if after.abs() < POSITION_DUST {
+        0.0
+    } else if held == 0.0 || held.signum() != after.signum() {
+        price
+    } else if held.signum() == signed.signum() {
+        (held * entry + signed * price) / after
+    } else {
+        entry
+    }
+}
+
 /// A real trade on the market: the taker's side (a taker's sale,
 /// [`Side::Ask`], hits bids), its price and size.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -534,6 +569,35 @@ pub struct Trade {
     pub taker: Side,
     pub price: f64,
     pub size: f64,
+}
+
+/// The trades a strategy's step is shown at most: the newest. A step is
+/// two slots, and SOL's busiest slots trade a few dozen times; this is
+/// minutes of a quiet market and seconds of the wildest.
+pub const STEP_TAPE_MAX: usize = 2048;
+
+/// Trades as a strategy's step reads them (`market.tape`): on `market` (an
+/// instrument, as the session's venues name it), oldest first, the newest
+/// [`STEP_TAPE_MAX`] of them.
+pub fn step_tape(trades: &[Trade], market: &str) -> Vec<mtx_kit::turns::Trade> {
+    let newest = &trades[trades.len().saturating_sub(STEP_TAPE_MAX)..];
+    newest
+        .iter()
+        .map(|trade| mtx_kit::turns::Trade {
+            venue: crate::venue::perps::VENUE.into(),
+            market: Some(market.to_string()),
+            side: match trade.taker {
+                Side::Bid => mtx_core::Side::Buy,
+                Side::Ask => mtx_core::Side::Sell,
+            },
+            price: trade.price,
+            base: trade.size,
+            slot: trade.slot,
+            taker: None,
+            maker: None,
+            own: None,
+        })
+        .collect()
 }
 
 /// Whether a fill made or took liquidity.
@@ -635,6 +699,30 @@ pub struct PaperBook {
     /// The paper position, base units, and the cash its fills paid.
     pub position: f64,
     cash: f64,
+    /// The open position's average entry price: 0 when flat.
+    pub entry_usd: f64,
+}
+
+/// A shadow strategy's paper position, as its strict (`through`) paper
+/// book holds it after each step: what the strategy reads as its own
+/// position. A shadow sends nothing, so the chain's position is always
+/// flat: without this, it never learns it filled, its inventory controls
+/// never act, and its paper position drifts past any cap.
+#[derive(Debug, Default)]
+pub struct PaperPosition {
+    held: Mutex<mtx_kit::Position>,
+}
+
+impl PaperPosition {
+    pub fn get(&self) -> mtx_kit::Position {
+        self.held.lock().map(|p| *p).unwrap_or_default()
+    }
+
+    fn set(&self, size: f64, entry_usd: f64) {
+        if let Ok(mut held) = self.held.lock() {
+            *held = mtx_kit::Position { size, entry_usd };
+        }
+    }
 }
 
 impl PaperBook {
@@ -677,6 +765,7 @@ impl PaperBook {
     }
 
     /// The paper PnL at `mid`: cash plus the position marked there.
+    /// (`cash + position * entry_usd` is what the closed trades made.)
     pub fn pnl(&self, mid: f64) -> f64 {
         self.cash + self.position * mid
     }
@@ -898,8 +987,14 @@ impl PaperBook {
             Side::Bid => size,
             Side::Ask => -size,
         };
+        self.entry_usd = entry_after(self.position, self.entry_usd, signed, price);
         self.position += signed;
         self.cash -= signed * price;
+        // Rounding leaves dust where a position closed: flat is flat.
+        if self.position.abs() < POSITION_DUST {
+            self.position = 0.0;
+            self.entry_usd = 0.0;
+        }
         let fill = Fill {
             slot,
             unix_ms,
@@ -958,14 +1053,14 @@ fn signed_bps(side: Side, price: f64, mid: f64) -> f64 {
 }
 
 /// A JSON-lines file, appended to, moved aside past [`JOURNAL_BYTES_MAX`].
-struct Appender {
+pub(crate) struct Appender {
     path: PathBuf,
     file: std::fs::File,
     bytes: u64,
 }
 
 impl Appender {
-    fn open(path: PathBuf) -> Result<Self, String> {
+    pub(crate) fn open(path: PathBuf) -> Result<Self, String> {
         let file = open_append(&path)?;
         let bytes = file.metadata().map_or(0, |m| m.len());
         Ok(Self { path, file, bytes })
@@ -973,7 +1068,7 @@ impl Appender {
 
     /// A failed write is logged, not returned: the journal mustn't stop a
     /// strategy.
-    fn write(&mut self, line: &Value) {
+    pub(crate) fn write(&mut self, line: &Value) {
         let mut text = line.to_string();
         text.push('\n');
         if self.bytes + text.len() as u64 > JOURNAL_BYTES_MAX
@@ -1004,6 +1099,155 @@ fn open_append(path: &Path) -> Result<std::fs::File, String> {
         .append(true)
         .open(path)
         .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tape_tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    fn trades() -> impl Strategy<Value = Vec<Trade>> {
+        prop::collection::vec(
+            (
+                0u64..1_000_000,
+                any::<bool>(),
+                1.0f64..200.0,
+                0.001f64..100.0,
+            )
+                .prop_map(|(slot, bid, price, size)| Trade {
+                    slot,
+                    taker: if bid { Side::Bid } else { Side::Ask },
+                    price,
+                    size,
+                }),
+            0..3000,
+        )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        /// The step's tape is the newest trades, in their order, at most
+        /// STEP_TAPE_MAX, each with its taker's side, price and size.
+        #[test]
+        fn the_steps_tape_is_the_newest_trades_in_order(trades in trades()) {
+            let tape = step_tape(&trades, "phoenix:perp:SOL");
+            prop_assert_eq!(tape.len(), trades.len().min(STEP_TAPE_MAX));
+            let newest = &trades[trades.len() - tape.len()..];
+            for (t, r) in tape.iter().zip(newest) {
+                prop_assert_eq!(t.slot, r.slot);
+                prop_assert_eq!(t.price, r.price);
+                prop_assert_eq!(t.base, r.size);
+                prop_assert_eq!(t.side == mtx_core::Side::Buy, r.taker == Side::Bid);
+                prop_assert_eq!(t.market.as_deref(), Some("phoenix:perp:SOL"));
+                prop_assert!(t.own.is_none());
+            }
+        }
+    }
+
+    /// A strategy's session names its market as the step's tape does: the
+    /// trades reach `market.tape`, and only its market's.
+    #[test]
+    fn the_tape_reaches_the_strategys_market() {
+        let mandate = mtx_core::Mandate::perp("phoenix", "SOL", 2.5, 300.0);
+        let sol = mtx_core::mandate::InstrumentRef {
+            venue: crate::venue::perps::VENUE.into(),
+            kind: mtx_core::mandate::Kind::Perp,
+            symbol: "SOL".into(),
+        };
+        let venues = mtx_kit::VenueInfo::of_perp_markets(&mandate, [(sol.clone(), None)]);
+        let trades = [Trade {
+            slot: 7,
+            taker: Side::Bid,
+            price: 70.8,
+            size: 2.0,
+        }];
+        let mut tape = step_tape(&trades, &sol.to_string());
+        tape.extend(step_tape(&trades, "phoenix:perp:ETH"));
+        let reports = mtx_kit::Reports {
+            tape: true,
+            ..Default::default()
+        };
+        let (views, _) = mtx_kit::venue_views(
+            &venues,
+            reports,
+            None,
+            None,
+            mtx_kit::Position::default(),
+            &tape,
+            &[],
+        );
+        let seen = views[0].tape.as_ref().expect("the tape is reported");
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].slot, 7);
+    }
+}
+
+#[cfg(test)]
+mod position_tests {
+    use proptest::prelude::*;
+
+    use super::*;
+
+    proptest! {
+        /// Average-cost accounting: whatever the fills, the cash plus the
+        /// open position at its entry is what the closed trades made,
+        /// counted fill by fill; flat has no entry; a reducing fill leaves
+        /// the entry alone.
+        #[test]
+        fn the_entry_keeps_the_books_balanced(fills in prop::collection::vec((-5i32..=5, 90.0f64..110.0), 1..60)) {
+            let (mut held, mut entry, mut cash, mut realized) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+            for (lots, price) in fills {
+                let signed = f64::from(lots) * 0.1;
+                if signed == 0.0 { continue; }
+                // What the closed part made, at the entry before this fill.
+                if held != 0.0 && held.signum() != signed.signum() {
+                    let closed = signed.abs().min(held.abs());
+                    realized += (price - entry) * closed * held.signum();
+                }
+                let before = entry;
+                entry = entry_after(held, entry, signed, price);
+                let reduced = held != 0.0 && held.signum() != signed.signum() && signed.abs() < held.abs() && (held + signed).abs() >= POSITION_DUST;
+                held += signed;
+                if held.abs() < POSITION_DUST { held = 0.0; }
+                cash -= signed * price;
+                if held == 0.0 { prop_assert_eq!(entry, 0.0); }
+                if reduced { prop_assert_eq!(entry, before); }
+                prop_assert!((cash + held * entry - realized).abs() < 1e-6, "cash {cash} held {held} entry {entry} realized {realized}");
+            }
+        }
+    }
+
+    /// The strict paper book's fills set what a shadow reads as its
+    /// position, entry included.
+    #[test]
+    fn a_shadow_reads_its_paper_fills() {
+        let mut book = PaperBook::new(FillModel::Through);
+        let take = vec![(
+            Action::Limit {
+                side: Side::Bid,
+                price: 102.0,
+                size: 0.3,
+            },
+            SendState::Landed("sig".into()),
+        )];
+        book.step(
+            100,
+            0,
+            Top {
+                bid: Some(99.0),
+                ask: Some(101.0),
+            },
+            &[],
+            &take,
+        );
+        let shared = PaperPosition::default();
+        shared.set(book.position, book.entry_usd);
+        let read = shared.get();
+        assert!((read.size - 0.3).abs() < 1e-9);
+        assert_eq!(read.entry_usd, 101.0);
+    }
 }
 
 #[cfg(test)]

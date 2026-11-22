@@ -169,6 +169,13 @@ fn lines() -> Vec<(Event, &'static str)> {
             r#"{"at_us":1,"event":"command","command":"add"}"#,
         ),
         (
+            Event::Command {
+                command: CommandKind::Upgrade,
+                error: None,
+            },
+            r#"{"at_us":1,"event":"command","command":"upgrade"}"#,
+        ),
+        (
             Event::Lagged { dropped: 12 },
             r#"{"at_us":1,"event":"lagged","dropped":12}"#,
         ),
@@ -194,6 +201,24 @@ fn an_event_this_build_does_not_know_is_an_error_a_reader_can_skip() {
     // Its envelope still reads: the reader knows what it skipped.
     let envelope: Value = serde_json::from_str(future).unwrap();
     assert_eq!(envelope["event"], "weather");
+}
+
+/// The upgrade command, as a sidecar writes it.
+#[test]
+fn an_upgrade_is_the_line_the_contract_says() {
+    use mtx_core::control::Command;
+    let line = r#"{"command":"upgrade","name":"mm-sol","component":"/home/sol/mtx/new.wasm"}"#;
+    let command: Command = serde_json::from_str(line).unwrap();
+    assert_eq!(
+        command,
+        Command::Upgrade {
+            name: "mm-sol".into(),
+            component: "/home/sol/mtx/new.wasm".into(),
+        }
+    );
+    assert_eq!(serde_json::to_string(&command).unwrap(), line);
+    assert_eq!(command.kind(), CommandKind::Upgrade);
+    assert!(CommandKind::Upgrade.changes());
 }
 
 #[test]
