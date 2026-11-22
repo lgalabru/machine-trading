@@ -121,22 +121,30 @@ pub fn listen(
                             );
                             continue;
                         }
-                        if let Err(error) = connections.keep(&stream) {
-                            tracing::warn!(%error, "an event connection can't be kept");
-                            continue;
-                        }
+                        let kept = match connections.keep(&stream) {
+                            Ok(kept) => kept,
+                            Err(error) => {
+                                tracing::warn!(%error, "an event connection can't be kept");
+                                continue;
+                            }
+                        };
                         open.fetch_add(1, Ordering::AcqRel);
                         // Subscribed here, so the writer holds no sender:
                         // once the runtime's are dropped, its queue closes.
                         let received = events.subscribe();
-                        let (commands, open) = (commands.clone(), open.clone());
+                        let (commands, opened) = (commands.clone(), open.clone());
                         let spawned = connections.spawn("mtx-live-event-writer", move || {
                             if let Err(error) = serve(stream, received, &commands) {
                                 tracing::info!(%error, "an event connection ended");
                             }
-                            open.fetch_sub(1, Ordering::AcqRel);
+                            // Shut for the peer too, whichever side ended it.
+                            drop(kept);
+                            opened.fetch_sub(1, Ordering::AcqRel);
                         });
                         if let Err(error) = spawned {
+                            // The connection went with the thread that
+                            // never ran: it no longer counts.
+                            open.fetch_sub(1, Ordering::AcqRel);
                             tracing::warn!(%error, "an event connection's thread didn't start");
                         }
                     }
