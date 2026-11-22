@@ -30,7 +30,8 @@ that the latest swap opened, and skips cycles whose fees eat the gap.
   shaded to the rivals who reach the slot and see the cycle.
 - **Loses:** a pair's two pools only; firing inside the fee band (130 bp
   through a 100 bp and a 30 bp pool); triggers on the deep pools; a leg
-  left without its cycle (the inventory limit); overbidding every race.
+  left without its cycle (the inventory limit); overbidding every race;
+  tipping the least whoever races.
 
 ## The market
 
@@ -41,12 +42,19 @@ that the latest swap opened, and skips cycles whose fees eat the gap.
   30–3,000 bp, trading at most 100 SOL's worth. Each is a trigger: the
   step ends behind it with its slot open.
 - **Calm flow** on every pool, in proportion to its depth, scaled by
-  0.6–1.4 per session; SOL's reference price walks by 0.5–2 bp ticks; the
-  other tokens' reference prices in SOL are fixed.
+  0.6–1.4 per session; SOL's reference price walks by 0.5–2 bp ticks;
+  the other tokens' reference prices in SOL start at a level of the
+  session's own (JitoSOL 12 bp under to 1 bp over its stake value, JTO
+  and GEOD within 30 bp of the snapshot's) and drift slowly, untold: the
+  pool searchers pull the pools to them.
 - **Competition:** 0–5 cycle searchers (two legs only for 40% of them,
   else up to three; bid 0–95% of their expected profit, tipped or as a
   priority fee; latency 0–4 slots) and 1–2 pool searchers that trade any
-  pool back to its reference and bid 76–99%.
+  pool back to its reference and bid 76–99%. Most sessions (88%) add one
+  cycle searcher that tips, searches three legs and reaches every
+  trigger's slot, as the research's same-slot re-arbs say someone usually
+  does; in the rest nobody can reach a trigger's slot, and only there does
+  the least tip win. Which kind a session is isn't told.
 - **Pools** are mainnet's at the snapshot: under 1 SOL moves five of them
   10 bp; the SOL/USDC and SOL/JitoSOL pools are hundreds to 100,000 times
   deeper.
@@ -63,17 +71,20 @@ limit.
 ## Baselines
 
 On a fresh 72-session hidden set (2026-11-22): the reference made
-$4,844.48 (no losing session, 17 flat, per-session Sharpe 0.64) and the
-informed bot $8,550.74 (Sharpe 0.60): the reference is 0.57 of the
+$5,179.23 (no losing session, 17 flat, per-session Sharpe 0.57) and the
+informed bot $9,123.65 (Sharpe 0.58): the reference is 0.57 of the
 informed bot, inside the strength band. On the 8 practice sessions,
-$411.65 and $821.42. The `two-leg` rung made $949.63 (v2 0.10), the
-`overbidder` $504.21 (0.05).
+$381.00 and $652.35. The `two-leg` rung made $629.19 (v2 0.06), the
+`overbidder` $708.33 (0.07), `min-tip` $69.51 (0.01; it scored 0.53, over
+the reference, before most sessions held a searcher in the trigger's
+slot).
 
 | Rung | What it is | Expected |
 | --- | --- | --- |
 | `nop` | the starter | 0 |
 | `two-leg` | the reference, looking at a pair's two pools only | well under the reference |
 | `overbidder` | the reference, tipping 95% of the profit | under the reference |
+| `min-tip` | the reference, always tipping the least (1,000 lamports) | under the reference |
 | `reference` | the 0.5 | 0.5 |
 | `informed` | the 1, told the latent state | 1 |
 
@@ -94,11 +105,18 @@ Harbor) haven't run yet.
   pools were often thinner, and its triggers' 90th percentile (5,877 bp)
   would open cycles of tens of SOL here, so moves are cut at 3,000 bp and
   triggers at 100 SOL's worth.
-- Every token but SOL has a fixed reference price in SOL; only SOL's
-  dollar price walks.
+- The other tokens' reference prices drift on their own, not with any
+  pool's flow, and JitoSOL's stake value doesn't step at epochs; their
+  session levels are drawn evenly, not from a measured distribution.
 - A Jito leader lands bundles at the top of its block, so a tipped bundle
   beats every priority fee in the layer's builder; on mainnet only 13 of
   the research's 106 multi-token arbs tipped Jito.
+- Whether anyone races a trigger is drawn per session, not per trigger
+  or pool: a contested session's fast searcher reaches every trigger's
+  slot and searches the whole graph at once. On mainnet the fastest rival
+  differs from pool to pool and trigger to trigger, and the research
+  measured how often a re-arb came within 2 slots (57 of 82), not who
+  reached the trigger's own slot.
 - Searchers send plain swap routes from the session's lookup table, not
   their own programs, and decide on the state after each step's blocks,
   never on pending transactions.

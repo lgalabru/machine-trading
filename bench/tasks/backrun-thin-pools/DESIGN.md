@@ -17,14 +17,17 @@ that the latest swap opened, and skips cycles whose fees eat the gap.
   their fees multiply to 1 or less; sizing the rest on the chained exact
   quotes (ticks crossed); one atomic group whose legs chain exactly and
   whose last limit is the least profit; a bid shaded to the rivals who can
-  reach the slot.
+  reach the slot, the least only where nobody can.
 - **Loses:** looking only at a pair's two pools (every gap a third token
   closes); firing on a move inside the fee band (a 100 bp pool and a 30 bp
   one cost 130 bp before anything); a leg left without the rest of its
-  cycle (the inventory limit); overbidding every race; waiting a step.
+  cycle (the inventory limit); overbidding every race; tipping the least
+  whoever races; waiting a step.
 - **Regimes:** no trigger, one or several, on any of ten pools; sales and
-  buys; moves of 30 to 3,000 bp; rivals that reach the slot or are late,
-  that tip or pay priority fees, that look at two legs or three.
+  buys; moves of 30 to 3,000 bp; contested sessions (88%), where one
+  tipping three-leg searcher reaches every trigger's slot, and quiet ones,
+  where nobody can; rivals that tip or pay priority fees, that look at two
+  legs or three.
 - **Mandate:** v0.3.0: any Orca or Raydium pool among SOL, USDC, JitoSOL,
   JTO and GEOD (two wildcards with the five mints as `assets`), SOL the
   numeraire with at most $5 of anything else after any transaction, $1,000
@@ -83,6 +86,13 @@ look defensible:
 What to pay the leader is the second decision, as in `backrun-sol-usdc`:
 the reference tips a fixed half of its expected profit; the informed bot
 bids what beats the rivals who can reach the slot and see the cycle.
+Since the search can't separate them, the bid must: in the first draw most
+triggers had no tipping rival in their slot, and a bot that always tipped
+the least (the `min-tip` rung) beat the reference (v2 0.53 on 72 hidden
+sessions, 0.91 on practice). Most sessions now hold a searcher that
+reaches every trigger's slot and tips, so the least tip loses those races,
+and the edge is knowing which sessions are quiet, and how little beats
+whoever is there.
 
 ## Variants
 
@@ -92,7 +102,8 @@ bids what beats the rivals who can reach the slot and see the cycle.
 | A big move on a JTO/JitoSOL or GEOD/USDC pool | a three-leg cycle: no two-leg one goes through it | the pair only (it finds nothing) |
 | A move inside the fee band (most on the 100 bp pools) | nothing | firing on the trigger |
 | A trigger on a deep pool (SOL/USDC, SOL/JitoSOL) | nothing: 100 SOL's worth moves it a few basis points | a cycle on every trigger |
-| A tipping rival at latency 0 that sees the cycle | outbid it, or stay out where that costs the profit | the least tip |
+| A contested session: a tipping rival at latency 0 that sees the cycle (88%) | outbid it, or stay out where that costs the profit | the least tip |
+| A quiet session: nobody reaches the trigger's slot (12%) | the least tip that clears the background | a large fixed share |
 | A two-leg rival on a three-leg cycle | the least tip: it can't see the cycle, or bids on a smaller one | a large fixed share |
 | No trigger | nothing | sending on calm drift |
 
@@ -105,7 +116,7 @@ bids what beats the rivals who can reach the slot and see the cycle.
 | Fee gate | 1 to 100 bp a pool | the product of prices after fees, before any sizing | the pools' fee rates |
 | Size | profit is concave in the size through every curve | the optimum on chained exact quotes | the kit's quotes |
 | Chaining | each line spends what its amount says | each leg spends exactly what the one before was quoted to give, at that quote | the sheet's atomic groups |
-| Bid | rivals tip a share of the best cycle they can see, or pay a priority fee | bids just over the rivals who reach the slot and see the cycle | rivals' landed bundles and tips, on chain |
+| Bid | rivals tip a share of the best cycle they can see, or pay a priority fee; most sessions hold one that reaches every trigger's slot | bids just over the rivals who reach the slot and see the cycle, the least where nobody does | rivals' landed bundles and tips, on chain: who took the last trigger's cycle, in its slot, for what tip |
 | Limits | the seat compares a limit and an amount exactly | a limit of a dozen significant digits | the seat's refusal, in `market.sends` |
 
 ## No tells
@@ -120,9 +131,22 @@ bids what beats the rivals who can reach the slot and see the cycle.
 - **Overlapping regimes.** A move of 300 bp is a cycle on a 30 bp pool and
   nothing on a 100 bp one; which is which is in the pools, not the
   trigger.
+- **No free cheap bid.** A bot that tips the least whatever it races wins
+  only quiet sessions' triggers and what a contested session's fast
+  searcher skips (under its least profit); the `min-tip` rung must score
+  under the reference. The fast searcher sits at a random place in the
+  roster, its share drawn as any searcher's, and which sessions are quiet
+  isn't told: a bot learns it from the races it plays, which is the edge.
 - **The reference moves on its own**, a small walk the pool searchers
   follow on the SOL/USDC and GEOD/USDC pools, so the pools drift between
   triggers.
+- **No fair value to memorise.** JitoSOL's, JTO's and GEOD's reference
+  prices in SOL were the snapshot's constants, and the pool searchers pull
+  pools to them: a bot could have learnt them from practice. Each session
+  now draws its own level (JitoSOL 12 bp under to 1 bp over its stake
+  value, the research's band; JTO and GEOD within 30 bp of the snapshot's)
+  and drifts it slowly; the venue metadata names no moving price. The
+  fair value is in the pools.
 - **Practice files** carry a neutral description (`mtx calibrate
   --informed` writes it), and no latent field.
 - **What a generator-aware bot can do without reading the pools:** nothing
@@ -136,21 +160,24 @@ A cycle is visible the step it opens: the trigger is announced and every
 pool is on chain. There is nothing to infer, only to search and compute.
 What isn't visible is the competition: which rival reaches which slot is
 drawn per send, and how each bids and how deep it looks shows only in the
-races a bot plays. About a tenth of sessions hold no trigger.
+races a bot plays. Whether a session is contested shows in its first
+trigger: a contested session's fast searcher lands a tipped cycle in the
+trigger's own slot, on chain, whenever it profits past its least. About a tenth of sessions hold no trigger.
 
 ## Fairness
 
 - **Told:** the snapshot, every pool and token, the depth table, the
   lookup table, the trigger steps and their latency, every range of the
-  family, the searchers' rules and the ranges they are drawn from, the
-  reference prices, the mandate, the transaction layer's ranking, the
+  family, the searchers' rules and the ranges they are drawn from, SOL's
+  reference price at the start and the ranges the other tokens' are drawn
+  from (never their levels), the mandate, the transaction layer's ranking, the
   limit's precision, and v2's scoring rules (`mtx task sync`).
 - **Learnable from practice:** eight practice sessions from a public seed,
   each with both anchors' PnL; their reports say what the best cycle after
   each trigger would have made and who took it.
 - **The reference stays inside the mandate:** every cycle ends in SOL, its
   legs chain exactly (dust of a few atoms stays), its costliest session
-  spent $433 of the $1,000 budget, and a failed bundle costs nothing.
+  spent $491 of the $1,000 budget (the informed bot's $532), and a failed bundle costs nothing.
 - **Anchors run as components** (`component_anchors`): amm sessions,
   atomic groups and trigger steps reach only strategy components.
 - **Role noise.** Each role of a grade (reference, informed, bot) plays a
@@ -163,6 +190,7 @@ races a bot plays. About a tenth of sessions hold no trigger.
 | --- | --- |
 | Looks at two legs only | every cycle through a third token: the `two-leg` rung |
 | Overbids (95% of the profit) | most of the profit: the `overbidder` rung |
+| Tips the least whoever races | every contested trigger: the `min-tip` rung |
 | Fires inside the fee band | a bundle that fails costs nothing; a transaction pays its fee |
 | A leg without the rest of its cycle | an inventory breach once the token is worth over $5 |
 | A limit of twenty digits | the group is refused before it is sent |
@@ -178,22 +206,39 @@ it; one that never composes a working group scores 0.
 ## Calibration
 
 - **Hidden set** (a fresh 72-session secret, 2026-11-22, `ladder.py
-  --sets 1`): reference $4,844.48, informed bot $8,550.74; the reference
-  is 0.567 of the informed bot (band 0.2 to 0.7; no losing session for
-  either, so loss-weighting changes nothing), per-session Sharpe 0.64 for
-  the reference and 0.60 for the informed bot (at least 0.25); 17 sessions
-  flat for both. The reference won 124 of 217 triggers, the informed bot
-  123. The reference's costliest session spent $433 on fees and tips, the
-  informed bot's $281.
-- **Ladder** (same set, v2 scores): `two-leg` 0.098 ($949.63, 0.20 of the
-  reference), `overbidder` 0.052 ($504.21), the informed bot as a rung
-  0.974 ($8,357.80, role noise), nop 0; both order rules hold.
-- **Practice** (seed 20261122, 8 sessions): reference $411.65, informed
-  $821.42 (0.50).
+  --sets 1`, after the competition and reference-price changes below):
+  reference $5,179.23, informed bot $9,123.65; the reference is 0.57 of
+  the informed bot (0.58 loss-weighted, band 0.2 to 0.7; no losing
+  session for either), per-session Sharpe 0.57 for the reference and 0.58
+  for the informed bot (at least 0.25); 17 sessions flat for both.
+- **Ladder** (same set, v2 scores): `two-leg` 0.061 ($629.19),
+  `overbidder` 0.068 ($708.33), `min-tip` 0.007 ($69.51), the reference
+  as a rung 0.509 ($5,251.74, role noise), the informed bot as a rung
+  0.995 ($9,087.95), nop 0; the three order rules hold, each with
+  bootstrap odds 1.00. The reference's costliest session spent $491 on fees
+  and tips, the informed bot's $532.
+- **Practice** (seed 20261122, 8 sessions): reference $381.00, informed
+  $652.35 (0.58); `min-tip` $203.39 (v2 0.27, its quiet sessions).
+- **The least tip, before and after.** On the first family (most triggers
+  had no tipping rival in their slot), `min-tip` made $3,578 on a fresh
+  72-session hidden set where the reference made $3,365 and the informed
+  bot $6,692: v2 0.53, over the reference; 0.91 on practice. A family
+  whose order rules held without it rewarded blind cheap bidding. With a
+  searcher that reaches every contested trigger's slot, it falls to 0.007
+  hidden and 0.27 on practice, and its rule (`min-tip < reference`) is in
+  the ladder. Not `min-tip < informed` alone: the reference tips a fixed
+  half and has no read of the races either, so a bot with no read that
+  bids less than it must not score more.
 - **Tip share.** Half the expected profit, as `backrun-sol-usdc`'s
-  reference: the informed bot's edge is the bid (it pays the background's
-  floor where no tipping rival that sees the cycle can reach the slot),
-  not the search, since the graph holds no four-leg cycle.
+  reference: the informed bot's edge is the bid (it bids just over the
+  fast searcher's share where that share leaves a profit, stays out where
+  it doesn't, and pays the background's floor in quiet sessions), not the
+  search, since the graph holds no four-leg cycle. The reference loses
+  every race to a fast searcher tipping over half, and overpays one that
+  tips under a tenth.
+- **First draw** (2026-11-22, before the changes): reference $4,844.48,
+  informed $8,550.74 (0.567), `two-leg` 0.098, `overbidder` 0.052; the
+  reference's costliest session spent $433 on fees and tips.
 - **Tails.** A first family with the research's moves up to 6,000 bp and
   1,500 SOL's worth opened cycles of up to 200 SOL (a session's optimum
   reached $15,000), its tips outran the 10 SOL of native SOL, and the
@@ -215,3 +260,10 @@ it; one that never composes a working group scores 0.
   Left out: the stake pool's epoch step, which the research's distractor
   was (`README.md`, "Realism limits"), and the pools' depth, which isn't
   drawn.
+  Before any model run, the same day: the `min-tip` rung showed the bid
+  edge was free (a bot tipping the least beat the reference), so most
+  sessions (88%) now hold a searcher that reaches every trigger's slot,
+  tips and searches three legs, and the rest are quiet; and JitoSOL's,
+  JTO's and GEOD's reference prices, which the pool searchers pull to and
+  a bot could have learnt from practice, are drawn per session and drift
+  (JitoSOL inside its stake band), untold. Rule `min-tip < reference`.

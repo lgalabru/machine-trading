@@ -17,14 +17,23 @@
 //!   move inside the fee band. Their slots are drawn apart, uneven.
 //! - **The calm flow.** Small swaps on every pool, at rates and sizes
 //!   scaled to each pool's depth, scaled again per session.
-//! - **The reference prices.** SOL's dollar price walks a little; every
-//!   other token's price in SOL is the snapshot's (`reference_sol`), so the
-//!   account, measured in SOL, moves only with what the bot trades.
+//! - **The reference prices.** SOL's dollar price walks a little. Every
+//!   other token's price in SOL starts at a level of the session's own near
+//!   the snapshot's and drifts slowly (`reference_sol` and
+//!   `reference_paths`), JitoSOL's inside the stake pool's band, so the
+//!   fair value the pool searchers pull to is read from the pools, never
+//!   memorised. The account, measured in SOL, still moves only with what
+//!   the bot trades: it holds nothing else past a few dollars.
 //! - **The competition.** Cycle searchers, each with a latency, a bid rule
 //!   (a share of the profit it expects, as a tip or a priority fee), and a
 //!   search depth (some only look at a pair's two pools: 2 legs; the rest
 //!   at 3), and pool searchers, which trade one pool back to its reference
-//!   and bid most of what they expect.
+//!   and bid most of what they expect. Most sessions are contested: one
+//!   cycle searcher tips from the trigger's own slot on every send and
+//!   searches three legs, as the research's re-arbs within a slot or two
+//!   (57 of 82) say someone usually does. In a quiet session nobody can
+//!   reach the trigger's slot: knowing which session is which is what lets
+//!   a bot bid low.
 //!
 //! The pools are the snapshot's own; their depth isn't drawn, and the
 //! stake pool's epoch step is left out (see the task's `DESIGN.md`).
@@ -49,17 +58,19 @@ const GEOD: &str = "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu";
 /// The graph's tokens, as the mandate lists them.
 pub const ASSETS: [&str; 5] = [WRAPPED_SOL, USDC, JITOSOL, JTO, GEOD];
 
-/// Each other token's reference price in SOL: the snapshot's deepest pool
-/// of it with SOL (`snapshots/thin-pools-2026-11-21/README.md`): JitoSOL
-/// at the SOL/JitoSOL Whirlpool's 0.7625 a SOL, JTO at the 30 bp SOL/JTO
-/// Whirlpool's 320.3, GEOD at the 5 bp Raydium pool's 302.1. Every other
-/// pool sits inside its fee band of them, but the GEOD/USDC pool, 7 bp
-/// past it, which the pool searchers trade back at the start.
-pub const REFERENCE_SOL: [(&str, f64); 3] = [
-    (JITOSOL, 1.0 / 0.7625),
-    (JTO, 1.0 / 320.3),
-    (GEOD, 1.0 / 302.1),
-];
+/// JitoSOL's value in SOL at its stake pool on the snapshot
+/// (`snapshots/thin-pools-2026-11-21/README.md`: the SOL/JitoSOL pool
+/// prices it 10 bp under, at 1.311486).
+const JITOSOL_STAKE_SOL: f64 = 1.312_796;
+/// Where JitoSOL's reference sits from its stake value, in basis points:
+/// the research's LST pools traded 4 to 13 bp under the stake pools' rate,
+/// and an arbitrageur who can deposit keeps it from rising more than a
+/// basis point past it.
+const JITOSOL_BAND_BPS: (f64, f64) = (-12.0, 1.0);
+/// The centres of JTO's and GEOD's reference prices in SOL: the snapshot's
+/// deepest pool of each with SOL, JTO at the 30 bp SOL/JTO Whirlpool's
+/// 320.3 a SOL, GEOD at the 5 bp Raydium pool's 302.1.
+const CENTRES_SOL: [(&str, f64); 2] = [(JTO, 1.0 / 320.3), (GEOD, 1.0 / 302.1)];
 
 /// One of the snapshot's pools: its instrument, the odds a trigger lands
 /// on it, and its calm flow (swaps a minute, median, p90 and largest size
@@ -147,16 +158,51 @@ pub struct TriggerShape {
     pub cap_sol: f64,
 }
 
+/// Whether a session's competition can reach a trigger's slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Contest {
+    /// One cycle searcher reaches every trigger's slot and tips; the rest
+    /// are drawn as they come.
+    Contested,
+    /// Every searcher's latency is at least a slot: whoever reaches the
+    /// trigger's slot pays only the background's floor.
+    Quiet,
+}
+
+/// One token's reference price in SOL: where it starts and the path that
+/// moves it, in percent of the start.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TokenReference {
+    pub mint: String,
+    pub start_sol: f64,
+    pub path: Vec<Waypoint>,
+}
+
+/// How a token's reference walks: `level_bps` from `centre_sol` at the
+/// start, then a normal tick of `sigma_bps` at uneven gaps, its offset from
+/// the centre kept inside `band_bps`.
+#[derive(Debug, Clone, Copy)]
+struct TokenWalk {
+    centre_sol: f64,
+    level_bps: f64,
+    sigma_bps: f64,
+    band_bps: (f64, f64),
+}
+
 /// What a session was drawn as, beneath its scenario: the ladder's told
 /// rungs see all of it, the informed bot only [`ThinPoolsShape::latent`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ThinPoolsShape {
     pub duration_slots: u64,
     pub triggers: Vec<TriggerShape>,
+    pub contest: Contest,
     /// The calm flow's rate, as a multiple of each pool's.
     pub flow_scale: f64,
     /// The reference path's tick size, in basis points.
     pub path_sigma_bps: f64,
+    /// JitoSOL's, JTO's and GEOD's reference prices.
+    pub references: Vec<TokenReference>,
     pub searchers: Vec<CycleSearcher>,
     pub pool_searchers: Vec<PoolSearcher>,
     pub path: Vec<Waypoint>,
@@ -198,7 +244,17 @@ pub struct ThinPoolsFamily {
     pub flow_scale: (f64, f64),
     pub path_gap_slots: (u64, u64),
     pub path_sigma_bps: (f64, f64),
+    /// How far JTO's and GEOD's session level sits from its centre, in
+    /// basis points either way.
+    pub token_level_bps: f64,
+    /// The token paths' gaps between ticks, in slots, and their tick
+    /// size, in basis points (JitoSOL's is the low end, as its stake rate
+    /// barely moves).
+    pub token_gap_slots: (u64, u64),
+    pub token_sigma_bps: (f64, f64),
     pub cycle_searchers: (u64, u64),
+    /// The chance a session is [`Contest::Quiet`].
+    pub quiet_odds: f64,
     /// The chance a cycle searcher only looks at two-leg cycles.
     pub two_leg_odds: f64,
     pub cycle_tip_odds: f64,
@@ -228,7 +284,20 @@ impl ThinPoolsFamily {
             flow_scale: (0.6, 1.4),
             path_gap_slots: (3, 9),
             path_sigma_bps: (0.5, 2.0),
+            // Inside the 30 bp JTO pools' fee band, past the 5 bp GEOD
+            // pool's: the pool searchers pull some pools to it as a session
+            // opens, so nothing about a pool's price on the snapshot is the
+            // fair value of every session.
+            token_level_bps: 30.0,
+            token_gap_slots: (9, 30),
+            token_sigma_bps: (0.3, 1.5),
             cycle_searchers: (0, 5),
+            // The research's re-arbs: the previous transaction on the pool
+            // was an arb within 2 slots in 57 of 82 cases, and 77 of 106
+            // backruns landed in the trigger's block, so a trigger nobody
+            // races for is the exception (at most the other 25 of 82).
+            // Rare, but present in most hidden sets of 72.
+            quiet_odds: 0.12,
             two_leg_odds: 0.4,
             cycle_tip_odds: 0.5,
             min_profit_sol: (0.002, 0.02),
@@ -267,19 +336,40 @@ impl ThinPoolsFamily {
         let flow_scale = rng.range_f64(self.flow_scale);
         let path_sigma_bps = rng.range_f64(self.path_sigma_bps);
         let path = self.path(&mut rng, duration, path_sigma_bps);
-        let searchers = (0..rng.range_u64(self.cycle_searchers))
-            .map(|_| self.cycle_searcher(&mut rng))
+        let references = self.references(&mut rng, duration);
+        let contest = match rng.next_f64() < self.quiet_odds {
+            true => Contest::Quiet,
+            false => Contest::Contested,
+        };
+        let mut searchers: Vec<CycleSearcher> = (0..rng.range_u64(self.cycle_searchers))
+            .map(|_| self.cycle_searcher(&mut rng, contest))
             .collect();
-        let pool_searchers = (0..rng.range_u64(self.pool_searchers))
-            .map(|_| self.pool_searcher(&mut rng))
+        if contest == Contest::Contested {
+            // The fast one, at a place of its own among the rest: its
+            // index says nothing.
+            let fast = self.fast_searcher(&mut rng);
+            let at = rng.range_u64((0, searchers.len() as u64)) as usize;
+            searchers.insert(at, fast);
+        }
+        let pool_searchers: Vec<PoolSearcher> = (0..rng.range_u64(self.pool_searchers))
+            .map(|_| self.pool_searcher(&mut rng, contest))
             .collect();
+        assert!(match contest {
+            Contest::Contested => searchers.iter().any(reaches_every_trigger),
+            Contest::Quiet => {
+                searchers.iter().all(|s| s.latency_slots[0] >= 1)
+                    && pool_searchers.iter().all(|s| s.latency_slots[0] >= 1)
+            }
+        });
         let amm_seed = rng.next_u64() % 1_000_000;
         let layer_seed = rng.next_u64() % 1_000_000;
         let shape = ThinPoolsShape {
             duration_slots: duration,
             triggers,
+            contest,
             flow_scale,
             path_sigma_bps,
+            references,
             searchers,
             pool_searchers,
             path,
@@ -328,9 +418,15 @@ impl ThinPoolsFamily {
                 })
                 .collect(),
         };
-        let reference_sol: serde_json::Map<String, Value> = REFERENCE_SOL
+        let reference_sol: serde_json::Map<String, Value> = shape
+            .references
             .iter()
-            .map(|(mint, price)| (mint.to_string(), json!(price)))
+            .map(|r| (r.mint.clone(), json!(r.start_sol)))
+            .collect();
+        let reference_paths: serde_json::Map<String, Value> = shape
+            .references
+            .iter()
+            .map(|r| (r.mint.clone(), json!(r.path)))
             .collect();
         let hot_accounts: Vec<Value> = POOLS
             .iter()
@@ -357,6 +453,7 @@ impl ThinPoolsFamily {
                     "seed": amm_seed,
                     "wallet": { "SOL": self.wallet_sol },
                     "reference_sol": reference_sol,
+                    "reference_paths": reference_paths,
                     "whale": whale,
                     "background": background,
                     "searchers": shape.searchers,
@@ -422,6 +519,77 @@ impl ThinPoolsFamily {
         triggers
     }
 
+    /// JitoSOL's, JTO's and GEOD's reference prices: a level of the
+    /// session's own, then a slow walk. JitoSOL's stays inside its band of
+    /// the stake value.
+    fn references(&self, rng: &mut SplitMix64, duration: u64) -> Vec<TokenReference> {
+        let (low, high) = JITOSOL_BAND_BPS;
+        let jitosol_bps = rng.range_f64((low, high));
+        let jitosol_sigma = self.token_sigma_bps.0;
+        let jitosol = TokenWalk {
+            centre_sol: JITOSOL_STAKE_SOL,
+            level_bps: jitosol_bps,
+            sigma_bps: jitosol_sigma,
+            band_bps: (low, high),
+        };
+        let mut references = vec![self.token_reference(rng, JITOSOL, &jitosol, duration)];
+        for (mint, centre) in CENTRES_SOL {
+            let level_bps = rng.range_f64((-self.token_level_bps, self.token_level_bps));
+            let sigma = rng.range_f64(self.token_sigma_bps);
+            // Unbounded but for the path's own check: a session's walk of
+            // a few hundred slots moves it tens of basis points at most.
+            let walk = TokenWalk {
+                centre_sol: centre,
+                level_bps,
+                sigma_bps: sigma,
+                band_bps: (-5_000.0, 5_000.0),
+            };
+            references.push(self.token_reference(rng, mint, &walk, duration));
+        }
+        references
+    }
+
+    /// `mint`'s reference as `walk` draws it.
+    fn token_reference(
+        &self,
+        rng: &mut SplitMix64,
+        mint: &str,
+        walk: &TokenWalk,
+        duration: u64,
+    ) -> TokenReference {
+        let TokenWalk {
+            centre_sol: centre,
+            level_bps,
+            sigma_bps,
+            band_bps,
+        } = *walk;
+        assert!(band_bps.0 <= level_bps && level_bps <= band_bps.1);
+        assert!(centre > 0.0 && sigma_bps >= 0.0);
+        let start_sol = centre * (1.0 + level_bps / 10_000.0);
+        let mut offset_bps = level_bps;
+        let mut path = Vec::new();
+        let mut slot = 0;
+        loop {
+            slot += rng.range_u64(self.token_gap_slots);
+            if slot + 3 > duration {
+                break;
+            }
+            offset_bps = (offset_bps + sigma_bps * rng.normal()).clamp(band_bps.0, band_bps.1);
+            let price = centre * (1.0 + offset_bps / 10_000.0);
+            path.push(Waypoint {
+                slot,
+                level_pct: (price / start_sol - 1.0) * 100.0,
+                premium_pct: 0.0,
+            });
+            assert!(path.len() <= PATH_POINTS_MAX);
+        }
+        TokenReference {
+            mint: mint.to_string(),
+            start_sol,
+            path,
+        }
+    }
+
     /// The reference path, in percent of its start: a tick at uneven gaps.
     fn path(&self, rng: &mut SplitMix64, duration: u64, sigma_bps: f64) -> Vec<Waypoint> {
         let mut points = Vec::new();
@@ -443,19 +611,8 @@ impl ThinPoolsFamily {
         points
     }
 
-    fn cycle_searcher(&self, rng: &mut SplitMix64) -> CycleSearcher {
-        // The research's backrun winners paid 0 to 93% of their gross: a mix
-        // of overlapping ranges, as `backrun-sol-usdc`'s.
-        let u = rng.next_f64();
-        let bid_share = if u < 0.35 {
-            rng.range_f64((0.0, 0.1))
-        } else if u < 0.65 {
-            rng.range_f64((0.25, 0.45))
-        } else if u < 0.85 {
-            rng.range_f64((0.45, 0.8))
-        } else {
-            rng.range_f64((0.8, 0.95))
-        };
+    fn cycle_searcher(&self, rng: &mut SplitMix64, contest: Contest) -> CycleSearcher {
+        let bid_share = bid_share(rng);
         let pays = match rng.next_f64() < self.cycle_tip_odds {
             true => Pays::Tip,
             false => Pays::PriorityFee,
@@ -465,7 +622,7 @@ impl ThinPoolsFamily {
             false => 3,
         };
         CycleSearcher {
-            latency_slots: latency(rng),
+            latency_slots: latency(rng, contest),
             bid_share,
             pays,
             fixed_sol: None,
@@ -474,9 +631,26 @@ impl ThinPoolsFamily {
         }
     }
 
-    fn pool_searcher(&self, rng: &mut SplitMix64) -> PoolSearcher {
+    /// A contested session's fast searcher: it reaches every trigger's
+    /// slot, tips (a priority fee loses to any bundle on a Jito leader),
+    /// and searches three legs; its share and least profit are drawn as
+    /// any cycle searcher's.
+    fn fast_searcher(&self, rng: &mut SplitMix64) -> CycleSearcher {
+        let searcher = CycleSearcher {
+            latency_slots: [0, 0],
+            bid_share: bid_share(rng),
+            pays: Pays::Tip,
+            fixed_sol: None,
+            min_profit_sol: rng.log_range_f64(self.min_profit_sol),
+            max_legs: 3,
+        };
+        assert!(reaches_every_trigger(&searcher));
+        searcher
+    }
+
+    fn pool_searcher(&self, rng: &mut SplitMix64, contest: Contest) -> PoolSearcher {
         PoolSearcher {
-            latency_slots: latency(rng),
+            latency_slots: latency(rng, contest),
             bid_share: rng.range_f64(self.pool_share),
             pays: match rng.next_f64() < self.pool_tip_odds {
                 true => Pays::Tip,
@@ -500,10 +674,32 @@ fn pick(u: f64, odds: &[f64]) -> usize {
     odds.len() - 1
 }
 
+/// A searcher's share of the profit it expects, paid to the leader: the
+/// research's backrun winners paid 0 to 93% of their gross, a mix of
+/// overlapping ranges, as `backrun-sol-usdc`'s.
+fn bid_share(rng: &mut SplitMix64) -> f64 {
+    let u = rng.next_f64();
+    if u < 0.35 {
+        rng.range_f64((0.0, 0.1))
+    } else if u < 0.65 {
+        rng.range_f64((0.25, 0.45))
+    } else if u < 0.85 {
+        rng.range_f64((0.45, 0.8))
+    } else {
+        rng.range_f64((0.8, 0.95))
+    }
+}
+
+/// Whether `searcher` lands a tipped bundle in every trigger's slot.
+fn reaches_every_trigger(searcher: &CycleSearcher) -> bool {
+    searcher.latency_slots == [0, 0] && searcher.pays == Pays::Tip && searcher.max_legs >= 3
+}
+
 /// A searcher's latency range, in slots: the research's backruns landed in
 /// the trigger's block 77 times in 106, and competitors re-arbed what was
-/// left within a slot or two (57 of 82 latest cases).
-fn latency(rng: &mut SplitMix64) -> [u64; 2] {
+/// left within a slot or two (57 of 82 latest cases). In a quiet session
+/// none starts at 0.
+fn latency(rng: &mut SplitMix64, contest: Contest) -> [u64; 2] {
     let u = rng.next_f64();
     let low = if u < 0.5 {
         0
@@ -511,6 +707,10 @@ fn latency(rng: &mut SplitMix64) -> [u64; 2] {
         1
     } else {
         2
+    };
+    let low = match contest {
+        Contest::Contested => low,
+        Contest::Quiet => low.max(1),
     };
     [low, low + rng.range_u64((0, 2))]
 }
@@ -591,6 +791,60 @@ mod tests {
         let median = impacts[total / 2];
         assert!((350.0..800.0).contains(&median), "{median}");
         assert!(two > 50 && three > 50, "{two} {three}");
+    }
+
+    /// Most sessions hold a searcher that reaches every trigger's slot and
+    /// tips; the quiet rest hold none that can reach it at all.
+    #[test]
+    fn most_sessions_are_contested_and_quiet_ones_are_out_of_reach() {
+        let family = ThinPoolsFamily::snapshot();
+        let set = family.draw_set("t", 300, 5);
+        let mut quiet = 0;
+        for (_, shape) in &set {
+            let fast = shape.searchers.iter().filter(|s| reaches_every_trigger(s));
+            match shape.contest {
+                Contest::Contested => assert!(fast.count() >= 1),
+                Contest::Quiet => {
+                    quiet += 1;
+                    assert_eq!(fast.count(), 0);
+                    let reach = shape.searchers.iter().map(|s| s.latency_slots[0]);
+                    let pools = shape.pool_searchers.iter().map(|s| s.latency_slots[0]);
+                    assert!(reach.chain(pools).all(|low| low >= 1));
+                }
+            }
+        }
+        assert!(quiet > 15 && quiet < 60, "{quiet} of 300");
+    }
+
+    /// Each session draws its own token prices; JitoSOL's stays inside the
+    /// stake pool's band at every waypoint.
+    #[test]
+    fn token_references_are_the_session_s_own_and_jitosol_stays_in_its_band() {
+        let family = ThinPoolsFamily::snapshot();
+        let set = family.draw_set("t", 50, 9);
+        let mut starts: Vec<f64> = Vec::new();
+        for (scenario, shape) in &set {
+            assert_eq!(shape.references.len(), 3);
+            let jitosol = &shape.references[0];
+            assert_eq!(jitosol.mint, JITOSOL);
+            let band = |price: f64| {
+                let bps = (price / JITOSOL_STAKE_SOL - 1.0) * 10_000.0;
+                (JITOSOL_BAND_BPS.0 - 1e-6..=JITOSOL_BAND_BPS.1 + 1e-6).contains(&bps)
+            };
+            assert!(band(jitosol.start_sol));
+            for w in &jitosol.path {
+                assert!(band(jitosol.start_sol * (1.0 + w.level_pct / 100.0)));
+            }
+            for r in &shape.references[1..] {
+                assert!(!r.path.is_empty());
+            }
+            starts.push(shape.references[1].start_sol);
+            let amm = scenario.amm.as_ref().unwrap();
+            assert_eq!(amm.reference_paths.len(), 3);
+        }
+        starts.sort_by(f64::total_cmp);
+        starts.dedup();
+        assert_eq!(starts.len(), 50, "a level per session");
     }
 
     #[test]

@@ -377,9 +377,9 @@
   "schema": 2,
   "scoring": {
     "informed_max_drawdown_usd": 0.0,
-    "informed_pnl_usd": 44.98,
+    "informed_pnl_usd": 6.01,
     "reference_max_drawdown_usd": 0.0,
-    "reference_pnl_usd": 22.56
+    "reference_pnl_usd": 0.0
   },
   "tx": {
     "layer": {
@@ -447,7 +447,7 @@
           "loss_congested": 0.3
         }
       },
-      "seed": 366773,
+      "seed": 473276,
       "sol_usd": 69.41,
       "validators": 24
     }
@@ -530,14 +530,14 @@
       },
       "pool_searchers": [
         {
-          "bid_share": 0.9129824027886739,
+          "bid_share": 0.9811347023359192,
           "latency_slots": [
-            1,
+            2,
             2
           ],
-          "margin_bps": 5.929634960177112,
-          "min_profit_sol": 0.0035437538985491107,
-          "pays": "priority_fee"
+          "margin_bps": 4.3221618910286885,
+          "min_profit_sol": 0.01337194623169867,
+          "pays": "tip"
         }
       ],
       "pools": [
@@ -552,12 +552,348 @@
         "raydium:amm:3RA4PDZAZ49nm6hdDCnCTrnECqQD93ny8oHP4T1CSTcR",
         "raydium:amm:BkX9RSHoDJGkU7pbHiksv3DprdLM3KWGoDSfGN9cGJ5d"
       ],
-      "reference_sol": {
-        "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu": 0.003310162197947699,
-        "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn": 1.3114754098360657,
-        "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL": 0.0031220730565095223
+      "reference_paths": {
+        "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu": [
+          {
+            "level_pct": -0.004704467816130098,
+            "slot": 20
+          },
+          {
+            "level_pct": -0.005818641938315494,
+            "slot": 47
+          },
+          {
+            "level_pct": -0.009062714199692401,
+            "slot": 74
+          },
+          {
+            "level_pct": -0.009510094729081597,
+            "slot": 90
+          },
+          {
+            "level_pct": -0.0068409657120960254,
+            "slot": 118
+          },
+          {
+            "level_pct": -0.010703211651752476,
+            "slot": 143
+          },
+          {
+            "level_pct": -0.012851433196703343,
+            "slot": 171
+          },
+          {
+            "level_pct": -0.016731919365908787,
+            "slot": 185
+          },
+          {
+            "level_pct": -0.018045277764633383,
+            "slot": 203
+          },
+          {
+            "level_pct": -0.014527367773187194,
+            "slot": 233
+          },
+          {
+            "level_pct": -0.009301596198407758,
+            "slot": 255
+          },
+          {
+            "level_pct": -0.013654480751523757,
+            "slot": 280
+          },
+          {
+            "level_pct": -0.010029265337929694,
+            "slot": 301
+          },
+          {
+            "level_pct": -0.008163039832531638,
+            "slot": 330
+          },
+          {
+            "level_pct": -0.006857711497798569,
+            "slot": 343
+          },
+          {
+            "level_pct": -0.004980920004460376,
+            "slot": 360
+          },
+          {
+            "level_pct": 0.0023239790710061214,
+            "slot": 374
+          },
+          {
+            "level_pct": -0.002178566317678765,
+            "slot": 401
+          },
+          {
+            "level_pct": -0.0048262352693284605,
+            "slot": 427
+          },
+          {
+            "level_pct": -0.009986906344816582,
+            "slot": 450
+          },
+          {
+            "level_pct": -0.0068046082580375256,
+            "slot": 472
+          },
+          {
+            "level_pct": -0.010853810443411938,
+            "slot": 484
+          },
+          {
+            "level_pct": -0.00893945483289027,
+            "slot": 495
+          }
+        ],
+        "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn": [
+          {
+            "level_pct": 0.0001900368213014758,
+            "slot": 29
+          },
+          {
+            "level_pct": 0.0023850110495216015,
+            "slot": 56
+          },
+          {
+            "level_pct": 0.007540097694613834,
+            "slot": 86
+          },
+          {
+            "level_pct": 0.006224244887742536,
+            "slot": 95
+          },
+          {
+            "level_pct": 0.003583222542791198,
+            "slot": 104
+          },
+          {
+            "level_pct": 0.009076591321877103,
+            "slot": 126
+          },
+          {
+            "level_pct": 0.009790627408534647,
+            "slot": 139
+          },
+          {
+            "level_pct": 0.01500392675202189,
+            "slot": 165
+          },
+          {
+            "level_pct": 0.015240584407449909,
+            "slot": 181
+          },
+          {
+            "level_pct": 0.015936494239254806,
+            "slot": 206
+          },
+          {
+            "level_pct": 0.01608772673220571,
+            "slot": 225
+          },
+          {
+            "level_pct": 0.011014408181941882,
+            "slot": 243
+          },
+          {
+            "level_pct": 0.010573797892154957,
+            "slot": 253
+          },
+          {
+            "level_pct": 0.009549209100656597,
+            "slot": 275
+          },
+          {
+            "level_pct": 0.008987402362703456,
+            "slot": 305
+          },
+          {
+            "level_pct": 0.0071735994983557205,
+            "slot": 333
+          },
+          {
+            "level_pct": 0.006138291812196606,
+            "slot": 347
+          },
+          {
+            "level_pct": 0.008197693356337687,
+            "slot": 376
+          },
+          {
+            "level_pct": 0.008390989642448332,
+            "slot": 406
+          },
+          {
+            "level_pct": 0.008384976986897108,
+            "slot": 430
+          },
+          {
+            "level_pct": 0.014079593570937021,
+            "slot": 455
+          },
+          {
+            "level_pct": 0.01340220710055462,
+            "slot": 470
+          },
+          {
+            "level_pct": 0.010212798502551301,
+            "slot": 480
+          },
+          {
+            "level_pct": 0.010156483497980595,
+            "slot": 497
+          }
+        ],
+        "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL": [
+          {
+            "level_pct": -0.004839244679122334,
+            "slot": 15
+          },
+          {
+            "level_pct": -0.0006849346769310927,
+            "slot": 42
+          },
+          {
+            "level_pct": 0.003774759183050591,
+            "slot": 53
+          },
+          {
+            "level_pct": 0.006334145131381419,
+            "slot": 83
+          },
+          {
+            "level_pct": 0.009832966262712795,
+            "slot": 112
+          },
+          {
+            "level_pct": 0.006669955240456993,
+            "slot": 136
+          },
+          {
+            "level_pct": 0.010792229858092028,
+            "slot": 157
+          },
+          {
+            "level_pct": 0.014394426338837363,
+            "slot": 166
+          },
+          {
+            "level_pct": 0.011226146466492004,
+            "slot": 187
+          },
+          {
+            "level_pct": 0.010113352074969661,
+            "slot": 212
+          },
+          {
+            "level_pct": 0.001589830749515464,
+            "slot": 237
+          },
+          {
+            "level_pct": 0.008941676928286846,
+            "slot": 261
+          },
+          {
+            "level_pct": 0.005839848040989359,
+            "slot": 291
+          },
+          {
+            "level_pct": -0.0015863808617067043,
+            "slot": 313
+          },
+          {
+            "level_pct": -0.0020059398451510724,
+            "slot": 335
+          },
+          {
+            "level_pct": -0.002388908239125964,
+            "slot": 345
+          },
+          {
+            "level_pct": 0.003354596850657643,
+            "slot": 363
+          },
+          {
+            "level_pct": -0.0008391171983146428,
+            "slot": 374
+          },
+          {
+            "level_pct": -0.010043572265250322,
+            "slot": 390
+          },
+          {
+            "level_pct": -0.008730922010258269,
+            "slot": 408
+          },
+          {
+            "level_pct": -0.008732193219618267,
+            "slot": 438
+          },
+          {
+            "level_pct": -0.012223564852487101,
+            "slot": 451
+          },
+          {
+            "level_pct": -0.010291851883104108,
+            "slot": 461
+          },
+          {
+            "level_pct": -0.0056005669885395015,
+            "slot": 480
+          },
+          {
+            "level_pct": -0.003216999883481897,
+            "slot": 499
+          }
+        ]
       },
-      "seed": 10947,
+      "reference_sol": {
+        "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu": 0.003300249745423978,
+        "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn": 1.3113785397339144,
+        "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL": 0.003119778041089233
+      },
+      "searchers": [
+        {
+          "bid_share": 0.8088124436195754,
+          "latency_slots": [
+            1,
+            3
+          ],
+          "min_profit_sol": 0.003540817083414823,
+          "pays": "tip"
+        },
+        {
+          "bid_share": 0.4808661671694825,
+          "latency_slots": [
+            0,
+            0
+          ],
+          "max_legs": 3,
+          "min_profit_sol": 0.009850316724839837,
+          "pays": "priority_fee"
+        },
+        {
+          "bid_share": 0.7941008458629581,
+          "latency_slots": [
+            0,
+            0
+          ],
+          "max_legs": 3,
+          "min_profit_sol": 0.009586056824158078,
+          "pays": "tip"
+        },
+        {
+          "bid_share": 0.801122939032299,
+          "latency_slots": [
+            1,
+            1
+          ],
+          "min_profit_sol": 0.009465258226024585,
+          "pays": "tip"
+        }
+      ],
+      "seed": 143022,
       "wallet": {
         "SOL": 500.0
       },

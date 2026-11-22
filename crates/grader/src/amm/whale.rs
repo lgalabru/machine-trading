@@ -111,7 +111,7 @@ impl crate::trigger::Triggers for Whale {
         let gap_before_bps = self.gap_bps().await;
         let base_units = self
             .prices
-            .base_units(&pool, chunk.sol, self.prices.sol_usd(at));
+            .base_units(&pool, chunk.sol, self.prices.sol_usd(at), at);
         let atoms = (base_units * 10f64.powi(pool.base.asset.decimals.into())).round() as u64;
         let seat = PoolSeat::new(pool.clone(), self.chain.clone(), keypair.insecure_clone());
         let instructions = match chunk.impact_bps {

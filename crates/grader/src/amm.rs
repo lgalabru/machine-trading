@@ -250,6 +250,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .iter()
             .map(|(mint, price)| (mint.parse().expect("checked: a mint"), *price))
             .collect(),
+        other_paths: venue
+            .reference_paths
+            .iter()
+            .map(|(mint, path)| (mint.parse().expect("checked: a mint"), path.clone()))
+            .collect(),
     };
     check_pools(&pools, &scenario.mandate, &prices)?;
 
@@ -275,7 +280,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             }
         }
         for token in &others {
-            let units = others_sol / prices.in_sol(&token.mint, 1.0, reference_start_usd);
+            let units = others_sol / prices.in_sol(&token.mint, 1.0, reference_start_usd, 0);
             let atoms = crate::lending::atoms(units, u32::from(token.asset.decimals));
             crate::spot::fund_mint(&surfnet, owner, &token.mint, atoms)?;
         }
@@ -675,11 +680,11 @@ impl AmmAccount {
         // move no PnL.
         let others_sol: f64 = others
             .iter()
-            .map(|(mint, held)| self.prices.in_sol(mint, *held, price_usd))
+            .map(|(mint, held)| self.prices.in_sol(mint, *held, price_usd, at))
             .sum();
         let others_usd: f64 = others
             .iter()
-            .map(|(mint, held)| self.prices.in_usd(mint, *held, price_usd))
+            .map(|(mint, held)| self.prices.in_usd(mint, *held, price_usd, at))
             .sum();
         let value_usd = match (self.values_in_base(), others.is_empty()) {
             (true, true) => (base + quote / price_usd) * self.reference_start_usd,
@@ -726,7 +731,8 @@ impl AmmAccount {
     /// What the session names as the venue: each pool's keys and its
     /// tokens' decimals, the session's lookup tables (`lookup_table` is the
     /// first), SOL's reference price at the start, and every other token's
-    /// in SOL.
+    /// in SOL whose price is fixed: one a path moves is the market's to
+    /// read, not the session's to tell.
     fn metadata(&self) -> serde_json::Value {
         serde_json::json!({
             "pools": self.pools.iter().map(|p| serde_json::json!({
@@ -744,6 +750,7 @@ impl AmmAccount {
             "lookup_tables": self.tables.iter().map(|t| t.key.to_string()).collect::<Vec<_>>(),
             "reference_usd": self.reference_start_usd,
             "reference_sol": self.prices.others.iter()
+                .filter(|(mint, _)| !self.prices.other_paths.contains_key(mint))
                 .map(|(mint, price)| (mint.to_string(), *price))
                 .collect::<BTreeMap<_, _>>(),
         })
@@ -859,7 +866,7 @@ impl AmmAccount {
                 .map(|t| t.asset.decimals)
                 .expect("checked: a priced token is a pool's");
             let units = change.post as f64 / 10f64.powi(token_decimals.into());
-            held += self.prices.in_usd(&change.mint, units, sol_usd);
+            held += self.prices.in_usd(&change.mint, units, sol_usd, at);
         }
         Some(held)
     }

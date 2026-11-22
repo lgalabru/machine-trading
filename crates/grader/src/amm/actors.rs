@@ -169,12 +169,19 @@ impl Flow {
         Some((sells, size.min(flow.max_sol)))
     }
 
-    async fn swap(&self, i: usize, sells: bool, sol: f64, sol_usd: f64) -> Result<(), String> {
+    async fn swap(
+        &self,
+        i: usize,
+        sells: bool,
+        sol: f64,
+        sol_usd: f64,
+        at: u64,
+    ) -> Result<(), String> {
         let (pool, _, keypair) = &self.pools[i];
         let state = State::read(self.bidding.chain.as_ref(), pool)
             .await
             .map_err(|e| e.to_string())?;
-        let base = self.prices.base_units(pool, sol, sol_usd);
+        let base = self.prices.base_units(pool, sol, sol_usd, at);
         let order = match sells {
             true => SwapOrder {
                 direction: Direction::BaseIn,
@@ -234,7 +241,7 @@ impl Actor for Flow {
                 let Some((sells, sol)) = self.swap_at(i, slot) else {
                     continue;
                 };
-                if let Err(error) = self.swap(i, sells, sol, now.level_usd).await {
+                if let Err(error) = self.swap(i, sells, sol, now.level_usd, now.at).await {
                     warn!(pool = %self.pools[i].0.instrument, %error, "a calm swap wasn't sent");
                 }
             }
@@ -394,10 +401,11 @@ impl PoolSearchers {
         p: usize,
         state: &State,
         sol_usd: f64,
+        at: u64,
     ) -> Option<(Vec<Instruction>, f64, u64)> {
         let (spec, keypair) = &self.searchers[i];
         let pool = &self.pools[p];
-        let reference = self.prices.pool_price(pool, sol_usd);
+        let reference = self.prices.pool_price(pool, sol_usd, at);
         let fee = state.fee_fraction();
         let off = state.mid(pool) / reference - 1.0;
         if off.abs() <= fee + spec.margin_bps / 10_000.0 {
@@ -405,7 +413,9 @@ impl PoolSearchers {
         }
         // Where trading more stops paying: the pool's price at the
         // reference, past the fee.
-        let base_max = self.prices.base_units(pool, POOL_SEARCHER_SOL_MAX, sol_usd);
+        let base_max = self
+            .prices
+            .base_units(pool, POOL_SEARCHER_SOL_MAX, sol_usd, at);
         let (target, max_in) = match off > 0.0 {
             true => (
                 reference * (1.0 + fee),
@@ -420,7 +430,7 @@ impl PoolSearchers {
         let base = |atoms: u64| atoms as f64 / 10f64.powi(pool.base.asset.decimals.into());
         let quote = |atoms: u64| atoms as f64 / 10f64.powi(pool.quote.asset.decimals.into());
         let sol =
-            |mint: &solana_pubkey::Pubkey, units: f64| self.prices.in_sol(mint, units, sol_usd);
+            |mint: &solana_pubkey::Pubkey, units: f64| self.prices.in_sol(mint, units, sol_usd, at);
         let (base_mint, quote_mint) = (&pool.base.mint, &pool.quote.mint);
         let profit_sol = match quoted.direction {
             Direction::BaseIn => {
@@ -464,7 +474,9 @@ impl Actor for PoolSearchers {
                 {
                     continue;
                 }
-                let Some((instructions, profit_sol, bid)) = self.plan(i, p, &state, sol_usd) else {
+                let Some((instructions, profit_sol, bid)) =
+                    self.plan(i, p, &state, sol_usd, now.at)
+                else {
                     continue;
                 };
                 let name = Self::name(i);

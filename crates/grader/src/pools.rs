@@ -77,9 +77,14 @@ pub struct AmmVenue {
     /// The reference price of every other token a pool trades, by mint, in
     /// SOL a unit: what the account values it at and the pool searchers
     /// trade its pools back to. SOL and USDC have none (USDC is worth a
-    /// dollar). Fixed for the session: only SOL's dollar price moves.
+    /// dollar). Its price at the start: fixed for the session unless
+    /// `reference_paths` moves it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub reference_sol: BTreeMap<String, f64>,
+    /// Paths that move some of `reference_sol`'s prices, by mint, in percent
+    /// of the start price, as `market_model.path` moves SOL's.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reference_paths: BTreeMap<String, Vec<crate::scenario::Waypoint>>,
     /// The seller (or buyer) whose chunks are the session's triggers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub whale: Option<crate::amm::Whale>,
@@ -179,6 +184,14 @@ impl AmmVenue {
                 return Err(format!("amm: reference_sol's {mint} is a positive price"));
             }
         }
+        for (mint, path) in &self.reference_paths {
+            if !self.reference_sol.contains_key(mint) {
+                return Err(format!(
+                    "amm: reference_paths moves a price reference_sol names, not {mint}'s"
+                ));
+            }
+            check_reference_path(mint, path, duration_slots)?;
+        }
         if self.bound_usd.is_some_and(|bound| !bound.is_finite()) {
             return Err("amm: bound_usd must be a number".into());
         }
@@ -206,6 +219,43 @@ impl AmmVenue {
         }
         Ok(())
     }
+}
+
+/// The most waypoints a token's reference path holds: a tick every slot of
+/// a session four times backrun-thin-pools' longest (800 slots).
+const REFERENCE_PATH_POINTS_MAX: usize = 4_096;
+/// How far a token's reference path may move it, in percent of its start:
+/// a session's drift, not a crash.
+const REFERENCE_PATH_LEVEL_PCT_MAX: f64 = 50.0;
+
+/// A token's reference path: waypoints in slot order inside the session,
+/// each level a bounded move from the start.
+fn check_reference_path(
+    mint: &str,
+    path: &[crate::scenario::Waypoint],
+    duration_slots: u64,
+) -> std::result::Result<(), String> {
+    let bad = |why: &str| Err(format!("amm: reference_paths' {mint}: {why}"));
+    if path.len() > REFERENCE_PATH_POINTS_MAX {
+        return bad(&format!("at most {REFERENCE_PATH_POINTS_MAX} waypoints"));
+    }
+    if !path.windows(2).all(|w| w[0].slot < w[1].slot) {
+        return bad("waypoints in slot order, one a slot");
+    }
+    if path.last().is_some_and(|w| w.slot >= duration_slots) {
+        return bad("waypoints inside the session");
+    }
+    let level_ok = |w: &crate::scenario::Waypoint| {
+        w.level_pct.is_finite()
+            && w.level_pct.abs() <= REFERENCE_PATH_LEVEL_PCT_MAX
+            && w.premium_pct == 0.0
+    };
+    if !path.iter().all(level_ok) {
+        return bad(&format!(
+            "levels within {REFERENCE_PATH_LEVEL_PCT_MAX}% of the start, and no premium"
+        ));
+    }
+    Ok(())
 }
 
 /// Every account a swap through the pool at `address` names but its

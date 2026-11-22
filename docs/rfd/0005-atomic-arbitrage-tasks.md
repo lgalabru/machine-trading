@@ -377,3 +377,25 @@ informed bot.
   bot; one that looks only at a pair's two pools made 0.20 of the reference (v2 0.10), and one that tips 95% 0.10. The
   epoch step is left out: no session has a stake-pool venue, and stepping
   the rate offline needs a stake-pool override nobody writes yet.
+
+- 2026-11-22: `backrun-thin-pools` paid blind cheap bidding. Its graph
+  holds no four-leg cycle, so the informed bot's only edge is the bid, and
+  a ladder rung that searches as the reference does but always tips the
+  least (`min-tip`, 1,000 lamports) beat the reference: v2 0.53 on 72
+  hidden sessions, 0.91 on practice. Most triggers had no tipping rival in
+  their slot (a searcher reached it about one send in three, half of them
+  tipped). The market changed, not the band: 88% of sessions now hold a
+  cycle searcher that tips, searches three legs and reaches every
+  trigger's slot (the research's re-arbs within 2 slots, 57 of 82), its
+  share drawn as any searcher's; in the other 12% no searcher's latency
+  starts at 0. Which is which isn't told. `min-tip` fell to 0.007 hidden
+  (0.27 practice), the reference sits at 0.57 of the informed bot, and the
+  ladder holds `min-tip < reference`. The other tokens' reference prices
+  in SOL, which the pool searchers pull pools to, were the snapshot's
+  constants and learnable from practice: an amm venue now takes
+  `reference_paths` (per-token waypoints, as `market_model.path` moves
+  SOL's), the venue metadata names only prices no path moves, and the
+  family draws each session's level (JitoSOL 12 bp under to 1 bp over its
+  stake value, JTO and GEOD within 30 bp) and a slow drift. On one fixed
+  secret, `backrun-sol-usdc`'s and `liquidation-flash`'s reports are
+  identical but for wall time and fuel.

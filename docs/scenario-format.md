@@ -202,7 +202,14 @@ searchers race to backrun it in that slot.
   `native_sol` pays fees and tips.
 - **`reference_sol`** (optional): every other token's reference price, in
   SOL a unit, by mint: what the account values it at and the pool
-  searchers trade its pools back to. It doesn't move during a session.
+  searchers trade its pools back to. It doesn't move during a session
+  unless `reference_paths` moves it.
+- **`reference_paths`** (optional): by mint (each one `reference_sol`
+  names), waypoints (`slot`, `level_pct`) that move that token's
+  reference price, in percent of its start, as `market_model.path` moves
+  SOL's: up to 4,096 in slot order inside the session, each within 50%.
+  The venue metadata a bot reads lists in `reference_sol` only the
+  tokens whose price no path moves.
 - **`reference_usd`** (optional): SOL's price at the start, which
   `market_model.path` moves (its waypoints, as a perp's level) and the
   account is valued at, never the pools' own prices, which a trade moves.

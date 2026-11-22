@@ -16,6 +16,10 @@
       "dir": "bench/tasks/backrun-thin-pools/checks/bots/overbidder"
     },
     {
+      "name": "min-tip",
+      "dir": "bench/tasks/backrun-thin-pools/checks/bots/min-tip"
+    },
+    {
       "name": "reference",
       "dir": "bench/tasks/backrun-thin-pools/reference"
     },
@@ -39,6 +43,7 @@
   },
   "rules": [
     "max(two-leg, overbidder) < reference",
+    "min-tip < reference",
     "reference < informed"
   ],
   "exploits": {
