@@ -36,6 +36,16 @@ pub const STALE_MS: u64 = 2_000;
 const POLL_EVERY: Duration = Duration::from_millis(250);
 const RECONNECT_AFTER_MAX: Duration = Duration::from_secs(30);
 
+/// How long a reader waits before connecting again after its first drop:
+/// doubled each drop after, up to [`RECONNECT_AFTER_MAX`].
+const RECONNECT_AFTER_MIN: Duration = Duration::from_secs(1);
+
+/// How long a connection (DNS, TCP, TLS and the WebSocket handshake) and a
+/// subscription may take: an exchange that doesn't answer in this long is
+/// tried again later. The runtime's stop is looked for every
+/// [`POLL_EVERY`] meanwhile, so a stop never waits on it.
+const CONNECT_WITHIN: Duration = Duration::from_secs(10);
+
 /// References at most: a few exchanges for a few markets.
 pub const REFERENCES_MAX: usize = 16;
 
@@ -220,7 +230,7 @@ fn read(
         }
     };
     let id = config.id();
-    let mut wait = Duration::from_secs(1);
+    let mut wait = RECONNECT_AFTER_MIN;
     while !connections.stopped() {
         let read = runtime.block_on(stream(config, &id, latest, journal, connections));
         if connections.stopped() {
@@ -246,22 +256,25 @@ async fn stream(
     connections: &Connections,
 ) -> Result<(), String> {
     use futures_util::StreamExt;
-    let (mut socket, _) = tokio_tungstenite::connect_async_tls_with_config(
+    let connecting = tokio_tungstenite::connect_async_tls_with_config(
         config.source.url(&config.pair),
         None,
         false,
         Some(tokio_tungstenite::Connector::Rustls(tls()?)),
-    )
-    .await
-    .map_err(|e| e.to_string())?;
+    );
+    let Some(connected) = until_stopped(connecting, connections).await? else {
+        return Ok(());
+    };
+    let (mut socket, _) = connected.map_err(|e| e.to_string())?;
     if let Some(subscription) = config.source.subscription(&config.pair) {
         use futures_util::SinkExt;
-        socket
-            .send(tokio_tungstenite::tungstenite::Message::Text(
-                subscription.into(),
-            ))
-            .await
-            .map_err(|e| e.to_string())?;
+        let subscribing = socket.send(tokio_tungstenite::tungstenite::Message::Text(
+            subscription.into(),
+        ));
+        let Some(subscribed) = until_stopped(subscribing, connections).await? else {
+            return Ok(());
+        };
+        subscribed.map_err(|e| e.to_string())?;
     }
     tracing::info!(reference = id, "a reference's stream is open");
     while !connections.stopped() {
@@ -291,6 +304,26 @@ async fn stream(
         }
     }
     Ok(())
+}
+
+/// `work`'s outcome, if it ends within [`CONNECT_WITHIN`]; `None` if the
+/// runtime stops first, an error past the deadline.
+async fn until_stopped<T>(
+    work: impl std::future::Future<Output = T>,
+    connections: &Connections,
+) -> Result<Option<T>, String> {
+    let mut work = std::pin::pin!(work);
+    let deadline = tokio::time::Instant::now() + CONNECT_WITHIN;
+    loop {
+        match tokio::time::timeout(POLL_EVERY, &mut work).await {
+            Ok(outcome) => return Ok(Some(outcome)),
+            Err(_) if connections.stopped() => return Ok(None),
+            Err(_) if tokio::time::Instant::now() >= deadline => {
+                return Err(format!("no answer in {}s", CONNECT_WITHIN.as_secs()));
+            }
+            Err(_) => {}
+        }
+    }
 }
 
 /// TLS for a stream: ring as the provider, chosen here rather than for the
@@ -353,7 +386,7 @@ pub fn is_heartbeat(source: Source, text: &str) -> bool {
 
 fn quote(bid: &str, ask: &str) -> Option<(f64, f64)> {
     let (bid, ask) = (bid.parse::<f64>().ok()?, ask.parse::<f64>().ok()?);
-    (bid.is_finite() && bid > 0.0 && ask >= bid).then_some((bid, ask))
+    (bid.is_finite() && ask.is_finite() && bid > 0.0 && ask >= bid).then_some((bid, ask))
 }
 
 trait ClosedOr {
@@ -378,6 +411,20 @@ mod tests {
 
     use super::*;
 
+    /// A connection that never answers holds no reader past the runtime's
+    /// stop: it is given up within a poll.
+    #[tokio::test]
+    async fn a_connection_that_never_answers_is_given_up_on_stop() {
+        let connections = Connections::default();
+        connections.stop();
+        let started = std::time::Instant::now();
+        let outcome = until_stopped(std::future::pending::<()>(), &connections).await;
+        assert_eq!(outcome, Ok(None));
+        assert!(started.elapsed() < CONNECT_WITHIN);
+        let done = until_stopped(async { 7 }, &connections).await;
+        assert_eq!(done, Ok(Some(7)), "work that ends is never cut");
+    }
+
     #[test]
     fn a_binance_book_ticker_reads_and_anything_else_doesnt() {
         let line = r#"{"u":400900217,"s":"SOLUSDT","b":"69.18000000","B":"147.7","a":"69.19000000","A":"776.7"}"#;
@@ -385,6 +432,7 @@ mod tests {
         assert_eq!(parse(Source::Binance, r#"{"result":null,"id":1}"#), None);
         assert_eq!(parse(Source::Binance, r#"{"b":"70.0","a":"69.0"}"#), None);
         assert_eq!(parse(Source::Binance, r#"{"b":"0","a":"69.0"}"#), None);
+        assert_eq!(parse(Source::Binance, r#"{"b":"69.0","a":"inf"}"#), None);
         assert_eq!(parse(Source::Binance, "not json"), None);
         let coinbase = r#"{"type":"ticker","sequence":1,"product_id":"SOL-USD","price":"69.05","best_bid":"69.04","best_bid_size":"10","best_ask":"69.06","best_ask_size":"3"}"#;
         assert_eq!(parse(Source::Coinbase, coinbase), Some((69.04, 69.06)));
