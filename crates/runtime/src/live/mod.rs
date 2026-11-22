@@ -23,6 +23,7 @@ pub mod journal;
 pub mod perp;
 pub mod session;
 pub mod shadow;
+pub mod stopping;
 pub mod strategies;
 pub mod tape;
 pub mod telemetry;
@@ -170,6 +171,9 @@ pub enum Read {
 #[derive(Debug)]
 pub struct Runtime {
     thread: JoinHandle<()>,
+    /// The strategies' thread, if the runtime runs strategies: it ends
+    /// once the feed has, after shutting its sockets' connections.
+    strategies: Option<JoinHandle<()>>,
     /// Flushed once the runtime's thread has ended, so its last events go
     /// out.
     telemetry: Option<telemetry::Telemetry>,
@@ -210,6 +214,7 @@ impl Runtime {
         // The latest slot the feed reported, for the strategies' steps.
         let (slots, slots_seen) = tokio::sync::watch::channel(0u64);
         let mut slot_events = None;
+        let mut strategies = None;
         if let Some(control) = config.control.clone() {
             let (events, received) = match control.tpu {
                 Some(_) => {
@@ -219,7 +224,7 @@ impl Runtime {
                 None => (None, None),
             };
             slot_events = events;
-            strategies::spawn(
+            strategies = Some(strategies::spawn(
                 control,
                 strategies::Inputs {
                     shared: strategies::Shared {
@@ -233,7 +238,7 @@ impl Runtime {
                     slots: slots_seen,
                     slot_events: received,
                 },
-            )?;
+            )?);
         }
         let thread = std::thread::Builder::new()
             .name("mtx-live".into())
@@ -261,7 +266,14 @@ impl Runtime {
                 );
             })
             .map_err(|e| format!("the runtime's thread: {e}"))?;
-        Ok((Self { thread, telemetry }, sender))
+        Ok((
+            Self {
+                thread,
+                strategies,
+                telemetry,
+            },
+            sender,
+        ))
     }
 
     /// Wait for the runtime to end, once its senders are dropped. Its
@@ -269,6 +281,14 @@ impl Runtime {
     pub fn join(self) {
         if self.thread.join().is_err() {
             tracing::error!("the runtime's thread panicked");
+        }
+        // The feed's end ends the strategies (their slots stop), and their
+        // thread shuts every socket connection before it returns: nothing
+        // of the runtime runs once this does, so the host may unload it.
+        if let Some(strategies) = self.strategies
+            && strategies.join().is_err()
+        {
+            tracing::error!("the strategies' thread panicked");
         }
         tracing::info!("the runtime stopped");
         drop(self.telemetry);
@@ -488,6 +508,70 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    /// What a plugin reload does to the runtime, twice: start it with
+    /// its control and event sockets, keep a sidecar's connection open on
+    /// each, stop it (the host's `on_unload`), and start it again on the
+    /// same sockets (the new library's `on_load`). The stop returns with
+    /// both connections closed, and the second runtime answers.
+    #[test]
+    fn a_reload_closes_kept_connections_and_starts_again() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let dir = std::env::temp_dir().join(format!("mtx-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "journal": dir.join("journal.jsonl"),
+            "markets": [],
+            "control": {
+                "socket": dir.join("control.sock"),
+                "events": dir.join("events.sock"),
+                "state": dir.join("strategies.json"),
+                "rpc_url": "http://127.0.0.1:1",
+                "logs": dir.join("logs"),
+            },
+        }))
+        .unwrap();
+        for round in 0..2 {
+            let (runtime, feed) = Runtime::start(config.clone()).unwrap();
+            feed.send(slot(10 + round));
+            let mut control =
+                std::os::unix::net::UnixStream::connect(dir.join("control.sock")).unwrap();
+            control.write_all(b"{\"command\":\"status\"}\n").unwrap();
+            let mut reader = BufReader::new(control.try_clone().unwrap());
+            let mut reply = String::new();
+            reader.read_line(&mut reply).unwrap();
+            assert!(reply.contains("\"reply\":\"ok\""), "round {round}: {reply}");
+            let events = std::os::unix::net::UnixStream::connect(dir.join("events.sock")).unwrap();
+            let mut events = BufReader::new(events);
+            let mut hello = String::new();
+            events.read_line(&mut hello).unwrap();
+            assert!(
+                hello.contains("\"event\":\"hello\""),
+                "round {round}: {hello}"
+            );
+
+            let stopping = std::time::Instant::now();
+            drop(feed);
+            runtime.join();
+            assert!(
+                stopping.elapsed() < stopping::STOP_WITHIN,
+                "the stop waited on something"
+            );
+            // Both kept connections were closed by the runtime.
+            let mut rest = String::new();
+            assert_eq!(
+                reader.read_line(&mut rest).unwrap(),
+                0,
+                "round {round}: {rest}"
+            );
+            let mut more = String::new();
+            while events.read_line(&mut more).unwrap() > 0 {
+                more.clear();
+            }
+        }
     }
 
     #[test]

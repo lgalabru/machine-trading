@@ -9,7 +9,7 @@ here is on the node; a sidecar runs on the same machine.
 
 | | What | Where |
 | --- | --- | --- |
-| **Commands** | add, pause, resume, mandate, remove, kill, status: one JSON line each way, as many commands as a connection likes, refusals with a code | the control socket, `control.socket`; `mtx_core::control` |
+| **Commands** | add, upgrade, pause, resume, mandate, remove, kill, status: one JSON line each way, as many commands as a connection likes, refusals with a code | the control socket, `control.socket`; `mtx_core::control` |
 | **Events** | everything that happens, pushed as it happens: a hello, then slots, steps, paper fills and markouts, trades, pauses, commands | the event socket, `control.events`; `mtx_core::events` |
 | **Journals** | each strategy's steps, shadow sends and paper fills, in full | `<control.logs>/<name>.{steps,shadow,fills}.jsonl`; `crates/runtime/src/live/journal.rs` |
 | **Telemetry** | logs, traces and metrics | OTLP to `telemetry.otlp_endpoint`, a JSON log at `telemetry.log`; `ops/grafana` |
@@ -155,6 +155,15 @@ the code, a person reads the error. A code a newer runtime adds reads as
 - `add` names a component and a keypair by path on the node: a sidecar
   puts both there first. The runtime refuses a component whose SHA-256
   changed since it was added.
+- `upgrade` swaps a strategy's component for a new build, with no restart
+  of anything else: it ends, and starts again on the new component under
+  the same name, key and mandate, paused or running as it was. If the new
+  one doesn't start, the old one starts again and the refusal is
+  `start_failed`.
+- The runtime itself is swapped without restarting the validator:
+  `ops/agave/reload-plugin.sh` builds the plugin and has the validator
+  reload it. Every socket connection is closed on the way: a sidecar
+  connects again and reads `hello`.
 - An answer can be lost (the sidecar dies mid-command). Read `status` and
   decide from what the runtime has; never resend blind. The desired state
   (`control.state`) is what the runtime restores after a restart.

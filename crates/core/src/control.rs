@@ -83,6 +83,11 @@ pub enum Command {
     Mandate { name: String, mandate: Mandate },
     /// Compile, start and keep a strategy, paused unless it says `run`.
     Add(AddStrategy),
+    /// Swap `name`'s component for another (a new build of it): it ends,
+    /// and starts again on the new one under the same name, key and
+    /// mandate, paused or running as it was. If the new one doesn't start,
+    /// the old one starts again and the command is refused.
+    Upgrade { name: String, component: PathBuf },
     /// Pause `name`, cancel its orders, `end` it and forget it.
     Remove { name: String },
     /// The kill switch: pause everything and cancel every order.
@@ -99,6 +104,7 @@ pub enum CommandKind {
     Resume,
     Mandate,
     Add,
+    Upgrade,
     Remove,
     Kill,
 }
@@ -111,6 +117,7 @@ impl Command {
             Command::Resume { .. } => CommandKind::Resume,
             Command::Mandate { .. } => CommandKind::Mandate,
             Command::Add(_) => CommandKind::Add,
+            Command::Upgrade { .. } => CommandKind::Upgrade,
             Command::Remove { .. } => CommandKind::Remove,
             Command::Kill => CommandKind::Kill,
         }
@@ -125,6 +132,7 @@ impl CommandKind {
             CommandKind::Resume => "resume",
             CommandKind::Mandate => "mandate",
             CommandKind::Add => "add",
+            CommandKind::Upgrade => "upgrade",
             CommandKind::Remove => "remove",
             CommandKind::Kill => "kill",
         }
