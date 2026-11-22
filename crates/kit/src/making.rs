@@ -111,23 +111,26 @@ pub fn touch_targets(view: &View, tick: f64, config: &TouchConfig) -> Targets {
     let mut bid = best_bid + i64::from(room);
     let mut ask = best_ask - i64::from(room);
 
+    // `as` saturates a float past i64's range, and the steps below
+    // saturate too: an inventory or a configuration out of all proportion
+    // pushes a quote to the end of the book, never wraps it to the other.
     let skew = (view.inventory.abs() * config.skew_ticks_at_cap).round() as i64;
     if view.inventory > 0.0 {
-        bid -= skew;
+        bid = bid.saturating_sub(skew);
     } else {
-        ask += skew;
+        ask = ask.saturating_add(skew);
     }
     if view.momentum_bps > config.momentum_bps {
-        ask += config.momentum_ticks;
+        ask = ask.saturating_add(config.momentum_ticks);
     } else if view.momentum_bps < -config.momentum_bps {
-        bid -= config.momentum_ticks;
+        bid = bid.saturating_sub(config.momentum_ticks);
     }
     if view.oracle > 0.0 {
         let mid = (best_bid + best_ask) as f64 * tick / 2.0;
         let basis_bps = (mid / view.oracle - 1.0) * 10_000.0;
         if basis_bps.abs() > config.basis_wide_bps {
-            bid -= config.basis_wide_ticks;
-            ask += config.basis_wide_ticks;
+            bid = bid.saturating_sub(config.basis_wide_ticks);
+            ask = ask.saturating_add(config.basis_wide_ticks);
         }
     }
     // Post-only refuses a crossing quote anyway; keep it off the book's far
