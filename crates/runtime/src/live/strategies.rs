@@ -460,6 +460,29 @@ struct Stats {
     drawdown: Option<f64>,
 }
 
+impl Stats {
+    /// A strategy just added: paused until its component starts, nothing
+    /// stepped or sent yet.
+    fn added() -> Self {
+        Self {
+            state: StrategyState::Paused {
+                why: "added".into(),
+            },
+            steps: 0,
+            skipped: 0,
+            due: 0,
+            last_step_ms: None,
+            sends_landed: 0,
+            sends_failed: 0,
+            last_send_error: None,
+            last_slot: None,
+            position: None,
+            pnl: None,
+            drawdown: None,
+        }
+    }
+}
+
 /// What a strategy is started with, apart from the manager: cloned onto
 /// a task, so that an `add`'s slow work (its files, its accounts from the
 /// node, its component) doesn't hold the other strategies' steps.
@@ -485,8 +508,8 @@ impl Ctx {
         let component =
             std::fs::read(&spec.component).map_err(|e| unreadable(&spec.component, e))?;
         let component_sha256 = format!("{:x}", Sha256::digest(&component));
-        let keypair =
-            read_keypair(&spec.keypair).map_err(|e| ControlError::new(ErrorCode::Unreadable, e))?;
+        let keypair = super::read_keypair(&spec.keypair)
+            .map_err(|e| ControlError::new(ErrorCode::Unreadable, e))?;
         let authority = solana_signer::Signer::pubkey(&keypair);
         let exchange =
             std::fs::read_to_string(&spec.exchange).map_err(|e| unreadable(&spec.exchange, e))?;
@@ -522,22 +545,7 @@ impl Ctx {
                     }
                 },
             })),
-            stats: Arc::new(Mutex::new(Stats {
-                state: StrategyState::Paused {
-                    why: "added".into(),
-                },
-                steps: 0,
-                skipped: 0,
-                due: 0,
-                last_step_ms: None,
-                sends_landed: 0,
-                sends_failed: 0,
-                last_send_error: None,
-                last_slot: None,
-                position: None,
-                pnl: None,
-                drawdown: None,
-            })),
+            stats: Arc::new(Mutex::new(Stats::added())),
             spec: spec.clone(),
         };
         let state = match restored {
@@ -941,6 +949,8 @@ impl Manager {
     /// `getHealth`): its accounts are then the chain's, and a strategy can
     /// start on them.
     async fn node_is_healthy(&self) -> bool {
+        // An error or no answer in time is a node not to start on yet: the
+        // held strategies are asked about again in HEALTH_EVERY_SLOTS.
         RpcChainClient::with_timeout(&self.config.rpc_url, HEALTH_TIMEOUT)
             .rpc()
             .get_health()
@@ -1025,9 +1035,50 @@ impl Manager {
         }
     }
 
-    /// Step every running strategy whose step is due at `slot`.
+    /// Step every running strategy whose step is due at `slot`, each on a
+    /// task of its own: unless the feed is stale, which pauses them all.
     async fn step(&mut self, slot: u64) {
         let woke = std::time::Instant::now();
+        self.report_feed(slot);
+        if let Some(why) = self.feed_staleness() {
+            self.pause_running_for_feed(why).await;
+            return;
+        }
+        for (name, strategy) in &self.strategies {
+            let Some(inner) = self.take_due(name, strategy, slot) else {
+                continue;
+            };
+            let task = StepTask {
+                name: name.clone(),
+                slot,
+                woke,
+                // The step's clock starts as its slot reaches the strategies.
+                started: std::time::Instant::now(),
+                clock: self.shared.progress.clocks().get(slot),
+                progress: self.shared.progress.clone(),
+                events: self.shared.events.clone(),
+                slot_cell: strategy.slot.clone(),
+                stats: strategy.stats.clone(),
+                mandate: strategy.spec.mandate.clone(),
+                close_on_breach: strategy.spec.close_on_breach,
+                instrument: instrument_of(&strategy.spec.symbol),
+                shadow: strategy.spec.shadow,
+            };
+            let span = tracing::info_span!(
+                "strategy.step",
+                strategy = %name,
+                slot,
+                k = inner.k,
+                shadow = task.shadow,
+                answered = tracing::field::Empty,
+                step_ms = tracing::field::Empty,
+            );
+            tokio::spawn(tracing::Instrument::instrument(task.run(inner), span));
+        }
+    }
+
+    /// Tell the event stream of `slot`, and the metrics every few slots.
+    fn report_feed(&self, slot: u64) {
         let progress = &self.shared.progress;
         self.shared.events.emit(Event::Slot {
             slot,
@@ -1043,235 +1094,79 @@ impl Manager {
                 "feed"
             );
         }
-        let stale = match (progress.dropped(), progress.slots_behind()) {
+    }
+
+    /// Why nothing should be traded on the cache now, if so: the feed
+    /// dropped an event, or lags the chain past [`FEED_SLOTS_BEHIND_MAX`].
+    fn feed_staleness(&self) -> Option<String> {
+        let progress = &self.shared.progress;
+        match (progress.dropped(), progress.slots_behind()) {
             (0, behind) if behind <= FEED_SLOTS_BEHIND_MAX => None,
             (0, behind) => Some(format!("the feed is {behind} slots behind the chain")),
             (dropped, _) => Some(format!(
                 "the feed dropped {dropped} events: the cache may be stale"
             )),
-        };
-        if let Some(why) = stale {
-            let running: Vec<String> = self
-                .strategies
-                .iter()
-                .filter(|(_, s)| lock(&s.stats).state == StrategyState::Running)
-                .map(|(name, _)| name.clone())
-                .collect();
-            for name in running {
-                tracing::warn!(
-                    counter.mtx_enforcer_pauses = 1_u64,
-                    strategy = %name,
-                    reason = "feed",
-                    why = %why,
-                    "the enforcer pauses a strategy"
-                );
-                self.shared.events.emit(Event::Paused {
-                    strategy: name.clone(),
-                    reason: PauseReason::Feed,
-                    why: why.clone(),
-                });
-                if let Err(error) = self.pause(&name, OnPause::Cancel, why.clone()).await {
-                    tracing::warn!(name, %error, "a strategy couldn't be paused");
-                }
-            }
-            return;
         }
-        for (name, strategy) in &self.strategies {
-            let mut stats = lock(&strategy.stats);
-            if stats.state != StrategyState::Running || slot < stats.due {
-                continue;
+    }
+
+    /// The enforcer: pause every running strategy, cancelling its orders,
+    /// because the feed is stale (`why`).
+    async fn pause_running_for_feed(&self, why: String) {
+        let running: Vec<String> = self
+            .strategies
+            .iter()
+            .filter(|(_, s)| lock(&s.stats).state == StrategyState::Running)
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in running {
+            tracing::warn!(
+                counter.mtx_enforcer_pauses = 1_u64,
+                strategy = %name,
+                reason = "feed",
+                why = %why,
+                "the enforcer pauses a strategy"
+            );
+            self.shared.events.emit(Event::Paused {
+                strategy: name.clone(),
+                reason: PauseReason::Feed,
+                why: why.clone(),
+            });
+            if let Err(error) = self.pause(&name, OnPause::Cancel, why.clone()).await {
+                tracing::warn!(name, %error, "a strategy couldn't be paused");
             }
-            stats.due = next_due(slot, strategy.spec.slots_per_step);
-            let Ok(mut inner) = strategy.inner.clone().try_lock_owned() else {
-                stats.skipped += 1;
-                tracing::warn!(
-                    counter.mtx_strategy_steps_skipped = 1_u64,
-                    strategy = %name,
-                    slot,
-                    "a step is skipped: the one before still runs"
-                );
-                self.shared.events.emit(Event::StepSkipped {
-                    strategy: name.clone(),
-                    slot,
-                });
-                continue;
-            };
-            drop(stats);
-            let (name, progress) = (name.clone(), self.shared.progress.clone());
-            let (slot_cell, stats) = (strategy.slot.clone(), strategy.stats.clone());
-            let (mandate, close_on_breach) =
-                (strategy.spec.mandate.clone(), strategy.spec.close_on_breach);
-            let instrument = instrument_of(&strategy.spec.symbol);
-            let shadow = strategy.spec.shadow;
-            let events = self.shared.events.clone();
-            let clock = self.shared.progress.clocks().get(slot);
-            // The step's clock starts as its slot reaches the strategies.
-            let started = std::time::Instant::now();
-            let span = tracing::info_span!(
-                "strategy.step",
+        }
+    }
+
+    /// `strategy`'s component, locked for a step at `slot`, if it runs and
+    /// its step is due: its next one is then set. A step still under way
+    /// skips this one, counted, never queued.
+    fn take_due(
+        &self,
+        name: &str,
+        strategy: &Strategy,
+        slot: u64,
+    ) -> Option<tokio::sync::OwnedMutexGuard<Inner>> {
+        let mut stats = lock(&strategy.stats);
+        if stats.state != StrategyState::Running || slot < stats.due {
+            return None;
+        }
+        stats.due = next_due(slot, strategy.spec.slots_per_step);
+        assert!(stats.due > slot, "a strategy's next step is after this one");
+        let Ok(inner) = strategy.inner.clone().try_lock_owned() else {
+            stats.skipped += 1;
+            tracing::warn!(
+                counter.mtx_strategy_steps_skipped = 1_u64,
                 strategy = %name,
                 slot,
-                k = inner.k,
-                shadow,
-                answered = tracing::field::Empty,
-                step_ms = tracing::field::Empty,
+                "a step is skipped: the one before still runs"
             );
-            tokio::spawn(tracing::Instrument::instrument(
-                async move {
-                    let inner = &mut *inner;
-                    let Some(bot) = inner.bot.as_mut() else {
-                        return;
-                    };
-                    let settling = std::time::Instant::now();
-                    let settled = tokio::task::block_in_place(|| progress.settle(SETTLE_WITHIN));
-                    let settle_us = micros(settling);
-                    if !settled {
-                        tracing::warn!(
-                            name,
-                            slot,
-                            "the feed is behind; the step reads what the cache holds"
-                        );
-                    }
-                    slot_cell.store(slot, Ordering::Release);
-                    let mut step = mtx_core::Step::new(inner.k, slot, false);
-                    if let Some(tape) = inner.tape.as_mut() {
-                        step.tape =
-                            super::journal::step_tape(&tape.trades(&name), &instrument.to_string());
-                    }
-                    let answered = bot.turn(&step, None).await;
-                    let ended = std::time::Instant::now();
-                    let took_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-                    let timings = step_timings(clock, woke, settle_us, bot.last_timings(), ended);
-                    let current = tracing::Span::current();
-                    current.record("answered", answered);
-                    current.record("step_ms", took_ms);
-                    inner.k += 1;
-                    let market = bot.last_market().cloned();
-                    // After the trade: what the step left, into what the
-                    // enforcer has seen, and the mandate's audit of it all.
-                    if let Some(market) = &market {
-                        let observed = &mut inner.observed;
-                        observed.record(&instrument, market.position.size);
-                        observed.max_drawdown_usd = observed.max_drawdown_usd.max(market.drawdown);
-                        if market.resting_bids > 0.0 {
-                            observed.record_open_order(&instrument, mtx_core::Side::Buy);
-                        }
-                        if market.resting_asks > 0.0 {
-                            observed.record_open_order(&instrument, mtx_core::Side::Sell);
-                        }
-                    }
-                    let breach = mandate.audit(&inner.observed);
-                    let paused = {
-                        let mut stats = lock(&stats);
-                        stats.steps += u64::from(answered);
-                        stats.last_step_ms = Some(took_ms);
-                        if let Some(market) = &market {
-                            // What became of the step before's orders, as this
-                            // step's market reports them.
-                            for send in &market.sends {
-                                let outcome = match &send.state {
-                                    mtx_kit::SendState::Landed(_) => "landed",
-                                    mtx_kit::SendState::Failed { .. } => "failed",
-                                    mtx_kit::SendState::NotSent(_) => "not_sent",
-                                    mtx_kit::SendState::Delayed => "delayed",
-                                    mtx_kit::SendState::Expired => "expired",
-                                };
-                                tracing::info!(
-                                    counter.mtx_strategy_sends = 1_u64,
-                                    strategy = %name,
-                                    outcome,
-                                    "a send's fate"
-                                );
-                                match &send.state {
-                                    mtx_kit::SendState::Landed(_) => stats.sends_landed += 1,
-                                    mtx_kit::SendState::Failed { reason, .. }
-                                    | mtx_kit::SendState::NotSent(reason) => {
-                                        stats.sends_failed += 1;
-                                        // The step's first failure, not the
-                                        // orders it stopped after it.
-                                        if reason != crate::desk::EARLIER_ORDER_FAILED {
-                                            stats.last_send_error = Some(reason.clone());
-                                        }
-                                    }
-                                    mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => {}
-                                }
-                            }
-                            stats.last_slot = Some(market.slot);
-                            stats.position = Some(market.position.size);
-                            stats.pnl = Some(market.pnl);
-                            stats.drawdown = Some(market.drawdown);
-                        }
-                        if let Some(why) = &bot.stopped
-                            && !matches!(stats.state, StrategyState::Stopped { .. })
-                        {
-                            stats.state = StrategyState::Stopped { why: why.clone() };
-                            events.emit(Event::Stopped {
-                                strategy: name.clone(),
-                                why: why.clone(),
-                            });
-                        }
-                        let paused = match (&breach, &stats.state) {
-                            (Some(breach), StrategyState::Running) => {
-                                tracing::warn!(
-                                    counter.mtx_enforcer_pauses = 1_u64,
-                                    strategy = %name,
-                                    reason = "mandate",
-                                    breach = %breach,
-                                    "the enforcer pauses a strategy"
-                                );
-                                events.emit(Event::Paused {
-                                    strategy: name.clone(),
-                                    reason: PauseReason::Mandate,
-                                    why: breach.to_string(),
-                                });
-                                stats.state = StrategyState::Paused {
-                                    why: format!("the enforcer: {breach}"),
-                                };
-                                true
-                            }
-                            _ => false,
-                        };
-                        tracing::info!(
-                            counter.mtx_strategy_steps = 1_u64,
-                            histogram.mtx_strategy_step_ms = took_ms,
-                            gauge.mtx_strategy_position = stats.position.unwrap_or(0.0),
-                            gauge.mtx_strategy_pnl_usd = stats.pnl.unwrap_or(0.0),
-                            gauge.mtx_strategy_drawdown_usd = stats.drawdown.unwrap_or(0.0),
-                            gauge.mtx_strategy_running =
-                                u64::from(stats.state == StrategyState::Running),
-                            strategy = %name,
-                            shadow,
-                            answered,
-                            "a strategy stepped"
-                        );
-                        events.emit(Event::Step {
-                            strategy: name.clone(),
-                            slot,
-                            k: inner.k - 1,
-                            step_ms: took_ms,
-                            timings,
-                            answered,
-                            shadow,
-                            orders: bot.last_orders(),
-                            position: stats.position.unwrap_or(0.0),
-                            pnl_usd: stats.pnl.unwrap_or(0.0),
-                            drawdown_usd: stats.drawdown.unwrap_or(0.0),
-                            running: stats.state == StrategyState::Running,
-                        });
-                        paused
-                    };
-                    if paused {
-                        for failed in bot.cancel_all().await {
-                            tracing::warn!(name, failed, "an order couldn't be cancelled");
-                        }
-                        if close_on_breach && let Err(error) = bot.flatten(FLATTEN_SLIPPAGE).await {
-                            tracing::warn!(name, %error, "the position couldn't be closed");
-                        }
-                    }
-                },
-                span,
-            ));
-        }
+            self.shared.events.emit(Event::StepSkipped {
+                strategy: name.to_string(),
+                slot,
+            });
+            return None;
+        };
+        Some(inner)
     }
 
     async fn handle(&mut self, command: Command) -> Reply {
@@ -1611,8 +1506,9 @@ impl Manager {
         self.adding.remove(&spec.name);
         let answer = match outcome {
             Ok(strategy) => {
-                if let Ok(mut stats) = strategy.stats.lock() {
+                {
                     // It was prepared at an earlier slot: it steps from now.
+                    let mut stats = lock(&strategy.stats);
                     stats.due = stats.due.max(self.slot);
                 }
                 self.strategies.insert(spec.name.clone(), strategy);
@@ -1713,10 +1609,252 @@ impl Manager {
     }
 }
 
+/// One strategy's step, run on a task of its own off the strategies' loop:
+/// what it needs of the manager, cloned.
+struct StepTask {
+    name: String,
+    slot: u64,
+    /// When the strategies' loop woke for `slot`.
+    woke: std::time::Instant,
+    /// When this step was handed its task: what `step_ms` counts from.
+    started: std::time::Instant,
+    /// When the validator told of `slot`, and the feed applied it.
+    clock: Option<SlotClock>,
+    progress: FeedProgress,
+    events: super::events::Events,
+    /// The slot its market is read at.
+    slot_cell: Arc<AtomicU64>,
+    stats: Arc<Mutex<Stats>>,
+    mandate: Mandate,
+    close_on_breach: bool,
+    instrument: InstrumentRef,
+    shadow: bool,
+}
+
+/// What a step came to, for its strategy's stats and the event stream.
+struct Stepped {
+    answered: bool,
+    took_ms: u64,
+    timings: StepTimings,
+    market: Option<mtx_kit::Market>,
+}
+
+impl StepTask {
+    /// Step the component once, record what it did, and enforce the
+    /// mandate on what it left: a breach pauses it, cancels its orders,
+    /// and closes its position if its spec says so.
+    async fn run(self, mut inner: tokio::sync::OwnedMutexGuard<Inner>) {
+        let inner = &mut *inner;
+        let Some(bot) = inner.bot.as_mut() else {
+            return;
+        };
+        let k = inner.k;
+        let stepped = self.turn(bot, inner.tape.as_mut(), k).await;
+        inner.k += 1;
+        if let Some(market) = &stepped.market {
+            observe(&mut inner.observed, &self.instrument, market);
+        }
+        let breach = self.mandate.audit(&inner.observed);
+        let paused = self.record(bot, k, &stepped, breach.as_ref());
+        if paused {
+            for failed in bot.cancel_all().await {
+                tracing::warn!(name = self.name, failed, "an order couldn't be cancelled");
+            }
+            if self.close_on_breach
+                && let Err(error) = bot.flatten(FLATTEN_SLIPPAGE).await
+            {
+                tracing::warn!(name = self.name, %error, "the position couldn't be closed");
+            }
+        }
+    }
+
+    /// The component's turn `k`, on the cache once the feed has applied
+    /// what came before `slot` (or after [`SETTLE_WITHIN`], on what it holds).
+    async fn turn(
+        &self,
+        bot: &mut WasmBot,
+        tape: Option<&mut super::journal::TapeReader>,
+        k: u64,
+    ) -> Stepped {
+        let settling = std::time::Instant::now();
+        let settled = tokio::task::block_in_place(|| self.progress.settle(SETTLE_WITHIN));
+        let settle_us = micros(settling);
+        if !settled {
+            tracing::warn!(
+                name = self.name,
+                slot = self.slot,
+                "the feed is behind; the step reads what the cache holds"
+            );
+        }
+        self.slot_cell.store(self.slot, Ordering::Release);
+        let mut step = mtx_core::Step::new(k, self.slot, false);
+        if let Some(tape) = tape {
+            step.tape =
+                super::journal::step_tape(&tape.trades(&self.name), &self.instrument.to_string());
+        }
+        let answered = bot.turn(&step, None).await;
+        let ended = std::time::Instant::now();
+        let took_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let timings = step_timings(self.clock, self.woke, settle_us, bot.last_timings(), ended);
+        let current = tracing::Span::current();
+        current.record("answered", answered);
+        current.record("step_ms", took_ms);
+        Stepped {
+            answered,
+            took_ms,
+            timings,
+            market: bot.last_market().cloned(),
+        }
+    }
+
+    /// Fold step `k` into the strategy's stats, stop or pause it if it must,
+    /// and tell the metrics and the event stream. Whether the enforcer
+    /// paused it for `breach`.
+    fn record(
+        &self,
+        bot: &WasmBot,
+        k: u64,
+        stepped: &Stepped,
+        breach: Option<&mtx_core::mandate::Breach>,
+    ) -> bool {
+        let name = &self.name;
+        let mut stats = lock(&self.stats);
+        stats.steps += u64::from(stepped.answered);
+        stats.last_step_ms = Some(stepped.took_ms);
+        if let Some(market) = &stepped.market {
+            record_market(&mut stats, name, market);
+        }
+        if let Some(why) = &bot.stopped
+            && !matches!(stats.state, StrategyState::Stopped { .. })
+        {
+            stats.state = StrategyState::Stopped { why: why.clone() };
+            self.events.emit(Event::Stopped {
+                strategy: name.clone(),
+                why: why.clone(),
+            });
+        }
+        let paused = match (breach, &stats.state) {
+            (Some(breach), StrategyState::Running) => {
+                self.pause_for_breach(&mut stats, breach);
+                true
+            }
+            _ => false,
+        };
+        tracing::info!(
+            counter.mtx_strategy_steps = 1_u64,
+            histogram.mtx_strategy_step_ms = stepped.took_ms,
+            gauge.mtx_strategy_position = stats.position.unwrap_or(0.0),
+            gauge.mtx_strategy_pnl_usd = stats.pnl.unwrap_or(0.0),
+            gauge.mtx_strategy_drawdown_usd = stats.drawdown.unwrap_or(0.0),
+            gauge.mtx_strategy_running = u64::from(stats.state == StrategyState::Running),
+            strategy = %name,
+            shadow = self.shadow,
+            answered = stepped.answered,
+            "a strategy stepped"
+        );
+        self.events.emit(Event::Step {
+            strategy: name.clone(),
+            slot: self.slot,
+            k,
+            step_ms: stepped.took_ms,
+            timings: stepped.timings,
+            answered: stepped.answered,
+            shadow: self.shadow,
+            orders: bot.last_orders(),
+            position: stats.position.unwrap_or(0.0),
+            pnl_usd: stats.pnl.unwrap_or(0.0),
+            drawdown_usd: stats.drawdown.unwrap_or(0.0),
+            running: stats.state == StrategyState::Running,
+        });
+        paused
+    }
+
+    /// The enforcer pauses a running strategy whose step breached its
+    /// mandate.
+    fn pause_for_breach(&self, stats: &mut Stats, breach: &mtx_core::mandate::Breach) {
+        assert_eq!(
+            stats.state,
+            StrategyState::Running,
+            "only a running strategy is paused"
+        );
+        tracing::warn!(
+            counter.mtx_enforcer_pauses = 1_u64,
+            strategy = %self.name,
+            reason = "mandate",
+            breach = %breach,
+            "the enforcer pauses a strategy"
+        );
+        self.events.emit(Event::Paused {
+            strategy: self.name.clone(),
+            reason: PauseReason::Mandate,
+            why: breach.to_string(),
+        });
+        stats.state = StrategyState::Paused {
+            why: format!("the enforcer: {breach}"),
+        };
+    }
+}
+
+/// What a step left, into what the enforcer has seen of its strategy: the
+/// position, the worst drawdown, and which sides rest orders.
+fn observe(observed: &mut Observed, instrument: &InstrumentRef, market: &mtx_kit::Market) {
+    observed.record(instrument, market.position.size);
+    observed.max_drawdown_usd = observed.max_drawdown_usd.max(market.drawdown);
+    if market.resting_bids > 0.0 {
+        observed.record_open_order(instrument, mtx_core::Side::Buy);
+    }
+    if market.resting_asks > 0.0 {
+        observed.record_open_order(instrument, mtx_core::Side::Sell);
+    }
+}
+
+/// What became of the step before's orders, as this step's market reports
+/// them, and where the strategy stands: into its stats and the metrics.
+fn record_market(stats: &mut Stats, strategy: &str, market: &mtx_kit::Market) {
+    for send in &market.sends {
+        tracing::info!(
+            counter.mtx_strategy_sends = 1_u64,
+            strategy,
+            outcome = send_outcome(&send.state),
+            "a send's fate"
+        );
+        match &send.state {
+            mtx_kit::SendState::Landed(_) => stats.sends_landed += 1,
+            mtx_kit::SendState::Failed { reason, .. } | mtx_kit::SendState::NotSent(reason) => {
+                stats.sends_failed += 1;
+                // The step's first failure, not the orders it stopped
+                // after it.
+                if reason != crate::desk::EARLIER_ORDER_FAILED {
+                    stats.last_send_error = Some(reason.clone());
+                }
+            }
+            mtx_kit::SendState::Delayed | mtx_kit::SendState::Expired => {}
+        }
+    }
+    stats.last_slot = Some(market.slot);
+    stats.position = Some(market.position.size);
+    stats.pnl = Some(market.pnl);
+    stats.drawdown = Some(market.drawdown);
+}
+
+/// A send's fate, as the metrics label it.
+fn send_outcome(state: &mtx_kit::SendState) -> &'static str {
+    match state {
+        mtx_kit::SendState::Landed(_) => "landed",
+        mtx_kit::SendState::Failed { .. } => "failed",
+        mtx_kit::SendState::NotSent(_) => "not_sent",
+        mtx_kit::SendState::Delayed => "delayed",
+        mtx_kit::SendState::Expired => "expired",
+    }
+}
+
 /// A held strategy, as status shows it: stopped, waiting for the node, or
 /// not restored.
 fn held_status(stored: &Stored, why: &Option<String>) -> StrategyStatus {
     let spec = &stored.spec;
+    // A held strategy's mandate passed its add's check once; one that no
+    // longer reads (a mandate format that changed since) shows no limits,
+    // and it is held all the same, never run.
     let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol).unwrap_or((0.0, 0.0));
     StrategyStatus {
         name: spec.name.clone(),
@@ -1816,13 +1954,6 @@ fn instrument_of(symbol: &str) -> InstrumentRef {
         kind: mtx_core::mandate::Kind::Perp,
         symbol: symbol.into(),
     }
-}
-
-fn read_keypair(path: &Path) -> Result<Keypair, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let bytes: Vec<u8> =
-        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    Keypair::try_from(bytes.as_slice()).map_err(|_| format!("{} is not a keypair", path.display()))
 }
 
 /// Every cancel went through, or why not.
