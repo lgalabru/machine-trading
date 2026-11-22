@@ -73,6 +73,12 @@ strategy's component alone is swapped with `mtx live upgrade <name>
 <bot.wasm>`, and strategies come and go with `add` and `remove`: none of
 it restarts the validator.
 
+Each reload leaves the old library mapped in the validator (glibc keeps a
+library whose threads registered thread-local destructors) with two idle
+threads of it: tens of MB and two sleeping threads a reload, cleared by the
+validator's next restart. Reload freely; restart when convenient after
+many.
+
 ## Watch it
 
 ```sh
