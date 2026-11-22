@@ -20,6 +20,7 @@ Put the provider's key on the bench machine, in `~/.machine-trading.env`
 | Google (Gemini API) | `GEMINI_API_KEY` | `chat` | `https://generativelanguage.googleapis.com/v1beta/openai` |
 | OpenRouter (Meta, Kimi, GLM, NVIDIA, Inkling, ...) | `OPENROUTER_API_KEY` | `chat`, `reasoning = "openrouter"` | `https://openrouter.ai/api/v1` |
 | Any OpenAI-compatible host (Together, Fireworks, a lab's own API) | any name, e.g. `TOGETHER_API_KEY` | `chat` | the host's API root |
+| BlockRun on Solana (Anthropic, OpenAI, Google, xAI, GLM, Kimi, ...), paid per call over x402 | `SOLANA_WALLET_KEY`, a wallet's secret | `chat`, `pay = "x402-solana"` | `https://sol.blockrun.ai/api/v1` |
 
 The keys never enter a trial. `just bench` starts a proxy on the bench
 machine for the batch (`key_proxy.py`) that holds them, listening on the
@@ -52,6 +53,52 @@ and don't share the batch.
 Models in their native harness (`native:<model>`, Claude Code and Codex)
 still take their key inside the container, as before; the search covers
 their files too.
+
+### A wallet instead of a key: BlockRun over x402
+
+[BlockRun](https://blockrun.ai)'s Solana gateway serves every family's
+models with no account and no API key: it is paid per call, in USDC, over
+[x402](https://www.x402.org). The `blockrun-*` models in `models.toml` run
+through it. The proxy holds a Solana wallet's secret in place of a key
+(`SOLANA_WALLET_KEY`: base58, as the BlockRun SDK and Phantom export it, or
+solana-keygen's JSON array) and pays for each call itself
+(`x402_solana.py`, standard library only):
+
+1. it sends the call unsigned; the gateway answers 402 with a quote (the
+   USDC it wants, its fee payer, a recent blockhash), or answers it outright
+   for a free model;
+2. it checks the quote: the `exact` scheme, USDC on the route's network, an
+   amount within the route's `max_usd` a call (5 by default) and within the
+   batch's budget, `MTX_X402_BUDGET_USD`, when set;
+3. it signs a USDC transfer for exactly that amount, the gateway's
+   facilitator as fee payer, and sends the call again with it in
+   `PAYMENT-SIGNATURE`; the answer is relayed as for any other route.
+
+A refused payment is signed again, on a new quote, only when the gateway
+proves nothing was broadcast (a nonce replay, an underpaid or expired
+quote), never after settlement began; a 5xx to a signed call is sent once
+more with the same signature, which settles at most once. Each payment is
+logged in the batch's `proxy.log` (route, USD, the batch's running total).
+A wallet out of USDC, or a spent budget, stops the batch like a provider's
+quota: the proxy's answer says `x402 wallet is out of USDC` (with the
+address to fund) or `x402 budget spent`. The token still opens one route,
+one model and one path; the wallet's secret never enters a trial, and the
+key scan looks for it like any key.
+
+```sh
+python3 -I bench/harness/models.py wallet blockrun-claude-sonnet-5-5   # the address to fund
+just preflight "blockrun-claude-sonnet-5-5 blockrun-glm-5-3"            # one paid call each (about $0.001)
+MTX_X402_BUDGET_USD=200 just bench "blockrun-claude-sonnet-5-5 blockrun-gpt-6-1-sol" 5 3 0.13.0 1 0 high
+```
+
+What x402 changes in the numbers: the gateway quotes a call on its input
+and its output ceiling, and x402 pays the quote, not the tokens the model
+used. A call that names no `max_tokens` (Hermes names none) is quoted, and
+capped, at 8,192 output tokens; set `max_tokens` on a model's table to give
+it more room, at that price a call. Hermes's own token counts are kept as
+for any route; what was paid is in `proxy.log`. Hermes's effort reaches the
+gateway as OpenAI's `reasoning_effort`, as on any `chat` route without
+`reasoning = "openrouter"`.
 
 ## 2. The model
 

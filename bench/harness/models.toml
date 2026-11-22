@@ -9,6 +9,13 @@
 #   key       the environment variable on the bench machine holding the
 #             provider's key (from .env or ~/.machine-trading.env); only the
 #             proxy reads it, trials get a token
+#   pay       "x402-solana" for a provider paid per call in USDC over x402
+#             on Solana (BlockRun's sol.blockrun.ai): `key` then names the
+#             variable holding the paying wallet's secret, never an API key
+#   network   an x402 route's network: solana (the default) or solana-devnet
+#   max_usd   the most an x402 route pays for one call, in US dollars (5 by
+#             default); a dearer quote is refused, not signed
+#   max_tokens  the output ceiling a chat call gets when it names none
 # A name not listed here runs as before: `openai/<model>`, or Anthropic's
 # for a bare name. Check a name and its key with `just preflight <name>`.
 
@@ -146,3 +153,78 @@ upstream = "https://openrouter.ai/api/v1"
 reasoning = "openrouter"
 model = "thinkingmachines/inkling"
 key = "OPENROUTER_API_KEY"
+
+# BlockRun (https://blockrun.ai) on Solana: every model on one gateway, no
+# API key or account. The key proxy pays each call in USDC from one wallet
+# over x402: the gateway quotes the call (HTTP 402), the proxy signs the
+# transfer and sends the call again. SOLANA_WALLET_KEY holds the wallet's
+# secret (base58, as the BlockRun SDK and Phantom export it, or
+# solana-keygen's JSON array); fund its address (`python3 -I
+# bench/harness/models.py wallet blockrun-claude-sonnet-5-5`) with USDC on
+# Solana. A call that names no max_tokens is quoted, and capped, at 8,192
+# output tokens, and x402 pays the quote, not the tokens used: set
+# max_tokens on a table to give a model more room, at that price a call.
+# Cap the batch with MTX_X402_BUDGET_USD.
+
+[blockrun-claude-sonnet-5-5]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "anthropic/claude-sonnet-5.5"
+key = "SOLANA_WALLET_KEY"
+
+[blockrun-claude-opus-5-5]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "anthropic/claude-opus-5.5"
+key = "SOLANA_WALLET_KEY"
+
+[blockrun-claude-fable-5-2]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "anthropic/claude-fable-5.2"
+key = "SOLANA_WALLET_KEY"
+
+[blockrun-gpt-6-1-sol]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "openai/gpt-6.1-sol"
+key = "SOLANA_WALLET_KEY"
+
+[blockrun-gpt-6-astra]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "openai/gpt-6-astra"
+key = "SOLANA_WALLET_KEY"
+
+[blockrun-gemini-4-carbon]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "google/gemini-4-carbon"
+key = "SOLANA_WALLET_KEY"
+
+[blockrun-grok-4-7]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "xai/grok-4.7"
+key = "SOLANA_WALLET_KEY"
+
+[blockrun-glm-5-3]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "zai/glm-5.3"
+key = "SOLANA_WALLET_KEY"
+
+[blockrun-kimi-k3-1-pro]
+api = "chat"
+pay = "x402-solana"
+upstream = "https://sol.blockrun.ai/api/v1"
+model = "moonshot/kimi-k3.1-pro"
+key = "SOLANA_WALLET_KEY"
