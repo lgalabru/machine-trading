@@ -136,6 +136,9 @@ pub enum Action {
     KaminoMarkets(crate::lending::MarketsSpec),
     /// A real Pyth price account, written from a file fetched once.
     PythFeedAccount(PythFeedSpec),
+    /// A mainnet Orca Whirlpool or Raydium CLMM pool, with every account a
+    /// swap through it reads (see [`crate::pools`]).
+    ClonePool(crate::pools::ClonePoolSpec),
 }
 
 /// A `pyth-feed-account` action: the mainnet push-oracle account of a feed,
@@ -261,7 +264,7 @@ struct World<'a> {
     created: Vec<Created>,
     exchange: Option<phoenix_rise::types::exchange::ExchangeResponse>,
     /// The recipe's price: its `symbol`'s, or else the last an action
-    /// reported.
+    /// reported (a cloned SOL/USDC pool's only while none has).
     price: Option<f64>,
     /// Each Phoenix market the warm-up traded, and its mark.
     marks: BTreeMap<String, f64>,
@@ -387,6 +390,13 @@ impl World<'_> {
             }
             Action::PythFeedAccount(spec) => {
                 let source = pyth_feed_account(self.surfnet, self.dir, spec)?;
+                self.written.push(source);
+            }
+            Action::ClonePool(spec) => {
+                let (source, sol_usd) = crate::pools::clone_pool(&self.rpc, spec)?;
+                // A SOL/USDC pool prices a snapshot of pools; another
+                // action's price, a lending market's oracle, comes first.
+                self.price = self.price.or(sol_usd);
                 self.written.push(source);
             }
         }
@@ -661,6 +671,10 @@ fn pin_and_record(
     d: &Declared,
     address: &Pubkey,
 ) -> Result<Source> {
+    let program = rpc.get_account(address)?;
+    if program.owner != UPGRADEABLE_LOADER {
+        return record_immutable(d, address, &program.data);
+    }
     let programdata = program_data_address(rpc, address)?;
     let mut pinned_from = None;
     if let Some(rel) = &d.pin_from {
@@ -700,6 +714,39 @@ fn pin_and_record(
         deploy_slot: Some(deploy_slot),
         code_sha256: Some(code_sha256),
         pinned_from,
+    })
+}
+
+const UPGRADEABLE_LOADER: Pubkey =
+    solana_pubkey::pubkey!("BPFLoaderUpgradeab1e11111111111111111111111");
+
+/// A program no upgrade authority can change (SPL Token and Memo, under the
+/// original BPF loaders): its code is the program account itself, so there
+/// is no ProgramData to pin and the hash covers the account.
+fn record_immutable(d: &Declared, address: &Pubkey, code: &[u8]) -> Result<Source> {
+    if d.pin_from.is_some() {
+        return Err(invalid(format!(
+            "{} ({address}) is not upgradeable: there is no ProgramData to pin",
+            d.name
+        )));
+    }
+    let code_sha256 = hex(&Sha256::digest(code));
+    if let Some(expected) = &d.expect_code_sha256
+        && *expected != code_sha256
+    {
+        return Err(invalid(format!(
+            "{} ({address}) runs code {code_sha256}, not the expected {expected}",
+            d.name
+        )));
+    }
+    Ok(Source {
+        role: d.kind.clone().unwrap_or_else(|| "program".into()),
+        name: d.name.clone(),
+        address: address.to_string(),
+        programdata: None,
+        deploy_slot: None,
+        code_sha256: Some(code_sha256),
+        pinned_from: None,
     })
 }
 
