@@ -73,6 +73,10 @@ const JITOSOL_BAND_BPS: (f64, f64) = (-12.0, 1.0);
 /// 320.3 a SOL, GEOD at the 5 bp Raydium pool's 302.1.
 const CENTRES_SOL: [(&str, f64); 2] = [(JTO, 1.0 / 320.3), (GEOD, 1.0 / 302.1)];
 
+/// Mixed into a set's seed for the draw that rounds its count of quiet
+/// sessions, so that draw is the set's own and none of a session's.
+const QUIET_ROUNDING_SALT: u64 = 0x7175_6965_7400_0001;
+
 /// One of the snapshot's pools: its instrument, the odds a trigger lands
 /// on it, the largest move a trigger there makes, and its calm flow (swaps
 /// a minute, median, p90 and largest size in SOL's worth).
@@ -324,8 +328,15 @@ impl ThinPoolsFamily {
             // was an arb within 2 slots in 57 of 82 cases, and 77 of 106
             // backruns landed in the trigger's block, so a trigger nobody
             // races for is the exception (at most the other 25 of 82).
-            // Rare, but present in most hidden sets of 72.
-            quiet_odds: 0.12,
+            // Rare, but in every hidden set of 72: 4 or 5 of them
+            // ([`ThinPoolsFamily::draw_set`] stratifies on it). Not 12%: a
+            // quiet session pays a bot that bids the least twice what it
+            // pays the reference, so `min-tip < reference` held only while
+            // the reference's quiet money stayed under its contested money,
+            // and at 12% a few quiet sessions decided that (bootstrap odds
+            // 0.77 on one fresh set, 1.00 on another; `DESIGN.md`,
+            // "Calibration").
+            quiet_odds: 0.06,
             two_leg_odds: 0.4,
             cycle_tip_odds: 0.5,
             min_profit_sol: (0.002, 0.02),
@@ -339,16 +350,43 @@ impl ThinPoolsFamily {
         }
     }
 
-    /// `count` scenarios named `<prefix>-<n>`, in an order of `seed`'s own.
+    /// `count` scenarios named `<prefix>-<n>`, in an order of `seed`'s own,
+    /// stratified by [`Contest`]: `count × quiet_odds` of them quiet, the
+    /// fraction rounded up with that chance, so a set's quiet sessions are
+    /// as many as the odds say on average and never a handful more. A quiet
+    /// session pays a bot that bids the least twice what it pays the
+    /// reference, so their number decided `min-tip < reference`: a hidden set
+    /// of 72 at 6% that drew 10 (one set in seventy) held it at odds 0.61
+    /// (`DESIGN.md`, "Calibration").
     pub fn draw_set(
         &self,
         prefix: &str,
         count: usize,
         seed: u64,
     ) -> Vec<(Scenario, ThinPoolsShape)> {
-        let seeds: Vec<u64> = (1..=count as u64)
-            .map(|draw| seed.wrapping_mul(1_000_003).wrapping_add(draw))
-            .collect();
+        let quiet_expected = count as f64 * self.quiet_odds;
+        let round_up = SplitMix64(seed ^ QUIET_ROUNDING_SALT).next_f64()
+            < quiet_expected - quiet_expected.floor();
+        let quiet = quiet_expected.floor() as usize + usize::from(round_up);
+        assert!(quiet <= count, "{quiet} quiet of {count}");
+        // Cells: contested, then quiet.
+        let mut left = [count - quiet, quiet];
+        let mut seeds = Vec::with_capacity(count);
+        let mut draw = 0u64;
+        while seeds.len() < count {
+            draw += 1;
+            // A cell of odds p fills in about count / p draws: 6% needs
+            // under twenty times the set, so this bound is never reached
+            // by a family whose odds keep both cells above a few percent.
+            assert!(draw < 64 * count as u64 + 64, "a set fills its two cells");
+            let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(draw);
+            let cell = usize::from(self.draw("cell", draw_seed).1.contest == Contest::Quiet);
+            if left[cell] == 0 {
+                continue;
+            }
+            left[cell] -= 1;
+            seeds.push(draw_seed);
+        }
         crate::scenario::shuffled(seeds, seed)
             .into_iter()
             .enumerate()
@@ -854,7 +892,28 @@ mod tests {
                 }
             }
         }
-        assert!(quiet > 15 && quiet < 60, "{quiet} of 300");
+        // A set is stratified: 6% of 300 is 18.
+        assert_eq!(quiet, 18, "{quiet} of 300");
+    }
+
+    /// A hidden set of 72 holds 4 quiet sessions or 5 (6% of 72 is 4.32),
+    /// whatever its seed, and both happen: never the 10 an unstratified set
+    /// drew once.
+    #[test]
+    fn a_set_of_72_holds_four_or_five_quiet_sessions() {
+        let family = ThinPoolsFamily::snapshot();
+        let mut counts = [0u32; 2];
+        for seed in 0..40 {
+            let set = family.draw_set("hidden", 72, seed);
+            assert_eq!(set.len(), 72);
+            let quiet = set
+                .iter()
+                .filter(|(_, shape)| shape.contest == Contest::Quiet)
+                .count();
+            assert!(quiet == 4 || quiet == 5, "seed {seed}: {quiet} quiet");
+            counts[quiet - 4] += 1;
+        }
+        assert!(counts[0] > counts[1] && counts[1] > 0, "{counts:?}");
     }
 
     /// Each session draws its own token prices; JitoSOL's stays inside the

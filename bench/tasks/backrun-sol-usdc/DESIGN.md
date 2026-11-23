@@ -221,16 +221,36 @@ models should come from composition and sizing first, bidding second.
 
 ## Calibration
 
-- **Hidden set** (a fresh 72-session secret, 2026-11-22, `ladder.py
-  --sets 1`): reference $2,503.02, informed bot $4,584.29; the reference is
-  0.55 of the informed bot (no losing session for either, so
-  loss-weighting changes nothing; band 0.2 to 0.7), per-session Sharpe
-  0.38 for the reference (at least 0.25); 47 sessions flat for the reference, 24 for
-  the informed bot.
-- **Ladder** (same set): `fixed-clip` $1,669.48 (0.67 of the reference),
-  `overbidder` $431.81 (0.17), `min-tip` $704.46 (0.28), `probe` $2,787.38
-  (1.11: milestone E's probe, tipping half), nop 0; the three order rules
-  hold (bootstrap odds 0.96, 1.00, 1.00) and no rung breached.
+- **Three hidden sets** (2026-11-23, after `fixed-clip` tips the
+  reference's share; three fresh 72-session secrets, each rung graded on
+  each, `ladder.py --sets 3`; bootstrap odds per set, floor 0.85):
+
+  | Draw | reference | informed | ratio (band 0.2–0.7) | Sharpe | `fixed-clip` | `overbidder` | `min-tip` | `probe` | odds: clip/overbid, `min-tip`, informed |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 1 | $3,395.56 | $5,199.11 | 0.65 | 0.46 | $2,161.2 | $477.4 | $946.4 | $3,171.3 | 1.00, 1.00, 1.00 |
+  | 2 | $3,029.15 | $4,942.13 | 0.61 | 0.46 | $1,972.5 | $515.0 | $801.4 | $2,849.9 | 1.00, 1.00, 1.00 |
+  | 3 | $1,485.34 | $3,456.50 | 0.43 | 0.35 | $1,108.5 | $455.7 | $718.2 | $2,086.4 | 0.98, 0.99, 1.00 |
+
+  No losing session for either anchor (40, 40 and 51 flat for the
+  reference), no rung breached: every rule holds on every draw above the
+  floor and the reference sits in the band on each. `mtx gates --fast`
+  passes the ladder and the band on each draw's own summary.
+  Three more fresh draws with the rung fixed, the same day: reference
+  $1,874, $2,223 and $1,745, 0.47, 0.63 and 0.51 of the informed bot
+  (Sharpe 0.46, 0.36, 0.36); `fixed-clip` 0.77, 0.66 and 0.70 of the
+  reference, `min-tip` 0.10, 0.47 and 0.42; the rules at odds 0.99, 0.98
+  and 1.00 or more on each.
+- **The `fixed-clip` rung** tipped 0.5, the first reference's share, after
+  the reference moved to 0.34 (0.2.0), so it won races the reference lost
+  and its rule measured bidding as much as sizing: on the same three draws
+  it made $1,978.82, $1,905.52 and $1,602.93, 1.08 of the reference on
+  draw 3 (odds 0.37), with 15 sessions where it made up to $186 and the
+  reference nothing. It now takes the reference's constant
+  (`backrunner::TIP_SHARE`), so it differs from it in the clip alone.
+- **Earlier hidden set** (2026-11-22, `ladder.py --sets 1`): reference
+  $2,503.02, informed bot $4,584.29 (0.55), Sharpe 0.38; `fixed-clip`
+  $1,669.48 (0.67), `overbidder` $431.81, `min-tip` $704.46, `probe`
+  $2,787.38; the three order rules at odds 0.96, 1.00 and 1.00.
 - **Practice** (seed 20261122, 8 sessions): reference $27.74, informed $89.68 (0.31).
 - **The bid, before and after.** Under the old builder (every bundle above
   every priority fee) the pool searchers, which pay priority fees, lost
@@ -278,3 +298,5 @@ models should come from composition and sizing first, bidding second.
   34% (the research's median winning payment), sells for an exact amount
   of USDC, and spends any USDC left in its buy; the informed bot counts
   every rival; a `min-tip` rung and its rule (`min-tip < reference`).
+  Then, the same version (2026-11-23): `fixed-clip` tips the reference's
+  share, from the reference's own constant ("Calibration").

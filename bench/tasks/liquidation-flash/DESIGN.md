@@ -200,17 +200,76 @@ should come from composition first and bidding second.
 
 ## Calibration
 
-- **Hidden set** (a fresh 72-session secret, 2026-11-22, `ladder.py
-  --sets 1`): reference $227.16, informed bot $385.17; the reference is
-  0.59 of the informed bot (no losing session for either, so
-  loss-weighting changes nothing; band 0.2 to 0.7), per-session Sharpe
-  0.40 for the reference (at least 0.25); 26 sessions flat for the reference, 19 for the
-  informed bot.
-- **Ladder** (same set): `scope-reader` $77.41 (0.34 of the reference),
-  `overbidder` $57.64 (0.25), `min-tip` $158.53 (0.70), nop 0; the three
-  order rules hold, `min-tip < reference` with bootstrap odds 0.90, the
-  others 1.00, and no rung breached.
-- **Practice** (seed 20261121, 8 sessions): reference $6.38, informed $21.42 (0.30).
+- **Three hidden sets** (2026-11-23, after the rival range was centred
+  and `scope-reader` tips the reference's share; three fresh 72-session
+  secrets, each rung graded on each, `ladder.py --sets 3`; bootstrap odds
+  per set, floor 0.85):
+
+  | Draw | reference | informed | ratio (band 0.2–0.7) | Sharpe | `scope-reader` | `overbidder` | `min-tip` | `min-tip < reference` odds |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 1 | $146.05 | $279.23 | 0.52 | 0.63 | $60.6 | $11.3 | $134.2 | **0.75** |
+  | 2 | $146.09 | $271.38 | 0.54 | 0.68 | $48.7 | $10.2 | $123.3 | 0.89 |
+  | 3 | $270.48 | $341.13 | **0.79** | 0.50 | $88.6 | $12.8 | $122.5 | 1.00 |
+
+  No losing session for either anchor; `max(scope-reader, overbidder) <
+  reference` and `reference < informed` hold at odds 1.00 (0.998 on draw
+  3) and no rung breached. Draw 1 fails `min-tip < reference`'s floor and
+  draw 3 the band's top: the task doesn't meet the three-draw bar at 72
+  sessions ("Statistical power" below). A fourth draw graded on a Mac the
+  same day: reference $207, informed 1.72 of it (0.58), `min-tip` 0.77,
+  odds 0.92.
+- **Statistical power.** `min-tip` and the reference make the same money
+  where nobody races them in the trigger's slot (`min-tip` more: it keeps
+  the 36% the reference tips), so the rule is decided by the contested
+  races the reference wins against rivals bidding under 36%: per session,
+  the reference's lead is $0.85 on average and $3.80 of spread (216
+  sessions of the three draws), z = 0.22 a session. On a fresh set of `n`
+  sessions its bootstrap odds clear 0.85 with chance Φ(0.22√n − 1.04):
+  0.80 at 72 (all three draws 0.52), 0.90 at 108 (0.73), 0.95 at 144
+  (0.85), 0.99 at 216 (0.96). The band moves with the same sessions: the
+  reference's ratio over 2,000 resampled sets is 0.63 at the median, and
+  misses the band in 22% of sets of 72, 13% of 144 and 8% of 216. Both
+  are power, not skill: the order and the ratio hold on the pooled 216
+  (`min-tip` 0.68 of the reference, the reference 0.63 of the informed
+  bot). Session by session on draw 1: `min-tip` beat the reference in 32
+  sessions, by $28.4 in all, each by winning the same liquidations
+  untipped (hidden-6: 9 wins against 10, $0 of tips against $3.60;
+  hidden-54: 17 against 21, $0 against $7.10); the reference beat it in
+  17, by $40.2, where the rivals bid under 0.3 at a competition of 1 or
+  more (hidden-4: 7 wins against 1, $11.50 against $1.50; hidden-12: 10
+  against 2). No session decides it: it is many small uncontested wins
+  against fewer contested ones. Nor is the market short of contest: the
+  rivals' winning liquidations landed in the slot the obligation turned
+  in 76% of cases (100% above $1,000 repaid), against the research's 50%
+  (93%), so more in-slot rivals would leave the research. What would
+  settle the rule and the band: 144 to 216 hidden sessions (two to three
+  times a verifier run's time), not a looser rule or band.
+- **Rival bids, centred.** On the first family (a session's range's low
+  end 0.15 to 0.5, its width 0.05 to 0.3: an average rival bidding 0.41,
+  ranges up to 0.8), `min-tip` made 1.09 of the reference on one fresh
+  set and 0.87 (odds 0.81) on the next; over 216 sessions its lead was
+  $0.34 a session ($4.23 spread), so a set of 72 passed one time in three.
+  Split by the session's rival range: where it sat above the reference's
+  36%, `min-tip` beat the reference (it wins every race nobody else joins
+  and keeps all of it), where it sat under it, the reference made
+  3.5 times what it did. The research's shares run 0.25 to 0.45 (0.28 to 0.44 by
+  size, the reference's 36% their middle), so the family now centres a
+  session's range on it: its low end 0.15 to 0.45 and its width 0.05 to
+  0.2, an average rival at 0.36 and no range above 0.65. A narrower range
+  tried in 0.2.0 put the reference near the band's top on 24 public
+  sessions (0.69), and this one does on one draw of three: the rule and
+  the band pull the same lever opposite ways.
+- **The `scope-reader` rung** tipped 0.65, the first reference's share,
+  after the reference moved to 0.36; it now takes the reference's
+  constant (`liquidator::TIP_SHARE`). Before: $53.65, $46.61 and $63.38 on
+  the three draws.
+- **Practice** (seed 20261121, 8 sessions, after the change): reference
+  $11.63, informed $30.67 (0.38).
+- **Earlier hidden sets** (2026-11-22, the first rival range): reference
+  $227.16, informed $385.17 (0.59), `scope-reader` $77.41, `overbidder`
+  $57.64, `min-tip` $158.53 (odds 0.90); and on 2026-11-23, two fresh
+  sets: reference $161 and $148, `min-tip` 1.09 and 0.87 of it (odds
+  0.81 on the second), informed 2.72 and 1.99.
 - **The bid, before and after.** Under the old builder (every bundle above
   every priority fee, routes of 0 to 2 slots), the slot a send reached
   settled most races: over twelve sessions the reference won 63, 68 and 70
@@ -254,3 +313,8 @@ should come from composition first and bidding second.
   the informed bot counts every rival, a priority fee as much as a tip;
   a `min-tip` rung (always the least tip) and its rule
   (`min-tip < reference`).
+  Then, the same version (2026-11-23): a session's rival range is
+  centred on the research's middle share (its low end 0.15 to 0.45, its
+  width 0.05 to 0.2), as `min-tip < reference` passed about one fresh set
+  in three ("Calibration", "Rival bids, centred"); `scope-reader` tips the
+  reference's share, from the reference's own constant.

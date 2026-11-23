@@ -52,7 +52,7 @@ that the latest swap opened, and skips cycles whose fees eat the gap.
 - **Competition:** 0–5 cycle searchers (two legs only for 40% of them,
   else up to three; bid 0–95% of their expected profit, tipped or as a
   priority fee; latency 0–4 slots) and 1–2 pool searchers that trade any
-  pool back to its reference and bid 76–99%. Most sessions (88%) add one
+  pool back to its reference and bid 76–99%. Most sessions (94%) add one
   cycle searcher that tips, searches three legs and reaches every
   trigger's slot, as the research's same-slot re-arbs say someone usually
   does; in the rest nobody can reach a trigger's slot, and only there does
@@ -72,13 +72,14 @@ limit.
 
 ## Baselines
 
-On a fresh 72-session hidden set (2026-11-22): the reference made
-$1,113.51 (no losing session, 46 flat) and the informed bot $1,935.61: the
-reference is 0.58 of the informed bot, inside the strength band. The rungs
-made $332.69 (`two-leg`), $176.94 (`overbidder`) and $812.93 (`min-tip`,
-90% of it in one quiet session: `min-tip < reference` holds on the point
-estimate, not at the ladder's bootstrap odds). On the 8 practice
-sessions, $381.00 and $640.28.
+On three fresh 72-session hidden sets (2026-11-23, 4, 5 and 5 quiet
+sessions): the reference made $1,013.17, $1,385.67 and $713.86 (no losing
+session) and the informed bot $1,653.66, $2,019.19 and $1,330.85: the
+reference is 0.61, 0.69 and 0.54 of the informed bot, inside the strength
+band on each. The rungs made $255 / $249 / $126 (`two-leg`), $129 / $203 /
+$160 (`overbidder`) and $425 / $606 / $314 (`min-tip`, all of it in the
+quiet sessions); every order rule holds on each set at bootstrap odds of
+0.98 or more. On the 8 practice sessions, $184.05 and $293.81.
 
 | Rung | What it is | Expected |
 | --- | --- | --- |

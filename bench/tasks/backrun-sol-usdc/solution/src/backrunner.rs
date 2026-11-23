@@ -17,6 +17,17 @@ use mtx_kit::{
     rpc, rpc_accounts, serde_json,
 };
 
+/// The share of the profit it expects that the reference tips: what
+/// mainnet's winners paid the leader at the median, of their gross (NOTES.md §1: 0% in 7 of
+/// 20, about 34% in 6, 50 to 80% in 4, 93% in 3), and what the week's top
+/// winner, MriyaN, bid on every win. A principle, not a fit: it knows
+/// nothing of the session's searchers. It outbids every searcher in the
+/// trigger's slot that pays less per unit, a tip or a priority fee, and
+/// keeps two thirds of every race it wins (DESIGN.md, "Calibration").
+///
+/// Here, beside the search every bot of the task shares, so the ladder's
+/// rungs that bid as the reference does (`fixed-clip`) can't drift from it.
+pub const TIP_SHARE: f64 = 0.34;
 /// Jito's least tip, in lamports: a bundle that tips less is refused.
 pub const MIN_TIP_LAMPORTS: u64 = 1_000;
 /// What the group's two transactions pay in base fees, in SOL: the swaps'

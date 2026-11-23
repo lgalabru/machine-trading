@@ -1,19 +1,20 @@
 //! A ladder rung for backrun-sol-usdc: the reference, trading a fixed clip
 //! of 200 SOL every time rather than the size that profits most, as one
-//! mainnet bot did (it took 29% of the optimum, NOTES.md §1). It wins the
-//! races the reference wins and leaves most of each gap: sizing through
-//! both curves is a skill. It must score under the reference.
+//! mainnet bot did (it took 29% of the optimum, NOTES.md §1). It tips the
+//! reference's share ([`backrunner::TIP_SHARE`]), so it wins the races the
+//! reference wins and leaves most of each gap: sizing through both curves
+//! is a skill. It must score under the reference. (It tipped 0.5, the first
+//! reference's share, after the reference moved to 0.34, and won races the
+//! reference lost: 1.08 of it on one hidden set.)
 
 #[path = "../../../../reference/src/backrunner.rs"]
 pub mod backrunner;
 
-use backrunner::{Backrunner, Bidding, MIN_TIP_LAMPORTS, Opportunity};
+use backrunner::{Backrunner, Bidding, MIN_TIP_LAMPORTS, Opportunity, TIP_SHARE};
 use mtx_kit::prelude::*;
 
 /// The clip, in SOL.
 const CLIP_SOL: f64 = 200.0;
-/// The share of the expected profit it tips: the reference's.
-const TIP_SHARE: f64 = 0.5;
 
 struct FixedShare;
 

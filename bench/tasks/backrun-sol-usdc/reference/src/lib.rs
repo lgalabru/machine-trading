@@ -7,17 +7,9 @@
 
 pub mod backrunner;
 
+pub use backrunner::TIP_SHARE;
 use backrunner::{Backrunner, Bidding, MIN_TIP_LAMPORTS, Opportunity};
 use mtx_kit::prelude::*;
-
-/// The share of the profit it expects that it tips: what mainnet's winners
-/// paid the leader at the median, of their gross (NOTES.md §1: 0% in 7 of
-/// 20, about 34% in 6, 50 to 80% in 4, 93% in 3), and what the week's top
-/// winner, MriyaN, bid on every win. A principle, not a fit: it knows
-/// nothing of the session's searchers. It outbids every searcher in the
-/// trigger's slot that pays less per unit, a tip or a priority fee, and
-/// keeps two thirds of every race it wins (DESIGN.md, "Calibration").
-pub const TIP_SHARE: f64 = 0.34;
 
 /// Tips [`TIP_SHARE`] of the expected profit.
 pub struct FixedShare;

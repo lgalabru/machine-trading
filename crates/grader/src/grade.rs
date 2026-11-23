@@ -633,11 +633,17 @@ pub struct Informed<'a> {
 
 /// A directory only the grader can enter, removed with everything in it
 /// when dropped.
+///
+/// Named `<prefix>-<pid>-<uuid>`: every grader on a machine shares the temp
+/// directory (on macOS the user's own, where ladders run side by side), and
+/// a grader that is killed leaves its directory behind, so the grader's
+/// process id is what tells this grader's directory from another's.
 struct PrivateDir(std::path::PathBuf);
 
 impl PrivateDir {
     fn create(prefix: &str) -> Result<Self> {
-        let path = std::env::temp_dir().join(format!("{prefix}-{}", uuid::Uuid::new_v4()));
+        let name = format!("{prefix}-{}-{}", std::process::id(), uuid::Uuid::new_v4());
+        let path = std::env::temp_dir().join(name);
         std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
             .create(&path)
             .map_err(io_error(&path))?;

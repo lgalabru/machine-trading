@@ -62,12 +62,14 @@ v0.3.0's inventory or costs rule is a breach like the loss limit.
 
 ## Baselines
 
-On a fresh 72-session hidden set (2026-11-22): the reference made
-$2,503.02 (no losing session, 47 flat) and the informed bot $4,584.29 (24
-flat): the reference is 0.55 of the informed bot, inside the strength
-band. The rungs made $1,669.48 (`fixed-clip`), $431.81 (`overbidder`),
-$704.46 (`min-tip`) and $2,787.38 (`probe`). On the 8 practice sessions,
-$27.74 and $89.68.
+On three fresh 72-session hidden sets (2026-11-23): the reference made
+$3,395.56, $3,029.15 and $1,485.34 (no losing session) and the informed
+bot $5,199.11, $4,942.13 and $3,456.50: the reference is 0.65, 0.61 and
+0.43 of the informed bot, inside the strength band on each. The rungs made
+$2,161 / $1,973 / $1,109 (`fixed-clip`), $477 / $515 / $456
+(`overbidder`), $946 / $801 / $718 (`min-tip`) and $3,171 / $2,850 /
+$2,086 (`probe`); every order rule holds on each set at bootstrap odds of
+0.98 or more. On the 8 practice sessions, $27.74 and $89.68.
 
 | Rung | What it is | Expected |
 | --- | --- | --- |

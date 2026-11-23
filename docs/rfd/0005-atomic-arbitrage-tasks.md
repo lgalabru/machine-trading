@@ -474,3 +474,43 @@ informed bot.
   - Perp tasks don't use the layer: on one fixed secret their references'
     reports are identical to 2cb9d8ca's but for wall time and fuel.
 
+- 2026-11-23: one fresh hidden set passing is not evidence. The bar is
+  now three: on each of three fresh 72-session draws every order rule
+  holds at bootstrap odds of 0.85 or more and the reference sits in the
+  band (0.2 to 0.7 of the informed bot, loss-weighted, Sharpe at least
+  0.25). Graded on a Linux host, each rung of each draw in a container of
+  its own (its own four bot users), so nine sets take under an hour.
+  - `backrun-sol-usdc` passes as it is but for a stale rung: `fixed-clip`
+    still tipped 0.5, the first reference's share, after the reference
+    moved to 0.34, and on one draw it made 1.08 of the reference by
+    winning races the reference lost. It now takes the reference's
+    constant (`backrunner::TIP_SHARE`), and so does `liquidation-flash`'s
+    `scope-reader` (0.65 against 0.36). Draws: reference 0.65, 0.61 and
+    0.43 of the informed bot; every rule at odds 0.98 or more.
+  - `backrun-thin-pools`: after each pool's moves were cut where its best
+    cycle reaches about 2 SOL (an 8.2 SOL quiet cycle had decided
+    `min-tip < reference`), the rule still swung between odds 0.77 and
+    1.00, because in a quiet session `min-tip` makes twice the reference
+    and a handful of them carry it. Quiet sessions went from 12% to 6%;
+    the next three draws held 10, 3 and 4 of them, and the one with 10
+    failed at 0.61. A set is now stratified on them (4 or 5 of 72), as
+    other families stratify their regimes: 0.98, 0.99 and 0.98, the
+    reference 0.61, 0.69 and 0.54 of the informed bot. Resampled, a set of
+    72 still misses the band's top about one time in eight.
+  - `liquidation-flash`: on the first family `min-tip` made 1.09 and 0.87
+    of the reference on two fresh draws. Where a session's rivals bid
+    over the reference's 36% it beat the reference (it wins every race
+    nobody joins and keeps it whole); the family's average rival bid
+    0.41, past the research's middle. A session's range is now centred on
+    it (low end 0.15 to 0.45, width 0.05 to 0.2, average 0.36). Draws:
+    odds 0.75, 0.89 and 1.00; the reference 0.52, 0.54 and 0.79 of the
+    informed bot. The rule is near the floor by nature: the reference's
+    lead is $0.85 a session against $3.80 of spread, so a set of `n`
+    clears 0.85 with chance Φ(0.22√n − 1.04): 0.80 at 72, 0.95 at 144,
+    0.99 at 216; the band is missed by 22%, 13% and 8% of such sets.
+    Proposed, not done: a hidden set of 144 to 216 sessions for it.
+  - `informed_boundary` failed on a Mac: its probe bot looked for any
+    `mtx-informed-logs-*` in the temp directory, and found one a killed
+    grader had left, or a running ladder's. The grader's private
+    directories are now named with its process id, and the probe looks
+    only for its own grader's.

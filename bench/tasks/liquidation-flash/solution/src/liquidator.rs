@@ -91,6 +91,17 @@ const SWEEP_MIN_SOL: f64 = 0.05;
 /// Most characters of a send's state it logs: a refused bundle's carries
 /// the whole transaction's logs.
 const STATE_CHARS_MAX: usize = 120;
+/// The share of the profit it expects that the reference tips: what mainnet's
+/// liquidators paid the leader, in fees and tips, of the bonus they kept,
+/// the middle of the research's medians by size (28 to 44%, NOTES.md §3).
+/// A principle, not a fit: it isn't tuned to the strength band, and it
+/// knows nothing of a rival's bid or of the units its own group asks for
+/// beside a rival's.
+///
+/// Here, beside the liquidation every bot of the task shares, so the
+/// ladder's rungs that bid as the reference does (`scope-reader`) can't
+/// drift from it.
+pub const TIP_SHARE: f64 = 0.36;
 /// Jito's least tip.
 pub const MIN_TIP_LAMPORTS: u64 = 1_000;
 /// Lamports in a SOL.

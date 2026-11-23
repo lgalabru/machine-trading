@@ -185,9 +185,17 @@ impl LiquidationFamily {
             // rivals on average, and a session of one can't contest them.
             liquidators: (2, 5),
             // The research: 0.25 to 0.45 of the bonus overall, 0.28 to 0.44
-            // by size, tips in 46% of wins; a session's own spread wider.
-            bid_share_low: (0.15, 0.5),
-            bid_share_width: (0.05, 0.3),
+            // by size, tips in 46% of wins; a session's own spread wider,
+            // centred where the research's is: the average rival bids 0.36
+            // (a range's low end 0.30 and half its width 0.0625 on average),
+            // the middle of 0.28 to 0.44, a session's range within 0.15 to
+            // 0.65. Not 0.15 to 0.8 around 0.41: there the average rival
+            // outbid the research's middle, the reference (which tips it)
+            // lost most contested races, and a bot tipping the least made
+            // as much as it on a typical set (`min-tip < reference` passed
+            // about one hidden set in three; `DESIGN.md`, "Calibration").
+            bid_share_low: (0.15, 0.45),
+            bid_share_width: (0.05, 0.2),
             tipping_share: (0.2, 0.8),
             // 50% in the trigger's slot overall.
             same_slot_share: (0.3, 0.7),

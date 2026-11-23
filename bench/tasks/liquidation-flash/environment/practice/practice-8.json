@@ -286,10 +286,10 @@
   },
   "schema": 2,
   "scoring": {
-    "informed_max_drawdown_usd": 0.01,
-    "informed_pnl_usd": 1.35,
-    "reference_max_drawdown_usd": 0.01,
-    "reference_pnl_usd": 1.37
+    "informed_max_drawdown_usd": 0.03,
+    "informed_pnl_usd": 4.17,
+    "reference_max_drawdown_usd": 0.03,
+    "reference_pnl_usd": 4.07
   },
   "tx": {
     "layer": {
@@ -366,8 +366,8 @@
         "count": 4,
         "race": {
           "bid_share": [
-            0.2877011580493338,
-            0.468098848645599
+            0.2680295640422862,
+            0.39626817840004525
           ],
           "competition": 1.1856683390083258,
           "same_slot_share": 0.5348434398224636,

@@ -25,7 +25,7 @@ that the latest swap opened, and skips cycles whose fees eat the gap.
   whoever races; waiting a step.
 - **Regimes:** no trigger, one or several, on any of ten pools; sales and
   buys; moves of 30 bp up to each pool's cap (600 to 3,000 bp, where
-  its best cycle reaches about 2 SOL); contested sessions (88%), where one
+  its best cycle reaches about 2 SOL); contested sessions (94%), where one
   tipping three-leg searcher reaches every trigger's slot, and quiet ones,
   where nobody can; rivals that tip or pay priority fees, that look at two
   legs or three.
@@ -103,8 +103,8 @@ whoever is there.
 | A big move on a JTO/JitoSOL or GEOD/USDC pool | a three-leg cycle: no two-leg one goes through it | the pair only (it finds nothing) |
 | A move inside the fee band (most on the 100 bp pools) | nothing | firing on the trigger |
 | A trigger on a deep pool (SOL/USDC, SOL/JitoSOL) | nothing: 100 SOL's worth moves it a few basis points | a cycle on every trigger |
-| A contested session: a tipping rival at latency 0 that sees the cycle (88%) | outbid it, or stay out where that costs the profit | the least tip |
-| A quiet session: nobody reaches the trigger's slot (12%) | the least tip that clears the background | a large fixed share |
+| A contested session: a tipping rival at latency 0 that sees the cycle (94%) | outbid it, or stay out where that costs the profit | the least tip |
+| A quiet session: nobody reaches the trigger's slot (6%) | the least tip that clears the background | a large fixed share |
 | A two-leg rival on a three-leg cycle | the least tip: it can't see the cycle, or bids on a smaller one | a large fixed share |
 | No trigger | nothing | sending on calm drift |
 
@@ -207,16 +207,39 @@ it; one that never composes a working group scores 0.
 
 ## Calibration
 
-- **Hidden set** (a fresh 72-session secret, 2026-11-23, after the
-  cycle-size cap, `ladder.py --sets 1`): reference $1,209.43, informed bot
-  $1,862.05; the reference is 0.65 of the informed bot (no losing session
-  for either; band 0.2 to 0.7), per-session Sharpe 0.49 for the reference
-  (at least 0.25); 45 sessions flat for the reference, 37 for the
-  informed bot.
-- **Ladder** (same set): `two-leg` $249.51 (0.21 of the reference),
-  `overbidder` $152.08 (0.13), `min-tip` $155.15 (0.13), nop 0. Every
-  order rule holds at bootstrap odds 1.00 (the floor is 0.85), and `mtx
-  gates --fast` passes on this summary.
+- **Three hidden sets** (2026-11-23, quiet sessions 6% and a set
+  stratified by them; three fresh 72-session secrets, each rung graded on
+  each, `ladder.py --sets 3`; bootstrap odds per set, floor 0.85):
+
+  | Draw | quiet | reference | informed | ratio (band 0.2–0.7) | Sharpe | `two-leg` | `overbidder` | `min-tip` | `min-tip < reference` odds |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 1 | 4 | $1,013.17 | $1,653.66 | 0.61 | 0.45 | $255.3 | $128.9 | $425.0 | 0.98 |
+  | 2 | 5 | $1,385.67 | $2,019.19 | 0.69 | 0.53 | $248.6 | $203.2 | $606.2 | 0.99 |
+  | 3 | 5 | $713.86 | $1,330.85 | 0.54 | 0.42 | $125.6 | $159.5 | $313.7 | 0.98 |
+
+  No losing session for either anchor (45, 46 and 44 flat for the
+  reference); the other two rules hold at odds 0.995 or more and no rung
+  breached. `mtx gates --fast` passes the ladder and the band on each
+  draw's own summary. `min-tip` makes all its money in the quiet sessions
+  (twice the reference's there) and $0.50 to $2.50 in the contested ones.
+- **Statistical power: quiet sessions.** At 12% a set of 72 held about 9
+  quiet sessions, and the rule was "the reference's quiet money is under
+  its contested money" (below): odds 0.77 and 0.79 on two sets, 1.00 on a
+  third. At 6% unstratified, three fresh sets held 10, 3 and 4 quiet
+  sessions (10 or more is one set in seventy), and the one with 10 held
+  the rule at odds 0.61 (`min-tip` $980.0, reference $1,054.35, informed
+  $1,921.84, ratio 0.55), the others at 0.997 and 1.00 (references
+  $725.97 and $940.76, ratios 0.69 and 0.59). A set is now stratified on
+  them (`ThinPoolsFamily::draw_set`): 4 quiet sessions of 72, or 5 with
+  the fraction's chance (0.32), as other families stratify their regimes.
+  Resampling the 432 sessions of these six sets into stratified sets of
+  72 (quiet ones from the 31 quiet, the rest from the 401 contested), the
+  rule passes on 93% of sets and the band on 87% (the ratio's 5th to 95th
+  percentile 0.52 to 0.77: with fewer quiet sessions, where the informed
+  bot makes twice the reference, the ratio rises), so all three of three
+  draws about half the time. At 144 sessions: 100% and 95% (three draws
+  0.86); at 216, 100% and 97% (0.91). The three draws above pass both; a
+  set of 72 can still miss the band's top.
 - **Statistical power: the cycle-size cap.** On the set before it
   (2026-11-22: reference $1,113.51, `min-tip` $812.93), `min-tip <
   reference` held on the point estimate at odds 0.79 only: one quiet
@@ -230,7 +253,7 @@ it; one that never composes a working group scores 0.
   1,050 on the Raydium SOL/GEOD, 1,350 on the Raydium SOL/JTO, 1,750 on
   the 100 bp JTO/JitoSOL, 2,000 on the Whirlpool SOL/GEOD, 3,000 on the
   two deep pools); below the cap the log-normal is the research's, past
-  it the move is the cap. Quiet sessions stay 12%. The cap bounds a
+  it the move is the cap. Quiet sessions stayed 12% then. The cap bounds a
   trigger's cycle (the largest on the sets since: 2.7 SOL), but not the
   rule's whole variance: in a quiet session `min-tip` makes twice the
   reference, so the rule is "the reference's quiet money is under its
@@ -240,11 +263,12 @@ it; one that never composes a working group scores 0.
   informed $1,229; three quiet sessions made all of `min-tip`'s money),
   and a variant that drew a move past the cap again (no move at the cap,
   the median falling to 220 bp) held at 0.75 (`min-tip` $225, reference
-  $281). The set above holds at 1.00; on a set like the first, the rule
-  can fail again. What would raise its power without loosening it:
-  larger hidden sets, or fewer quiet sessions (kept at 12%, owner's call).
-- **Practice** (seed 20261122, 8 sessions, after the cap): reference
-  $204.83, informed $334.38 (0.61).
+  $281). A set right after the cap held at 1.00 (reference $1,209.43,
+  informed $1,862.05, `min-tip` $155.15); one like the first could fail
+  again, so the quiet sessions were cut ("Statistical power: quiet
+  sessions").
+- **Practice** (seed 20261122, 8 sessions, quiet 6%: none of the 8):
+  reference $184.05, informed $293.81 (0.63).
 - **Earlier hidden set** (before one scale, 2026-11-22): reference
   $5,179.23, informed $9,123.65 (0.57); `two-leg` 0.061, `overbidder`
   0.068, `min-tip` 0.007, each rule at odds 1.00.
@@ -303,5 +327,9 @@ it; one that never composes a working group scores 0.
   amount (a better price sells less SOL) and a later leg spends what an
   earlier cycle left, so no token stays behind a transaction (rule 11).
   Then, the same version: each pool's moves are cut where the best cycle
-  they open reaches about 2 SOL ("Calibration", "Statistical power"), as
+  they open reaches about 2 SOL ("Calibration", "Statistical power: the cycle-size cap"), as
   one quiet session's 8.2 SOL cycle decided `min-tip < reference`.
+  Then, the same version (2026-11-23): quiet sessions are 6%, not 12%,
+  and a set is stratified on them (4 or 5 of 72), as a handful of quiet
+  sessions still decided `min-tip < reference` on some fresh sets
+  ("Calibration", "Statistical power: quiet sessions").

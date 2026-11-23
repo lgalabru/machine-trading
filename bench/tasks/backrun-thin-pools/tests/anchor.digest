@@ -7,5 +7,5 @@
 # `mtx task sync --anchors` and commit the result.
 format: 1
 anchors: reference and informed bot
-inputs: c03e0c812d6abd961ad63f81f1647d929569d35a4f9fe3ec35b1dc9322abef18
+inputs: e3046c8c116872adf07480898a52a89d6695a48ed5e223698573fc018cb70dfd
 digest: pending: run `mtx task sync --anchors` on Linux

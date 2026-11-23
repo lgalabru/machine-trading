@@ -311,7 +311,7 @@
   "schema": 2,
   "scoring": {
     "informed_max_drawdown_usd": 0.02,
-    "informed_pnl_usd": 12.74,
+    "informed_pnl_usd": 21.82,
     "reference_max_drawdown_usd": 0.02,
     "reference_pnl_usd": 2.69
   },
@@ -390,8 +390,8 @@
         "count": 3,
         "race": {
           "bid_share": [
-            0.46970704741683766,
-            0.7040413998888763
+            0.4240346120715752,
+            0.5846352235547985
           ],
           "competition": 0.5536584858820512,
           "same_slot_share": 0.5926714121440495,

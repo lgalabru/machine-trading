@@ -47,7 +47,7 @@ ahead of competing liquidators.
   $20–150,000, health from 1.0001 to a per-session top of 1.001–1.04.
 - **Competition:** 2–5 liquidators read the upstream too and send a push
   and a liquidation from their own USDC; each bids a share of its expected
-  bonus (a per-session range within 0.15–0.8), per compute unit as
+  bonus (a per-session range within 0.15–0.65, 0.36 on average), per compute unit as
   mainnet's liquidations paid it on their median 333k units, as a tip or a
   priority fee; how many race and how fast follow the research, scaled per
   session (above $1,000 repaid, only up). The routes add no latency, so a
@@ -66,11 +66,16 @@ costs rule is a breach like the loss limit.
 
 ## Baselines
 
-On a fresh 72-session hidden set (2026-11-22): the reference made $227.16
-(no losing session, 26 flat) and the informed bot $385.17 (19 flat): the
-reference is 0.59 of the informed bot, inside the strength band. The rungs
-made $77.41 (`scope-reader`), $57.64 (`overbidder`) and $158.53
-(`min-tip`). On the 8 practice sessions, $6.38 and $21.42.
+On three fresh 72-session hidden sets (2026-11-23): the reference made
+$146.05, $146.09 and $270.48 (no losing session) and the informed bot
+$279.23, $271.38 and $341.13: the reference is 0.52, 0.54 and 0.79 of the
+informed bot, so the third set is above the strength band. The rungs made
+$61 / $49 / $89 (`scope-reader`), $11 / $10 / $13 (`overbidder`) and
+$134 / $123 / $123 (`min-tip`): `min-tip < reference` holds on each, at
+bootstrap odds 0.75, 0.89 and 1.00, so the first set is under the
+ladder's 0.85. Both are a set of 72's power, not the order: see
+`DESIGN.md`, "Calibration". On the 8 practice sessions, $11.63 and
+$30.67.
 
 | Rung | What it is | Expected |
 | --- | --- | --- |

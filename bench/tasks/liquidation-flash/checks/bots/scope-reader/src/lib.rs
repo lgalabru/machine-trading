@@ -3,16 +3,15 @@
 //! shows under water, so it never pushes, and it is a push too late for
 //! every race a liquidator that reads upstream enters (RESEARCH.md: a bot
 //! that only reads Scope on chain is too late for anything over $10). It
-//! must score under the reference.
+//! tips the reference's share ([`liquidator::TIP_SHARE`]; it tipped 0.65,
+//! the first reference's, after the reference moved to 0.36). It must
+//! score under the reference.
 
 #[path = "../../../../reference/src/liquidator.rs"]
 pub mod liquidator;
 
-use liquidator::{Bidding, Liquidator, MIN_TIP_LAMPORTS, Opportunity, PriceSource};
+use liquidator::{Bidding, Liquidator, MIN_TIP_LAMPORTS, Opportunity, PriceSource, TIP_SHARE};
 use mtx_kit::prelude::*;
-
-/// The reference's share of the expected profit, tipped.
-const TIP_SHARE: f64 = 0.65;
 
 struct FixedShare;
 
