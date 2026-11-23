@@ -172,7 +172,9 @@ jobs:
         # the grader's host, the probe's sheet and market round-trip
         # through the interface, the raw-send probe is answered in a
         # session as its scenario allows, and the transaction-layer probe's
-        # sends land as its fee spike lets them.
+        # sends land as its fee spike lets them. The 0.2.0 compatibility
+        # test is skipped: it needs a component built from an old commit,
+        # which `just compat-0-2-0` does on a full clone.
         run: |
           rustup target add wasm32-wasip2
           for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-kamino-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust mtx-bot-keeper-race mtx-bot-making-probe mtx-bot-candle-mlp $(just --evaluate reference_packages); do
@@ -185,7 +187,7 @@ jobs:
           just --justfile bots/wit-probe/Justfile build
           just --justfile bots/raw-probe/Justfile build
           MTX_TEST_WASM="$PWD/bench/tasks/flash-crash-spcx/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
-            cargo test -p mtx-runtime host::tests -- --ignored
+            cargo test -p mtx-runtime host::tests -- --ignored --skip a_0_2_0_component_still_plays
           MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-runtime the_spot_smoke_component -- --ignored
           MTX_TEST_RAW_PROBE_WASM="$PWD/bots/raw-probe/bot.wasm" \
             cargo test -p mtx-grader raw::tests -- --ignored
