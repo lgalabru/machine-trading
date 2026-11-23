@@ -66,6 +66,9 @@ pub struct AddStrategy {
 pub enum Command {
     /// Every strategy and how it is doing.
     Status,
+    /// The markets the runtime watches (`control.watch`), as a survey
+    /// reads them.
+    Markets,
     /// Stop stepping `name`, or every strategy.
     Pause {
         #[serde(default)]
@@ -83,6 +86,11 @@ pub enum Command {
     Mandate { name: String, mandate: Mandate },
     /// Compile, start and keep a strategy, paused unless it says `run`.
     Add(AddStrategy),
+    /// Swap `name`'s component for another (a new build of it): it ends,
+    /// and starts again on the new one under the same name, key and
+    /// mandate, paused or running as it was. If the new one doesn't start,
+    /// the old one starts again and the command is refused.
+    Upgrade { name: String, component: PathBuf },
     /// Pause `name`, cancel its orders, `end` it and forget it.
     Remove { name: String },
     /// The kill switch: pause everything and cancel every order.
@@ -95,10 +103,12 @@ pub enum Command {
 #[serde(rename_all = "snake_case")]
 pub enum CommandKind {
     Status,
+    Markets,
     Pause,
     Resume,
     Mandate,
     Add,
+    Upgrade,
     Remove,
     Kill,
 }
@@ -107,10 +117,12 @@ impl Command {
     pub fn kind(&self) -> CommandKind {
         match self {
             Command::Status => CommandKind::Status,
+            Command::Markets => CommandKind::Markets,
             Command::Pause { .. } => CommandKind::Pause,
             Command::Resume { .. } => CommandKind::Resume,
             Command::Mandate { .. } => CommandKind::Mandate,
             Command::Add(_) => CommandKind::Add,
+            Command::Upgrade { .. } => CommandKind::Upgrade,
             Command::Remove { .. } => CommandKind::Remove,
             Command::Kill => CommandKind::Kill,
         }
@@ -121,18 +133,21 @@ impl CommandKind {
     pub fn as_str(self) -> &'static str {
         match self {
             CommandKind::Status => "status",
+            CommandKind::Markets => "markets",
             CommandKind::Pause => "pause",
             CommandKind::Resume => "resume",
             CommandKind::Mandate => "mandate",
             CommandKind::Add => "add",
+            CommandKind::Upgrade => "upgrade",
             CommandKind::Remove => "remove",
             CommandKind::Kill => "kill",
         }
     }
 
-    /// Whether it may change what runs: every command but `status`.
+    /// Whether it may change what runs: every command but `status` and
+    /// `markets`.
     pub fn changes(self) -> bool {
-        self != CommandKind::Status
+        !matches!(self, CommandKind::Status | CommandKind::Markets)
     }
 }
 
@@ -271,6 +286,10 @@ pub enum Reply {
     Ok {
         feed: FeedStatus,
         strategies: Vec<StrategyStatus>,
+    },
+    /// The watched markets, for `markets`.
+    Markets {
+        markets: Vec<crate::market::MarketInfo>,
     },
     /// Refused, and nothing changed (but with [`ErrorCode::NotPersisted`],
     /// where the change is in force and wasn't written down).

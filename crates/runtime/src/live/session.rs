@@ -101,6 +101,10 @@ fn task_variables(vars: &[(String, String)]) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The sessions' worker threads: one session plays at a time, its turn
+/// on one thread and its sends' waits on the other.
+const SESSION_WORKERS: usize = 2;
+
 /// Listen on `config.socket` and play each session a grader brings, one at
 /// a time, on a thread of the runtime's own. `readers` are the markets the
 /// runtime watches: a session's market must be one, read for the session's
@@ -125,7 +129,7 @@ pub fn spawn(
         .name("mtx-live-sessions".into())
         .spawn(move || {
             let runtime = match tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
+                .worker_threads(SESSION_WORKERS)
                 .enable_all()
                 .build()
             {
@@ -214,16 +218,38 @@ async fn play(
         sends: None,
         observer: None,
         readings: Default::default(),
+        // A session's bot trades on its own account, never on paper.
+        paper_position: None,
+        references: None,
         dispatch: mtx_kit::protocols::phoenix::eternal::Dispatch::Confirm,
     })
     .await?;
-    let mut played = 0;
-    loop {
+    let played = play_turns(&mut turns, &mut bot, &slot, progress, hello.steps).await;
+    bot.end().await;
+    played
+}
+
+/// Play the grader's turns on `bot` until it ends the session: at most
+/// `steps`, the hello's count, and a grader that sends more is refused. How
+/// many the bot answered.
+async fn play_turns(
+    turns: &mut Turns,
+    bot: &mut crate::desk::WasmBot,
+    slot: &AtomicU64,
+    progress: &FeedProgress,
+    steps: u64,
+) -> Result<u64, String> {
+    let mut played: u64 = 0;
+    for turn in 0..=steps {
         let next = tokio::task::block_in_place(|| turns.next())
             .map_err(|e| format!("the turn socket: {e}"))?;
         let Some(step) = next else {
-            break;
+            assert!(played <= steps, "a bot answers a turn at most once");
+            return Ok(played);
         };
+        if turn == steps {
+            return Err(format!("the grader sent a turn past the hello's {steps}"));
+        }
         if !progress.settle(SETTLE_WITHIN) {
             tracing::warn!(
                 k = step.k,
@@ -235,8 +261,7 @@ async fn play(
             played += 1;
         }
     }
-    bot.end().await;
-    Ok(played)
+    unreachable!("the last turn of the bound returns")
 }
 
 #[cfg(test)]

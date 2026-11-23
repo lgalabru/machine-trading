@@ -21,12 +21,15 @@ pub mod events;
 pub mod feed;
 pub mod journal;
 pub mod perp;
+pub mod reference;
 pub mod session;
 pub mod shadow;
+pub mod stopping;
 pub mod strategies;
 pub mod tape;
 pub mod telemetry;
 pub mod tpu;
+pub mod watching;
 
 use std::{
     io::{BufWriter, Write},
@@ -150,7 +153,7 @@ impl Config {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Reading<'a> {
     pub slot: u64,
-    pub status: &'static str,
+    pub status: Status,
     pub symbol: &'a str,
     /// The reading, or why there is none.
     #[serde(flatten)]
@@ -170,6 +173,9 @@ pub enum Read {
 #[derive(Debug)]
 pub struct Runtime {
     thread: JoinHandle<()>,
+    /// The strategies' thread, if the runtime runs strategies: it ends
+    /// once the feed has, after shutting its sockets' connections.
+    strategies: Option<JoinHandle<()>>,
     /// Flushed once the runtime's thread has ended, so its last events go
     /// out.
     telemetry: Option<telemetry::Telemetry>,
@@ -209,42 +215,27 @@ impl Runtime {
         let latest_blockhash = Arc::new(blockhash::LatestBlockhash::default());
         // The latest slot the feed reported, for the strategies' steps.
         let (slots, slots_seen) = tokio::sync::watch::channel(0u64);
-        let mut slot_events = None;
-        if let Some(control) = config.control.clone() {
-            let (events, received) = match control.tpu {
-                Some(_) => {
-                    let (events, received) = tpu::slot_events();
-                    (Some(events), Some(received))
-                }
-                None => (None, None),
-            };
-            slot_events = events;
-            strategies::spawn(
-                control,
-                strategies::Inputs {
-                    shared: strategies::Shared {
-                        cache: cache.clone(),
-                        watch,
-                        progress: receiver.progress(),
-                        events: events::Events::default(),
-                        blockhash: latest_blockhash.clone(),
-                        readings: Arc::default(),
-                    },
-                    slots: slots_seen,
-                    slot_events: received,
-                },
-            )?;
-        }
+        let (slot_events, strategies) = match config.control.clone() {
+            Some(control) => {
+                let shared = strategies::Shared {
+                    cache: cache.clone(),
+                    watch,
+                    progress: receiver.progress(),
+                    events: events::Events::default(),
+                    blockhash: latest_blockhash.clone(),
+                    readings: Arc::default(),
+                    references: Arc::default(),
+                };
+                let (events, thread) = spawn_strategies(control, shared, slots_seen)?;
+                (events, Some(thread))
+            }
+            None => (None, None),
+        };
         let thread = std::thread::Builder::new()
             .name("mtx-live".into())
             .spawn(move || {
                 if let Some(url) = &config.backfill_rpc_url {
-                    let mut backfilled = AccountCache::default();
-                    match backfill_blocking(url, &addresses, &mut backfilled) {
-                        Ok(found) => tracing::info!(found, of = addresses.len(), "backfilled"),
-                        Err(error) => tracing::warn!(%error, "the backfill failed"),
-                    }
-                    lock(&cache).merge(backfilled);
+                    backfill_into(url, &addresses, &cache);
                 }
                 ready.set();
                 run(
@@ -261,7 +252,14 @@ impl Runtime {
                 );
             })
             .map_err(|e| format!("the runtime's thread: {e}"))?;
-        Ok((Self { thread, telemetry }, sender))
+        Ok((
+            Self {
+                thread,
+                strategies,
+                telemetry,
+            },
+            sender,
+        ))
     }
 
     /// Wait for the runtime to end, once its senders are dropped. Its
@@ -270,14 +268,95 @@ impl Runtime {
         if self.thread.join().is_err() {
             tracing::error!("the runtime's thread panicked");
         }
+        // The feed's end ends the strategies (their slots stop), and their
+        // thread shuts every socket connection before it returns: nothing
+        // of the runtime runs once this does, so the host may unload it.
+        if let Some(strategies) = self.strategies
+            && strategies.join().is_err()
+        {
+            tracing::error!("the strategies' thread panicked");
+        }
         tracing::info!("the runtime stopped");
         drop(self.telemetry);
     }
 }
 
+/// The most bytes a keypair file may hold: a Solana CLI keypair is a JSON
+/// array of 64 numbers, under 300 bytes; this leaves room for whitespace.
+const KEYPAIR_FILE_BYTES_MAX: u64 = 4096;
+
+/// The keypair in the Solana CLI's JSON file at `path`, read up to
+/// [`KEYPAIR_FILE_BYTES_MAX`] bytes.
+fn read_keypair(path: &Path) -> Result<solana_keypair::Keypair, String> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut text = String::new();
+    file.take(KEYPAIR_FILE_BYTES_MAX + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    if text.len() as u64 > KEYPAIR_FILE_BYTES_MAX {
+        return Err(format!(
+            "{} is past {KEYPAIR_FILE_BYTES_MAX} bytes: not a keypair",
+            path.display()
+        ));
+    }
+    let bytes: Vec<u8> =
+        serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+    solana_keypair::Keypair::try_from(bytes.as_slice())
+        .map_err(|_| format!("{} is not a keypair", path.display()))
+}
+
+/// Start the strategies' thread for `control`, stepped on `slots`: with the
+/// TPU's slot events' sender, when the strategies send over the TPU.
+fn spawn_strategies(
+    control: strategies::ControlConfig,
+    shared: strategies::Shared,
+    slots: tokio::sync::watch::Receiver<u64>,
+) -> Result<(Option<tpu::SlotEvents>, JoinHandle<()>), String> {
+    let (events, received) = match control.tpu {
+        Some(_) => {
+            let (events, received) = tpu::slot_events();
+            (Some(events), Some(received))
+        }
+        None => (None, None),
+    };
+    let thread = strategies::spawn(
+        control,
+        strategies::Inputs {
+            shared,
+            slots,
+            slot_events: received,
+        },
+    )?;
+    Ok((events, thread))
+}
+
 /// The status a journal line carries when a write, not a slot event,
 /// made it ([`Config::journal_writes`]).
 pub const WRITE: &str = "write";
+
+/// What made a journal line: a slot reaching a status, or a write of a
+/// watched account. Written as the slot status's name, or [`WRITE`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Slot(mtx_core::feed::SlotStatus),
+    Write,
+}
+
+impl Status {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Slot(status) => status.as_str(),
+            Self::Write => WRITE,
+        }
+    }
+}
+
+impl Serialize for Status {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
 
 /// The runtime's loop: keep the accounts, and journal every market at
 /// every slot event (and after every write, if `journal_writes`), until
@@ -300,7 +379,7 @@ fn run(
                 if !(kept && journal_writes) {
                     continue;
                 }
-                (slot, WRITE)
+                (slot, Status::Write)
             }
             FeedEvent::Slot { slot, status, .. } => {
                 events.applied();
@@ -318,7 +397,7 @@ fn run(
                 if let Some(events) = &slots.events {
                     events.offer(slot, status);
                 }
-                (slot, status.as_str())
+                (slot, Status::Slot(status))
             }
             FeedEvent::Block {
                 slot, blockhash, ..
@@ -380,7 +459,7 @@ fn record(
     readers: &[PerpReader],
     cache: &AccountCache,
     slot: u64,
-    status: &'static str,
+    status: Status,
     dropped: u64,
 ) -> std::io::Result<()> {
     for reader in readers {
@@ -410,6 +489,10 @@ pub async fn backfill(
     addresses: &[Address],
     cache: &mut AccountCache,
 ) -> Result<usize, String> {
+    assert!(
+        addresses.len() <= feed::WATCHED_ADDRESSES_MAX,
+        "only watched accounts are backfilled"
+    );
     let slot = chain.get_slot().await.map_err(|e| e.to_string())?;
     let mut found = 0;
     for addresses in addresses.chunks(ACCOUNTS_PER_READ) {
@@ -438,7 +521,23 @@ pub async fn backfill(
             });
         }
     }
+    assert!(
+        found <= addresses.len(),
+        "one account found an address at most"
+    );
     Ok(found)
+}
+
+/// Backfill `addresses` from the node at `url` into `cache`, at start. A
+/// backfill that fails leaves each market an error until the feed has told
+/// of every account it needs: the runtime runs on, said why.
+fn backfill_into(url: &str, addresses: &[Address], cache: &Mutex<AccountCache>) {
+    let mut backfilled = AccountCache::default();
+    match backfill_blocking(url, addresses, &mut backfilled) {
+        Ok(found) => tracing::info!(found, of = addresses.len(), "backfilled"),
+        Err(error) => tracing::warn!(%error, "the backfill failed"),
+    }
+    lock(cache).merge(backfilled);
 }
 
 fn backfill_blocking(
@@ -488,6 +587,70 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    /// What a plugin reload does to the runtime, twice: start it with
+    /// its control and event sockets, keep a sidecar's connection open on
+    /// each, stop it (the host's `on_unload`), and start it again on the
+    /// same sockets (the new library's `on_load`). The stop returns with
+    /// both connections closed, and the second runtime answers.
+    #[test]
+    fn a_reload_closes_kept_connections_and_starts_again() {
+        use std::io::{BufRead, BufReader, Write};
+
+        let dir = std::env::temp_dir().join(format!("mtx-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let config: Config = serde_json::from_value(serde_json::json!({
+            "journal": dir.join("journal.jsonl"),
+            "markets": [],
+            "control": {
+                "socket": dir.join("control.sock"),
+                "events": dir.join("events.sock"),
+                "state": dir.join("strategies.json"),
+                "rpc_url": "http://127.0.0.1:1",
+                "logs": dir.join("logs"),
+            },
+        }))
+        .unwrap();
+        for round in 0..2 {
+            let (runtime, feed) = Runtime::start(config.clone()).unwrap();
+            feed.send(slot(10 + round));
+            let mut control =
+                std::os::unix::net::UnixStream::connect(dir.join("control.sock")).unwrap();
+            control.write_all(b"{\"command\":\"status\"}\n").unwrap();
+            let mut reader = BufReader::new(control.try_clone().unwrap());
+            let mut reply = String::new();
+            reader.read_line(&mut reply).unwrap();
+            assert!(reply.contains("\"reply\":\"ok\""), "round {round}: {reply}");
+            let events = std::os::unix::net::UnixStream::connect(dir.join("events.sock")).unwrap();
+            let mut events = BufReader::new(events);
+            let mut hello = String::new();
+            events.read_line(&mut hello).unwrap();
+            assert!(
+                hello.contains("\"event\":\"hello\""),
+                "round {round}: {hello}"
+            );
+
+            let stopping = std::time::Instant::now();
+            drop(feed);
+            runtime.join();
+            assert!(
+                stopping.elapsed() < stopping::STOP_WITHIN,
+                "the stop waited on something"
+            );
+            // Both kept connections were closed by the runtime.
+            let mut rest = String::new();
+            assert_eq!(
+                reader.read_line(&mut rest).unwrap(),
+                0,
+                "round {round}: {rest}"
+            );
+            let mut more = String::new();
+            while events.read_line(&mut more).unwrap() > 0 {
+                more.clear();
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,30 @@
+# No workspace inheritance: this crate also builds inside the task image,
+# where /opt/mtx/sdk mirrors this repository's crates/ and bots/ layout.
+[package]
+name = "mtx-bot-lead-maker"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+# A strategy component: `just build` builds it for wasm32-wasip2 into
+# bot.wasm, which the grader loads and calls (docs/rfd/0002-wasm-strategies.md).
+[lib]
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+# The same strategy as a process bot.
+[[bin]]
+name = "mtx-lead-maker"
+path = "src/main.rs"
+
+[dependencies]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component", "venue"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+mtx-kit = { path = "../../crates/kit" }
+
+[dev-dependencies]
+proptest = "1"

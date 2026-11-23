@@ -9,7 +9,7 @@ here is on the node; a sidecar runs on the same machine.
 
 | | What | Where |
 | --- | --- | --- |
-| **Commands** | add, pause, resume, mandate, remove, kill, status: one JSON line each way, as many commands as a connection likes, refusals with a code | the control socket, `control.socket`; `mtx_core::control` |
+| **Commands** | add, upgrade, pause, resume, mandate, remove, kill, status: one JSON line each way, as many commands as a connection likes, refusals with a code | the control socket, `control.socket`; `mtx_core::control` |
 | **Events** | everything that happens, pushed as it happens: a hello, then slots, steps, paper fills and markouts, trades, pauses, commands | the event socket, `control.events`; `mtx_core::events` |
 | **Journals** | each strategy's steps, shadow sends and paper fills, in full | `<control.logs>/<name>.{steps,shadow,fills}.jsonl`; `crates/runtime/src/live/journal.rs` |
 | **Telemetry** | logs, traces and metrics | OTLP to `telemetry.otlp_endpoint`, a JSON log at `telemetry.log`; `ops/grafana` |
@@ -45,6 +45,21 @@ Beside them, what the runtime's speed depends on:
 - `workers` (4): the threads strategies step on, at once across
   strategies; `cores` (none): cores to pin them to, away from the
   validator's busiest.
+- `references` (none): exchanges' public prices, each shown to every
+  strategy as a read-only venue in `market.venues` (`live::reference`):
+  `[{"source": "coinbase", "pair": "SOL-USD"}]`. Sources: `coinbase`
+  (Coinbase Exchange's public ticker) and `binance` (its `bookTicker`;
+  its terms restrict some locations, the United States among them). Each
+  quote received is journaled to `<logs>/reference-<source>-<pair>.jsonl`.
+  No account, nothing sent but the subscription.
+- `watch` (none): markets watched without trading them, for a sidecar
+  that surveys every market (`live::watching`):
+  `{"exchange": "/home/sol/mtx/exchange.json", "symbols": [], "every_slots": 25}`.
+  No symbols watches every market that trades now. Each market's accounts
+  join the cache; a few are read each slot after the steps, so each is
+  read once in `every_slots` (at least 5) and told as a `quote`, with its
+  trades as `trade` events. `mtx_kit::venue::PhoenixVenue::markets` lists
+  them as `mtx_core::market::MarketInfo` (tick, lot, fees).
 - `tpu.preflight` (false): a live strategy over the TPU sends without
   waiting for its order to land (its `fate` comes on the event stream),
   and without the node's simulation first unless this is on: a round trip
@@ -80,6 +95,7 @@ on the same host, a sidecar reads its own delay off it) and an `event`.
 | `paused` | the enforcer paused a strategy | strategy, `mandate` or `feed`, why |
 | `command` | a command that changes something was done or refused | the command (an enum), and the refusal (`code`, `error`) if it was |
 | `lagged` | this connection fell behind and lost events | how many: read `status` again |
+| `quote` | a watched market was read (`control.watch`) | symbol, slot, best bid and ask (null on an empty side), mark |
 
 **It never slows the runtime.** An event is serialized once, only when
 someone listens, into a queue of 8192; each connection has its own writer
@@ -155,6 +171,15 @@ the code, a person reads the error. A code a newer runtime adds reads as
 - `add` names a component and a keypair by path on the node: a sidecar
   puts both there first. The runtime refuses a component whose SHA-256
   changed since it was added.
+- `upgrade` swaps a strategy's component for a new build, with no restart
+  of anything else: it ends, and starts again on the new component under
+  the same name, key and mandate, paused or running as it was. If the new
+  one doesn't start, the old one starts again and the refusal is
+  `start_failed`.
+- The runtime itself is swapped without restarting the validator:
+  `ops/agave/reload-plugin.sh` builds the plugin and has the validator
+  reload it. Every socket connection is closed on the way: a sidecar
+  connects again and reads `hello`.
 - An answer can be lost (the sidecar dies mid-command). Read `status` and
   decide from what the runtime has; never resend blind. The desired state
   (`control.state`) is what the runtime restores after a restart.

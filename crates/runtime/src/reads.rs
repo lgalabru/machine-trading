@@ -32,6 +32,7 @@ where
         match read().await {
             Ok(value) => return Ok(value),
             Err(error) if attempt < READ_ATTEMPTS && is_transport(&error) => {
+                assert!(attempt < READ_ATTEMPTS, "the reads are bounded");
                 tracing::warn!(what, attempt, %error, "a grader read got no answer; reading again");
                 attempt += 1;
             }
@@ -52,7 +53,10 @@ pub fn is_transport(error: &(dyn std::error::Error + 'static)) -> bool {
         "connection closed",
     ];
     let mut next = Some(error);
-    while let Some(error) = next {
+    for _ in 0..ERROR_SOURCES_MAX {
+        let Some(error) = next else {
+            return false;
+        };
         if let Some(http) = error.downcast_ref::<reqwest::Error>()
             && (http.is_timeout() || http.is_connect() || http.is_request())
         {
@@ -64,8 +68,14 @@ pub fn is_transport(error: &(dyn std::error::Error + 'static)) -> bool {
         }
         next = error.source();
     }
+    // A chain this deep is no transport's: reqwest's is three or four.
     false
 }
+
+/// The most of an error's sources [`is_transport`] looks through: a
+/// transport error is a few links down (reqwest, hyper, the OS); a chain
+/// longer than this is something else, and looking ends.
+const ERROR_SOURCES_MAX: usize = 32;
 
 /// A meter's amount as an `f64`: the nearest double to the exact
 /// decimal, which is what dividing Phoenix's integer lots in `f64` gave.

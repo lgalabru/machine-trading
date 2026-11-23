@@ -103,7 +103,23 @@ impl TakingGuard {
                 }
                 (side, size)
             }
-            _ => return Ok(()),
+            // A post-only order never takes, and the rest trade no book the
+            // guard watches (a swap's or a reserve's limits are the
+            // mandate's audit's). Named, so a new action is decided here.
+            Action::PostOnly { .. }
+            | Action::CancelAll
+            | Action::Cancel { .. }
+            | Action::Respond { .. }
+            | Action::Swap { .. }
+            | Action::AddLiquidity { .. }
+            | Action::RemoveLiquidity { .. }
+            | Action::Deposit { .. }
+            | Action::Withdraw { .. }
+            | Action::Borrow { .. }
+            | Action::Repay { .. }
+            | Action::Liquidate { .. }
+            | Action::Flash { .. }
+            | Action::PushPrice => return Ok(()),
         };
         let side = match side {
             mtx_kit::Side::Bid => Side::Buy,
@@ -113,8 +129,13 @@ impl TakingGuard {
             Side::Buy => (position + size).min(0.0).max(position),
             Side::Sell => (position - size).max(0.0).min(position),
         };
+        let before = self.position;
         if reduce_only {
             self.position = toward_zero(self.position);
+            debug_assert!(
+                self.position.abs() <= before.abs(),
+                "reducing never grows the position"
+            );
             return Ok(());
         }
         if !self.allowance.may_take(self.position, side, size) {
@@ -131,6 +152,10 @@ impl TakingGuard {
             ));
         }
         self.position = toward_zero(self.position);
+        debug_assert!(
+            self.position.abs() <= before.abs(),
+            "a take let through only reduces"
+        );
         Ok(())
     }
 }

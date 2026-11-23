@@ -164,6 +164,15 @@ pub struct SimulatedExecution {
 }
 
 impl SimulatedExecution {
+    /// The simulation's state, locked. Each holder makes one whole change
+    /// (a midpoint, an order), so a lock a panic poisoned still holds a
+    /// whole state.
+    fn state(&self) -> std::sync::MutexGuard<'_, SimulationState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// Creates a new simulated execution driver with the given configuration.
     pub fn new(config: SimulationConfig) -> Self {
         Self {
@@ -183,19 +192,13 @@ impl SimulatedExecution {
     /// Instruments without an explicit midpoint use
     /// [`SimulationConfig::default_midpoint`].
     pub fn set_midpoint(&self, instrument: InstrumentId, midpoint: Decimal) {
-        self.state
-            .lock()
-            .unwrap()
-            .midpoints
-            .insert(instrument, midpoint);
+        self.state().midpoints.insert(instrument, midpoint);
     }
 
     /// Returns the current midpoint for an instrument, falling back to the
     /// configured default.
     fn midpoint_for(&self, instrument: &InstrumentId) -> Decimal {
-        self.state
-            .lock()
-            .unwrap()
+        self.state()
             .midpoints
             .get(instrument)
             .copied()
@@ -274,9 +277,7 @@ impl ExecutionDriver for SimulatedExecution {
             }
             None if order.order_type == OrderType::Limit => {
                 // Limit order didn't cross the spread — rests on the book.
-                self.state
-                    .lock()
-                    .unwrap()
+                self.state()
                     .open_orders
                     .insert(order.id.clone(), order.clone());
 
@@ -298,7 +299,7 @@ impl ExecutionDriver for SimulatedExecution {
     }
 
     async fn cancel_order(&self, order_id: &OrderId) -> Result<OrderStatus, ExecutionError> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state();
         match state.open_orders.remove(order_id) {
             Some(_) => Ok(OrderStatus::Cancelled),
             None => Err(ExecutionError::OrderNotFound(order_id.clone())),
@@ -306,9 +307,7 @@ impl ExecutionDriver for SimulatedExecution {
     }
 
     async fn cancel_all(&self, instrument: &InstrumentId) -> Result<(), ExecutionError> {
-        self.state
-            .lock()
-            .unwrap()
+        self.state()
             .open_orders
             .retain(|_, order| &order.instrument != instrument);
         Ok(())

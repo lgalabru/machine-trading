@@ -84,6 +84,7 @@ pub mod features;
 mod inputs;
 #[cfg(feature = "chain")]
 pub mod lending;
+pub mod making;
 #[cfg(feature = "candle")]
 pub mod nn;
 #[cfg(any(feature = "chain", feature = "spot-venue"))]

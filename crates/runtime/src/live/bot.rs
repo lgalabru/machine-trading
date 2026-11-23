@@ -58,6 +58,11 @@ pub struct BotSpec<'a> {
     pub sends: Option<Arc<dyn mtx_kit::chain::ChainClient>>,
     /// Watches each step: the strategy's journals ([`super::journal`]).
     pub observer: Option<Arc<dyn crate::desk::StepObserver>>,
+    /// A shadow's paper position, read as its own (the chain's is flat:
+    /// it sends nothing). `None` for a live strategy.
+    pub paper_position: Option<Arc<super::journal::PaperPosition>>,
+    /// The exchanges' prices it reads as venues, if the runtime has any.
+    pub references: Option<Arc<super::reference::Latest>>,
     /// Whether an order waits to land before the step goes on. Through
     /// `sends`, a live strategy fires and forgets: a step can't wait on
     /// each of its orders.
@@ -104,6 +109,7 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
         slot: spec.slot,
         readings: spec.readings,
         last: Mutex::new(None),
+        paper_position: spec.paper_position,
     });
     // Post-only orders are checked against the cache's book: the trader's
     // own read simulates against its account, which a shadow strategy's
@@ -139,6 +145,9 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
             reader: Reader::Live(reads),
             sends: None,
             rfqs: None,
+            references: spec.references.map(|latest| {
+                Arc::new(super::reference::References(latest)) as Arc<dyn crate::desk::References>
+            }),
         },
         spec.log,
         spec.observer,
@@ -162,11 +171,14 @@ struct CacheReads {
     /// Phoenix's SOL book). One decode a step, every answer from the same
     /// snapshot.
     last: Mutex<Option<(u64, PerpReading)>>,
+    /// A shadow's paper position, read in place of the chain's.
+    paper_position: Option<Arc<super::journal::PaperPosition>>,
 }
 
 impl CacheReads {
     fn read(&self) -> Result<PerpReading, String> {
         let slot = self.slot.load(Ordering::Acquire);
+        // Poisoned: the last reading is not trusted, and read again.
         if let Ok(last) = self.last.lock()
             && let Some((at, reading)) = *last
             && at == slot
@@ -188,8 +200,10 @@ impl CacheReads {
         let decoding = std::time::Instant::now();
         let reading = self.reader.read(&snapshot, slot)?;
         tracing::info!(
-            histogram.mtx_read_lock_us = decoding.duration_since(waited).as_micros() as u64,
-            histogram.mtx_read_decode_us = decoding.elapsed().as_micros() as u64,
+            histogram.mtx_read_lock_us =
+                u64::try_from(decoding.duration_since(waited).as_micros()).unwrap_or(u64::MAX),
+            histogram.mtx_read_decode_us =
+                u64::try_from(decoding.elapsed().as_micros()).unwrap_or(u64::MAX),
             symbol = self.reader.symbol(),
             "a market read"
         );
@@ -198,6 +212,7 @@ impl CacheReads {
     }
 
     fn keep(&self, slot: u64, reading: PerpReading) -> Result<PerpReading, String> {
+        // Poisoned: not kept, and the next call reads again.
         if let Ok(mut last) = self.last.lock() {
             *last = Some((slot, reading));
         }
@@ -213,8 +228,15 @@ pub struct Readings {
     latest: Mutex<std::collections::HashMap<ReaderKey, (u64, PerpReading)>>,
 }
 
+/// Readings kept, one a reader: the strategies a runtime runs
+/// (`strategies::STRATEGIES_MAX`, 32) with room for keys that came and went.
+/// Past it, every reading older than the one put is forgotten: a reading is
+/// only ever shared within its slot.
+const READINGS_MAX: usize = 256;
+
 impl Readings {
     fn get(&self, key: ReaderKey, slot: u64) -> Option<PerpReading> {
+        // Poisoned: no shared reading, and the reader decodes its own.
         let latest = self.latest.lock().ok()?;
         latest
             .get(&key)
@@ -223,12 +245,21 @@ impl Readings {
     }
 
     fn put(&self, key: ReaderKey, slot: u64, reading: PerpReading) {
-        if let Ok(mut latest) = self.latest.lock() {
-            let newer = latest.get(&key).is_none_or(|(at, _)| slot >= *at);
-            if newer {
-                latest.insert(key, (slot, reading));
-            }
+        // Poisoned: nothing shared, as in `get`.
+        let Ok(mut latest) = self.latest.lock() else {
+            return;
+        };
+        if latest.len() >= READINGS_MAX {
+            latest.retain(|_, (at, _)| *at >= slot);
         }
+        let newer = latest.get(&key).is_none_or(|(at, _)| slot >= *at);
+        if newer {
+            latest.insert(key, (slot, reading));
+        }
+        debug_assert!(
+            latest.len() <= READINGS_MAX,
+            "no more readers than the bound read in one slot"
+        );
     }
 }
 
@@ -249,6 +280,9 @@ impl PerpReads for CacheReads {
     }
 
     async fn position(&self) -> Result<mtx_kit::Position, String> {
+        if let Some(paper) = &self.paper_position {
+            return Ok(paper.get());
+        }
         let reading = self.read()?;
         Ok(mtx_kit::Position {
             size: reading.position,

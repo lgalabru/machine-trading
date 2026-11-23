@@ -169,6 +169,23 @@ fn lines() -> Vec<(Event, &'static str)> {
             r#"{"at_us":1,"event":"command","command":"add"}"#,
         ),
         (
+            Event::Command {
+                command: CommandKind::Upgrade,
+                error: None,
+            },
+            r#"{"at_us":1,"event":"command","command":"upgrade"}"#,
+        ),
+        (
+            Event::Quote {
+                symbol: "MEGA".into(),
+                slot: 472500000,
+                best_bid: Some(0.04661),
+                best_ask: None,
+                mark: 0.04666,
+            },
+            r#"{"at_us":1,"event":"quote","symbol":"MEGA","slot":472500000,"best_bid":0.04661,"best_ask":null,"mark":0.04666}"#,
+        ),
+        (
             Event::Lagged { dropped: 12 },
             r#"{"at_us":1,"event":"lagged","dropped":12}"#,
         ),
@@ -196,6 +213,24 @@ fn an_event_this_build_does_not_know_is_an_error_a_reader_can_skip() {
     assert_eq!(envelope["event"], "weather");
 }
 
+/// The upgrade command, as a sidecar writes it.
+#[test]
+fn an_upgrade_is_the_line_the_contract_says() {
+    use mtx_core::control::Command;
+    let line = r#"{"command":"upgrade","name":"mm-sol","component":"/home/sol/mtx/new.wasm"}"#;
+    let command: Command = serde_json::from_str(line).unwrap();
+    assert_eq!(
+        command,
+        Command::Upgrade {
+            name: "mm-sol".into(),
+            component: "/home/sol/mtx/new.wasm".into(),
+        }
+    );
+    assert_eq!(serde_json::to_string(&command).unwrap(), line);
+    assert_eq!(command.kind(), CommandKind::Upgrade);
+    assert!(CommandKind::Upgrade.changes());
+}
+
 #[test]
 fn every_reply_is_the_line_the_contract_says() {
     let replies = [
@@ -213,6 +248,21 @@ fn every_reply_is_the_line_the_contract_says() {
             r#"{"reply":"error","code":"exists","error":"a strategy is already named a"}"#,
         ),
     ];
+    let markets = Reply::Markets {
+        markets: vec![mtx_core::market::MarketInfo {
+            instrument: "phoenix:perp:MEGA".parse().unwrap(),
+            address: None,
+            tick: 0.00001,
+            lot: 1.0,
+            maker_fee_bps: 0.5,
+            taker_fee_bps: 3.5,
+            active: true,
+        }],
+    };
+    let line = r#"{"reply":"markets","markets":[{"instrument":"phoenix:perp:MEGA","tick":0.00001,"lot":1.0,"maker_fee_bps":0.5,"taker_fee_bps":3.5,"active":true}]}"#;
+    assert_eq!(serde_json::to_string(&markets).unwrap(), line);
+    assert_eq!(serde_json::from_str::<Reply>(line).unwrap(), markets);
+    assert!(!CommandKind::Markets.changes());
     for (reply, expected) in replies {
         assert_eq!(serde_json::to_string(&reply).unwrap(), expected);
         assert_eq!(serde_json::from_str::<Reply>(expected).unwrap(), reply);

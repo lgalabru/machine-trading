@@ -213,6 +213,17 @@ pub enum Event {
     /// This connection fell behind and lost `dropped` events: read
     /// `status` to know where things stand.
     Lagged { dropped: u64 },
+    /// A market the runtime watches without trading it
+    /// (`control.watch`), read on a round-robin: its book's best bid and
+    /// ask, if it has them, and its mark. The market's trades come as
+    /// `trade` events.
+    Quote {
+        symbol: String,
+        slot: u64,
+        best_bid: Option<f64>,
+        best_ask: Option<f64>,
+        mark: f64,
+    },
 }
 
 /// Read the runtime's events at `socket`, a line at a time, starting with

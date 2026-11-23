@@ -703,6 +703,8 @@ impl<R: RawSend> WasmStrategy<R> {
         host.raw_calls = 0;
         host.raw_sends.clear();
         self.fuel_given = self.fuel_left.min(FUEL_PER_CALL);
+        // `set_fuel` fails only on an engine built without fuel, which this
+        // host never builds: such a call gets none, and is refused.
         self.fuel_given > 0 && self.store.set_fuel(self.fuel_given).is_ok()
     }
 
@@ -710,6 +712,10 @@ impl<R: RawSend> WasmStrategy<R> {
     /// printed, into the session's log.
     fn charge(&mut self) {
         let used = self.fuel_given - self.store.get_fuel().unwrap_or(0).min(self.fuel_given);
+        assert!(
+            used <= self.fuel_left,
+            "a call is given at most the session's fuel left"
+        );
         self.fuel_left -= used;
         self.fuel_used += used;
         self.fuel_max_call = self.fuel_max_call.max(used);
@@ -717,6 +723,8 @@ impl<R: RawSend> WasmStrategy<R> {
         let host = self.store.data_mut();
         let lines = host.printed.take();
         for line in &lines {
+            // A log that can't be written loses the strategy's prints, not
+            // its step: they are still in `last_printed` for the trace.
             let _ = writeln!(host.log, "{line}");
         }
         self.last_printed = lines;

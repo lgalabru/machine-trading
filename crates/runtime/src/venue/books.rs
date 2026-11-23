@@ -464,6 +464,75 @@ impl BookSeat {
         sent.map(Some)
     }
 
+    /// Send `planned` to the book: what its transaction came to, or the
+    /// [`Sent`] that refuses it before anything goes out (off the grid,
+    /// rounding to nothing, or not an action of this book).
+    async fn dispatch(
+        &self,
+        planned: &Planned,
+    ) -> std::result::Result<SeatResult<mtx_kit::Signature>, Sent> {
+        let (tick, lot) = self.grid();
+        match planned.action {
+            Action::Market { side, size, limit } => {
+                let (Some(size), Some(limit)) = (
+                    on_grid(size, lot, false),
+                    on_grid(limit, tick, side == Side::Ask),
+                ) else {
+                    return Err(off_grid());
+                };
+                if size.is_zero() {
+                    return Err(no_lots());
+                }
+                Ok(self.take_exact(core_side(side), size, limit).await)
+            }
+            Action::Limit { side, price, size } | Action::PostOnly { side, price, size } => {
+                self.dispatch_rest(planned, side, price, size).await
+            }
+            Action::CancelAll => match self.cancel_exact().await {
+                Ok(Some(signature)) => Ok(Ok(signature)),
+                Ok(None) => Err(not_sent("nothing rests: no account yet")),
+                Err(error) => Ok(Err(error)),
+            },
+            // What `executes` refuses never reaches a seat's send; one that
+            // does is told so, not sent.
+            _ => Err(not_sent("unsupported in this session")),
+        }
+    }
+
+    /// A limit or post-only order, on the grid, to rest.
+    async fn dispatch_rest(
+        &self,
+        planned: &Planned,
+        side: Side,
+        price: f64,
+        size: f64,
+    ) -> std::result::Result<SeatResult<mtx_kit::Signature>, Sent> {
+        let (tick, lot) = self.grid();
+        let post_only = matches!(planned.action, Action::PostOnly { .. });
+        if post_only && planned.expires_slot.is_some() && matches!(self.trader, Trader::OpenBook(_))
+        {
+            return Err(not_sent("OpenBook orders expire by the clock, not by slot"));
+        }
+        let (Some(size), Some(price)) = (
+            on_grid(size, lot, false),
+            on_grid(price, tick, side == Side::Ask),
+        ) else {
+            return Err(off_grid());
+        };
+        if size.is_zero() || price.is_zero() {
+            return Err(no_lots());
+        }
+        Ok(self
+            .rest_exact(
+                core_side(side),
+                price,
+                size,
+                post_only,
+                planned.expires_slot,
+            )
+            .await)
+    }
+
     /// What became of a send the world will land in its next block: what
     /// the chain says of it now.
     async fn outcome(&self, signature: mtx_kit::Signature) -> SendState {
@@ -497,82 +566,15 @@ impl Seat for BookSeat {
     }
 
     async fn send(&self, planned: &Planned) -> Sent {
-        let (tick, lot) = self.grid();
-        let off_grid = || Sent {
-            state: SendState::failed("a price or size no market grid can hold"),
-            sent: false,
-        };
-        let no_lots = || Sent {
-            state: SendState::NotSent("rounds to nothing on the market's grid".into()),
-            sent: false,
-        };
-        let sent = match planned.action {
-            Action::Market { side, size, limit } => {
-                let (Some(size), Some(limit)) = (
-                    on_grid(size, lot, false),
-                    on_grid(limit, tick, side == Side::Ask),
-                ) else {
-                    return off_grid();
-                };
-                if size.is_zero() {
-                    return no_lots();
-                }
-                self.take_exact(core_side(side), size, limit).await
-            }
-            Action::Limit { side, price, size } | Action::PostOnly { side, price, size } => {
-                let post_only = matches!(planned.action, Action::PostOnly { .. });
-                if post_only
-                    && planned.expires_slot.is_some()
-                    && matches!(self.trader, Trader::OpenBook(_))
-                {
-                    return Sent {
-                        state: SendState::NotSent(
-                            "OpenBook orders expire by the clock, not by slot".into(),
-                        ),
-                        sent: false,
-                    };
-                }
-                let (Some(size), Some(price)) = (
-                    on_grid(size, lot, false),
-                    on_grid(price, tick, side == Side::Ask),
-                ) else {
-                    return off_grid();
-                };
-                if size.is_zero() || price.is_zero() {
-                    return no_lots();
-                }
-                self.rest_exact(
-                    core_side(side),
-                    price,
-                    size,
-                    post_only,
-                    planned.expires_slot,
-                )
-                .await
-            }
-            Action::CancelAll => match self.cancel_exact().await {
-                Ok(Some(signature)) => Ok(signature),
-                Ok(None) => {
-                    return Sent {
-                        state: SendState::NotSent("nothing rests: no account yet".into()),
-                        sent: false,
-                    };
-                }
-                Err(error) => Err(error),
+        match self.dispatch(planned).await {
+            Ok(sent) => Sent {
+                state: match sent {
+                    Ok(signature) => self.outcome(signature).await,
+                    Err(reason) => SendState::failed(reason),
+                },
+                sent: true,
             },
-            _ => {
-                return Sent {
-                    state: SendState::NotSent("unsupported in this session".into()),
-                    sent: false,
-                };
-            }
-        };
-        Sent {
-            state: match sent {
-                Ok(signature) => self.outcome(signature).await,
-                Err(reason) => SendState::failed(reason),
-            },
-            sent: true,
+            Err(refused) => refused,
         }
     }
 
@@ -738,6 +740,25 @@ async fn market_account(chain: &dyn ChainClient, address: &Pubkey) -> Result<Vec
         .map_err(venue_error("market"))?
         .ok_or_else(|| Error::UnknownMarket(address.to_string()))?
         .data)
+}
+/// A line whose price or size no market grid can hold: failed, not sent.
+fn off_grid() -> Sent {
+    Sent {
+        state: SendState::failed("a price or size no market grid can hold"),
+        sent: false,
+    }
+}
+
+/// A line too small for the market's grid: not sent.
+fn no_lots() -> Sent {
+    not_sent("rounds to nothing on the market's grid")
+}
+
+fn not_sent(reason: &str) -> Sent {
+    Sent {
+        state: SendState::NotSent(reason.into()),
+        sent: false,
+    }
 }
 
 fn venue_error<E: std::fmt::Display>(what: &'static str) -> impl Fn(E) -> Error {

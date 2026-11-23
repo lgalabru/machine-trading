@@ -28,6 +28,8 @@ impl LatestBlockhash {
     /// The validator produced `slot`'s block with `hash`. An older slot than
     /// the one kept changes nothing.
     pub fn produced(&self, slot: u64, hash: Hash) {
+        // Poisoned: a thread panicked holding it. The chain clients then
+        // find no fresh hash and ask the RPC: slower, never wrong.
         let Ok(mut latest) = self.latest.lock() else {
             return;
         };
@@ -38,6 +40,7 @@ impl LatestBlockhash {
 
     /// The newest blockhash, if it is fresh.
     pub fn fresh(&self) -> Option<Hash> {
+        // Poisoned: as in `produced`, no fresh hash.
         let latest = self.latest.lock().ok()?;
         latest
             .filter(|(_, _, at)| at.elapsed() < FRESH_FOR)

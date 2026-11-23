@@ -56,6 +56,29 @@ git archive HEAD | ssh mtx-alpha 'mkdir -p /tmp/mtx-src && tar -x -C /tmp/mtx-sr
 # with the commit in /home/sol/mtx/src/.commit
 ```
 
+## Update the plugin, with no restart
+
+Copy the new source to `/home/sol/mtx/src` (as above), then as `sol`:
+
+```sh
+~/bin/reload-plugin.sh
+```
+
+It builds the plugin under a name of its own in `~/mtx/plugins`, points
+`geyser.json` at it, and has the running validator reload it
+(`agave-validator plugin reload mtx-geyser`). The old runtime finishes its
+steps, closes every socket connection and stops; the new one starts on the
+same sockets and restores the strategies from the desired state. A
+strategy's component alone is swapped with `mtx live upgrade <name>
+<bot.wasm>`, and strategies come and go with `add` and `remove`: none of
+it restarts the validator.
+
+Each reload leaves the old library mapped in the validator (glibc keeps a
+library whose threads registered thread-local destructors) with two idle
+threads of it: tens of MB and two sleeping threads a reload, cleared by the
+validator's next restart. Reload freely; restart when convenient after
+many.
+
 ## Watch it
 
 ```sh

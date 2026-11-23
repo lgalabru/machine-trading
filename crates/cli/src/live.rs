@@ -16,6 +16,9 @@ use mtx_core::{
 pub enum LiveCommand {
     /// Every strategy: its state, position, PnL, steps and skipped steps.
     Status,
+    /// The markets the runtime watches without trading them
+    /// (`control.watch`): tick, lot, fees.
+    Markets,
     /// Stop stepping a strategy, or every one. Its resting orders are
     /// cancelled and its position kept, unless told otherwise.
     Pause {
@@ -38,6 +41,14 @@ pub enum LiveCommand {
         name: String,
         /// The mandate file.
         mandate: PathBuf,
+    },
+    /// Swap a strategy's component for a new build: same name, key and
+    /// mandate, no runtime restart. The old one comes back if the new one
+    /// doesn't start.
+    Upgrade {
+        name: String,
+        /// The new component (`bot.wasm`), as the node's runtime reads it.
+        component: PathBuf,
     },
     /// Start a strategy component under a mandate, with its own key. It
     /// begins paused unless `--run`.
@@ -118,6 +129,25 @@ pub fn run(socket: &Path, command: LiveCommand, json: bool) -> Result<()> {
                     feed.slot, feed.behind, feed.dropped
                 );
                 print!("{}", table(&strategies));
+            }
+            Ok(())
+        }
+        Reply::Markets { markets } => {
+            if json {
+                println!("{}", serde_json::to_string_pretty(&markets)?);
+            } else {
+                println!("{} watched markets", markets.len());
+                for m in &markets {
+                    println!(
+                        "  {:<24} tick {:<12} lot {:<10} maker {:+.2} bp  taker {:+.2} bp{}",
+                        m.instrument.to_string(),
+                        m.tick,
+                        m.lot,
+                        m.maker_fee_bps,
+                        m.taker_fee_bps,
+                        if m.active { "" } else { "  (not trading)" }
+                    );
+                }
             }
             Ok(())
         }
@@ -216,6 +246,20 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
             },
             Event::Lagged { dropped } => {
                 format!("lagged: {dropped} events lost; run `mtx live status`")
+            }
+            Event::Quote {
+                symbol,
+                best_bid,
+                best_ask,
+                mark,
+                ..
+            } => {
+                let side = |p: &Option<f64>| p.map_or("–".to_string(), |p| format!("{p}"));
+                format!(
+                    "{symbol}: {} / {} (mark {mark})",
+                    side(best_bid),
+                    side(best_ask)
+                )
             }
         };
         println!("{text}");
@@ -340,6 +384,7 @@ fn latency(control: &Path, events: &Path, seconds: u64, json: bool) -> Result<()
 fn to_request(command: LiveCommand) -> Result<Command> {
     Ok(match command {
         LiveCommand::Status => Command::Status,
+        LiveCommand::Markets => Command::Markets,
         LiveCommand::Watch { .. } | LiveCommand::Latency { .. } => {
             unreachable!("reads events, sends no command")
         }
@@ -385,6 +430,7 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             shadow,
         }),
         LiveCommand::Remove { name } => Command::Remove { name },
+        LiveCommand::Upgrade { name, component } => Command::Upgrade { name, component },
         LiveCommand::Kill => Command::Kill,
     })
 }
