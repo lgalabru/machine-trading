@@ -114,8 +114,21 @@ jobs:
     needs: ci-image
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    container: ${{ needs.ci-image.outputs.image }}
+    container:
+      image: ${{ needs.ci-image.outputs.image }}
+      # The runner's own disk, so the first step can clear it.
+      volumes:
+        - /:/host
     steps:
+      - name: Free the runner's disk
+        # The workspace's debug builds (every reference, informed bot and
+        # check bot links the Solana crates) outgrew the runner's disk: the
+        # job died with "No space left on device". The toolchains the
+        # runner ships that this job never uses are about 25 GB.
+        run: |
+          cd /host
+          rm -rf usr/share/dotnet usr/local/lib/android opt/ghc opt/hostedtoolcache/CodeQL usr/local/.ghcup usr/share/swift
+          df -h /host
       - uses: actions/checkout@v4
       - name: Toolchain and libraries
         if: needs.ci-image.outputs.prebuilt != 'true'
