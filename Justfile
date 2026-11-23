@@ -383,6 +383,21 @@ tasks-sync:
 tasks-check:
     cargo run --release -q -- task check
 
+# Components built on mtx:strategy@0.2.0 still load and play. The
+# repository keeps no built components, so this builds the book maker from
+# 7538c774, the last commit on 0.2.0, in a throwaway worktree under
+# target/, and runs the host's compatibility test on it.
+compat-0-2-0:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$PWD/target/compat-0-2-0"
+    rm -rf "$dir"
+    git worktree add --detach "$dir" 7538c774 > /dev/null
+    trap 'git worktree remove --force "$dir"' EXIT
+    just --justfile "$dir/bots/book-maker/Justfile" build
+    MTX_COMPAT_0_2_0_WASM="$dir/bots/book-maker/bot.wasm" \
+      cargo test -p mtx-runtime --lib a_0_2_0_component_still_plays -- --ignored
+
 # The strategy interface end to end: the probe puts one line of each kind
 # on its first sheet in a flash-crash session, and its log
 # (target/logs/wit-probe) shows what it was handed and what became of each.

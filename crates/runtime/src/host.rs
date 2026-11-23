@@ -1671,13 +1671,19 @@ mod tests {
         assert!(wasmtime::Module::new(&engine, "(module (memory 1) (memory 1))").is_err());
     }
 
-    /// A component built on 0.2.0 before 0.3.0 froze it (the book maker in
-    /// the tree, built 2026-11-20) loads on its own world and plays: every
+    /// A component built on 0.2.0 loads on its own world and plays: every
     /// call crosses it and returns, and a sheet comes back as the kit's
-    /// lines, with no atomic group.
+    /// lines, with no atomic group. The repository keeps no built
+    /// components, so `just compat-0-2-0` builds the book maker as it was
+    /// at `7538c774`, the last commit on 0.2.0, and runs this test on it
+    /// (`MTX_COMPAT_0_2_0_WASM`).
     #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs a 0.2.0 component: run `just compat-0-2-0`"]
     async fn a_0_2_0_component_still_plays() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bots/book-maker/bot.wasm");
+        let path = std::path::PathBuf::from(
+            std::env::var("MTX_COMPAT_0_2_0_WASM")
+                .expect("MTX_COMPAT_0_2_0_WASM: a component built on mtx:strategy@0.2.0"),
+        );
         let log = Shared::default();
         let mut strategy = load(&path, &log).await;
         assert_eq!(strategy.interface(), "0.2.0");
