@@ -4,6 +4,27 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
+  mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
+  unchanged: their anchor digests did not move.
+  - **`liquidation-flash`.** Liquidate unhealthy Kamino obligations (SOL
+    collateral, USDC debt): push Scope's price, flash-borrow the repay,
+    liquidate and sell the seized SOL on Orca's or Raydium's SOL/USDC pool,
+    in one transaction, racing competing liquidators for the slot. 144
+    hidden sessions.
+  - **`backrun-sol-usdc`.** Backrun a seller working a large order on Orca's
+    and Raydium's SOL/USDC concentrated pools: sell into the pool that
+    prices SOL higher and buy back from the other, atomically, in the
+    trigger's own slot. 72 hidden sessions.
+  - **`backrun-thin-pools`.** Find and close the SOL-to-SOL cycle a large
+    swap opens across ten thin pools (SOL, USDC, JitoSOL, JTO, GEOD), in a
+    Jito-style auction. 144 hidden sessions.
+  - **What they run on:** strategy interface `mtx:strategy@0.3.0` (atomic
+    sheet groups, `flash` and `push-price`), mandate v0.3.0, exact
+    Whirlpool and Raydium CLMM quotes, the transaction layer with competing
+    actors in its auction (arrival slot first, then pay per compute unit),
+    trigger steps, and two snapshots of 2026-11-21. Each task is scored with
+    v2, against a reference and an informed bot, and has a min-tip rung.
 - **0.13.0.** A market maker takes only to reduce, models in a bot get an
   SDK, and the engine stops handing out two free trades. Written after
   reading the twenty bots GPT-6 Astra shipped in 0.12.0, where it led every

@@ -1,7 +1,7 @@
 # The runtime image (bench/image/Dockerfile, target runtime): the grader and
 # the snapshots, without the agent's toolchain. Harbor copies the agent's
 # /app/bot in.
-FROM ghcr.io/solana-foundation/machine-trading:0.13.0-runtime@sha256:6a1ee8db406de475951db063a284fa72fdc9f2b3ffff176de512f20516ebe40f
+FROM ghcr.io/solana-foundation/machine-trading:0.14.0-runtime
 ENV MTX_SNAPSHOT=/opt/mtx/snapshots/phoenix-spcx-2026-10-29
 # The task's name, before anything is copied in: the tasks' Dockerfiles are
 # otherwise identical, and BuildKit building two at once has put one task's
