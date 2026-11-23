@@ -22,7 +22,7 @@ finished ladder) adjust a run.
 | Task files | design, family, reference (the oracle is the reference bot's `lib.rs`), anchor, practice, instruction, README, CI and dataset, lint | `mtx task status` |
 | | a v2 task: both anchors named in its ladder file, the informed bot written; the verifier grades with `--scoring v2-headline` (v2 as the one score) and the instruction's scoring rules are current; it opts into the probe gate | `mtx task status` |
 | Solvable and fair | the reference makes money on every set (it is the 1.0 line); doing nothing scores 0 | ladder |
-| | the skill ladder keeps its order, on every set and in the bootstrap | ladder |
+| | the skill ladder keeps its order, on every set and in the bootstrap (fast mode: a v2 task's reference at or past its informed bot is inconclusive; see "Fast mode") | ladder |
 | | the best informed policy makes at least 2x the best non-reading one's graded total, or a $25 floor when every non-reading rung does worse | ladder rungs |
 | | the oracle (the reference) scores skill 1.0, or under scoring v2 0.5 before the near-breach charge and any breach penalty (`score_v2_raw_before_charge`), with `reward` v2's score and no `skill` beside it; the charge, anchored on the informed bot's drawdowns, can take a reference that draws down deeper under 0.5 by design, and is reported beside it, not checked; nop scores 0 under Harbor | full: `just harbor-checks` |
 | | a v2 task's reference is in the strength band against its informed bot: weighted as v2 weighs losses, 0.2 to 0.7 of it, never `anchor_floored`, per-session Sharpe at least 0.25 (fast mode: a miss is inconclusive, unless the reference loses money with confidence, which fails) | ladder, per-session PnL |
@@ -52,6 +52,19 @@ inconclusive only the order rules that name `reference`; other broken rules
 still fail. A reference whose edge is a few large winning sessions can fail
 fast mode on its fixed public seed while passing the full ladder, because the
 12 sessions may miss the big wins; the full ladder's verdict is the remedy.
+
+A v2 task's reference at or past its informed bot on the fast set (a ceiling
+breach) is `inconclusive` too. v2 refuses to scale a set whose reference
+reaches the informed bot or comes within 5% of it, so the ladder compares
+that set's rungs on raw PnL and records why (`v2_refused` in its summary).
+Twelve sessions can't settle the anchors' order where the reference wins
+only a few contested races fewer than the informed bot: liquidation-flash's
+public set gives the reference $69.83 and the informed bot $69.30, though
+over 216 hidden sessions the reference makes 0.63 of it. In fast mode, the
+order rules that compare the two anchors (`reference < informed`) and the
+strength band are then `inconclusive`, and so is a probe gate the refusal
+left unscored; any other broken rule still fails. The full ladder fails
+on any set with a ceiling breach.
 
 Rungs are compared on the grade the task gives them: under v1 a rung with a
 disqualified (breached) session totals 0, under a v2 task the sum of its v2

@@ -1409,7 +1409,10 @@ fn check_anchors(role: &str, anchors: &[SessionReport]) -> Result<()> {
     if broken.is_empty() {
         Ok(())
     } else {
-        Err(Error::Degraded(format!("{role}: {}", broken.join(", "))))
+        Err(Error::AnchorBroken(format!(
+            "{role}: {}",
+            broken.join(", ")
+        )))
     }
 }
 
@@ -3369,6 +3372,25 @@ mod tests {
         assert!(!is_transient(&Error::MissingBot("bot".into())));
         assert!(!is_transient(&Error::Degraded("failed takers".into())));
         assert!(!is_transient(&Error::UnknownMarket("XYZ".into())));
+    }
+
+    #[test]
+    fn an_anchor_that_exits_is_broken_not_a_loaded_machine() {
+        let clean = SessionReport {
+            bot_exit: Some("exit status: 0".into()),
+            ..session(10.0)
+        };
+        assert!(check_anchors("the reference", std::slice::from_ref(&clean)).is_ok());
+        let crashed = SessionReport {
+            bot_exit: Some("exit status: 1".into()),
+            ..session(0.0)
+        };
+        let error = check_anchors("the reference", &[clean, crashed]).unwrap_err();
+        assert!(matches!(error, Error::AnchorBroken(_)), "{error}");
+        let text = error.to_string();
+        assert!(text.contains("exited: exit status: 1"), "{text}");
+        assert!(!text.contains("loaded"), "{text}");
+        assert!(!is_transient(&error));
     }
 
     #[test]

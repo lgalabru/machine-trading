@@ -34,7 +34,8 @@ leak_needles = ["0.45 × 1.45 ≈ 0.65 outbids", "weighs the chance no rival abo
 headline = "v2"
 
 [verifier]
-# Seventy-two hidden sessions drawn from the batch's secret, graded with
+# 144 hidden sessions drawn from the batch's secret (twice the other
+# tasks': DESIGN.md, "Statistical power"), graded with
 # the reference and then the informed bot on the same sessions first, four
 # sessions at a time each, then the bot's, four at a time. The world moves
 # only between the bot's turns, so a session takes as long as the bot
