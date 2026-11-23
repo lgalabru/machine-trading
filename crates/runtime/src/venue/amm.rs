@@ -29,6 +29,8 @@
 //!   refuses the swap on chain. It reads and sends through an injected
 //!   [`ChainClient`], so the same seat runs on any client a host hands it.
 //!
+//! (A probe: this line changes nothing, and asks CI for main's own anchor digests.)
+//!
 //! Not covered: Token-2022 transfer fees and hooks (the kit's quotes don't
 //! model them), liquidity positions, and the other pool programs the
 //! profile lists (Raydium AMM v4 and CPMM, Meteora).
