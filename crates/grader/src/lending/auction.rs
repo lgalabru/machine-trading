@@ -40,7 +40,7 @@ use crate::{
     txlayer::{
         RouteKind, TxEngine, draw,
         engine::{Fate, Submission},
-        jito, pool,
+        jito,
     },
     venue::kamino::{self, Reading, klend},
 };
@@ -139,8 +139,8 @@ pub struct Race {
     /// research's shape. Absent, 0.5.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub same_slot_share: Option<f64>,
-    /// The research's mean count of competitors for a size, times this.
-    /// Absent, 1.
+    /// The research's mean count of competitors for a size, times this;
+    /// above $1,000 repaid, at least the research's. Absent, 1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub competition: Option<f64>,
 }
@@ -281,13 +281,17 @@ pub fn competitors_mean(repay_usd: f64) -> f64 {
 /// a uniform draw `u`: each joins with the chance that makes the expected
 /// number of them the research's mean for the size, times the session's
 /// `competition` (1 when `None`), all of them when that is more than the
-/// session has.
+/// session has. Above $1,000 the factor only raises the mean: the research's
+/// 4.4 rivals there, 93% of them in the trigger's slot, are a floor, so a
+/// large liquidation is contested in every session.
 pub fn competes(u: f64, repay_usd: f64, count: u32, competition: Option<f64>) -> bool {
     assert!(count > 0, "a liquidator among none");
-    let mean = match competition {
-        None => competitors_mean(repay_usd),
-        Some(scale) => competitors_mean(repay_usd) * scale,
+    let scale = competition.unwrap_or(1.0);
+    let scale = match repay_usd > LARGE_USD {
+        true => scale.max(1.0),
+        false => scale,
     };
+    let mean = competitors_mean(repay_usd) * scale;
     let chance = (mean / f64::from(count)).min(1.0);
     u < chance
 }
@@ -303,6 +307,11 @@ pub struct Bid {
     /// It tips through a bundle rather than paying a priority fee.
     pub tips: bool,
 }
+
+/// The compute units mainnet's liquidations asked for, the median (p10
+/// 233k, p90 450k; NOTES.md §3): what the research's bid shares were paid
+/// on.
+pub const RESEARCH_UNITS: u64 = 333_000;
 
 const BID_SHARE_MIN: f64 = 0.25;
 const BID_SHARE_MAX: f64 = 0.45;
@@ -321,11 +330,17 @@ impl Bid {
     }
 
     /// What it pays to liquidate `repay_usd` at a bonus of `bonus_bps`, in
-    /// lamports at `sol_usd`.
-    pub fn lamports(&self, repay_usd: f64, bonus_bps: u16, sol_usd: f64) -> u64 {
+    /// lamports at `sol_usd`, on a transaction that asks for `units`
+    /// compute units: its share of the bonus as mainnet's liquidators paid
+    /// it per unit. The research's shares were paid by liquidations asking
+    /// a median [`RESEARCH_UNITS`]; one that asks fewer pays as much per
+    /// unit, so less in all, and ranks where theirs did.
+    pub fn lamports(&self, repay_usd: f64, bonus_bps: u16, sol_usd: f64, units: u32) -> u64 {
         assert!(sol_usd > 0.0, "SOL has a price");
+        assert!(units > 0, "a transaction asks for units");
         let kept_usd = repay_usd.max(0.0) * f64::from(bonus_bps) / 10_000.0 * BONUS_KEPT_SHARE;
-        (self.share * kept_usd / sol_usd * 1e9).round() as u64
+        let per_research_units = self.share * kept_usd / sol_usd * 1e9;
+        (per_research_units * f64::from(units) / RESEARCH_UNITS as f64).round() as u64
     }
 }
 
@@ -660,7 +675,7 @@ impl KaminoActors {
         let plan = TransactionPlan::from_group(&group, limit).with_lookup_tables(&tables);
         let bid = liquidator.bid;
         let lamports = found.sol_usd.map_or(0, |price| {
-            bid.lamports(found.repay_usd, found.bonus_bps, price)
+            bid.lamports(found.repay_usd, found.bonus_bps, price, limit)
         });
         let (plan, tip) = match bid.tips {
             true => (plan, Some(lamports.max(jito::MIN_TIP))),
@@ -885,23 +900,7 @@ pub(crate) async fn submit(
             [(signature.len() + wires.len()) % jito::TIP_ACCOUNTS.len()]
         .parse()
         .expect("a tip account");
-        let mut data = 2u32.to_le_bytes().to_vec();
-        data.extend(lamports.to_le_bytes());
-        let pay = Instruction::new_with_bytes(
-            pool::SYSTEM,
-            &data,
-            vec![
-                solana_transaction::AccountMeta::new(signer.pubkey(), true),
-                solana_transaction::AccountMeta::new(tip_account, false),
-            ],
-        );
-        let message =
-            solana_message::Message::new_with_blockhash(&[pay], Some(&signer.pubkey()), &blockhash);
-        let tipped = VersionedTransaction::try_new(
-            solana_message::VersionedMessage::Legacy(message),
-            &[signer],
-        )
-        .map_err(|e| e.to_string())?;
+        let tipped = jito::tip_transaction(signer, &tip_account, lamports, blockhash)?;
         wires.push(wincode::serialize(&tipped).map_err(|e| e.to_string())?);
     }
     let bundle = wires.len() > 1;
@@ -1079,6 +1078,17 @@ mod tests {
             * 5.0;
         assert!((scaled - 1.3).abs() < 0.1, "{scaled}");
         assert!(!competes(0.0, 500.0, 5, Some(0.0)), "no competition");
+        // Above $1,000 a session's factor raises the research's mean, never
+        // lowers it.
+        let large = |scale: f64| {
+            (0..10_000u64)
+                .filter(|i| competes(draw(3, "c", &[*i]), 5_000.0, 5, Some(scale)))
+                .count() as f64
+                / 10_000.0
+                * 5.0
+        };
+        assert!((large(0.4) - 4.4).abs() < 0.1, "{}", large(0.4));
+        assert!((large(1.5) - 5.0).abs() < 1e-9);
     }
 
     #[test]
@@ -1108,9 +1118,13 @@ mod tests {
             tips: false,
         };
         // $1,000 repaid at 100 bp, half kept: $5, of which 40% is $2, at
-        // $100 a SOL 0.02 SOL.
-        assert_eq!(bid.lamports(1_000.0, 100, 100.0), 20_000_000);
-        assert_eq!(bid.lamports(-1.0, 100, 100.0), 0);
+        // $100 a SOL 0.02 SOL, on the research's median units.
+        let units = RESEARCH_UNITS as u32;
+        assert_eq!(bid.lamports(1_000.0, 100, 100.0, units), 20_000_000);
+        assert_eq!(bid.lamports(-1.0, 100, 100.0, units), 0);
+        // On a transaction asking half as many, half as much: the same per
+        // unit.
+        assert_eq!(bid.lamports(1_000.0, 100, 100.0, units / 2), 10_000_000);
     }
 
     fn obligation(collateral: (Pubkey, f64), debt: (Pubkey, f64)) -> Obligation {

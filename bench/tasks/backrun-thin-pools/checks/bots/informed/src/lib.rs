@@ -7,14 +7,15 @@
 //!
 //! What it does with it: it bids what pays best against the session's
 //! searchers, trigger by trigger. A searcher reaches the trigger's slot
-//! when its drawn latency is 0, which its range sets the odds of; one that
-//! tips outranks a bundle that bids less per requested compute unit, and
-//! one that pays a priority fee lands behind every bundle on a Jito
-//! leader's block, so it sets no bid. A cycle searcher tips a share of the
-//! best cycle it can see, which for one that looks only at a pair's two
-//! pools may be far less than the three-leg cycle the trigger opened, or
+//! when its drawn latency is 0, which its range sets the odds of; there the
+//! block ranks every send by what it pays the leader per requested compute
+//! unit, a tip and a priority fee alike, and one that pays more per unit
+//! than this bot lands first. One that reaches a later slot lands after
+//! this bot, whatever it pays. A cycle searcher bids a share of the best
+//! cycle it can see, which for one that looks only at a pair's two pools
+//! may be far less than the three-leg cycle the trigger opened, or
 //! nothing. So for each bid worth considering (the least that outbids the
-//! background's bundles, or just over one tipping rival's) it weighs the
+//! background's bundles, or just over one rival's) it weighs the
 //! chance no rival above it reaches the slot against the profit left after
 //! the tip, takes the best, and stays out when none pays. It knows no more
 //! than that: the same costs, mandate and latency, and nothing of when the
@@ -26,9 +27,9 @@ pub mod cycles;
 use cycles::{Backrunner, Bidding, LEGS_MAX, MIN_TIP_LAMPORTS, Opportunity};
 use mtx_kit::{log, prelude::*, serde_json};
 
-/// Compute units a bundle asks for beside its swaps: its tip's transfer,
-/// which asks for the default 200,000 (the layer's reports).
-const TIP_UNITS: f64 = 200_000.0;
+/// Compute units a bundle asks for beside its swaps: its tip's transfer
+/// (the layer's `TIP_TX_UNITS`).
+const TIP_UNITS: f64 = 1_000.0;
 /// What a cycle asks for a leg, a searcher's or this bot's: its
 /// simulation's units and a margin (backrun-sol-usdc's two legs asked for
 /// about 210,000).
@@ -59,18 +60,20 @@ enum Kind {
     Pool,
 }
 
-/// One rival that tips: how it trades, the share of its expected profit it
-/// tips, the least it sends for, and the chance it reaches the trigger's
-/// slot.
+/// One rival: how it trades, the share of its expected profit it bids,
+/// whether as a tip (a bundle, whose tip is a transaction of its own) or a
+/// priority fee, the least it sends for, and the chance it reaches the
+/// trigger's slot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Rival {
     kind: Kind,
     share: f64,
+    tips: bool,
     min_profit_sol: f64,
     reaches: f64,
 }
 
-/// The session's tipping rivals, from its latent state.
+/// The session's rivals, from its latent state.
 #[derive(Debug, Default)]
 pub struct Rivals {
     rivals: Vec<Rival>,
@@ -97,9 +100,11 @@ impl Rivals {
             .map(|s| (s, true))
             .chain(pools.iter().map(|s| (s, false)))
         {
-            if spec["pays"].as_str() != Some("tip") {
-                continue;
-            }
+            let tips = match spec["pays"].as_str() {
+                Some("tip") => true,
+                Some("priority_fee") => false,
+                other => return Err(format!("a searcher that pays by {other:?}")),
+            };
             let share = spec["bid_share"]
                 .as_f64()
                 .ok_or("a searcher without a bid")?;
@@ -130,6 +135,7 @@ impl Rivals {
                     false => Kind::Pool,
                 },
                 share,
+                tips,
                 min_profit_sol: spec["min_profit_sol"].as_f64().unwrap_or(0.01),
                 reaches,
             });
@@ -137,8 +143,9 @@ impl Rivals {
         Ok(Self { rivals })
     }
 
-    /// What `rival` tips for `found`, as this bot's tip would have to be to
-    /// rank with it, in SOL; `None` when it doesn't send.
+    /// What `rival` bids for `found`, as this bot's tip would have to be to
+    /// rank with it per requested unit, in SOL; `None` when it doesn't
+    /// send.
     fn bar_sol(rival: &Rival, found: &Opportunity) -> Option<f64> {
         let legs = found.cycle.legs.len();
         let (profit_sol, units) = match rival.kind {
@@ -151,9 +158,15 @@ impl Rivals {
         if profit_sol < rival.min_profit_sol {
             return None;
         }
-        let tip_sol = (rival.share * profit_sol).max(MIN_TIP_LAMPORTS as f64 / 1e9);
+        let (bid_sol, units) = match rival.tips {
+            true => (
+                (rival.share * profit_sol).max(MIN_TIP_LAMPORTS as f64 / 1e9),
+                units + TIP_UNITS,
+            ),
+            false => (rival.share * profit_sol, units),
+        };
         let own_units = legs as f64 * LEG_UNITS + TIP_UNITS;
-        Some(tip_sol * own_units / (units + TIP_UNITS))
+        Some(bid_sol * own_units / units)
     }
 }
 
@@ -210,7 +223,7 @@ impl Strategy for Informed {
             .var("MTX_REGIME")
             .ok_or("the informed bot runs told the session's latent state (MTX_REGIME)")?;
         self.rivals = Rivals::from_regime(regime)?;
-        log(&format!("tipping rivals: {:?}", self.rivals));
+        log(&format!("rivals: {:?}", self.rivals));
         self.backrunner.start(session)
     }
 
@@ -227,7 +240,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_tipping_rivals_count_and_latency_sets_the_odds() {
+    fn every_rival_counts_on_one_scale_and_latency_sets_the_odds() {
         let rivals = Rivals::from_regime(
             r#"{"searchers": [
                 {"latency_slots": [0, 1], "bid_share": 0.4, "pays": "tip", "min_profit_sol": 0.01},
@@ -236,11 +249,13 @@ mod tests {
             ], "pool_searchers": [], "flow_scale": 1.0}"#,
         )
         .unwrap();
-        assert_eq!(rivals.rivals.len(), 2);
+        assert_eq!(rivals.rivals.len(), 3);
         assert_eq!(rivals.rivals[0].reaches, 0.5);
-        assert_eq!(rivals.rivals[1].reaches, 0.0);
+        assert_eq!(rivals.rivals[1].reaches, 1.0);
+        assert!(!rivals.rivals[1].tips, "a priority fee is a bid too");
+        assert_eq!(rivals.rivals[2].reaches, 0.0);
         assert_eq!(rivals.rivals[0].kind, Kind::Cycle { max_legs: 2 });
-        assert_eq!(rivals.rivals[1].kind, Kind::Cycle { max_legs: 3 });
+        assert_eq!(rivals.rivals[2].kind, Kind::Cycle { max_legs: 3 });
         assert!(Rivals::from_regime("{}").is_err());
         assert!(
             Rivals::from_regime(

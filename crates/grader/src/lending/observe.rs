@@ -1,7 +1,9 @@
-//! What mandate v0.3.0's rules 11 to 13 read of a lending session's
-//! transactions (`specs/mandate.md`): each landed or failed transaction of
-//! the bot's, read back from the chain as `getTransaction` serves it, for
-//! its costs and its flash borrows.
+//! What mandate v0.3.0's rules 11 to 13 read of a session's transactions
+//! (`specs/mandate.md`): each landed or failed transaction of the bot's,
+//! read back from the chain as `getTransaction` serves it, for its costs,
+//! its flash borrows, and what it left the wallet holding.
+
+use std::collections::BTreeMap;
 
 use serde_json::Value;
 use solana_pubkey::Pubkey;
@@ -104,6 +106,137 @@ pub fn token_changes(transaction: &Value) -> Option<Vec<TokenChange>> {
     Some(changes)
 }
 
+/// An owner's wallet as its own transactions leave it, one after another in
+/// the chain's order, from what it held before the first: rule 11's measure
+/// after each, read from the transactions' own balances and never from a
+/// reading between steps, which a bot that splits a route over two
+/// transactions in one step would slip between. Each transaction's post
+/// balances set the token accounts it lists, and the owner's lamports, so
+/// what moved the wallet in between (the risk desk's close, say) is read at
+/// the next transaction that touches the account.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WalletTrail {
+    /// Each of the owner's token accounts: its mint and atoms.
+    accounts: BTreeMap<Pubkey, (Pubkey, u64)>,
+    lamports: u64,
+}
+
+impl WalletTrail {
+    /// The wallet before the session's first transaction: each token
+    /// account's mint and atoms, and the owner's lamports.
+    pub fn new(accounts: BTreeMap<Pubkey, (Pubkey, u64)>, lamports: u64) -> Self {
+        Self { accounts, lamports }
+    }
+
+    /// The wallet after `transaction` (a `getTransaction` answer, `json`
+    /// encoding), one of `owner`'s that ran; `None` if it doesn't read.
+    pub fn apply(&mut self, transaction: &Value, owner: &Pubkey) -> Option<()> {
+        for change in token_changes(transaction)?
+            .into_iter()
+            .filter(|c| c.owner == Some(*owner))
+        {
+            self.accounts
+                .insert(change.account, (change.mint, change.post));
+        }
+        // A bot may send a transaction signed and paid by a key of its own:
+        // the owner's lamports then didn't move.
+        let keys = account_keys(transaction)?;
+        if let Some(i) = keys.iter().position(|k| k == owner) {
+            self.lamports = transaction["meta"]["postBalances"].get(i)?.as_u64()?;
+        }
+        Some(())
+    }
+
+    /// The atoms held of each mint but `numeraire`, empty ones aside.
+    pub fn others(&self, numeraire: &Pubkey) -> BTreeMap<Pubkey, u64> {
+        let mut out: BTreeMap<Pubkey, u64> = BTreeMap::new();
+        for (mint, atoms) in self.accounts.values() {
+            if mint == numeraire || *atoms == 0 {
+                continue;
+            }
+            let held = out.entry(*mint).or_default();
+            *held = held.saturating_add(*atoms);
+        }
+        out
+    }
+
+    pub fn lamports(&self) -> u64 {
+        self.lamports
+    }
+}
+
+/// `owner`'s token accounts of each of `mints`: address, mint and atoms.
+pub async fn token_accounts(
+    chain: &dyn mtx_kit::chain::ChainClient,
+    owner: &Pubkey,
+    mints: impl IntoIterator<Item = Pubkey>,
+) -> Result<BTreeMap<Pubkey, (Pubkey, u64)>, mtx_kit::chain::ChainError> {
+    let mut out = BTreeMap::new();
+    for mint in mints {
+        for (address, account) in chain.get_token_accounts_by_owner(owner, &mint).await? {
+            let atoms = mtx_kit::chain::token::token_balance(&account)?;
+            out.insert(address, (mint, atoms));
+        }
+    }
+    Ok(out)
+}
+
+/// Order `records`' transactions that ran (landed, or landed and failed,
+/// which still pays its fee) as the chain ran them: by the slot they ran
+/// in, then by their place under the transaction layer (`landing`, by
+/// signature: the layer's block and the index in it, as the layer counts
+/// blocks), then in the order sent, which is the chain's without the
+/// layer.
+pub fn chain_order<'r>(
+    records: &'r [crate::session::TxRecord],
+    landing: &BTreeMap<String, (u64, u64)>,
+) -> Vec<&'r crate::session::TxRecord> {
+    let mut ran: Vec<(usize, &crate::session::TxRecord)> = records
+        .iter()
+        .enumerate()
+        .filter(|(_, r)| !r.duplicate && r.signature.is_some() && r.at.is_some())
+        .collect();
+    ran.sort_by_key(|(i, r)| {
+        let signature = r.signature.as_deref().expect("filtered");
+        let place = landing
+            .get(signature)
+            .copied()
+            .unwrap_or((u64::MAX, u64::MAX));
+        (r.at.expect("filtered"), place, *i)
+    });
+    ran.into_iter().map(|(_, r)| r).collect()
+}
+
+/// What an owner held beside its numeraire right after each of its
+/// transactions that ran, by signature: `start`'s wallet moved by each
+/// transaction's own balances (`found`, the `getTransaction` answers) in
+/// the chain's order ([`chain_order`]), valued by `value` (the trail, and
+/// the slot it ran at). Rule 11's measure: never a step's reading, which a
+/// bot that splits a route over two transactions in one step slips
+/// between. `Err` names a transaction that doesn't read back.
+pub fn held_after_each(
+    records: &[crate::session::TxRecord],
+    landing: &BTreeMap<String, (u64, u64)>,
+    found: &BTreeMap<String, Value>,
+    owner: &Pubkey,
+    start: &WalletTrail,
+    value: impl Fn(&WalletTrail, u64) -> Option<f64>,
+) -> Result<BTreeMap<String, Option<f64>>, String> {
+    let mut trail = start.clone();
+    let mut held = BTreeMap::new();
+    for record in chain_order(records, landing) {
+        let signature = record.signature.as_deref().expect("ordered: signed");
+        let transaction = found.get(signature).ok_or_else(|| signature.to_string())?;
+        trail
+            .apply(transaction, owner)
+            .ok_or_else(|| signature.to_string())?;
+        let at = record.at.expect("ordered: ran");
+        let before = held.insert(signature.to_string(), value(&trail, at));
+        assert!(before.is_none(), "a transaction runs once");
+    }
+    Ok(held)
+}
+
 /// What `transaction` (a `getTransaction` answer, `json` encoding) cost and
 /// borrowed; `None` if it isn't one.
 pub fn costs(transaction: &Value) -> Option<Costs> {
@@ -167,6 +300,210 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// One token balance as `getTransaction` lists it.
+    fn balance(index: usize, mint: &Pubkey, owner: &Pubkey, atoms: u64) -> Value {
+        json!({
+            "accountIndex": index,
+            "mint": mint.to_string(),
+            "owner": owner.to_string(),
+            "uiTokenAmount": { "amount": atoms.to_string() },
+        })
+    }
+
+    /// A transaction naming `keys`, its token balances before and after,
+    /// and its first key's lamports before and after.
+    fn ran(keys: &[Pubkey], pre: Vec<Value>, post: Vec<Value>, lamports: (u64, u64)) -> Value {
+        let mut pre_balances = vec![0u64; keys.len()];
+        let mut post_balances = vec![0u64; keys.len()];
+        (pre_balances[0], post_balances[0]) = lamports;
+        json!({
+            "meta": {
+                "fee": 5_000,
+                "preTokenBalances": pre,
+                "postTokenBalances": post,
+                "preBalances": pre_balances,
+                "postBalances": post_balances,
+            },
+            "transaction": { "message": {
+                "accountKeys": keys.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                "instructions": [],
+            }},
+        })
+    }
+
+    fn record(signature: &str, step: u64, at: u64, ok: bool) -> crate::session::TxRecord {
+        crate::session::TxRecord {
+            step: Some(step),
+            signature: Some(signature.into()),
+            at: Some(at),
+            ok,
+            duplicate: false,
+            error: None,
+            instructions: Vec::new(),
+            compute_units: None,
+            fee_lamports: None,
+            logs: Vec::new(),
+        }
+    }
+
+    /// A bot that buys JitoSOL in one transaction and sells it in the next,
+    /// both in one step: the step's reading after them shows nothing held,
+    /// but the wallet held JitoSOL between them, and rule 11 breaks.
+    #[test]
+    fn a_route_split_over_two_transactions_in_one_step_breaks_rule_11() {
+        let (bot, wsol, jitosol) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let (bot_wsol, bot_jitosol, pool) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let keys = [bot, bot_wsol, bot_jitosol, pool];
+        let sol = 1_000_000_000u64;
+        // Buy 9.9 JitoSOL with 10 SOL, opening the JitoSOL account.
+        let buy = ran(
+            &keys,
+            vec![balance(1, &wsol, &bot, 100 * sol)],
+            vec![
+                balance(1, &wsol, &bot, 90 * sol),
+                balance(2, &jitosol, &bot, 9_900_000_000),
+            ],
+            (2 * sol, 2 * sol - 5_000),
+        );
+        // Sell it back for 10.05 SOL, closing the account.
+        let sell = ran(
+            &keys,
+            vec![
+                balance(1, &wsol, &bot, 90 * sol),
+                balance(2, &jitosol, &bot, 9_900_000_000),
+            ],
+            vec![balance(1, &wsol, &bot, 100 * sol + 50_000_000)],
+            (2 * sol - 5_000, 2 * sol - 10_000),
+        );
+        let found: BTreeMap<String, Value> =
+            [("buy".to_string(), buy), ("sell".to_string(), sell)].into();
+        let records = [record("buy", 3, 10, true), record("sell", 3, 10, true)];
+        let start = WalletTrail::new([(bot_wsol, (wsol, 100 * sol))].into(), 2 * sol);
+        // JitoSOL at 1.1 SOL, SOL at $150.
+        let value = |trail: &WalletTrail, _at: u64| {
+            let others = trail.others(&wsol);
+            Some(others.get(&jitosol).copied().unwrap_or(0) as f64 / 1e9 * 1.1 * 150.0)
+        };
+        let held =
+            held_after_each(&records, &BTreeMap::new(), &found, &bot, &start, value).unwrap();
+        assert!((held["buy"].unwrap() - 1_633.5).abs() < 1e-6, "{held:?}");
+        assert_eq!(held["sell"], Some(0.0));
+        // The same, as mandate v0.3.0 audits it: a breach at the buy.
+        let mandate: mtx_core::mandate::Mandate = serde_json::from_value(json!({
+            "version": "v0.3.0",
+            "universe": [{ "instrument": "orca:amm:*", "assets": [wsol.to_string(), jitosol.to_string()] }],
+            "limits": { "inventory": { "numeraire": wsol.to_string(), "max_other_usd": 5.0 } },
+        }))
+        .unwrap();
+        let transactions = ["buy", "sell"]
+            .iter()
+            .map(|signature| mtx_core::mandate::ObservedTransaction {
+                signature: signature.to_string(),
+                slot: 10,
+                outcome: mtx_core::mandate::TransactionOutcome::Landed,
+                fee_usd: 0.0,
+                priority_fee_usd: 0.0,
+                tip_usd: 0.0,
+                other_holdings_usd: held[*signature],
+                flash_borrows: Vec::new(),
+            })
+            .collect();
+        let mut observed = mtx_core::mandate::Observed::default();
+        observed.transactions = transactions;
+        match mandate.audit(&observed) {
+            Some(mtx_core::mandate::Breach::Inventory { signature, .. }) => {
+                assert_eq!(signature, "buy")
+            }
+            other => panic!("expected an inventory breach at the buy, got {other:?}"),
+        }
+        // A route in one transaction holds nothing after it.
+        let atomic = ran(
+            &keys,
+            vec![balance(1, &wsol, &bot, 100 * sol)],
+            vec![balance(1, &wsol, &bot, 100 * sol + 50_000_000)],
+            (2 * sol, 2 * sol - 5_000),
+        );
+        let found: BTreeMap<String, Value> = [("route".to_string(), atomic)].into();
+        let held = held_after_each(
+            &[record("route", 3, 10, true)],
+            &BTreeMap::new(),
+            &found,
+            &bot,
+            &start,
+            value,
+        )
+        .unwrap();
+        assert_eq!(held["route"], Some(0.0));
+    }
+
+    /// The trail follows the chain's order, not the order sent: under the
+    /// layer a later send that pays more runs first.
+    #[test]
+    fn the_trail_runs_in_the_chains_order() {
+        let records = [
+            record("x", 1, 5, true),
+            record("y", 1, 5, false),
+            record("z", 0, 4, true),
+        ];
+        let order = |landing: &BTreeMap<String, (u64, u64)>| {
+            chain_order(&records, landing)
+                .iter()
+                .map(|r| r.signature.clone().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(order(&BTreeMap::new()), ["z", "x", "y"]);
+        let landing: BTreeMap<String, (u64, u64)> = [
+            ("x".to_string(), (6, 3)),
+            ("y".to_string(), (6, 0)),
+            ("z".to_string(), (5, 1)),
+        ]
+        .into();
+        assert_eq!(order(&landing), ["z", "y", "x"]);
+    }
+
+    /// Lamports come from the owner's own balance, where it signed; a token
+    /// account another key owns isn't the wallet's.
+    #[test]
+    fn the_trail_reads_only_the_owners_accounts() {
+        let (bot, other, mint) = (
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+            Pubkey::new_unique(),
+        );
+        let (ours, theirs) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let mut trail = WalletTrail::new([(ours, (mint, 7))].into(), 1_000);
+        let tx = ran(
+            &[bot, ours, theirs],
+            vec![balance(1, &mint, &bot, 7), balance(2, &mint, &other, 50)],
+            vec![balance(1, &mint, &bot, 3), balance(2, &mint, &other, 54)],
+            (1_000, 900),
+        );
+        trail.apply(&tx, &bot).unwrap();
+        assert_eq!(trail.others(&Pubkey::new_unique()), [(mint, 3)].into());
+        assert_eq!(trail.lamports(), 900);
+        // Paid and signed by another key: the owner's lamports stay.
+        let paid = ran(
+            &[other, ours],
+            vec![],
+            vec![balance(1, &mint, &bot, 1)],
+            (5, 4),
+        );
+        trail.apply(&paid, &bot).unwrap();
+        assert_eq!(
+            (trail.others(&Pubkey::new_unique())[&mint], trail.lamports()),
+            (1, 900)
+        );
+        assert_eq!(trail.apply(&json!({}), &bot), None);
+    }
 
     #[test]
     fn a_flash_liquidations_costs_and_borrow_read_back() {

@@ -189,14 +189,18 @@ borrower's place and the step, so a session replays them.
     with `ObligationHealthy`, and pays its fee, as 30,928 did on mainnet.
   - **Its bid**, drawn once per liquidator: 25 to 45% of the bonus it
     expects to keep (half the reserve's minimum bonus), as a Jito tip in a
-    bundle for 46% of them and as a priority fee for the rest.
+    bundle for 46% of them and as a priority fee for the rest. It pays that
+    share per compute unit as mainnet's liquidations did on their median
+    333,000 units: a transaction asking fewer pays less in all, and ranks
+    where theirs did. A tip and a priority fee rank alike
+    (`docs/tx-layer.md`, "Ranking").
   - **A session's own race** (`liquidators.race`, every member optional):
     `bid_share` (the range each bid share is drawn from), `tipping_share`
     (the chance a liquidator tips), `same_slot_share` (the share of races
     up to $1,000 joined in the slot the obligation turned; the lag keeps
     the research's shape, and above $1,000 the same slot takes
     `1 − 0.07 (1 − s) / 0.5`) and `competition` (the research's mean count
-    per size, times this). Absent, each is the research's. The
+    per size, times this; above $1,000 repaid it only raises the mean). Absent, each is the research's. The
     `liquidation-flash` family draws them per session.
   - The liquidators look at the obligations in the borrowers' order, not
     their addresses': each role of a grade (the reference, the informed

@@ -383,7 +383,7 @@
         "jito": {
           "latency_slots": [
             0,
-            1
+            0
           ],
           "loss": 0.0,
           "loss_congested": 0.0
@@ -391,7 +391,7 @@
         "rpc": {
           "latency_slots": [
             0,
-            2
+            0
           ],
           "loss": 0.01,
           "loss_congested": 0.3
@@ -431,7 +431,7 @@
         "every_slots": 2
       },
       "liquidators": {
-        "count": 4,
+        "count": 5,
         "race": {
           "bid_share": [
             0.31877797185972023,

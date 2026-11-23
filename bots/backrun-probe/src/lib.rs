@@ -346,8 +346,11 @@ impl Strategy for Probe {
             cycle.sol_in as f64 / SOL_ATOMS,
             cycle.usdc as f64 / USDC_ATOMS,
         );
-        // The sale must give the USDC the buy spends; the buy must give back
-        // the SOL sold, the tip and the fees.
+        // The sale gives exactly the USDC the buy spends, for at most the
+        // SOL quoted (mandate v0.3.0 allows $5 of USDC after any
+        // transaction: a better price sells less SOL rather than leaving
+        // USDC behind); the buy must give back the SOL sold, the tip and the
+        // fees.
         let sell_limit = usdc * (1.0 - 1e-9) / sol;
         let buy_limit = usdc / (sol + tip_sol + FEE_SOL);
         log(&format!(
@@ -370,13 +373,27 @@ impl Strategy for Probe {
             ..TxOptions::default()
         };
         orders
-            .swap(Side::Ask, sol, AmountUnit::Base, sell_limit)
+            .swap(Side::Ask, usdc, AmountUnit::Quote, sell_limit)
             .at(&self.pools[cycle.high].0)
             .tx(options);
+        // Built with `split` (`just backrun-smoke`'s check of mandate
+        // v0.3.0's rule 11), the buy goes as a transaction of its own in
+        // the same step: between the two the wallet holds the sale's USDC,
+        // and the rule breaks.
+        let buy_options = match cfg!(feature = "split") {
+            true => TxOptions {
+                tip: Some((tip_sol * SOL_ATOMS) as u64),
+                ..TxOptions::default()
+            },
+            false => TxOptions {
+                atomic: Some(self.group),
+                ..TxOptions::default()
+            },
+        };
         orders
             .swap(Side::Bid, usdc, AmountUnit::Quote, buy_limit)
             .at(&self.pools[cycle.low].0)
-            .atomic(self.group);
+            .tx(buy_options);
         Ok(())
     }
 }

@@ -15,7 +15,7 @@ use mtx_kit::{
     AmountUnit, Pubkey, log,
     prelude::*,
     protocols::{orca::whirlpool, raydium::clmm},
-    rpc_accounts, serde_json,
+    rpc, rpc_accounts, serde_json,
 };
 
 /// Jito's least tip, in lamports: a bundle that tips less is refused.
@@ -362,6 +362,21 @@ pub trait Bidding {
     fn tip(&self, found: &Opportunity) -> Option<u64>;
 }
 
+/// What `owner`'s token accounts hold of `mint`, in its units; `None` if
+/// it can't be read.
+fn held(owner: &str, mint: &Pubkey) -> Option<f64> {
+    let params =
+        serde_json::json!([owner, { "mint": mint.to_string() }, { "encoding": "jsonParsed" }]);
+    let text = rpc("getTokenAccountsByOwner", &params.to_string()).ok()?;
+    let found: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let held: f64 = found["value"]
+        .as_array()?
+        .iter()
+        .filter_map(|a| a["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"].as_f64())
+        .sum();
+    (held.is_finite() && held >= 0.0).then_some(held)
+}
+
 fn key(text: &str) -> Option<Pubkey> {
     text.parse().ok()
 }
@@ -470,6 +485,8 @@ struct PoolKeys {
 pub struct Backrunner {
     pools: Vec<PoolKeys>,
     sol: Pubkey,
+    /// The session's key: whose tokens a cycle spends.
+    authority: String,
     group: u32,
     /// The most legs a cycle of its has.
     pub max_legs: usize,
@@ -481,6 +498,7 @@ impl Backrunner {
         Self {
             pools: Vec::new(),
             sol: key(SOL_MINT).expect("SOL's mint"),
+            authority: String::new(),
             group: 0,
             max_legs,
         }
@@ -509,6 +527,7 @@ impl Backrunner {
         if !(2..=POOLS_MAX).contains(&self.pools.len()) {
             return Err(format!("2 to {POOLS_MAX} pools, not {}", self.pools.len()).into());
         }
+        self.authority = session.authority.clone();
         Ok(())
     }
 
@@ -634,20 +653,37 @@ impl Backrunner {
             };
             assert!(paid > 0.0 && received > 0.0);
             // A sale's limit is the least quote a base, rounded down; a
-            // buy's the most, rounded up.
-            let line = match leg.way {
-                Way::BaseIn => orders.swap(
+            // buy's the most, rounded up. Mandate v0.3.0 allows $5 of
+            // anything but SOL after any transaction, so no leg may leave a
+            // token behind: the first leg takes exactly the quoted amount of
+            // the token it buys, paying at most the SOL quoted (and its
+            // slack), so a better price sells less SOL; a later leg spends
+            // exactly what the leg before quoted, and whatever an earlier
+            // cycle left of the token, at the same worst price.
+            let (sale, buy) = (
+                significant(received / paid, false),
+                significant(paid / received, true),
+            );
+            let line = match (n, leg.way) {
+                (0, Way::BaseIn) => orders.swap(
                     Side::Ask,
-                    paid,
-                    AmountUnit::Base,
-                    significant(received / paid, false),
-                ),
-                Way::QuoteIn => orders.swap(
-                    Side::Bid,
-                    paid,
+                    units(cycle.amounts[1], &receives),
                     AmountUnit::Quote,
-                    significant(paid / received, true),
+                    sale,
                 ),
+                (0, Way::QuoteIn) => orders.swap(
+                    Side::Bid,
+                    units(cycle.amounts[1], &receives),
+                    AmountUnit::Base,
+                    buy,
+                ),
+                (_, way) => {
+                    let spent = paid + held(&self.authority, &pays).unwrap_or(0.0);
+                    match way {
+                        Way::BaseIn => orders.swap(Side::Ask, spent, AmountUnit::Base, sale),
+                        Way::QuoteIn => orders.swap(Side::Bid, spent, AmountUnit::Quote, buy),
+                    }
+                }
             };
             let line = line.at(&pool.id);
             match n {

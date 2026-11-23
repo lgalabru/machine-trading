@@ -13,13 +13,13 @@ pub mod liquidator;
 use liquidator::{Bidding, Liquidator, MIN_TIP_LAMPORTS, Opportunity};
 use mtx_kit::prelude::*;
 
-/// The share of the profit it expects that it tips: mainnet's liquidators
-/// paid 25 to 45% of the bonus they kept in fees and tips (NOTES.md §3,
-/// the top of that range), and a bundle ranks by its tip per compute unit,
-/// of which its group of a push, a flash loan, a liquidation and a sale
-/// asks about 1.45 times a liquidator's: 0.45 × 1.45 ≈ 0.65 outbids a
-/// liquidator at the research's highest share.
-const TIP_SHARE: f64 = 0.65;
+/// The share of the profit it expects that it tips: what mainnet's
+/// liquidators paid the leader, in fees and tips, of the bonus they kept,
+/// the middle of the research's medians by size (28 to 44%, NOTES.md §3).
+/// A principle, not a fit: it isn't tuned to the strength band, and it
+/// knows nothing of a rival's bid or of the units its own group asks for
+/// beside a rival's.
+const TIP_SHARE: f64 = 0.36;
 
 /// Tips [`TIP_SHARE`] of the expected profit.
 pub struct FixedShare;

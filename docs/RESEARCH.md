@@ -443,3 +443,44 @@ On the windows:
     most of their profit.
 - Pools are moved by real swaps from an actor. The override templates only
   set price fields, not vaults or tick arrays.
+
+## Who wins a contested slot (2026-11-22)
+
+We re-fetched the blocks of the SOL/USDC backruns and of 40 contested
+Kamino liquidations, to check how the transaction layer orders a race
+([RFD 0005](rfd/0005-atomic-arbitrage-tasks.md)'s open question). The
+scripts are in `ops/research/atomic-arb/ordering/`; the conclusions are in
+[the transaction layer's design](tx-layer.md#ranking).
+
+- **Samples.** 26 SOL/USDC backruns between the Whirlpool and Raydium
+  pools: 19 of the explorer's 21 (one of MriyaN's and one of Dtvmxr's
+  weren't found again) and the first responders to 7 whale chunks. 40
+  Kamino liquidations on 2026-11-20, 34 of them above $1k repaid on the
+  main market, each with at least two other signers failing
+  `ObligationHealthy` nearby. A contender is a transaction in the winner's
+  slot that writes either pool, or attempts the same obligation.
+- **Contested slots:** 22 of the 26 backruns and 30 of the 40
+  liquidations had contenders in the winner's slot.
+- **What decided them:**
+
+  | The winner was | SOL/USDC (22) | Kamino (30) |
+  | --- | --- | --- |
+  | the highest payer per requested unit, tipped bundles ranked above everything | 8 | 11 |
+  | the highest payer per requested unit, the whole slot | 13 | 11 |
+  | the highest payer among contenders within 5 positions of it | 20 | 28 |
+  | the earliest contender in the slot | 12 | 28 |
+
+- **Arrival before pay.** 347 SOL/USDC contenders in 9 slots, and 126
+  Kamino ones in 19, paid more per unit than the winner and landed after
+  it, a median 155 and 382 positions later.
+- **Tips decide nothing alone.** 6 of the 26 SOL/USDC winners tipped, and
+  31 of 1,454 contenders carried a tip; no Kamino loser tipped, and 8 of
+  the 40 winners did. Failed bundles never land, so tipped losers are
+  mostly invisible.
+- **Position.** 23 of the 26 backruns landed in the trigger's slot, 11
+  right behind it; 4 winners paid nothing above the base fee. Every Kamino
+  winner pushed Scope in its own transaction.
+- **Limits.** Index stands in for arrival time. 21 of 26 SOL/USDC winners
+  and 32 of 40 Kamino winners are version 1 transactions, whose compute
+  budget sits in the message's config rather than in instructions; both
+  are read. The Kamino sample is one window of one drawdown day.

@@ -287,20 +287,50 @@ impl Strategy for Probe {
             atomic: Some(id),
             ..TxOptions::default()
         };
-        if target.stale {
-            orders.push_price().at(&sol_id).tx(options);
-            orders.flash(target.repay).at(&usdc_id).atomic(id);
-        } else {
-            orders.flash(target.repay).at(&usdc_id).tx(options);
+        // Built with `split` (`just liquidation-flash-smoke`'s check of
+        // mandate v0.3.0's rule 11), it repays from its wallet's USDC and
+        // sells the seized SOL in a transaction of its own in the same
+        // step: between the two the wallet holds the SOL, and the rule
+        // breaks.
+        let split = cfg!(feature = "split");
+        match (target.stale, split) {
+            (true, false) => {
+                orders.push_price().at(&sol_id).tx(options);
+                orders.flash(target.repay).at(&usdc_id).atomic(id);
+            }
+            (false, false) => {
+                orders.flash(target.repay).at(&usdc_id).tx(options);
+            }
+            (true, true) => {
+                orders.push_price().at(&sol_id).tx(options);
+            }
+            (false, true) => {}
         }
-        orders
+        let liquidation = orders
             .liquidate(&target.obligation, &sol_id, target.repay)
-            .at(&usdc_id)
-            .atomic(id);
-        orders
+            .at(&usdc_id);
+        match (target.stale, split) {
+            (false, true) => {
+                liquidation.tx(options);
+            }
+            _ => {
+                liquidation.atomic(id);
+            }
+        }
+        let sale = orders
             .swap(Side::Ask, sell, AmountUnit::Base, limit)
-            .at(&self.pool)
-            .atomic(id);
+            .at(&self.pool);
+        match split {
+            true => {
+                sale.tx(TxOptions {
+                    tip: Some(tip),
+                    ..TxOptions::default()
+                });
+            }
+            false => {
+                sale.atomic(id);
+            }
+        }
         self.tried.push((target.obligation, market.k));
         Ok(())
     }

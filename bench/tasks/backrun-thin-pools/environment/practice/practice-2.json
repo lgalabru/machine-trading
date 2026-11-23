@@ -329,7 +329,7 @@
   "schema": 2,
   "scoring": {
     "informed_max_drawdown_usd": 0.0,
-    "informed_pnl_usd": 41.47,
+    "informed_pnl_usd": 29.4,
     "reference_max_drawdown_usd": 0.0,
     "reference_pnl_usd": 33.09
   },

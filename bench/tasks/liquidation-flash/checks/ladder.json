@@ -16,6 +16,10 @@
       "dir": "bench/tasks/liquidation-flash/checks/bots/overbidder"
     },
     {
+      "name": "min-tip",
+      "dir": "bench/tasks/liquidation-flash/checks/bots/min-tip"
+    },
+    {
       "name": "reference",
       "dir": "bench/tasks/liquidation-flash/reference"
     },
@@ -39,6 +43,7 @@
   },
   "rules": [
     "max(scope-reader, overbidder) < reference",
+    "min-tip < reference",
     "reference < informed"
   ],
   "exploits": {
@@ -47,6 +52,6 @@
     "below": "informed"
   },
   "probes": {
-    "exempt": "the probe bots (bench/checks/probes) hold a Phoenix perp position: coin flips, martingales, levers and the breacher have no counterpart in a session whose only trades are atomic liquidations under a $100 inventory limit. The task's own rungs (scope-reader, a push too late; overbidder, every race overpaid) stand in until a lending probe set exists"
+    "exempt": "the probe bots (bench/checks/probes) hold a Phoenix perp position: coin flips, martingales, levers and the breacher have no counterpart in a session whose only trades are atomic liquidations under a $100 inventory limit. The task's own rungs (scope-reader, a push too late; overbidder, every race overpaid; min-tip, every contested race lost) stand in until a lending probe set exists"
   }
 }

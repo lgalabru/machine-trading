@@ -3,8 +3,8 @@
 The agent's bot liquidates unhealthy Kamino obligations (SOL collateral,
 USDC debt) on the main market: it pushes Scope's price, flash borrows the
 repay, liquidates and sells the seized SOL on Orca's or Raydium's SOL/USDC
-pool, all in one transaction, racing competing liquidators in a Jito-style
-auction.
+pool, all in one transaction, racing competing liquidators for the slot:
+the send that pays the leader most per compute unit lands first.
 
 | | |
 | --- | --- |
@@ -12,7 +12,7 @@ auction.
 | Sessions | 72 hidden per grade, half opening with a falling leg and half with a rising one (about a quarter liquidate nothing); 8 practice. Each is 260–360 slots. |
 | Mandate | v0.3.0: SOL and USDC reserves without borrowing, any Orca or Raydium SOL/USDC pool, flash borrows up to 250,000 USDC, at most $100 of anything but USDC after each transaction, $300 of fees and tips, $500 loss limit |
 | Bound | None: scored by v2 alone |
-| Reference | v2's 0.5. Reads the upstream, values every obligation there, and liquidates each one under water in one atomic group (push, flash, liquidate at the close factor, sale on the better pool), tipping 65% of the profit it expects |
+| Reference | v2's 0.5. Reads the upstream, values every obligation there, and liquidates each one under water in one atomic group (push, flash, liquidate at the close factor, sale on the better pool), tipping 36% of the profit it expects: the middle of what mainnet's liquidators paid the leader of the bonus they kept |
 | Anchors | Scoring v2: 0.5 the reference; 1 the informed bot, told how the session's liquidators bid and race and the keeper's cadence, which bids what pays best against them |
 
 How every task is scored, and how risk is enforced, is in the
@@ -45,11 +45,14 @@ ahead of competing liquidators.
 - **Borrowers:** 4–14 obligations, collateral log-normal around a median of
   $1,100–2,600 (five to ten times mainnet's median debt), clipped to
   $20–150,000, health from 1.0001 to a per-session top of 1.001–1.04.
-- **Competition:** 1–5 liquidators read the upstream too and send a push
+- **Competition:** 2–5 liquidators read the upstream too and send a push
   and a liquidation from their own USDC; each bids a share of its expected
-  bonus (a per-session range within 0.15–0.8) as a tip or a priority fee;
-  how many race and how fast follow the research, scaled per session.
-  Scope's keeper pushes every 2–12 slots.
+  bonus (a per-session range within 0.15–0.8), per compute unit as
+  mainnet's liquidations paid it on their median 333k units, as a tip or a
+  priority fee; how many race and how fast follow the research, scaled per
+  session (above $1,000 repaid, only up). The routes add no latency, so a
+  rival that acts in the slot it saw the obligation turn races the bot for
+  that slot. Scope's keeper pushes every 2–12 slots.
 - **Pools** are mainnet's, moved back to the upstream after each step's
   blocks by an arbitrageur.
 
@@ -63,16 +66,18 @@ costs rule is a breach like the loss limit.
 
 ## Baselines
 
-On a fresh 72-session hidden set (2026-11-21): the reference made $212.71
-(no losing session, a fifth flat, per-session Sharpe 0.66) and the informed
-bot $321.72 (Sharpe 0.53): the reference is 0.66 of the informed bot, inside
-the strength band. On the 8 practice sessions, $8.0 and $14.1.
+On a fresh 72-session hidden set (2026-11-22): the reference made $227.16
+(no losing session, 26 flat) and the informed bot $385.17 (19 flat): the
+reference is 0.59 of the informed bot, inside the strength band. The rungs
+made $77.41 (`scope-reader`), $57.64 (`overbidder`) and $158.53
+(`min-tip`). On the 8 practice sessions, $6.38 and $21.42.
 
 | Rung | What it is | Expected |
 | --- | --- | --- |
 | `nop` | the starter | 0 |
 | `scope-reader` | the reference, reading Scope's own price | under the reference |
 | `overbidder` | the reference, tipping 95% of the profit | under the reference |
+| `min-tip` | the reference, always tipping the least (1,000 lamports) | under the reference |
 | `reference` | the 0.5 | 0.5 |
 | `informed` | the 1, told the latent state | 1 |
 
@@ -93,6 +98,10 @@ Harbor) haven't run yet.
   bot's runs of a session.
 - Failed bundles cost nothing, as on Jito; the only bound on spraying them
   is 64 pending sends.
+- The builder's window is a slot: sends that reach one slot rank by pay
+  per unit, where mainnet's earlier arrivals within the slot also land
+  first (`docs/tx-layer.md`, "Ranking"); the liquidators' lag in slots
+  stands for arriving late.
 
 ## More
 

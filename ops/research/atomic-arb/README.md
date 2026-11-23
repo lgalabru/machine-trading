@@ -11,6 +11,7 @@ its sample size.
 | `kamino-liquidations/` | Nine days of Kamino Lend liquidations, their pre-state and a detector |
 | `clmm-backrun/` | SOL/USDC backruns between Whirlpool and Raydium CLMM, whale bursts and a detector |
 | `lst-cycles/` | LST cycles, epoch steps, stake-pool values and a cycle detector |
+| `ordering/` | Who wins a contested slot: the SOL/USDC backruns' and Kamino liquidations' contenders, with their fees and tips, and the block-ordering rules scored against them (2026-11-22, `rules.py`) |
 
 The scripts read a mainnet RPC URL from `json_rpc_url` in
 `~/.config/solana/cli/config.yml` and never print it. The downloaded data,

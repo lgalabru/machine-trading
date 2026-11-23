@@ -620,6 +620,25 @@ impl TxEngine {
         self.observe(slot).await
     }
 
+    /// Where each of the bot's transactions that ran landed, by
+    /// signature: the layer's slot and its index in that slot's block. Read
+    /// in that order, they are the chain's order, which the order they
+    /// were sent in isn't: a later send that pays more lands first.
+    pub fn landing_order(&self) -> BTreeMap<String, (u64, u64)> {
+        let state = self.state();
+        let mut out = BTreeMap::new();
+        for entry in state.pool.entries.iter().filter(|e| e.sender == BOT) {
+            let EntryState::Landed { slot, index, .. } = entry.state else {
+                continue;
+            };
+            for (i, tx) in entry.txs.iter().enumerate() {
+                let before = out.insert(tx.signature.clone(), (slot, u64::from(index) + i as u64));
+                assert!(before.is_none(), "a signature lands once");
+            }
+        }
+        out
+    }
+
     /// What became of the send with `signature` (or a bundle's id).
     pub fn fate(&self, signature: &str) -> Option<Fate> {
         let state = self.state();

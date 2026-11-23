@@ -163,15 +163,12 @@ impl PooledTx {
     /// The fee it pays if it lands: the base fee per signature and the
     /// priority fee on its requested limit.
     pub fn fee(&self) -> u64 {
-        BASE_FEE * self.signatures
-            + (self.cu_price as u128 * self.cu_limit as u128).div_ceil(1_000_000) as u64
+        BASE_FEE * self.signatures + self.priority_lamports()
     }
 
-    /// What it pays per requested compute unit, its base fee included, in
-    /// micro-lamports: what the scheduler orders by.
-    pub fn effective_price(&self) -> u64 {
-        let base = (BASE_FEE * self.signatures) as u128 * 1_000_000 / self.cu_limit.max(1) as u128;
-        self.cu_price.saturating_add(base as u64)
+    /// Its priority fee in lamports, rounded up as the runtime charges it.
+    pub fn priority_lamports(&self) -> u64 {
+        (self.cu_price as u128 * self.cu_limit as u128).div_ceil(1_000_000) as u64
     }
 }
 
@@ -255,21 +252,34 @@ impl Entry {
     }
 
     /// What it bids for block space per requested compute unit, in
-    /// micro-lamports: a transaction's priority fee; a bundle's tip and its
-    /// transactions' priority fees, over all their requested units. The
-    /// leader sells the same block space either way, so either has to clear
-    /// what landing costs in the slot.
+    /// micro-lamports, on a Jito leader: its transactions' priority fees and
+    /// tips over all the units they request, a transaction's and a bundle's
+    /// alike. The leader sells the same block space either way, so either
+    /// has to clear what landing costs in the slot. Tips count wherever they
+    /// are paid: a transaction that tips pays the Jito leader as a bundle's
+    /// tip does.
     pub fn bid(&self) -> u64 {
-        if !self.is_bundle() {
-            return self.txs[0].cu_price;
-        }
-        let priority: u128 = self
-            .txs
-            .iter()
-            .map(|t| t.cu_price as u128 * t.cu_limit as u128 / 1_000_000)
-            .sum();
-        let bid = (self.tip() as u128 + priority) * 1_000_000 / self.cu().max(1) as u128;
-        bid.min(u64::MAX as u128) as u64
+        self.bid_on(true)
+    }
+
+    /// [`Entry::bid`] on a leader that runs Jito (`jito_leader`) or not: on
+    /// one that doesn't, a tip goes to the tip accounts, not to it.
+    pub fn bid_on(&self, jito_leader: bool) -> u64 {
+        let tip = if jito_leader { self.tip() } else { 0 };
+        let priority: u64 = self.txs.iter().map(PooledTx::priority_lamports).sum();
+        per_unit(tip + priority, self.cu())
+    }
+
+    /// What it pays the leader per requested compute unit, in
+    /// micro-lamports: [`Entry::bid_on`] and the leader's half of the base
+    /// fees. It is the one scale the builder ranks every entry by, as
+    /// Agave's scheduler ranks by the leader's reward over the cost
+    /// (`calculate_priority_and_cost`), the base fee's burnt half aside.
+    pub fn pay_per_cu(&self, jito_leader: bool) -> u64 {
+        let tip = if jito_leader { self.tip() } else { 0 };
+        let priority: u64 = self.txs.iter().map(PooledTx::priority_lamports).sum();
+        let base_share: u64 = self.txs.iter().map(|t| BASE_FEE * t.signatures / 2).sum();
+        per_unit(tip + priority + base_share, self.cu())
     }
 
     /// Whether it holds a transaction with one of `signatures`.
@@ -280,6 +290,14 @@ impl Entry {
     pub fn is_pending(&self) -> bool {
         matches!(self.state, EntryState::Pending | EntryState::Lost)
     }
+}
+
+/// `lamports` over `units`, in micro-lamports per unit. A send may ask for
+/// no units (a limit of 0, or nothing but compute-budget instructions): it
+/// counts as one.
+fn per_unit(lamports: u64, units: u64) -> u64 {
+    let per = u128::from(lamports) * 1_000_000 / u128::from(units.max(1));
+    per.min(u128::from(u64::MAX)) as u64
 }
 
 /// The pool's entries, in the order sent.

@@ -30,9 +30,10 @@
 //!    in PnL (`fees_in_pnl`).
 //! 5. **The audit** (mandate v0.3.0): every landed or failed transaction of
 //!    the bot's is read back from the chain for its costs (rule 13), what
-//!    the account held beside SOL right after it (rule 11, from the
-//!    transaction's own token balances), and its fills, from the pools'
-//!    vaults (rule 1).
+//!    the account held beside SOL right after it (rule 11: the wallet at
+//!    the start, moved by each of the bot's transactions' own token
+//!    balances in the order they ran, never a step's reading), and its
+//!    fills, from the pools' vaults (rule 1).
 
 mod actors;
 pub mod cycle;
@@ -351,11 +352,11 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         prices: prices.clone(),
         reference_start_usd,
         start: None,
+        wallet_start: observe::WalletTrail::default(),
         last: None,
         start_value_usd: 0.0,
         peak_value_usd: 0.0,
         max_drawdown_usd: 0.0,
-        inventory: Vec::new(),
         triggers: triggers.clone(),
         attempts: attempts.clone(),
     };
@@ -363,6 +364,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     account.start_value_usd = start.value_usd;
     account.peak_value_usd = start.value_usd;
     account.start = Some(start);
+    account.wallet_start = account.wallet_now().await?;
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
         keypair_path: workdir.keypair_path(),
@@ -593,8 +595,6 @@ struct AmmReading {
     value_usd: f64,
     /// Every other token's units, by mint, where the session has any.
     others: BTreeMap<Pubkey, f64>,
-    /// What the wallet holds beside SOL, in USD: rule 11's measure.
-    other_usd: f64,
 }
 
 /// An `amm` session's account: the bot's wallet, at the reference price.
@@ -610,19 +610,37 @@ struct AmmAccount {
     prices: Prices,
     reference_start_usd: f64,
     start: Option<AmmReading>,
+    /// The wallet before the bot's first transaction: where rule 11's
+    /// trail starts.
+    wallet_start: observe::WalletTrail,
     last: Option<AmmReading>,
     start_value_usd: f64,
     peak_value_usd: f64,
     max_drawdown_usd: f64,
-    /// What the wallet held beside SOL at each step's reading, in USD, by
-    /// slots into the session: rule 11's measurement for a landed
-    /// transaction whose own balances don't list the wallet's.
-    inventory: Vec<(u64, Option<f64>)>,
     triggers: Arc<Mutex<Vec<TriggerRecord>>>,
     attempts: Arc<Mutex<Vec<SearcherAttempt>>>,
 }
 
 impl AmmAccount {
+    /// The wallet now, as rule 11's trail reads it: the bot's token
+    /// accounts of every token the pools trade, and its lamports.
+    async fn wallet_now(&self) -> Result<observe::WalletTrail> {
+        let mints: std::collections::BTreeSet<Pubkey> = self
+            .pools
+            .iter()
+            .flat_map(|p| [p.base.mint, p.quote.mint])
+            .collect();
+        let accounts = observe::token_accounts(self.chain.as_ref(), &self.bot, mints)
+            .await
+            .map_err(|e| venue_error("wallet", e))?;
+        let lamports = self
+            .chain
+            .get_balance(&self.bot)
+            .await
+            .map_err(|e| venue_error("wallet", e))?;
+        Ok(observe::WalletTrail::new(accounts, lamports))
+    }
+
     fn reference_at(&self, at: u64) -> f64 {
         self.prices.sol_usd(at)
     }
@@ -692,10 +710,6 @@ impl AmmAccount {
             (false, true) => base * price_usd + quote,
             (false, false) => base * price_usd + quote + others_usd,
         };
-        let other_usd = match others.is_empty() {
-            true => quote,
-            false => quote + others_usd,
-        };
         let mut venues = Vec::with_capacity(self.pools.len());
         for pool in &self.pools {
             let state = State::read(self.chain.as_ref(), pool).await?;
@@ -724,7 +738,6 @@ impl AmmAccount {
             },
             value_usd,
             others,
-            other_usd,
         })
     }
 
@@ -757,39 +770,48 @@ impl AmmAccount {
     }
 
     /// Each of the bot's transactions that landed or failed, read back from
-    /// the chain: its costs at the reference then (rule 13), what the
-    /// wallet held beside SOL right after a landed one (rule 11), from its
-    /// own token balances, and its fills from the pools' vaults (rule 1).
+    /// the chain, in the order sent: its costs at the reference then (rule
+    /// 13), what the wallet held beside SOL right after a landed one (rule
+    /// 11, [`AmmAccount::held_after_each`]), and its fills from the pools'
+    /// vaults (rule 1). `landing`: the layer's order of them.
     fn observed_transactions(
         &self,
         records: &[session::TxRecord],
+        landing: &BTreeMap<String, (u64, u64)>,
     ) -> Result<(Vec<ObservedTransaction>, Vec<AmmFill>)> {
         let rpc =
             mtx_kit::rpc_client_with_timeout(&self.internal_url, session::INTERNAL_RPC_TIMEOUT);
-        let numeraire = self.pools[0].base.mint;
+        let mut found: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        for record in records.iter().filter(|r| !r.duplicate && r.at.is_some()) {
+            let Some(signature) = &record.signature else {
+                continue;
+            };
+            let transaction = crate::chain::call(
+                &rpc,
+                "getTransaction",
+                serde_json::json!([signature, { "encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0 }]),
+            )?;
+            found.insert(signature.clone(), transaction);
+        }
+        let held = self.held_after_each(records, landing, &found)?;
         let mut transactions = Vec::new();
         let mut fills = Vec::new();
         for record in records.iter().filter(|r| !r.duplicate) {
             let (Some(signature), Some(at)) = (&record.signature, record.at) else {
                 continue;
             };
-            let found = crate::chain::call(
-                &rpc,
-                "getTransaction",
-                serde_json::json!([signature, { "encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0 }]),
-            )?;
+            let transaction = &found[signature];
             let unreadable = || {
                 venue_error(
                     "mandate",
                     format!("transaction {signature} doesn't read back"),
                 )
             };
-            let costs = observe::costs(&found).ok_or_else(unreadable)?;
-            let changes = observe::token_changes(&found).ok_or_else(unreadable)?;
+            let costs = observe::costs(transaction).ok_or_else(unreadable)?;
             let reference = self.reference_at(at);
             let usd = |lamports: u64| lamports as f64 / 1e9 * reference;
             let other_holdings_usd = match record.ok {
-                true => self.held_after(&changes, at, &numeraire),
+                true => held[signature],
                 false => None,
             };
             if !costs.flash_borrows.is_empty() {
@@ -814,6 +836,7 @@ impl AmmAccount {
                 flash_borrows: Vec::new(),
             });
             if record.ok {
+                let changes = observe::token_changes(transaction).ok_or_else(unreadable)?;
                 fills.extend(
                     self.pools
                         .iter()
@@ -824,51 +847,57 @@ impl AmmAccount {
         Ok((transactions, fills))
     }
 
-    /// What the wallet held beside `numeraire` right after a landed
-    /// transaction, in USD: its own token balances, where they list the
-    /// wallet's accounts, or the step's reading that followed it. USDC is
-    /// worth a dollar, the session's other tokens their reference; a token
-    /// it doesn't price can't be valued, and breaks rule 11.
-    fn held_after(
+    /// What the wallet held beside SOL right after each of the bot's
+    /// transactions that ran, in USD, by signature
+    /// ([`observe::held_after_each`]): USDC is worth a dollar, the
+    /// session's other tokens their reference; a token it doesn't price
+    /// can't be valued, and breaks rule 11.
+    fn held_after_each(
         &self,
-        changes: &[observe::TokenChange],
-        at: u64,
-        numeraire: &Pubkey,
-    ) -> Option<f64> {
-        let usdc = self.pools[0].quote.mint;
-        let decimals = self.pools[0].quote.asset.decimals;
+        records: &[session::TxRecord],
+        landing: &BTreeMap<String, (u64, u64)>,
+        found: &BTreeMap<String, serde_json::Value>,
+    ) -> Result<BTreeMap<String, Option<f64>>> {
+        let numeraire = self.pools[0].base.mint;
+        observe::held_after_each(
+            records,
+            landing,
+            found,
+            &self.bot,
+            &self.wallet_start,
+            |trail, at| Some(self.other_usd(trail, &numeraire, at)),
+        )
+        .map_err(|signature| {
+            venue_error(
+                "mandate",
+                format!("transaction {signature} doesn't read back"),
+            )
+        })
+    }
+
+    /// What `trail` holds beside `numeraire`, in USD `at` slots in.
+    fn other_usd(&self, trail: &observe::WalletTrail, numeraire: &Pubkey, at: u64) -> f64 {
+        let usdc = &self.pools[0].quote;
         let sol_usd = self.reference_at(at);
-        let own: Vec<&observe::TokenChange> = changes
-            .iter()
-            .filter(|c| c.owner == Some(self.bot) && c.mint != *numeraire)
-            .collect();
-        if own.is_empty() {
-            return self
-                .inventory
-                .iter()
-                .find(|(measured, _)| *measured >= at)
-                .and_then(|(_, other)| *other);
-        }
         let mut held = 0.0;
-        for change in own {
-            if change.mint == usdc {
-                held += change.post as f64 / 10f64.powi(decimals.into());
+        for (mint, atoms) in trail.others(numeraire) {
+            if mint == usdc.mint {
+                held += atoms as f64 / 10f64.powi(usdc.asset.decimals.into());
                 continue;
             }
-            if !self.prices.others.contains_key(&change.mint) {
-                return Some(f64::NAN);
-            }
-            let token_decimals = self
+            let Some(token) = self
                 .pools
                 .iter()
                 .flat_map(|p| [&p.base, &p.quote])
-                .find(|t| t.mint == change.mint)
-                .map(|t| t.asset.decimals)
-                .expect("checked: a priced token is a pool's");
-            let units = change.post as f64 / 10f64.powi(token_decimals.into());
-            held += self.prices.in_usd(&change.mint, units, sol_usd, at);
+                .find(|t| t.mint == mint)
+                .filter(|_| self.prices.others.contains_key(&mint))
+            else {
+                return f64::NAN;
+            };
+            let units = atoms as f64 / 10f64.powi(token.asset.decimals.into());
+            held += self.prices.in_usd(&mint, units, sol_usd, at);
         }
-        Some(held)
+        held
     }
 }
 
@@ -926,9 +955,6 @@ impl Account for AmmAccount {
 
     async fn step(&mut self, k: u64, _slot: u64, at: u64) -> Result<StepRecord> {
         let now = self.read(at).await?;
-        if self.scenario.mandate.limits.inventory.is_some() {
-            self.inventory.push((at, Some(now.other_usd)));
-        }
         let value_usd = now.value_usd;
         self.peak_value_usd = self.peak_value_usd.max(value_usd);
         self.max_drawdown_usd = self.max_drawdown_usd.max(self.peak_value_usd - value_usd);
@@ -1042,11 +1068,9 @@ impl Account for AmmAccount {
     async fn finish(mut self: Box<Self>, done: Done) -> Result<SessionReport> {
         let end_at = done.end_slot.saturating_sub(done.start_slot);
         let end = self.read(end_at).await?;
-        if self.scenario.mandate.limits.inventory.is_some() {
-            self.inventory.push((end_at, Some(end.other_usd)));
-        }
         let start = self.start.clone().expect("a start reading");
-        let (transactions, fills) = self.observed_transactions(&done.transactions)?;
+        let (transactions, fills) =
+            self.observed_transactions(&done.transactions, &done.landing)?;
         let pools: Vec<ObservedPool> = self
             .pools
             .iter()

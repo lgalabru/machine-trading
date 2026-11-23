@@ -13,8 +13,9 @@ use mtx_kit::prelude::*;
 
 /// The share of the profit it expects that it tips. Mainnet's backrun
 /// winners paid 0 to 93% of their gross (`backrun-sol-usdc`'s research);
-/// half outbids every searcher that tips less, whoever reaches the slot,
-/// and keeps half of every race it wins (DESIGN.md, "Calibration").
+/// half outbids every searcher in the trigger's slot that pays less per
+/// unit, a tip or a priority fee, and keeps half of every race it wins
+/// (DESIGN.md, "Calibration").
 pub const TIP_SHARE: f64 = 0.5;
 /// The most legs it looks at: the snapshot's cycles are of two and three.
 pub const MAX_LEGS: usize = 3;

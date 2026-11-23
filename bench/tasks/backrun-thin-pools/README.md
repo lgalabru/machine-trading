@@ -71,13 +71,12 @@ limit.
 ## Baselines
 
 On a fresh 72-session hidden set (2026-11-22): the reference made
-$5,179.23 (no losing session, 17 flat, per-session Sharpe 0.57) and the
-informed bot $9,123.65 (Sharpe 0.58): the reference is 0.57 of the
-informed bot, inside the strength band. On the 8 practice sessions,
-$381.00 and $652.35. The `two-leg` rung made $629.19 (v2 0.06), the
-`overbidder` $708.33 (0.07), `min-tip` $69.51 (0.01; it scored 0.53, over
-the reference, before most sessions held a searcher in the trigger's
-slot).
+$1,113.51 (no losing session, 46 flat) and the informed bot $1,935.61: the
+reference is 0.58 of the informed bot, inside the strength band. The rungs
+made $332.69 (`two-leg`), $176.94 (`overbidder`) and $812.93 (`min-tip`,
+90% of it in one quiet session: `min-tip < reference` holds on the point
+estimate, not at the ladder's bootstrap odds). On the 8 practice
+sessions, $381.00 and $640.28.
 
 | Rung | What it is | Expected |
 | --- | --- | --- |
@@ -108,9 +107,12 @@ Harbor) haven't run yet.
 - The other tokens' reference prices drift on their own, not with any
   pool's flow, and JitoSOL's stake value doesn't step at epochs; their
   session levels are drawn evenly, not from a measured distribution.
-- A Jito leader lands bundles at the top of its block, so a tipped bundle
-  beats every priority fee in the layer's builder; on mainnet only 13 of
-  the research's 106 multi-token arbs tipped Jito.
+- The builder ranks the sends that reach a slot together by their pay per
+  compute unit, a tip and a priority fee alike, and a whole slot is one
+  window: on mainnet arrival within the slot decides more (a richer
+  contender that arrives a few hundred transactions later lands after the
+  winner), and here only the searchers' latency in slots stands for it
+  (`docs/tx-layer.md`, "Ranking").
 - Whether anyone races a trigger is drawn per session, not per trigger
   or pool: a contested session's fast searcher reaches every trigger's
   slot and searches the whole graph at once. On mainnet the fastest rival

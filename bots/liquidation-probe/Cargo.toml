@@ -12,6 +12,12 @@ publish = false
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 
+# `split`: the liquidation and the sale of what it seized as two
+# transactions in one step, a route mandate v0.3.0's rule 11 must refuse
+# (`just liquidation-flash-smoke`).
+[features]
+split = []
+
 [dependencies]
 base64 = "0.22"
 bs58 = "0.5"

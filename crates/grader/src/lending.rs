@@ -1243,7 +1243,8 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         pools: pools.clone(),
         table: table.clone(),
         pushed: pushed.clone(),
-        inventory: Vec::new(),
+        positions: Vec::new(),
+        wallet_start: observe::WalletTrail::default(),
         bot: bot.pubkey(),
         keeper: keeper.pubkey(),
         instruments: instruments.clone(),
@@ -1272,6 +1273,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
     }
     account.last_debt = start.debt.clone();
     account.start = Some(start);
+    account.wallet_start = account.wallet_now().await?;
     let env = BotEnv {
         rpc_url: guard.url().to_string(),
         keypair_path: workdir.keypair_path(),
@@ -1787,9 +1789,14 @@ struct LendingAccount {
     /// The session's lookup table, where it has pools.
     table: Option<AddressLookupTableAccount>,
     pushed: Vec<PushedReserve>,
-    /// Under an inventory limit: what the account held other than its
-    /// numeraire at each step's reading, by slots into the session.
-    inventory: Vec<(u64, Option<f64>)>,
+    /// Under an inventory limit: what the account's obligations held net
+    /// of anything but its numeraire at each step's reading, in USD, by
+    /// slots into the session. Its wallet is judged after each transaction
+    /// instead (`wallet_start`).
+    positions: Vec<(u64, Option<f64>)>,
+    /// The wallet before the bot's first transaction: where rule 11's
+    /// trail starts.
+    wallet_start: observe::WalletTrail,
     bot: Pubkey,
     /// Pays for every refresh the grader simulates, so a bot with no SOL
     /// left is still measured.
@@ -2008,8 +2015,8 @@ impl Account for LendingAccount {
                 .record(instrument, holding.supplied - holding.borrowed);
         }
         if self.scenario.mandate.limits.inventory.is_some() {
-            let other = self.other_holdings_usd(&now, at).await;
-            self.inventory.push((at, other));
+            let positions = self.positions_usd(&now);
+            self.positions.push((at, positions));
         }
         if let Some(h) = now.health {
             self.min_health = Some(self.min_health.map_or(h, |m: f64| m.min(h)));
@@ -2182,12 +2189,16 @@ impl Account for LendingAccount {
         };
         let (liquidations, liquidations_failed) = (liquidating(true), liquidating(false));
         if self.scenario.mandate.limits.inventory.is_some() {
-            let other = self.other_holdings_usd(&end, end_at).await;
-            self.inventory.push((end_at, other));
+            let positions = self.positions_usd(&end);
+            self.positions.push((end_at, positions));
         }
         let (transactions, pools) = match self.scenario.mandate.checks_transactions() {
             true => (
-                self.observed_transactions(&done.transactions)?,
+                self.observed_transactions(
+                    &done.transactions,
+                    &done.landing,
+                    &self.collateral_rates().await?,
+                )?,
                 self.observed_pools(),
             ),
             false => (Vec::new(), Vec::new()),
@@ -2322,30 +2333,98 @@ impl LendingAccount {
         metadata
     }
 
-    /// What the account holds, in USD at the scenario's prices, of
-    /// everything but the inventory limit's numeraire, `at` slots in: each
-    /// reserve's net supply and wallet, and the wallet's own SOL unless SOL
-    /// is the numeraire. `None` if it couldn't be read, which rule 11 reads
-    /// as broken.
-    async fn other_holdings_usd(&self, reading: &LendingReading, at: u64) -> Option<f64> {
+    /// What the account's obligations hold net of anything but the
+    /// inventory limit's numeraire, in USD at the scenario's prices then:
+    /// each reserve's supply less its debt. `None` if a price can't be
+    /// read, which rule 11 reads as broken.
+    fn positions_usd(&self, reading: &LendingReading) -> Option<f64> {
         let numeraire = &self.scenario.mandate.limits.inventory.as_ref()?.numeraire;
-        let mut other = 0.0;
-        let mut counted: BTreeSet<Pubkey> = BTreeSet::new();
+        let mut held = 0.0;
         for holding in &reading.holdings {
             let book = self.books.get(&holding.instrument.to_string())?;
-            let wallet = match counted.insert(book.keys.mint) {
-                true => holding.wallet,
-                false => 0.0,
-            };
             if book.keys.mint.to_string() != *numeraire {
-                other += (holding.supplied - holding.borrowed + wallet) * holding.price_usd;
+                held += (holding.supplied - holding.borrowed) * holding.price_usd;
             }
         }
-        if numeraire.as_str() != WRAPPED_SOL {
-            let lamports = self.chain.get_balance(&self.bot).await.ok()?;
-            other += lamports as f64 / 1e9 * self.sol_usd(at)?;
+        held.is_finite().then_some(held)
+    }
+
+    /// The wallet now, as rule 11's trail reads it: the bot's token
+    /// accounts of every reserve's asset and collateral, and its lamports.
+    async fn wallet_now(&self) -> Result<observe::WalletTrail> {
+        let mints: BTreeSet<Pubkey> = self
+            .books
+            .reserves
+            .iter()
+            .flat_map(|b| [b.keys.mint, b.keys.collateral_mint])
+            .chain(self.pools.iter().flat_map(|p| [p.base.mint, p.quote.mint]))
+            .collect();
+        let accounts = observe::token_accounts(self.chain.as_ref(), &self.bot, mints)
+            .await
+            .map_err(|e| venue_error("wallet", e))?;
+        let lamports = self
+            .chain
+            .get_balance(&self.bot)
+            .await
+            .map_err(|e| venue_error("wallet", e))?;
+        Ok(observe::WalletTrail::new(accounts, lamports))
+    }
+
+    /// Each reserve's collateral token's worth in its asset, now, by the
+    /// collateral's mint.
+    async fn collateral_rates(&self) -> Result<BTreeMap<Pubkey, f64>> {
+        let mut rates = BTreeMap::new();
+        for market in self.books.markets() {
+            let reading = self.venue.read(&self.bot, &market, &self.keeper).await?;
+            for book in self.books.of_market(&market) {
+                if let Some(reserve) = reading.reserves.get(&book.keys.address) {
+                    rates.insert(book.keys.collateral_mint, reserve.exchange_rate());
+                }
+            }
         }
-        other.is_finite().then_some(other)
+        Ok(rates)
+    }
+
+    /// What `trail`'s wallet holds of anything but the inventory limit's
+    /// numeraire, in USD at the scenario's prices `at` slots in: each
+    /// reserve's asset, its collateral token at `rates`, and the wallet's
+    /// own SOL unless SOL is the numeraire. A token no reserve prices can't
+    /// be valued, and breaks rule 11 (`NaN`).
+    fn wallet_usd(
+        &self,
+        trail: &observe::WalletTrail,
+        rates: &BTreeMap<Pubkey, f64>,
+        at: u64,
+    ) -> Option<f64> {
+        let numeraire: Pubkey = self
+            .scenario
+            .mandate
+            .limits
+            .inventory
+            .as_ref()?
+            .numeraire
+            .parse()
+            .ok()?;
+        let mut held = 0.0;
+        for (mint, atoms) in trail.others(&numeraire) {
+            let asset = self.books.reserves.iter().find(|b| b.keys.mint == mint);
+            let collateral = self
+                .books
+                .reserves
+                .iter()
+                .find(|b| b.keys.collateral_mint == mint);
+            let (book, rate) = match (asset, collateral) {
+                (Some(book), _) => (book, 1.0),
+                (None, Some(book)) => (book, rates.get(&mint).copied().unwrap_or(f64::NAN)),
+                (None, None) => return Some(f64::NAN),
+            };
+            let units = atoms as f64 * rate / 10f64.powi(book.decimals as i32);
+            held += units * self.price_at(&book.keys.address, at);
+        }
+        if numeraire.to_string() != WRAPPED_SOL {
+            held += trail.lamports() as f64 / 1e9 * self.sol_usd(at)?;
+        }
+        Some(held)
     }
 
     /// A SOL's price `at` slots in: the scenario's for the reserve of
@@ -2364,28 +2443,38 @@ impl LendingAccount {
     }
 
     /// Each of the bot's transactions that landed or failed, read back from
-    /// the chain, as rules 11 to 13 read it: costs at the scenario's SOL
-    /// price then, flash borrows by reserve, and, after a landed one, what
-    /// the account held beside the numeraire at the step's reading that
-    /// followed it (the session measures at steps, not between a step's
-    /// transactions).
+    /// the chain, in the order sent, as rules 11 to 13 read it: costs at the
+    /// scenario's SOL price then, flash borrows by reserve, and, after a
+    /// landed one, what the account held beside the numeraire
+    /// ([`LendingAccount::held_after_each`]). `landing`: the layer's order
+    /// of them; `rates`: each collateral token's worth.
     fn observed_transactions(
         &self,
         records: &[session::TxRecord],
+        landing: &BTreeMap<String, (u64, u64)>,
+        rates: &BTreeMap<Pubkey, f64>,
     ) -> Result<Vec<ObservedTransaction>> {
         let rpc =
             mtx_kit::rpc_client_with_timeout(&self.internal_url, session::INTERNAL_RPC_TIMEOUT);
+        let mut found: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        for record in records.iter().filter(|r| !r.duplicate && r.at.is_some()) {
+            let Some(signature) = &record.signature else {
+                continue;
+            };
+            let transaction = crate::chain::call(
+                &rpc,
+                "getTransaction",
+                serde_json::json!([signature, { "encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0 }]),
+            )?;
+            found.insert(signature.clone(), transaction);
+        }
+        let held = self.held_after_each(records, landing, &found, rates)?;
         let mut out = Vec::new();
         for record in records.iter().filter(|r| !r.duplicate) {
             let (Some(signature), Some(at)) = (&record.signature, record.at) else {
                 continue;
             };
-            let found = crate::chain::call(
-                &rpc,
-                "getTransaction",
-                serde_json::json!([signature, { "encoding": "json", "commitment": "confirmed", "maxSupportedTransactionVersion": 0 }]),
-            )?;
-            let costs = observe::costs(&found).ok_or_else(|| {
+            let costs = observe::costs(&found[signature]).ok_or_else(|| {
                 venue_error(
                     "mandate",
                     format!("transaction {signature} doesn't read back"),
@@ -2410,11 +2499,7 @@ impl LendingAccount {
                 })
                 .collect();
             let other_holdings_usd = match record.ok {
-                true => self
-                    .inventory
-                    .iter()
-                    .find(|(measured, _)| *measured >= at)
-                    .and_then(|(_, other)| *other),
+                true => held[signature],
                 false => None,
             };
             out.push(ObservedTransaction {
@@ -2432,6 +2517,48 @@ impl LendingAccount {
             });
         }
         Ok(out)
+    }
+
+    /// What the account held beside the numeraire right after each of the
+    /// bot's transactions that ran, in USD, by signature: its wallet as the
+    /// transactions' own balances leave it, in the order the chain ran them
+    /// (`landing`, the layer's order), from the wallet at the start; and
+    /// its obligations' net positions at the step's reading at or after
+    /// the transaction. Never the wallet at a step's reading: a bot that
+    /// takes collateral in one transaction and sells it in the next, within
+    /// one step, held it in between. (A deposit and a withdrawal both within
+    /// one step move the obligation unseen: positions are read at steps.)
+    /// `None` where something can't be read, which rule 11 reads as broken.
+    fn held_after_each(
+        &self,
+        records: &[session::TxRecord],
+        landing: &BTreeMap<String, (u64, u64)>,
+        found: &BTreeMap<String, serde_json::Value>,
+        rates: &BTreeMap<Pubkey, f64>,
+    ) -> Result<BTreeMap<String, Option<f64>>> {
+        let positions = |at: u64| {
+            self.positions
+                .iter()
+                .find(|(measured, _)| *measured >= at)
+                .and_then(|(_, positions)| *positions)
+        };
+        observe::held_after_each(
+            records,
+            landing,
+            found,
+            &self.bot,
+            &self.wallet_start,
+            |trail, at| {
+                let wallet = self.wallet_usd(trail, rates, at)?;
+                Some(positions(at)? + wallet)
+            },
+        )
+        .map_err(|signature| {
+            venue_error(
+                "mandate",
+                format!("transaction {signature} doesn't read back"),
+            )
+        })
     }
 
     /// The session's pools, each with its two assets.

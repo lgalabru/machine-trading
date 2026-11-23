@@ -74,13 +74,16 @@ liquidations", and `ops/research/atomic-arb/kamino-liquidations/NOTES.md`):
 ## The central decision
 
 What to pay to land first. Once a bot reads the upstream and composes the
-group, every liquidation it sees is one a competitor sees in the same slot,
-and the bundle that ranks first takes it. The options that look defensible:
+group, every liquidation it sees is one a competitor sees, mostly in the
+same slot (the routes add no latency, and a rival's lag is the research's:
+above $1,000 repaid, 90 to 96% act in the slot the obligation turned), and
+the send that pays the leader most per compute unit takes it, a tip or a
+priority fee alike. The options that look defensible:
 
 - **Bid a fixed share of the expected profit** (the reference): wins most
   races it can, overpays every race nobody else is in.
 - **Bid the least**: keeps everything it wins, loses every race against a
-  tipping rival that acts in the same slot.
+  rival that acts in the same slot (the `min-tip` rung).
 - **Bid what beats the rivals who race** (the informed bot): needs to know
   who they are, how they bid and how often they race, which the session's
   data could tell in principle (a liquidator's bids are on chain) but the
@@ -96,8 +99,8 @@ for Scope is a push too late, and the `scope-reader` rung prices that.
 | A deep fall (several legs down) | liquidate every slice as it crosses, push first | reading Scope (late); one liquidation a step |
 | A shallow dip that recovers | the few tight borrowers, early | waiting for "the crash" |
 | A rally, nothing under water | do nothing | liquidating on a guess (a failed group pays nothing as a bundle, but a transaction pays its fee) |
-| Tipping rivals, eager (high competition, fast) | outbid them, or stay out where it costs the profit | the least tip |
-| Rivals that pay priority fees, or slow ones | the least tip | a fixed large share |
+| Eager rivals (high competition, fast), or any large liquidation | outbid them per unit, or stay out where it costs the profit | the least tip |
+| Slow rivals, few, or a small liquidation nobody races | the least tip | a fixed large share |
 | A large borrower (the log-normal tail) | the close factor, the deeper pool | a fixed pool; selling more than seized |
 
 ## Levers
@@ -109,7 +112,8 @@ for Scope is a push too late, and the `scope-reader` rung prices that.
 | Close factor | at most 10% of the debt a liquidation | repays the close factor's share, rounded down | the market account (byte 126) |
 | Seizure price | the program seizes at Scope's price at the liquidation | sells what that price seizes, not more | Scope's own price vs. the upstream |
 | Pool impact | Raydium is thinner | quotes both pools, sells on the better | the pools' state |
-| Bid | rivals tip a share of their bonus, or pay a priority fee | bids just over the rivals who race | rivals' landed transactions and tips on chain |
+| Bid | rivals pay a share of their bonus per compute unit as mainnet's did, a tip or a priority fee; the slot's sends rank by pay per unit | bids just over the rivals who race, per unit of its own group | rivals' landed transactions, fees and tips on chain |
+| Push | the group may push Scope itself | always pushes: the seizure is then at a price it knows, and it sells all of it in the group | the program's logs |
 | Inventory | $100 of anything but USDC, after each transaction | sells the collateral in the group, sweeps dust | the mandate |
 
 The pool depth is not a lever the family draws: the pools are mainnet's,
@@ -158,9 +162,10 @@ past the tightest borrower).
   ranking, and v2's scoring rules (`mtx task sync`).
 - **Learnable from practice:** eight practice sessions from a public seed,
   each with both anchors' PnL; their logs show every race's outcome.
-- **The reference stays inside the mandate:** it sells the seized SOL in
-  the group (selling 99.8% of the estimate) and sweeps the rest once it is
-  over 0.05 SOL, so its non-USDC holdings stay under the $100 limit; its
+- **The reference stays inside the mandate:** its group pushes Scope, so
+  the program seizes at a price it knows, and it sells 99.9% of the seized
+  SOL in the group, sweeping the rest once it is over 0.05 SOL, so its
+  non-USDC holdings stay under the $100 limit after every transaction; its
   costs are a fraction of the $300 budget; its worst drawdown is under a
   dollar.
 - **Anchors run as components** (`component_anchors`): lending sessions,
@@ -179,8 +184,9 @@ past the tightest borrower).
 | --- | --- |
 | Reads Scope, not the upstream | most races, since the rivals push: the `scope-reader` rung |
 | Overbids (95% of the profit) | most of the profit: the `overbidder` rung |
+| Bids the least, always | every race a rival reaches: the `min-tip` rung |
 | Sells more SOL than seized | the whole group fails (the swap's tokens are short); as a bundle it costs nothing but the liquidation |
-| Keeps the seized SOL | an inventory breach once it is over $100 (about 0.4 SOL with the fee SOL) |
+| Keeps the seized SOL, even until its next transaction | an inventory breach once it is over $100 (about 0.4 SOL with the fee SOL): rule 11 is judged after each transaction, from its own balances |
 | Sends plain transactions that lose | their fees, and the race |
 | Borrows, or supplies over the caps | a breach |
 
@@ -194,18 +200,36 @@ should come from composition first and bidding second.
 
 ## Calibration
 
-- **Hidden set** (a fresh 72-session secret, 2026-11-21): reference
-  $212.71, informed bot $321.72; loss-weighted, the reference is 0.661 of
-  the informed bot (band 0.2 to 0.7), per-session Sharpe 0.66 (at least
-  0.25), no losing session, 20 flat.
-- **Practice** (seed 20261121, 8 sessions): reference $8.0, informed $15.1
-  (recalibrated 2026-11-22: `mtx calibrate --informed` had written the
-  files as v1, without their pools).
-- **Tip share.** Over twelve drawn sessions the reference made $71 tipping
-  5%, $61 at 50% and $37 at 90%, winning 63, 68 and 70 liquidations: the
-  bid moves who wins less than what's kept. At 50% the reference was 0.77
-  of the informed bot, outside the band; 65% (the research's top share
-  scaled to the group's units) put it at 0.65 on 24 sessions and 0.66 on 72.
+- **Hidden set** (a fresh 72-session secret, 2026-11-22, `ladder.py
+  --sets 1`): reference $227.16, informed bot $385.17; the reference is
+  0.59 of the informed bot (no losing session for either, so
+  loss-weighting changes nothing; band 0.2 to 0.7), per-session Sharpe
+  0.40 for the reference (at least 0.25); 26 sessions flat for the reference, 19 for the
+  informed bot.
+- **Ladder** (same set): `scope-reader` $77.41 (0.34 of the reference),
+  `overbidder` $57.64 (0.25), `min-tip` $158.53 (0.70), nop 0; the three
+  order rules hold, `min-tip < reference` with bootstrap odds 0.90, the
+  others 1.00, and no rung breached.
+- **Practice** (seed 20261121, 8 sessions): reference $6.38, informed $21.42 (0.30).
+- **The bid, before and after.** Under the old builder (every bundle above
+  every priority fee, routes of 0 to 2 slots), the slot a send reached
+  settled most races: over twelve sessions the reference won 63, 68 and 70
+  liquidations tipping 5, 50 and 90% of its expected profit, and its 65%
+  was chosen to put it inside the band. With one scale and no route
+  latency, 24 public sessions read: rivals took 162 liquidations to the
+  reference's 98, a bot that always tips the least made 0.77 of the
+  reference and the informed bot 1.12. Three findings, each a fix rather
+  than a fit: a tip transaction asked for the runtime's default 200,000
+  compute units, a third of every tipped group's units; liquidators paid
+  their share of the bonus on transactions a third smaller than mainnet's
+  (now per unit, on the research's median 333k); and the reference's
+  per-transaction inventory breached (now it always pushes, and sells
+  99.9%). After them, on the same 24 sessions: `min-tip` 0.37, informed
+  1.45; with the family's own rival range (0.15 to 0.8) restored from a
+  narrower one tried here, `min-tip` 0.62 and informed 2.17.
+- **Tip share.** 36%, the middle of mainnet's liquidators' median cost
+  share by size (28 to 44% of the bonus kept, NOTES.md §3): a principle,
+  not tuned to the band.
 - **Anchor hashes** (frozen before any model run, `shasum -a 256` of
   `bot.wasm` as built from this commit): recorded by `mtx task sync
   --anchors` in `tests/anchor.digest` on Linux.
@@ -217,3 +241,16 @@ should come from composition first and bidding second.
   times the group's 1.45 compute units over a liquidator's), the informed
   bot (the expected-value bid against the session's rivals), the
   `scope-reader` and `overbidder` rungs.
+- **0.2.0** (2026-11-22): the bid matters. The transaction layer ranks a
+  slot's sends on one scale of pay per requested unit, a tip and a
+  priority fee alike, after the slot they reached
+  (`docs/tx-layer.md`, "Ranking"); the routes add no latency here, so a
+  rival that acts in the slot it saw the obligation turn races the bot for
+  it; above $1,000 repaid the research's 4.4 rivals are a floor, and a
+  session has 2 to 5 liquidators; a liquidator pays its share per unit as
+  mainnet's did. Rule 11 is judged after each transaction from its own
+  balances, so the reference always pushes and sells 99.9% of what it
+  seizes. The reference tips 36% (the research's middle share), not 65%;
+  the informed bot counts every rival, a priority fee as much as a tip;
+  a `min-tip` rung (always the least tip) and its rule
+  (`min-tip < reference`).

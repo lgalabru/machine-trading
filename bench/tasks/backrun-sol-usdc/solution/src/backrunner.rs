@@ -14,7 +14,7 @@ use mtx_kit::{
     AmountUnit, Pubkey, log,
     prelude::*,
     protocols::{orca::whirlpool, raydium::clmm},
-    rpc_accounts, serde_json,
+    rpc, rpc_accounts, serde_json,
 };
 
 /// Jito's least tip, in lamports: a bundle that tips less is refused.
@@ -215,6 +215,20 @@ pub trait Bidding {
     fn tip(&self, found: &Opportunity) -> Option<u64>;
 }
 
+/// The USDC `owner`'s token accounts hold, in USDC; `None` if it can't be
+/// read.
+fn usdc_held(owner: &str, mint: &str) -> Option<f64> {
+    let params = serde_json::json!([owner, { "mint": mint }, { "encoding": "jsonParsed" }]);
+    let text = rpc("getTokenAccountsByOwner", &params.to_string()).ok()?;
+    let found: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let held: f64 = found["value"]
+        .as_array()?
+        .iter()
+        .filter_map(|a| a["account"]["data"]["parsed"]["info"]["tokenAmount"]["uiAmount"].as_f64())
+        .sum();
+    (held.is_finite() && held >= 0.0).then_some(held)
+}
+
 fn key(text: &str) -> Option<Pubkey> {
     text.parse().ok()
 }
@@ -311,6 +325,9 @@ pub struct Backrunner {
     /// Each pool's id as the session names it, its address, and whether
     /// it is a Whirlpool.
     pools: Vec<(String, Pubkey, bool)>,
+    /// The session's key, and the USDC mint: whose USDC it spends.
+    authority: String,
+    usdc_mint: String,
     group: u32,
     /// A fixed clip in SOL in place of the best size: the ladder's
     /// fixed-clip rung, as one mainnet bot traded 200 SOL every time.
@@ -331,6 +348,11 @@ impl Backrunner {
         if self.pools.len() != 2 {
             return Err(format!("two pools to cycle through, not {}", self.pools.len()).into());
         }
+        self.authority = session.authority.clone();
+        self.usdc_mint = venue["pools"][0]["quote_mint"]
+            .as_str()
+            .ok_or("the pools' quote mint")?
+            .to_string();
         Ok(())
     }
 
@@ -427,8 +449,12 @@ impl Backrunner {
     }
 
     /// The cycle as one atomic group of two swaps, a bundle with its tip:
-    /// the sale gives at least the USDC it was quoted, and the buy spends
-    /// exactly that for at least the SOL sold, the tip and the fees back.
+    /// the sale sells SOL for exactly the USDC it was quoted, at no more
+    /// than the SOL quoted, and the buy spends exactly that USDC (and any
+    /// left from before) for at least the SOL sold, the tip and the fees
+    /// back. Mandate v0.3.0 allows $5 of USDC after any transaction: when
+    /// the pool has moved its way, the sale sells less SOL rather than
+    /// leaving USDC behind.
     /// The group asks for the compute units its simulation used and a
     /// margin (the host's default): a bundle ranks by its bid per requested
     /// unit.
@@ -440,7 +466,12 @@ impl Backrunner {
         );
         let tip_sol = tip_lamports as f64 / SOL_ATOMS;
         let sell_limit = usdc * (1.0 - 1e-9) / sol;
+        // The buy's worst average price is the cycle's: spending the
+        // surplus too at that price still brings back the SOL sold, the
+        // tip and the fees.
         let buy_limit = usdc / (sol + tip_sol + FEE_SOL);
+        let held = usdc_held(&self.authority, &self.usdc_mint).unwrap_or(0.0);
+        let spent = usdc + held;
         assert!(sell_limit > 0.0 && buy_limit > 0.0);
         self.group += 1;
         let options = TxOptions {
@@ -449,11 +480,11 @@ impl Backrunner {
             ..TxOptions::default()
         };
         orders
-            .swap(Side::Ask, sol, AmountUnit::Base, sell_limit)
+            .swap(Side::Ask, usdc, AmountUnit::Quote, sell_limit)
             .at(&self.pools[cycle.high].0)
             .tx(options);
         orders
-            .swap(Side::Bid, usdc, AmountUnit::Quote, buy_limit)
+            .swap(Side::Bid, spent, AmountUnit::Quote, buy_limit)
             .at(&self.pools[cycle.low].0)
             .atomic(self.group);
     }

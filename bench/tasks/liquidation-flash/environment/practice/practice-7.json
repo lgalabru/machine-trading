@@ -310,10 +310,10 @@
   },
   "schema": 2,
   "scoring": {
-    "informed_max_drawdown_usd": 0.04,
-    "informed_pnl_usd": 7.7,
-    "reference_max_drawdown_usd": 0.03,
-    "reference_pnl_usd": 2.7
+    "informed_max_drawdown_usd": 0.01,
+    "informed_pnl_usd": 2.87,
+    "reference_max_drawdown_usd": 0.0,
+    "reference_pnl_usd": 0.18
   },
   "tx": {
     "layer": {
@@ -339,7 +339,7 @@
         "jito": {
           "latency_slots": [
             0,
-            1
+            0
           ],
           "loss": 0.0,
           "loss_congested": 0.0
@@ -347,7 +347,7 @@
         "rpc": {
           "latency_slots": [
             0,
-            2
+            0
           ],
           "loss": 0.01,
           "loss_congested": 0.3
@@ -387,7 +387,7 @@
         "every_slots": 6
       },
       "liquidators": {
-        "count": 1,
+        "count": 2,
         "race": {
           "bid_share": [
             0.3379029471495173,

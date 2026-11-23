@@ -228,7 +228,9 @@ informed bot.
   It ranks bundles by tip plus priority fee per CU, with ghost contention.
   The research shows the top arbs mostly win on priority fees, not bundles.
   We find out by replaying the research's contested blocks through
-  `grader/src/txlayer`, and checking who it puts first.
+  `grader/src/txlayer`, and checking who it puts first. Answered
+  2026-11-22 (What we learned): it wasn't; the builder now ranks by arrival
+  slot, then on one scale of pay per unit.
 - **One-slot steps or event steps?** We find out by building
   `backrun-sol-usdc` on one-slot steps. If the reference can't catch a
   backrun that a searcher at mainnet latency would, the steps are too
@@ -399,3 +401,76 @@ informed bot.
   stake value, JTO and GEOD within 30 bp) and a slow drift. On one fixed
   secret, `backrun-sol-usdc`'s and `liquidation-flash`'s reports are
   identical but for wall time and fuel.
+
+- 2026-11-22: the transaction layer's model of the ordering contest wasn't
+  good enough, and is replaced (the open question above;
+  [tx layer](../tx-layer.md#ranking)). A Jito leader's builder ranked every
+  bundle above every priority-fee transaction, so in all three tasks the
+  kind of bid decided the winner. On blocks re-fetched for the research's
+  contested slots (22 SOL/USDC backruns with rivals in the winner's slot,
+  30 contested Kamino liquidations above about $1k;
+  `ops/research/atomic-arb/ordering/`), that rule puts the actual winner
+  first in 8 and 11. Mainnet ranks by arrival, then by pay: a contender
+  that paid more per unit and still lost landed a median 155 (SOL/USDC)
+  and 382 (Kamino) positions later, and among contenders landing within 5
+  positions of each other the one paying the most per requested unit won
+  20 times in 22 and 28 in 30; one scale over the whole slot gets 13 and
+  11. The builder now ranks by the slot an entry reached the leader in,
+  then by what it pays the leader per requested unit (priority fees, tips
+  on a Jito leader, half the base fee), a bundle and a transaction alike,
+  then by the step sent, then by a seeded coin between senders: every send
+  of one step's turns reaches the same slot, so the order the grader runs
+  them in wins no tie, and in a trigger's slot the best payer of the
+  trigger step lands right behind it. Jito's auction still holds for
+  bundles (the least tip, the background's tips on a hot pool, one bundle
+  per account, a quarter of the block), but a bundle lands where its rank
+  puts it, not at the top. A tip transaction now asks for 1,000 compute
+  units, not the runtime's default 200,000, which on one scale diluted
+  every tipped bundle by about a third (the host's and the actors' alike).
+- 2026-11-22: mandate v0.3.0's rule 11 is judged from each of the bot's
+  transactions' own balances in lending sessions too, as in amm sessions,
+  and in both from the wallet at the start, moved by each transaction that
+  ran in the chain's order (the layer's), never by a step's reading: a bot
+  that splits a route over two transactions in one step held what it
+  bought in between, and breaks the rule
+  (`lending::observe::held_after_each`). A lending session adds its
+  obligations' positions at the step's reading after the transaction. The
+  `liquidation-flash` reference broke it first: it sold 99.8% of the SOL it
+  expected to seize and swept the rest a step later, holding up to $105
+  beside USDC between the two. Its group now always pushes Scope, so the
+  program seizes at a price it knows, and it sells 99.9%.
+- 2026-11-22: the three tasks recalibrated on the new builder, each on a
+  fresh 72-session secret.
+  - `liquidation-flash`: the bid now matters. The routes add no latency
+    (the research's lag already holds every delay), so a rival that acts
+    in the slot it saw the obligation turn races the bot for it; above
+    $1,000 repaid the research's 4.4 rivals are a floor; a liquidator pays
+    its share of the bonus per unit as mainnet's did on their median
+    333k units. The reference tips 36%, the middle of mainnet's
+    liquidators' median cost shares (28 to 44%), not the 65% fitted to the
+    band. Reference $227.16, informed $385.17 (0.59); `min-tip` $158.53,
+    `scope-reader` $77.41, `overbidder` $57.64; `min-tip < reference`
+    holds at bootstrap odds 0.90.
+  - `backrun-sol-usdc`: a parent order's chunks share a side and mostly a
+    pool, and a generator-aware bot can do nothing with it: rule 11 (now
+    per transaction) forbids holding USDC for the next chunk, and a send
+    made before a trigger lands ahead of it. The family still makes the
+    next trigger less certain (orders that route some chunks to the other
+    pool, lone swaps of either side). Under one scale the pool searchers
+    win what they outbid, and most triggers had no fast rival: 95% of
+    sessions now hold a searcher that reaches every trigger's slot (the
+    research's 19 in 20). The reference tips 34%, the research's median
+    winning payment, and its sale sells for exactly the quoted USDC.
+    Reference $2,503.02, informed $4,584.29 (0.55); `min-tip` $704.46,
+    `fixed-clip` $1,669.48, `overbidder` $431.81; the half-tipping probe
+    $2,787.38.
+  - `backrun-thin-pools`: unchanged but for the builder, the informed
+    bot's count of rivals and the reference's legs (no token left behind a
+    transaction). Reference $1,113.51, informed $1,935.61 (0.58);
+    `two-leg` $332.69, `overbidder` $176.94, `min-tip` $812.93, 90% of it
+    from one quiet session holding an 8.2 SOL cycle, so
+    `min-tip < reference` holds on the point estimate at bootstrap odds
+    0.79, under the ladder's 0.85: open.
+  - Perp tasks don't use the layer: on one fixed secret their references'
+    reports are identical to 2cb9d8ca's but for wall time and fuel.
+

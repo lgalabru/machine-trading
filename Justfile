@@ -177,7 +177,8 @@ kamino-smoke:
 # keeper in the transaction layer's auction, two pools. A bot that does
 # nothing makes and breaks nothing; the probe, which pushes, flash borrows,
 # liquidates and sells in one transaction, lands some liquidations, loses
-# others to the liquidators, and keeps its v0.3.0 mandate.
+# others to the liquidators, and keeps its v0.3.0 mandate; built to sell in
+# a second transaction, it breaks rule 11.
 liquidation-flash-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -198,6 +199,18 @@ liquidation-flash-smoke:
       and ([.tx_layer.sends[] | select(.state == "failed")] | length) >= 1
       and (.lending.transactions | length) >= 1' \
       target/logs/liquidation-flash-liquidation-probe.json > /dev/null
+    # The liquidation and the sale of what it seized as two transactions in
+    # one step: the wallet holds the SOL between them, and mandate
+    # v0.3.0's rule 11 breaks.
+    (cd bots/liquidation-probe && cargo build --release --lib --target wasm32-wasip2 --features split \
+      --target-dir ../../target/split -q)
+    mkdir -p target/bots/liquidation-splitter
+    cp target/split/wasm32-wasip2/release/mtx_bot_liquidation_probe.wasm target/bots/liquidation-splitter/bot.wasm
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/atomic-arb-2026-11-21 \
+      --bot target/bots/liquidation-splitter --logs target/logs/liquidation-flash-splitter \
+      --report target/logs/liquidation-flash-splitter.json bench/checks/kamino/liquidation-flash.json > /dev/null
+    jq -e '.scenarios[0].disqualified | test("held .* other than its numeraire")' \
+      target/logs/liquidation-flash-splitter.json > /dev/null
     echo "liquidation-flash-smoke: ok"
 
 # An amm session with trigger steps (bench/checks/amm/backrun-sol-usdc.json,
@@ -205,7 +218,8 @@ liquidation-flash-smoke:
 # three cycle searchers and a pool searcher race to backrun them in the
 # transaction layer's auction. Doing nothing makes nothing and breaks
 # nothing; the probe backruns in the trigger's own slot, wins some and
-# loses some to the searchers, profits, and replays byte for byte.
+# loses some to the searchers, profits, and replays byte for byte; built to
+# buy back in a second transaction, it breaks rule 11.
 backrun-smoke:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -228,6 +242,17 @@ backrun-smoke:
       and ([.amm.triggers[] | select(.winner != null and .winner != "bot")] | length) >= 1
       and (.amm.transactions | length) >= 1 and (.amm.fills | length) >= 2)' \
       target/logs/backrun-backrun-probe.json > /dev/null
+    # The same cycle as two transactions in one step: the wallet holds the
+    # sale's USDC between them, and mandate v0.3.0's rule 11 breaks.
+    (cd bots/backrun-probe && cargo build --release --lib --target wasm32-wasip2 --features split \
+      --target-dir ../../target/split -q)
+    mkdir -p target/bots/backrun-splitter
+    cp target/split/wasm32-wasip2/release/mtx_bot_backrun_probe.wasm target/bots/backrun-splitter/bot.wasm
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/atomic-arb-2026-11-21 \
+      --bot target/bots/backrun-splitter --logs target/logs/backrun-splitter --report target/logs/backrun-splitter.json \
+      bench/checks/amm/backrun-sol-usdc.json > /dev/null
+    jq -e '.scenarios[0].disqualified | test("held .* other than its numeraire")' \
+      target/logs/backrun-splitter.json > /dev/null
     echo "backrun-smoke: ok"
 
 # An amm session over ten thin pools and two lookup tables

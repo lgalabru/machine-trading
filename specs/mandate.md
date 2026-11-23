@@ -441,24 +441,27 @@ each of the account's transactions and name their pools.
 | 8. Exposure as a fraction of its start | refused | refused | refused | refused |
 | 9. Hedge | refused | refused | refused | refused |
 | 10. Taking | market making without a keeper; refused otherwise | refused | refused | refused |
-| 11. Inventory | not enforced | not enforced | after every landed transaction, at the step's measurement that follows it | after every landed transaction, from its own token balances |
+| 11. Inventory | not enforced | not enforced | after every landed transaction, its wallet from its own token balances, its obligations at the step's measurement that follows it | after every landed transaction, from its own token balances |
 | 12. Flash borrow, 13. Costs | not enforced | not enforced | every transaction that landed or failed | every transaction that landed or failed (an amm session lends nothing) |
 
-An amm session reads rule 11 exactly: each landed transaction's own
-token balances say what the account held beside the numeraire right after
-it, USDC at a dollar (a token it can't value breaks the rule); one that
-lists none of the account's token accounts falls back to the step's
-measurement that follows it.
+Both read rule 11 from the transactions themselves, never from a step's
+measurement alone: a bot that buys in one transaction and sells in the next,
+within one step, held what it bought in between, and breaks the rule. The
+wallet starts as the session found it; each of the account's transactions
+that ran, in the order the chain ran them, sets every token account of the
+account's it lists to its balance after it, and the account's own lamports.
+What the wallet then holds beside the numeraire is what the account held
+right after that transaction: USDC at a dollar, other tokens at the
+scenario's prices (a token the session can't value breaks the rule).
 
-A lending session reads each of the account's transactions back from the
-chain once the session ends: its base fee, its priority fee (its compute
-unit price times the units it asked for) and its tips to Jito's accounts,
-valued at the scenario's SOL price then, and each flash borrow it asked for.
-It measures the account at steps, not between transactions, so rule 11
-reads what the account held beside the numeraire at the first step's
-measurement after a transaction landed (or the session's last): a route
-that lands with others in one step is judged on where the step left the
-account. A bundle that never ran is no transaction of the account's.
+An amm session holds nothing else. A lending session adds its obligations'
+net positions, read at the first step's measurement after the transaction
+(or the session's last): a deposit and a withdrawal within one step move the
+obligation unseen. It also reads each of the account's transactions back
+from the chain once the session ends: its base fee, its priority fee (its
+compute unit price times the units it asked for) and its tips to Jito's
+accounts, valued at the scenario's SOL price then, and each flash borrow it
+asked for. A bundle that never ran is no transaction of the account's.
 
 A perp session prices its one market at the scenario's level (its book
 level where the session values the account at the book), not at Phoenix's

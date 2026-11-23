@@ -632,9 +632,9 @@ impl ThinPoolsFamily {
     }
 
     /// A contested session's fast searcher: it reaches every trigger's
-    /// slot, tips (a priority fee loses to any bundle on a Jito leader),
-    /// and searches three legs; its share and least profit are drawn as
-    /// any cycle searcher's.
+    /// slot, tips, and searches three legs; its share and least profit are
+    /// drawn as any cycle searcher's. (How it pays doesn't move its rank:
+    /// the builder ranks a tip and a priority fee on one scale.)
     fn fast_searcher(&self, rng: &mut SplitMix64) -> CycleSearcher {
         let searcher = CycleSearcher {
             latency_slots: [0, 0],

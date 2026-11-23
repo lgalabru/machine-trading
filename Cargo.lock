@@ -5322,6 +5322,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-backrun-sol-usdc-min-tip"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-backrun-sol-usdc-overbidder"
 version = "0.1.0"
 dependencies = [
@@ -5462,6 +5469,13 @@ dependencies = [
 
 [[package]]
 name = "mtx-bot-liquidation-flash-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-liquidation-flash-min-tip"
 version = "0.1.0"
 dependencies = [
  "mtx-kit",

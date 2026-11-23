@@ -9,15 +9,16 @@
 //! What it does with it: it bids what pays best against the session's
 //! rivals, race by race. Each liquidator joins a race with a chance the
 //! session's competition sets for its size, and acts in the slot it saw the
-//! obligation turn with a chance its same-slot share sets; a tipping one
-//! that does outranks a bundle that tips less per compute unit. So for each
-//! bid worth considering (Jito's least, or just over one tipping rival's)
-//! it weighs the chance no rival above it races it against the profit left
-//! after the tip, takes the best, and stays out when none pays. A priority
-//! fee buys nothing against a bundle on a Jito leader's block, so rivals
-//! that pay one set no bid. It knows no more than that: same costs, same
-//! mandate, same latency, and nothing of the path or of which rival joins
-//! which race.
+//! obligation turn with a chance its same-slot share sets; one that does
+//! reaches the slot this bot's group reaches, where the block ranks every
+//! send by what it pays the leader per compute unit, a tip and a priority
+//! fee alike, and outranks this bot if it pays more per unit. One that acts
+//! later lands after this bot, whatever it pays. So for each bid worth
+//! considering (Jito's least, or just over one rival's) it weighs the
+//! chance no rival above it races it against the profit left after the
+//! tip, takes the best, and stays out when none pays. It knows no more than
+//! that: same costs, same mandate, same latency, and nothing of the path or
+//! of which rival joins which race.
 
 #[path = "../../../../reference/src/liquidator.rs"]
 pub mod liquidator;
@@ -25,11 +26,13 @@ pub mod liquidator;
 use liquidator::{Bidding, Liquidator, MIN_TIP_LAMPORTS, Opportunity};
 use mtx_kit::{log, prelude::*, serde_json};
 
-/// A liquidator's transaction (a push and the liquidation, paid from its
-/// own inventory) asks for about 245k to 271k compute units, and this
-/// bot's group about 344k (the medians of the session reports): its tip
-/// per unit must be this much larger to rank above the same tip.
-const UNITS_RATIO: f64 = 1.45;
+/// A liquidator pays its share of the bonus per compute unit as mainnet's
+/// liquidations did, on their median 333k units (the auction's
+/// `RESEARCH_UNITS`), and this bot's bundle asks for about 368k (its group
+/// of a push, a flash loan, a liquidation and a sale, a median of 367k over
+/// 24 sessions' reports, and its tip's 1,000): its tip must be this much
+/// larger than a rival's share of the bonus to rank above it per unit.
+const UNITS_RATIO: f64 = 368_000.0 / 333_000.0;
 /// What it bids over a rival's tip it means to beat.
 const OUTBID: f64 = 1.05;
 /// The bonus a liquidator expects to keep: Kamino's main market keeps
@@ -42,20 +45,20 @@ const LARGE_USD: f64 = 1_000.0;
 const MEAN_SMALL: f64 = 0.56;
 const MEAN_MEDIUM: f64 = 2.6;
 const MEAN_LARGE: f64 = 4.4;
-/// The research's lag shape (the auction's `Lag`): 2 slots or fewer at
-/// `s + 0.42 (1 - s)` for a same-slot share `s`; above $1,000 a same-slot
-/// share of `1 - 0.07 (1 - s) / 0.5`. A rival that acts within a slot
-/// still lands in the step it saw the obligation turn.
-const TWO_SLOTS_SHARE: f64 = 0.42;
+/// The research's lag shape (the auction's `Lag`): a same-slot share `s`,
+/// and above $1,000 one of `1 - 0.07 (1 - s) / 0.5`. The session's routes
+/// add no latency, so a rival that acts in the slot it saw the obligation
+/// turn reaches the slot this bot does, and one a slot later lands after
+/// it.
 const LARGE_TAIL: f64 = 0.07;
 /// Rivals a session holds at most.
 const RIVALS_MAX: usize = 5;
 
-/// One rival's bid rule.
+/// One rival's bid rule: its share of the bonus it expects to keep. Whether
+/// it pays it as a tip or a priority fee doesn't move its rank.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Rival {
     share: f64,
-    tips: bool,
 }
 
 /// The session's rivals and how they race, from its latent state.
@@ -67,7 +70,7 @@ pub struct Rivals {
 }
 
 impl Rivals {
-    /// From `MTX_REGIME`: `bids` (each liquidator's `share` and `tips`),
+    /// From `MTX_REGIME`: `bids` (each liquidator's `share`),
     /// `competition` and `same_slot_share`.
     pub fn from_regime(regime: &str) -> Result<Self, String> {
         let latent: serde_json::Value = serde_json::from_str(regime).map_err(|e| e.to_string())?;
@@ -83,10 +86,7 @@ impl Rivals {
             if !(0.0..=1.0).contains(&share) {
                 return Err(format!("a share of the bonus out of range: {share}"));
             }
-            rivals.push(Rival {
-                share,
-                tips: bid["tips"].as_bool() == Some(true),
-            });
+            rivals.push(Rival { share });
         }
         let competition = latent["competition"].as_f64().unwrap_or(1.0);
         let same_slot_share = latent["same_slot_share"].as_f64().unwrap_or(0.5);
@@ -111,13 +111,18 @@ impl Rivals {
         } else {
             MEAN_LARGE
         };
-        let joins = (mean * self.competition / count as f64).min(1.0);
+        // Above $1,000 the session's factor only raises the research's
+        // mean (the auction's `competes`).
+        let competition = match repay_usd > LARGE_USD {
+            true => self.competition.max(1.0),
+            false => self.competition,
+        };
+        let joins = (mean * competition / count as f64).min(1.0);
         let s = self.same_slot_share;
         let prompt = if repay_usd > LARGE_USD {
             1.0 - LARGE_TAIL * (1.0 - s) / 0.5
         } else {
-            // Same slot, and half the one-to-two-slot band.
-            s + TWO_SLOTS_SHARE * (1.0 - s) / 2.0
+            s
         };
         let chance = joins * prompt;
         assert!((0.0..=1.0).contains(&chance));
@@ -129,12 +134,11 @@ impl Bidding for Rivals {
     fn tip(&self, found: &Opportunity) -> Option<u64> {
         assert!(found.sol_usd > 0.0 && found.bonus_usd >= 0.0);
         let races = self.races(found.repay);
-        // Each tipping rival's tip, as this bot's tip per unit would have
-        // to match it, in USD.
+        // Each rival's bid, tip or priority fee, as this bot's tip per unit
+        // would have to match it, in USD.
         let mut bars: Vec<f64> = self
             .rivals
             .iter()
-            .filter(|r| r.tips)
             .map(|r| r.share * found.bonus_usd * LIQUIDATOR_KEPT_SHARE * UNITS_RATIO)
             .collect();
         bars.sort_by(f64::total_cmp);
@@ -200,11 +204,21 @@ mod tests {
     }
 
     #[test]
-    fn with_no_tipping_rival_it_tips_the_least() {
-        let rivals =
-            Rivals::from_regime(r#"{"bids": [{"share": 0.4, "tips": false}], "competition": 1.0, "same_slot_share": 0.5}"#)
+    fn with_no_rival_it_tips_the_least_and_a_priority_fee_counts_as_a_tip() {
+        let alone =
+            Rivals::from_regime(r#"{"bids": [], "competition": 1.0, "same_slot_share": 0.5}"#)
                 .unwrap();
-        assert_eq!(rivals.tip(&found(500.0)), Some(MIN_TIP_LAMPORTS));
+        assert_eq!(alone.tip(&found(500.0)), Some(MIN_TIP_LAMPORTS));
+        // A rival paying a priority fee ranks on the same scale as one that
+        // tips: the bid against it is the same.
+        let fee = r#"{"bids": [{"share": 0.3, "tips": false}], "competition": 1.6, "same_slot_share": 0.7}"#;
+        let tip = r#"{"bids": [{"share": 0.3, "tips": true}], "competition": 1.6, "same_slot_share": 0.7}"#;
+        let by_fee = Rivals::from_regime(fee).unwrap().tip(&found(5_000.0));
+        assert!(by_fee.unwrap() > MIN_TIP_LAMPORTS);
+        assert_eq!(
+            by_fee,
+            Rivals::from_regime(tip).unwrap().tip(&found(5_000.0))
+        );
     }
 
     #[test]
@@ -218,10 +232,7 @@ mod tests {
         // A rival bidding past the profit, racing nearly every time, and a
         // profit under Jito's least tip: nothing pays.
         let certain = Rivals {
-            rivals: vec![Rival {
-                share: 1.0,
-                tips: true,
-            }],
+            rivals: vec![Rival { share: 1.0 }],
             competition: 4.0,
             same_slot_share: 0.95,
         };

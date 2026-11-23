@@ -181,7 +181,9 @@ impl LiquidationFamily {
             // Health just before the trigger: p50 1.8e-4, p90 1.2e-3.
             health_low: 1.0001,
             health_high: (1.001, 1.04),
-            liquidators: (1, 5),
+            // At least two: the research's large liquidations drew 4.4
+            // rivals on average, and a session of one can't contest them.
+            liquidators: (2, 5),
             // The research: 0.25 to 0.45 of the bonus overall, 0.28 to 0.44
             // by size, tips in 46% of wins; a session's own spread wider.
             bid_share_low: (0.15, 0.5),
@@ -344,6 +346,15 @@ impl LiquidationFamily {
                         { "address": RAYDIUM_CLMM, "class": "amm_pool" },
                         { "address": SCOPE_PRICES, "class": "oracle" },
                     ],
+                    // The research's lag from the update to the landing
+                    // holds every delay a send meets, the route's
+                    // included: the liquidators draw it, and a route adds
+                    // none on top, the bot's or theirs. Sends made in one
+                    // step reach one slot, where the bid ranks them.
+                    "routes": {
+                        "rpc": { "latency_slots": [0, 0], "loss": 0.01, "loss_congested": 0.3 },
+                        "jito": { "latency_slots": [0, 0], "loss": 0.0, "loss_congested": 0.0 },
+                    },
                     "fees_in_pnl": true,
                     "native_sol": 1.0,
                     "sol_usd": self.sol_usd,

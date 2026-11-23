@@ -116,7 +116,7 @@ whoever is there.
 | Fee gate | 1 to 100 bp a pool | the product of prices after fees, before any sizing | the pools' fee rates |
 | Size | profit is concave in the size through every curve | the optimum on chained exact quotes | the kit's quotes |
 | Chaining | each line spends what its amount says | each leg spends exactly what the one before was quoted to give, at that quote | the sheet's atomic groups |
-| Bid | rivals tip a share of the best cycle they can see, or pay a priority fee; most sessions hold one that reaches every trigger's slot | bids just over the rivals who reach the slot and see the cycle, the least where nobody does | rivals' landed bundles and tips, on chain: who took the last trigger's cycle, in its slot, for what tip |
+| Bid | rivals tip a share of the best cycle they can see, or pay a priority fee; every send in the slot ranks by its pay per requested unit, a tip and a fee alike; most sessions hold one that reaches every trigger's slot | bids just over the rivals who reach the slot and see the cycle, per unit, the least where nobody does | rivals' landed transactions, fees and tips, on chain: who took the last trigger's cycle, in its slot, for what |
 | Limits | the seat compares a limit and an amount exactly | a limit of a dozen significant digits | the seat's refusal, in `market.sends` |
 
 ## No tells
@@ -194,7 +194,7 @@ trigger's own slot, on chain, whenever it profits past its least. About a tenth 
 | Fires inside the fee band | a bundle that fails costs nothing; a transaction pays its fee |
 | A leg without the rest of its cycle | an inventory breach once the token is worth over $5 |
 | A limit of twenty digits | the group is refused before it is sent |
-| A priority fee in place of a tip | every race a tipping bundle enters on a Jito leader |
+| The least tip | every race a rival that bids reaches: the `min-tip` rung |
 
 ## Predictions
 
@@ -205,20 +205,27 @@ it; one that never composes a working group scores 0.
 
 ## Calibration
 
-- **Hidden set** (a fresh 72-session secret, 2026-11-22, `ladder.py
-  --sets 1`, after the competition and reference-price changes below):
-  reference $5,179.23, informed bot $9,123.65; the reference is 0.57 of
-  the informed bot (0.58 loss-weighted, band 0.2 to 0.7; no losing
-  session for either), per-session Sharpe 0.57 for the reference and 0.58
-  for the informed bot (at least 0.25); 17 sessions flat for both.
-- **Ladder** (same set, v2 scores): `two-leg` 0.061 ($629.19),
-  `overbidder` 0.068 ($708.33), `min-tip` 0.007 ($69.51), the reference
-  as a rung 0.509 ($5,251.74, role noise), the informed bot as a rung
-  0.995 ($9,087.95), nop 0; the three order rules hold, each with
-  bootstrap odds 1.00. The reference's costliest session spent $491 on fees
-  and tips, the informed bot's $532.
+- **Hidden set** (a fresh 72-session secret, 2026-11-22, after the
+  transaction layer's one scale, `ladder.py --sets 1`): reference
+  $1,113.51, informed bot $1,935.61; the reference is 0.58 of the informed
+  bot (no losing session for either; band 0.2 to 0.7), per-session Sharpe
+  0.31 for the reference (at least 0.25); 46 sessions flat for the
+  reference, 37 for the informed bot.
+- **Ladder** (same set): `two-leg` $332.69 (0.30 of the reference),
+  `overbidder` $176.94 (0.16), `min-tip` $812.93 (0.73), nop 0. Two order
+  rules hold at bootstrap odds 1.00; `min-tip < reference` holds on the
+  point estimate but at odds 0.79, under the ladder's 0.85, so `mtx gates
+  --fast` fails it. One quiet session (nobody reaches a trigger's slot)
+  held an 8.2 SOL cycle, the set's largest by far: `min-tip` took all of
+  it ($735), the reference half ($367), and that one session is 90% of
+  `min-tip`'s money. The 12% quiet sessions and the heavy tail of cycle
+  sizes make the rule's power a draw; whether to make quiet sessions
+  rarer or cap a cycle's size is open (owner's call).
 - **Practice** (seed 20261122, 8 sessions): reference $381.00, informed
-  $652.35 (0.58); `min-tip` $203.39 (v2 0.27, its quiet sessions).
+  $640.28 (0.60).
+- **Earlier hidden set** (before one scale, 2026-11-22): reference
+  $5,179.23, informed $9,123.65 (0.57); `two-leg` 0.061, `overbidder`
+  0.068, `min-tip` 0.007, each rule at odds 1.00.
 - **The least tip, before and after.** On the first family (most triggers
   had no tipping rival in their slot), `min-tip` made $3,578 on a fresh
   72-session hidden set where the reference made $3,365 and the informed
@@ -267,3 +274,9 @@ it; one that never composes a working group scores 0.
   JTO's and GEOD's reference prices, which the pool searchers pull to and
   a bot could have learnt from practice, are drawn per session and drift
   (JitoSOL inside its stake band), untold. Rule `min-tip < reference`.
+- **0.3.0** (2026-11-22): one scale. The transaction layer ranks a slot's
+  sends by pay per requested unit, a tip and a priority fee alike, after
+  the slot they reached (`docs/tx-layer.md`, "Ranking"); the informed bot
+  counts every rival; the reference's first leg takes exactly its quoted
+  amount (a better price sells less SOL) and a later leg spends what an
+  earlier cycle left, so no token stays behind a transaction (rule 11).

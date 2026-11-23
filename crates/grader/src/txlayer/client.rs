@@ -135,23 +135,7 @@ impl PoolClient {
         let to: Pubkey = jito::TIP_ACCOUNTS[(n % 8) as usize]
             .parse()
             .expect("a tip account");
-        let mut data = 2u32.to_le_bytes().to_vec();
-        data.extend(lamports.to_le_bytes());
-        let ix = solana_transaction::Instruction::new_with_bytes(
-            pool::SYSTEM,
-            &data,
-            vec![
-                solana_transaction::AccountMeta::new(self.signer.pubkey(), true),
-                solana_transaction::AccountMeta::new(to, false),
-            ],
-        );
-        let message = solana_message::Message::new_with_blockhash(
-            &[ix],
-            Some(&self.signer.pubkey()),
-            &blockhash,
-        );
-        let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(message), &[&self.signer])
-            .map_err(|e| e.to_string())?;
+        let tx = jito::tip_transaction(&self.signer, &to, lamports, blockhash)?;
         wincode::serialize(&tx).map_err(|e| e.to_string())
     }
 

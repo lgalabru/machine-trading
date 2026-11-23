@@ -20,10 +20,11 @@ beat the other searchers.
 - **Loses:** waiting a step (the gap is gone); a fixed clip (most of the
   gap left); firing on a chunk into the deep pool, or on any gap inside the
   fee band; overbidding every race; a sale without its buy back (the
-  inventory limit); a priority fee where a tip is needed.
+  inventory limit).
 - **Regimes:** no parent order, one or several; sales and buys; the
-  thinner pool mostly, the Whirlpool sometimes; rivals that reach the slot
-  or are late, that tip or pay priority fees, that bid little or most.
+  thinner pool mostly, the Whirlpool sometimes, some orders both; a lone
+  swap of either side now and then; rivals that reach the slot or are
+  late, that tip or pay priority fees, that bid little or most.
 - **Mandate:** v0.3.0 (`specs/examples/backrun-sol-usdc.json`): any Orca or
   Raydium SOL/USDC pool, SOL the numeraire with at most $5 of anything
   else after any transaction, $1,000 of fees and tips (the example's $500
@@ -70,14 +71,17 @@ each, a calm 48-minute window and two windows of large sell orders
 ## The central decision
 
 What to pay the leader. A bot that reads both pools and sizes the cycle
-finds the same cycle every rival that saw the trigger finds; the bundle
-that bids most per compute unit takes it, and the others fail unpaid. The
+finds the same cycle every rival that saw the trigger finds; of the sends
+that reach the trigger's slot, the one that pays the leader most per
+compute unit takes it, a tip and a priority fee alike, and the others fail
+(unpaid as bundles). The
 options that look defensible:
 
-- **Bid a fixed share of the expected profit** (the reference, 50%): wins
-  most races it can, and overpays every race nobody else reaches.
+- **Bid a fixed share of the expected profit** (the reference, 34%, the
+  research's median winning payment): wins the races whose rivals bid
+  less, and overpays every race nobody else reaches.
 - **Bid the least**: keeps everything it wins, loses every race to a
-  tipping rival that reaches the slot.
+  rival that bids and reaches the slot (the `min-tip` rung).
 - **Bid what beats the rivals who can reach the slot** (the informed bot):
   needs each rival's latency and bid rule, which a session's data could
   tell in principle (every rival's landed bundles and tips are on chain)
@@ -90,11 +94,11 @@ optimum, and the `fixed-clip` rung prices a bot that doesn't.
 
 | Regime (drawn per session) | Best response | Habit that fails |
 | --- | --- | --- |
-| A large order into Raydium, rivals late or paying priority fees | the optimum, the least tip that beats the background's bundles | a fixed large share |
-| The same, a tipping rival that reaches the slot | outbid it, or stay out where that costs the profit | the least tip |
+| A large order into Raydium, rivals late | the optimum, the least tip that beats the background's bundles | a fixed large share |
+| The same, a rival that reaches the slot and bids (a tip or a priority fee) | outbid it per unit, or stay out where that costs the profit | the least tip |
 | Chunks into the Whirlpool | nothing: the gap rarely clears 8 bp | a cycle on every trigger |
 | Small chunks (200 to 300 SOL) | the optimum, if it clears the least profit | a clip larger than the optimum (it loses) |
-| Two orders of opposite sides, or of both pools | read the pools, not the trigger: a chunk may close a gap another opened | a direction guessed from the trigger's side |
+| Two orders of opposite sides, an order split across pools, a lone swap against the order | read the pools, not the trigger: a chunk may close a gap another opened | a direction or a pool guessed from the chunks before |
 | No order at all | nothing | sending on calm gaps |
 
 ## Levers
@@ -106,7 +110,8 @@ optimum, and the `fixed-clip` rung prices a bot that doesn't.
 | Size | profit is concave in the size through both curves | the optimum on exact quotes (ticks crossed) | the kit's quotes |
 | Fee band | 4 bp a pool | fires only past it, and only for a profit worth the fees | the pools' fee rates |
 | Atomicity | a group lands whole or fails unpaid as a bundle | the buy's limit at the least profit | the sheet's atomic groups |
-| Bid | rivals tip a share of their profit, or pay a priority fee; bundles rank by bid per requested unit | bids just over the rivals who reach the slot; a tip, not a priority fee | rivals' landed bundles and tips, on chain |
+| Bid | rivals tip a share of their profit, or pay a priority fee; every send ranks by its pay per requested unit, after the slot it reached | bids just over the rivals who reach the slot, a tip or a priority fee | rivals' landed transactions, fees and tips, on chain |
+| The parent order | an order's chunks share a side and mostly a pool | reads each trigger as it lands: the next one's side and pool are likely, not certain (split orders, lone swaps) | `market.trigger`, and the chunks before |
 | Background bundles | ghosts tip on the busy pools, around the tip floor | a tip clear of them | `market.fees.tip_floor` |
 
 Pool depth is not a lever the family draws (see "Generations": a depth
@@ -131,6 +136,34 @@ multiplier needs a pool override the session doesn't have yet).
   follow, so the pools drift between chunks like mainnet's.
 - **Practice files** carry a neutral description (`mtx calibrate
   --informed` writes it), and no latent field.
+- **The parent order leaks its side, and that pays nothing.** After an
+  order's first chunk, its side, its pool and (for a round trader) its
+  size are likely for the next chunk. What could a bot that knows the
+  generator do with that? Three things, each closed:
+  - *Position for it*: hold USDC to buy back on Raydium alone after the
+    next sale, as mainnet's strongest single-pool searchers did. Rule 11
+    forbids it: at most $5 of anything but SOL after any of the bot's
+    transactions, judged from each transaction's own balances (two
+    transactions in one step don't slip between step readings).
+  - *Be in the slot first*: send the cycle before the chunk lands. A send
+    made before a trigger reaches its slot before the trigger, and runs
+    ahead of it, where the gap isn't open: it fails, as a bundle unpaid.
+    The trigger step gives every reacting send, the bot's and the
+    searchers', the same turn behind the trigger, so there is no slot to
+    be ready for sooner. (A shortened step does announce a trigger next:
+    the same pre-sent cycle still lands ahead of it.)
+  - *Bid against what comes*: the chunk's size and side are in
+    `market.trigger` when it lands; knowing them a step early changes no
+    bid.
+
+  So the anchors don't anticipate the next chunk: there is nothing for
+  them to take from it. The family still makes it less certain, as the
+  research's triggers were: 30% of orders route a share of their chunks
+  (10 to 35%) to the other pool, and up to two lone swaps a session, of
+  either side and mostly into Raydium (3 of the research's 20 distinct
+  triggers came from a liquidation flow or a bot, not a chunked seller),
+  land between the chunks. A bot that guesses the next trigger from the
+  last one is wrong now and then; one that reads each trigger never is.
 - **What a generator-aware bot can do without reading the pools:** nothing
   the reference doesn't. A trigger is named in `market.trigger` anyway; the
   next chunk's size and slot are drawn, so knowing a round trader's size
@@ -176,7 +209,7 @@ of sessions hold no chunk at all.
 | Overbids (95% of the profit) | most of the profit: the `overbidder` rung |
 | Fires inside the fee band | a bundle that fails costs nothing; a transaction pays its fee |
 | A sale without its buy | an inventory breach once the USDC is over $5 |
-| A priority fee in place of a tip | every race a tipping bundle enters on a Jito leader |
+| The least tip | every race a rival that bids reaches: the `min-tip` rung |
 
 ## Predictions
 
@@ -188,25 +221,38 @@ models should come from composition and sizing first, bidding second.
 
 ## Calibration
 
-- **Hidden set** (a fresh 72-session secret, 2026-11-21): reference
-  $6,265.92, informed bot $11,406.03; the reference is 0.549 of the
-  informed bot (band 0.2 to 0.7; no losing session for either, so
-  loss-weighting changes nothing), per-session Sharpe about 0.89 for both
-  (at least 0.25); 21 sessions flat for the reference, 20 for the informed
-  bot. Its costliest session spent $433 on fees and tips. The overbidder
-  made $23.49 on the same set, two of its sessions over the $500 costs
-  budget the example mandate had.
-- **Practice** (seed 20261122, 8 sessions): reference $839.76, informed
-  $1,626.75 (0.52).
-- **Tip share.** Half the expected profit: on 24 sessions the reference
-  was 0.547 of the informed bot, and 0.549 on 72. It wins 131 of the
-  triggers worth a cycle where the informed bot wins 152 (24 sessions): the
-  informed bot's edge is the bid, paying the background's bundles' floor
-  where no tipping rival can reach the slot and just over the rival's tip
-  where one can. A first version that asked for a fixed 400,000 compute
-  units lost 31 races the probe (the host's default, the simulation's
-  units) won: a bundle ranks per requested unit, so both anchors take the
-  default.
+- **Hidden set** (a fresh 72-session secret, 2026-11-22, `ladder.py
+  --sets 1`): reference $2,503.02, informed bot $4,584.29; the reference is
+  0.55 of the informed bot (no losing session for either, so
+  loss-weighting changes nothing; band 0.2 to 0.7), per-session Sharpe
+  0.38 for the reference (at least 0.25); 47 sessions flat for the reference, 24 for
+  the informed bot.
+- **Ladder** (same set): `fixed-clip` $1,669.48 (0.67 of the reference),
+  `overbidder` $431.81 (0.17), `min-tip` $704.46 (0.28), `probe` $2,787.38
+  (1.11: milestone E's probe, tipping half), nop 0; the three order rules
+  hold (bootstrap odds 0.96, 1.00, 1.00) and no rung breached.
+- **Practice** (seed 20261122, 8 sessions): reference $27.74, informed $89.68 (0.31).
+- **The bid, before and after.** Under the old builder (every bundle above
+  every priority fee) the pool searchers, which pay priority fees, lost
+  every race a bundle entered; under one scale they take what they outbid
+  (109 of 273 triggers on 24 public sessions), as the research's
+  single-pool searchers did. Most triggers had no fast rival, and a bot
+  that always tipped the least made 0.97 of the reference (tipping half)
+  on those 24 sessions: the research's first responders landed in the
+  trigger's slot 19 times in 20, so 95% of sessions now hold a searcher
+  that reaches every trigger's slot, and `min-tip` fell to 0.38. The
+  informed bot then made 1.35 of the half-tipping reference (0.74, outside
+  the band), and 1.75 of one tipping 34%.
+- **Tip share.** 34%: the research's median winning payment (0 in 7
+  cases, about 34% in 6, more in 7), and what the week's top winner bid on
+  every win; a principle, not tuned to the band. It isn't the best fixed
+  share: the probe, tipping half, made 1.11 of it on the hidden set above,
+  and the reference tipping half 1.30 of it on the 24 public sessions.
+  That is headroom a bot can take, not a rule the ladder holds.
+- **Inventory after each transaction.** A fixed-clip cycle whose sale beat
+  its quote left $8.36 of USDC behind it and breached rule 11. The cycle's
+  sale now sells SOL for exactly the quoted USDC (an exact-output swap),
+  so a better price sells less SOL and leaves no USDC.
 - **Anchor hashes** (frozen before any model run, `shasum -a 256` of
   `bot.wasm` as built from this commit): recorded by `mtx task sync
   --anchors` in `tests/anchor.digest` on Linux.
@@ -222,3 +268,13 @@ models should come from composition and sizing first, bidding second.
   SOL (`crate::amm`, a mandate whose numeraire is SOL). Not yet drawn: the
   pools' depth (the research's fivefold range), which needs the session to
   scale a pool's liquidity and its tick arrays before it starts.
+- **0.2.0** (2026-11-22): one scale. The transaction layer ranks a slot's
+  sends by pay per requested unit, a tip and a priority fee alike, after
+  the slot they reached (`docs/tx-layer.md`, "Ranking"), so the pool
+  searchers win what they outbid; 95% of sessions hold a searcher that
+  reaches every trigger's slot; parent orders route some chunks to the
+  other pool, and lone swaps of either side land between them, so the
+  next trigger's side and pool are likely, not certain. The reference tips
+  34% (the research's median winning payment), sells for an exact amount
+  of USDC, and spends any USDC left in its buy; the informed bot counts
+  every rival; a `min-tip` rung and its rule (`min-tip < reference`).

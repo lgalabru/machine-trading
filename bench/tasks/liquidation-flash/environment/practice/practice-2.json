@@ -355,7 +355,7 @@
         "jito": {
           "latency_slots": [
             0,
-            1
+            0
           ],
           "loss": 0.0,
           "loss_congested": 0.0
@@ -363,7 +363,7 @@
         "rpc": {
           "latency_slots": [
             0,
-            2
+            0
           ],
           "loss": 0.01,
           "loss_congested": 0.3

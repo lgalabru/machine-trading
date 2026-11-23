@@ -16,6 +16,10 @@
       "dir": "bench/tasks/backrun-sol-usdc/checks/bots/overbidder"
     },
     {
+      "name": "min-tip",
+      "dir": "bench/tasks/backrun-sol-usdc/checks/bots/min-tip"
+    },
+    {
       "name": "probe",
       "dir": "bots/backrun-probe"
     },
@@ -43,6 +47,7 @@
   },
   "rules": [
     "max(fixed-clip, overbidder) < reference",
+    "min-tip < reference",
     "reference < informed"
   ],
   "exploits": {
@@ -51,6 +56,6 @@
     "below": "informed"
   },
   "probes": {
-    "exempt": "the probe bots (bench/checks/probes) hold a Phoenix perp position: coin flips, martingales, levers and the breacher have no counterpart in a session whose only trades are atomic cycles that end in SOL under a $5 inventory limit. The task's own rungs (fixed-clip, a cycle that leaves most of each gap; overbidder, every race overpaid; probe, milestone E's backrun probe) stand in until an amm probe set exists"
+    "exempt": "the probe bots (bench/checks/probes) hold a Phoenix perp position: coin flips, martingales, levers and the breacher have no counterpart in a session whose only trades are atomic cycles that end in SOL under a $5 inventory limit. The task's own rungs (fixed-clip, a cycle that leaves most of each gap; overbidder, every race overpaid; min-tip, every contested race lost; probe, milestone E's backrun probe) stand in until an amm probe set exists"
   }
 }

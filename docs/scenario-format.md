@@ -147,7 +147,11 @@ bot can push, and the transaction layer's auction.
   slot auction at a latency and with a bid the research measured
   (`docs/actors.md`), or by the session's own `race`:
   `{ "bid_share": [0.2, 0.6], "tipping_share": 0.7, "same_slot_share": 0.4,
-  "competition": 1.3 }`, each member optional.
+  "competition": 1.3 }`, each member optional. `competition` scales the
+  research's mean count of rivals for a race's size; above $1,000 repaid it
+  only raises it. A liquidator pays its `bid_share` of the bonus per compute
+  unit as mainnet's liquidations did on their median 333,000 units, so a
+  transaction asking fewer pays less in all.
 - **`venues.lending.borrowers.size_sigma`** (optional): the borrowers'
   collateral is log-normal around the geometric middle of `size_usd`, with
   this spread of its logarithm (at most 4), clipped to the range; absent,

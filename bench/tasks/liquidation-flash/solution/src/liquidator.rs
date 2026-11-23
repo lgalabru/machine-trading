@@ -3,8 +3,9 @@
 //! oracle, value every obligation there, and liquidate each one that is
 //! under water in one atomic group (RFD 0005, task 1):
 //!
-//! 1. a push of SOL's Scope entries, when Scope still reads the obligation
-//!    healthy: the liquidation is then allowed in the same transaction;
+//! 1. a push of SOL's Scope entries: when Scope still reads the obligation
+//!    healthy, the liquidation is then allowed in the same transaction, and
+//!    either way the program seizes at the price the group pushed;
 //! 2. a flash borrow of the USDC it repays;
 //! 3. the liquidation, at the market's close factor of the debt;
 //! 4. a sale of the SOL it seizes on whichever pool pays more for it;
@@ -62,9 +63,13 @@ const LIQUIDATABLE_BELOW: f64 = 1.0 - 1e-6;
 /// What it repays of the close factor's share, for rounding: the program
 /// refuses a repay over it.
 const REPAY_MARGIN: f64 = 0.999;
-/// What it sells of the SOL it expects to seize: the price that sets the
-/// seizure may tick before the group lands. The rest is swept later.
-const SELL_MARGIN: f64 = 0.998;
+/// What it sells of the SOL it expects to seize. The group pushes the
+/// upstream price itself, so the program seizes at a price it knows; a
+/// tenth of a percent is left for rounding (the reserve's collateral
+/// exchange). The rest is swept later: mandate v0.3.0 judges what the
+/// wallet holds beside USDC after every transaction, and the fee SOL is
+/// already about $70 of the $100 it allows, so no more may stay behind.
+const SELL_MARGIN: f64 = 0.999;
 /// The least worse than its estimate it accepts a sale at: past this the
 /// swap, and the group with it, fails.
 const SALE_SLIPPAGE: f64 = 0.003;
@@ -323,7 +328,7 @@ impl Liquidator {
             found.obligation,
             found.sol_usd,
             if found.stale {
-                "pushing"
+                "Scope stale"
             } else {
                 "Scope fresh"
             },
@@ -341,11 +346,18 @@ impl Liquidator {
             atomic: Some(id),
             ..TxOptions::default()
         };
-        if found.stale {
-            orders.push_price().at(sol_id).tx(options);
-            orders.flash(found.repay).at(usdc_id).atomic(id);
-        } else {
-            orders.flash(found.repay).at(usdc_id).tx(options);
+        // Pushed whether Scope reads the obligation healthy or not: the
+        // seizure is then at the upstream it pushes, not at a price
+        // another push may move before the group lands. A bot that reads
+        // Scope alone knows no upstream to push.
+        match self.source {
+            PriceSource::Upstream => {
+                orders.push_price().at(sol_id).tx(options);
+                orders.flash(found.repay).at(usdc_id).atomic(id);
+            }
+            PriceSource::Scope => {
+                orders.flash(found.repay).at(usdc_id).tx(options);
+            }
         }
         orders
             .liquidate(&found.obligation, sol_id, found.repay)
@@ -459,17 +471,10 @@ impl Liquidator {
         // USDC is a dollar, to a basis point: what the bot repays is what
         // the bonus is a share of.
         let kept_share = sol_terms.bonus * (1.0 - sol_terms.protocol_share);
-        // The program seizes at Scope's price: the upstream once the group
-        // pushes it, else what Scope last had, which on a fall is higher
-        // and seizes less; the higher of the two never sells SOL it
-        // didn't get.
+        // The program seizes at Scope's price, which the group pushes to
+        // the upstream first (a Scope reader's `upstream` is Scope's own).
         let stale = value.health_scope >= LIQUIDATABLE_BELOW;
-        let seizure_price = if stale {
-            upstream
-        } else {
-            upstream.max(sol_terms.price)
-        };
-        let seized_sol = repay * (1.0 + kept_share) / seizure_price;
+        let seized_sol = repay * (1.0 + kept_share) / upstream;
         let sell_sol = seized_sol * SELL_MARGIN;
         let (pool, proceeds) = self.best_sale(sell_sol)?;
         // What the sale costs in fee and impact against the upstream, and

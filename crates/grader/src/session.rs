@@ -796,6 +796,10 @@ pub(crate) struct Done {
     pub turns: TurnReport,
     pub steps: Vec<StepRecord>,
     pub transactions: Vec<TxRecord>,
+    /// Where each of the bot's transactions landed under the transaction
+    /// layer (its slot and index there, by signature): their chain order.
+    /// Empty without the layer, where they land in the order sent.
+    pub landing: std::collections::BTreeMap<String, (u64, u64)>,
     pub calls: CallLog,
     pub actors: ActorsReport,
     pub crank_refusals: Vec<crate::crank::CrankRefusal>,
@@ -1448,6 +1452,10 @@ async fn run_session(opts: SessionOptions<'_>, bot_started: &mut bool) -> Result
             turns,
             steps: steps_seen,
             transactions,
+            landing: tx
+                .as_ref()
+                .map(|(engine, _, _)| engine.landing_order())
+                .unwrap_or_default(),
             calls,
             actors,
             crank_refusals: cranked.refusals,
