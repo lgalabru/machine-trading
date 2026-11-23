@@ -172,7 +172,9 @@ jobs:
         # the grader's host, the probe's sheet and market round-trip
         # through the interface, the raw-send probe is answered in a
         # session as its scenario allows, and the transaction-layer probe's
-        # sends land as its fee spike lets them.
+        # sends land as its fee spike lets them. The 0.2.0 compatibility
+        # test is skipped: it needs a component built from an old commit,
+        # which `just compat-0-2-0` does on a full clone.
         run: |
           rustup target add wasm32-wasip2
           for package in mtx-bot-starter mtx-bot-printer mtx-bot-first-strategy mtx-bot-spot-smoke mtx-bot-kamino-probe mtx-bot-wit-probe mtx-bot-raw-probe mtx-bot-tx-probe mtx-bot-actors-smoke mtx-bot-rfq-desk mtx-bot-rfq-dust mtx-bot-keeper-race mtx-bot-making-probe mtx-bot-candle-mlp $(just --evaluate reference_packages); do
