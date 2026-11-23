@@ -98,6 +98,9 @@ histograms become `_bucket`, `_sum` and `_count`.
 | `mtx_tape_undecoded` | counter | strategy | tape transactions whose Phoenix records didn't decode |
 | `mtx_read_lock_us` | histogram | symbol | a market read's wait for the account cache's lock |
 | `mtx_read_decode_us` | histogram | symbol | a market read's decode, after the lock |
+| `mtx_pool_read_us` | histogram | pool | a watched pool's read: assembled from the cache and quoted both ways |
+| `mtx_pool_reads` | counter | pool | reads of watched pools: one a write that changed a pool, one a minute otherwise |
+| `mtx_pool_read_failures` | counter | pool | watched pools that couldn't be assembled, or whose accounts weren't found |
 | `mtx_journal_dropped` | counter | strategy | step journal lines dropped because the journal's thread fell behind |
 | `mtx_enforcer_pauses` | counter | strategy, reason | `mandate` (a breach) or `feed` (stale) |
 | `mtx_control_commands` | counter | command, outcome | `mtx live` commands that change something |

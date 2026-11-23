@@ -666,12 +666,85 @@
       ]
     },
     {
+      "type": "timeseries",
+      "title": "Watched pool read: assembling and quoting (mean)",
+      "description": "A watched pool (control.pools) read from the account cache and quoted both ways, after the strategies' steps. It grows with the rungs of the ladder and the ticks a rung crosses.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 67,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "\u00b5s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (pool) (rate(mtx_pool_read_us_sum{service_name=~\"$service\"}[5m])) / sum by (pool) (rate(mtx_pool_read_us_count{service_name=~\"$service\"}[5m]))",
+          "legendFormat": "{{pool}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Watched pool reads",
+      "description": "Reads of watched pools a second: one for each write that changed a pool, and one a minute for a pool nobody wrote. A failure is a pool that couldn't be assembled or whose accounts weren't found.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 67,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (pool) (rate(mtx_pool_reads{service_name=~\"$service\"}[1m]))",
+          "legendFormat": "{{pool}} reads/s",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (pool) (rate(mtx_pool_read_failures{service_name=~\"$service\"}[5m]))",
+          "legendFormat": "{{pool}} failures/s",
+          "refId": "B"
+        }
+      ]
+    },
+    {
       "type": "row",
       "title": "Enforcer and control",
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 67,
+        "y": 75,
         "w": 24,
         "h": 1
       },
@@ -687,7 +760,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 68,
+        "y": 76,
         "w": 12,
         "h": 8
       },
@@ -719,7 +792,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 76,
+        "y": 84,
         "w": 12,
         "h": 8
       },
@@ -747,7 +820,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 76,
+        "y": 84,
         "w": 24,
         "h": 1
       },
@@ -763,7 +836,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 77,
+        "y": 85,
         "w": 12,
         "h": 8
       },
@@ -795,7 +868,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 77,
+        "y": 85,
         "w": 12,
         "h": 8
       },
@@ -827,7 +900,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 85,
+        "y": 93,
         "w": 12,
         "h": 8
       },
@@ -859,7 +932,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 85,
+        "y": 93,
         "w": 12,
         "h": 8
       },
@@ -887,7 +960,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 93,
+        "y": 101,
         "w": 24,
         "h": 1
       },
@@ -903,7 +976,7 @@
       },
       "gridPos": {
         "x": 12,
-        "y": 94,
+        "y": 102,
         "w": 12,
         "h": 8
       },
@@ -935,7 +1008,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 102,
+        "y": 110,
         "w": 12,
         "h": 8
       },
@@ -967,7 +1040,7 @@
       },
       "gridPos": {
         "x": 0,
-        "y": 102,
+        "y": 110,
         "w": 24,
         "h": 8
       },
