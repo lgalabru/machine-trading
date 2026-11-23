@@ -11,7 +11,8 @@
 //! - **The triggers.** None to several large swaps, each on one pool of the
 //!   graph, a side of its own at even odds, sized by the move it makes:
 //!   log-normal through the research's median impact (545 bp) and 90th
-//!   percentile (5,877), truncated. Most land on the thin pools (JTO, GEOD
+//!   percentile (5,877), cut per pool where the best cycle it opens would
+//!   pass 2 SOL. Most land on the thin pools (JTO, GEOD
 //!   and the JTO/JitoSOL pair), as the research's did; some on the deep
 //!   SOL/USDC and SOL/JitoSOL pools, where the swap's size cap leaves a
 //!   move inside the fee band. Their slots are drawn apart, uneven.
@@ -73,11 +74,15 @@ const JITOSOL_BAND_BPS: (f64, f64) = (-12.0, 1.0);
 const CENTRES_SOL: [(&str, f64); 2] = [(JTO, 1.0 / 320.3), (GEOD, 1.0 / 302.1)];
 
 /// One of the snapshot's pools: its instrument, the odds a trigger lands
-/// on it, and its calm flow (swaps a minute, median, p90 and largest size
-/// in SOL's worth).
+/// on it, the largest move a trigger there makes, and its calm flow (swaps
+/// a minute, median, p90 and largest size in SOL's worth).
 struct PoolSpec {
     instrument: &'static str,
     trigger_odds: f64,
+    /// The move, in basis points, past which a trigger on this pool opens
+    /// a best cycle worth more than 2 SOL of gross profit on the
+    /// snapshot's pools.
+    impact_max_bps: f64,
     flow: (f64, f64, f64, f64),
 }
 
@@ -85,55 +90,76 @@ struct PoolSpec {
 /// pools' flow is the research's sparse swaps (a median gap of 50 slots on
 /// the JitoSOL pools) sized to their depth: under a SOL moves five of them
 /// by 10 bp. Not measured pool by pool (`DESIGN.md`, "Realism limits").
+///
+/// Each pool's `impact_max_bps` was measured on the snapshot offline: the
+/// trigger's swap landed at moves of 30 to 3,000 bp, each way, capped at
+/// 100 SOL's worth as a session's is, and the best cycle of every pool
+/// after it sized on the kit's exact quotes (`amm::cycle::Graph::best`);
+/// the cap is the move where the larger side's reaches 2 SOL, rounded to
+/// 50 bp. The two deep pools' best stays under 0.2 SOL at 3,000 bp, the
+/// range's top. Why 2 SOL: the research's largest backrun profits were a
+/// few SOL, and past it one quiet session's cycle decided the ladder's
+/// `min-tip < reference` (an 8.2 SOL cycle made 90% of `min-tip`'s money on
+/// a hidden set of 72; `DESIGN.md`, "Calibration").
 const POOLS: [PoolSpec; 10] = [
     PoolSpec {
         instrument: "orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
         trigger_odds: 0.03,
+        impact_max_bps: 3_000.0,
         flow: (15.0, 3.4, 41.0, 280.0),
     },
     PoolSpec {
         instrument: "raydium:amm:3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv",
         trigger_odds: 0.03,
+        impact_max_bps: 700.0,
         flow: (12.0, 1.1, 7.5, 71.0),
     },
     PoolSpec {
         instrument: "orca:amm:Hp53XEtt4S8SvPCXarsLSdGfZBuUr5mMmZmX2DRNXQKp",
         trigger_odds: 0.04,
+        impact_max_bps: 3_000.0,
         flow: (3.0, 5.0, 60.0, 300.0),
     },
     PoolSpec {
         instrument: "orca:amm:G2FiE1yn9N9ZJx5e1E2LxxMnHvb1H3hCuHLPfKJ98smA",
         trigger_odds: 0.15,
+        impact_max_bps: 750.0,
         flow: (1.0, 0.3, 2.0, 10.0),
     },
     PoolSpec {
         instrument: "orca:amm:4UVvSVdeth9mxpPe4nwwZseXPd2bqqDm4xVaJSve3DXw",
         trigger_odds: 0.10,
+        impact_max_bps: 1_750.0,
         flow: (0.3, 0.02, 0.1, 0.5),
     },
     PoolSpec {
         instrument: "raydium:amm:JVoPtWWDsRcLvQosu5fWc2CaNF6jEtJzbxdPtcEuvZo",
         trigger_odds: 0.15,
+        impact_max_bps: 1_350.0,
         flow: (0.5, 0.03, 0.2, 1.0),
     },
     PoolSpec {
         instrument: "orca:amm:2UhFnySoJi6c89aydGAGS7ZRemo2dbkFRhvSJqDX4gHJ",
         trigger_odds: 0.15,
+        impact_max_bps: 600.0,
         flow: (1.0, 0.2, 1.5, 8.0),
     },
     PoolSpec {
         instrument: "orca:amm:FsPFkRRTyCJrwK3S8x8JvU8Vmruk5EGKKQsLqywfvF5E",
         trigger_odds: 0.12,
+        impact_max_bps: 2_000.0,
         flow: (0.8, 0.2, 1.5, 6.0),
     },
     PoolSpec {
         instrument: "raydium:amm:3RA4PDZAZ49nm6hdDCnCTrnECqQD93ny8oHP4T1CSTcR",
         trigger_odds: 0.12,
+        impact_max_bps: 1_050.0,
         flow: (1.0, 0.1, 0.8, 4.0),
     },
     PoolSpec {
         instrument: "raydium:amm:BkX9RSHoDJGkU7pbHiksv3DprdLM3KWGoDSfGN9cGJ5d",
         trigger_odds: 0.11,
+        impact_max_bps: 1_000.0,
         flow: (1.0, 0.4, 3.0, 20.0),
     },
 ];
@@ -227,9 +253,11 @@ pub struct ThinPoolsFamily {
     /// The chance of each count of triggers, from none up.
     pub trigger_odds: [f64; TRIGGERS_MAX + 1],
     /// A trigger's move: log-normal through these median and p90, in basis
-    /// points, truncated to the range. The research's p90 (5,877 bp) on
-    /// this snapshot's pools would open cycles of tens of SOL, ten times
-    /// the research's largest backrun profits: the tail is cut at 3,000.
+    /// points, kept inside the range and under the pool's `impact_max_bps`.
+    /// The research's p90 (5,877 bp) on this snapshot's pools would open
+    /// cycles of tens of SOL, ten times the research's largest backrun
+    /// profits: the tail is cut at 3,000, and per pool where its best
+    /// cycle passes 2 SOL ([`POOLS`]).
     pub impact_median_bps: f64,
     pub impact_p90_bps: f64,
     pub impact_bps: (f64, f64),
@@ -493,20 +521,19 @@ impl ThinPoolsFamily {
         let mut triggers: Vec<TriggerShape> = Vec::with_capacity(count);
         for _ in 0..count {
             let odds: Vec<f64> = POOLS.iter().map(|p| p.trigger_odds).collect();
-            let pool = POOLS[pick(rng.next_f64(), &odds)].instrument.to_string();
+            let pool = pick(rng.next_f64(), &odds);
             let side = match rng.next_f64() < 0.5 {
                 true => WhaleSide::Sell,
                 false => WhaleSide::Buy,
             };
-            let impact = (self.impact_median_bps * (sigma * rng.normal()).exp())
-                .clamp(self.impact_bps.0, self.impact_bps.1);
+            let impact = self.impact(rng, sigma, POOLS[pool].impact_max_bps);
             let mut slot = rng.range_u64((first, last));
             // Two triggers never land in one slot: a later one waits.
             while triggers.iter().any(|t| t.slot == slot) {
                 slot += 1;
             }
             triggers.push(TriggerShape {
-                pool,
+                pool: POOLS[pool].instrument.to_string(),
                 side,
                 slot: slot.min(duration - 1),
                 impact_bps: (impact * 10.0).round() / 10.0,
@@ -517,6 +544,18 @@ impl ThinPoolsFamily {
         triggers.dedup_by_key(|t| t.slot);
         assert!(triggers.windows(2).all(|w| w[0].slot < w[1].slot));
         triggers
+    }
+
+    /// A trigger's move on a pool whose cap is `max_bps`: the research's
+    /// log-normal, its shape kept below the cap and its tail past it cut to
+    /// the cap, inside the family's range.
+    fn impact(&self, rng: &mut SplitMix64, sigma: f64, max_bps: f64) -> f64 {
+        assert!(sigma > 0.0 && sigma.is_finite());
+        assert!(max_bps > self.impact_bps.0 && max_bps <= self.impact_bps.1);
+        let impact = (self.impact_median_bps * (sigma * rng.normal()).exp())
+            .clamp(self.impact_bps.0, max_bps);
+        assert!((self.impact_bps.0..=max_bps).contains(&impact));
+        impact
     }
 
     /// JitoSOL's, JTO's and GEOD's reference prices: a level of the
@@ -751,8 +790,8 @@ mod tests {
     }
 
     /// Over many sessions: some hold no trigger, both sides trigger, most
-    /// on thin pools, impacts spread around the research's median, and both
-    /// search depths compete.
+    /// on thin pools, impacts spread around the research's median and none
+    /// past its pool's cap, and both search depths compete.
     #[test]
     fn triggers_and_searchers_come_from_the_research_s_ranges() {
         let family = ThinPoolsFamily::snapshot();
@@ -764,6 +803,8 @@ mod tests {
                 calm += 1;
             }
             for t in &shape.triggers {
+                let spec = POOLS.iter().find(|p| p.instrument == t.pool).unwrap();
+                assert!(t.impact_bps <= spec.impact_max_bps, "{t:?}");
                 impacts.push(t.impact_bps);
                 if t.side == WhaleSide::Sell {
                     sells += 1;

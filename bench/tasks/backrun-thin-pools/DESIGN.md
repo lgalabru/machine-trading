@@ -24,7 +24,8 @@ that the latest swap opened, and skips cycles whose fees eat the gap.
   cycle (the inventory limit); overbidding every race; tipping the least
   whoever races; waiting a step.
 - **Regimes:** no trigger, one or several, on any of ten pools; sales and
-  buys; moves of 30 to 3,000 bp; contested sessions (88%), where one
+  buys; moves of 30 bp up to each pool's cap (600 to 3,000 bp, where
+  its best cycle reaches about 2 SOL); contested sessions (88%), where one
   tipping three-leg searcher reaches every trigger's slot, and quiet ones,
   where nobody can; rivals that tip or pay priority fees, that look at two
   legs or three.
@@ -116,6 +117,7 @@ whoever is there.
 | Fee gate | 1 to 100 bp a pool | the product of prices after fees, before any sizing | the pools' fee rates |
 | Size | profit is concave in the size through every curve | the optimum on chained exact quotes | the kit's quotes |
 | Chaining | each line spends what its amount says | each leg spends exactly what the one before was quoted to give, at that quote | the sheet's atomic groups |
+| Cycle size | a trigger's move is cut, pool by pool, where the best cycle it opens on the snapshot reaches about 2 SOL of gross profit; below the cap the research's log-normal is untouched | sizes every cycle on the chained exact quotes, as any other | the moved pool and the kit's quotes, the step it opens |
 | Bid | rivals tip a share of the best cycle they can see, or pay a priority fee; every send in the slot ranks by its pay per requested unit, a tip and a fee alike; most sessions hold one that reaches every trigger's slot | bids just over the rivals who reach the slot and see the cycle, per unit, the least where nobody does | rivals' landed transactions, fees and tips, on chain: who took the last trigger's cycle, in its slot, for what |
 | Limits | the seat compares a limit and an amount exactly | a limit of a dozen significant digits | the seat's refusal, in `market.sends` |
 
@@ -177,7 +179,7 @@ trigger's own slot, on chain, whenever it profits past its least. About a tenth 
   each trigger would have made and who took it.
 - **The reference stays inside the mandate:** every cycle ends in SOL, its
   legs chain exactly (dust of a few atoms stays), its costliest session
-  spent $491 of the $1,000 budget (the informed bot's $532), and a failed bundle costs nothing.
+  spent $491 of the $1,000 budget (the informed bot's $532; measured before the cycle-size cap, which only lowers what a cycle can pay), and a failed bundle costs nothing.
 - **Anchors run as components** (`component_anchors`): amm sessions,
   atomic groups and trigger steps reach only strategy components.
 - **Role noise.** Each role of a grade (reference, informed, bot) plays a
@@ -205,24 +207,44 @@ it; one that never composes a working group scores 0.
 
 ## Calibration
 
-- **Hidden set** (a fresh 72-session secret, 2026-11-22, after the
-  transaction layer's one scale, `ladder.py --sets 1`): reference
-  $1,113.51, informed bot $1,935.61; the reference is 0.58 of the informed
-  bot (no losing session for either; band 0.2 to 0.7), per-session Sharpe
-  0.31 for the reference (at least 0.25); 46 sessions flat for the
-  reference, 37 for the informed bot.
-- **Ladder** (same set): `two-leg` $332.69 (0.30 of the reference),
-  `overbidder` $176.94 (0.16), `min-tip` $812.93 (0.73), nop 0. Two order
-  rules hold at bootstrap odds 1.00; `min-tip < reference` holds on the
-  point estimate but at odds 0.79, under the ladder's 0.85, so `mtx gates
-  --fast` fails it. One quiet session (nobody reaches a trigger's slot)
-  held an 8.2 SOL cycle, the set's largest by far: `min-tip` took all of
-  it ($735), the reference half ($367), and that one session is 90% of
-  `min-tip`'s money. The 12% quiet sessions and the heavy tail of cycle
-  sizes make the rule's power a draw; whether to make quiet sessions
-  rarer or cap a cycle's size is open (owner's call).
-- **Practice** (seed 20261122, 8 sessions): reference $381.00, informed
-  $640.28 (0.60).
+- **Hidden set** (a fresh 72-session secret, 2026-11-23, after the
+  cycle-size cap, `ladder.py --sets 1`): reference $1,209.43, informed bot
+  $1,862.05; the reference is 0.65 of the informed bot (no losing session
+  for either; band 0.2 to 0.7), per-session Sharpe 0.49 for the reference
+  (at least 0.25); 45 sessions flat for the reference, 37 for the
+  informed bot.
+- **Ladder** (same set): `two-leg` $249.51 (0.21 of the reference),
+  `overbidder` $152.08 (0.13), `min-tip` $155.15 (0.13), nop 0. Every
+  order rule holds at bootstrap odds 1.00 (the floor is 0.85), and `mtx
+  gates --fast` passes on this summary.
+- **Statistical power: the cycle-size cap.** On the set before it
+  (2026-11-22: reference $1,113.51, `min-tip` $812.93), `min-tip <
+  reference` held on the point estimate at odds 0.79 only: one quiet
+  session (nobody reaches a trigger's slot) held an 8.2 SOL cycle, the
+  set's largest by far, `min-tip` took all of it ($735) and the reference
+  half ($367). One session's tail decided the rule, which is power, not
+  skill. Each pool's moves are now cut where the best cycle they open on
+  the snapshot reaches about 2 SOL of gross profit (measured offline with
+  the kit's exact quotes: 600 bp on the Whirlpool SOL/JTO pool, 700 on
+  the Raydium SOL/USDC, 750 on the 30 bp JTO/JitoSOL, 1,000 on GEOD/USDC,
+  1,050 on the Raydium SOL/GEOD, 1,350 on the Raydium SOL/JTO, 1,750 on
+  the 100 bp JTO/JitoSOL, 2,000 on the Whirlpool SOL/GEOD, 3,000 on the
+  two deep pools); below the cap the log-normal is the research's, past
+  it the move is the cap. Quiet sessions stay 12%. The cap bounds a
+  trigger's cycle (the largest on the sets since: 2.7 SOL), but not the
+  rule's whole variance: in a quiet session `min-tip` makes twice the
+  reference, so the rule is "the reference's quiet money is under its
+  contested money", and both are carried by a handful of sessions. On a
+  72-session set graded while choosing the cap, `min-tip < reference`
+  still held at odds 0.77 only (`min-tip` $471, reference anchor $618,
+  informed $1,229; three quiet sessions made all of `min-tip`'s money),
+  and a variant that drew a move past the cap again (no move at the cap,
+  the median falling to 220 bp) held at 0.75 (`min-tip` $225, reference
+  $281). The set above holds at 1.00; on a set like the first, the rule
+  can fail again. What would raise its power without loosening it:
+  larger hidden sets, or fewer quiet sessions (kept at 12%, owner's call).
+- **Practice** (seed 20261122, 8 sessions, after the cap): reference
+  $204.83, informed $334.38 (0.61).
 - **Earlier hidden set** (before one scale, 2026-11-22): reference
   $5,179.23, informed $9,123.65 (0.57); `two-leg` 0.061, `overbidder`
   0.068, `min-tip` 0.007, each rule at odds 1.00.
@@ -280,3 +302,6 @@ it; one that never composes a working group scores 0.
   counts every rival; the reference's first leg takes exactly its quoted
   amount (a better price sells less SOL) and a later leg spends what an
   earlier cycle left, so no token stays behind a transaction (rule 11).
+  Then, the same version: each pool's moves are cut where the best cycle
+  they open reaches about 2 SOL ("Calibration", "Statistical power"), as
+  one quiet session's 8.2 SOL cycle decided `min-tip < reference`.

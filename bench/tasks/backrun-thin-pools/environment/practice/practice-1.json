@@ -445,9 +445,9 @@
   "schema": 2,
   "scoring": {
     "informed_max_drawdown_usd": 0.0,
-    "informed_pnl_usd": 147.93,
+    "informed_pnl_usd": 63.47,
     "reference_max_drawdown_usd": 0.0,
-    "reference_pnl_usd": 74.24
+    "reference_pnl_usd": 32.01
   },
   "tx": {
     "layer": {
@@ -1037,7 +1037,7 @@
           {
             "chunks": [
               {
-                "impact_bps": 1947.7,
+                "impact_bps": 600.0,
                 "slot": 263,
                 "sol": 100.0
               }
@@ -1070,7 +1070,7 @@
           {
             "chunks": [
               {
-                "impact_bps": 2488.6,
+                "impact_bps": 750.0,
                 "slot": 535,
                 "sol": 100.0
               }

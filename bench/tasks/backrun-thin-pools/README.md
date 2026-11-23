@@ -39,7 +39,9 @@ that the latest swap opened, and skips cycles whose fees eat the gap.
   each a large swap on one pool (mostly the JTO, GEOD and JTO/JitoSOL
   pools), a side of its own (even odds), moving its price by a log-normal
   draw through the research's median 545 bp (p90 5,877), kept within
-  30–3,000 bp, trading at most 100 SOL's worth. Each is a trigger: the
+  30–3,000 bp and cut, pool by pool, where the best cycle it opens would
+  pass about 2 SOL (600 bp on the Whirlpool SOL/JTO pool to 3,000 on the
+  deep ones), trading at most 100 SOL's worth. Each is a trigger: the
   step ends behind it with its slot open.
 - **Calm flow** on every pool, in proportion to its depth, scaled by
   0.6–1.4 per session; SOL's reference price walks by 0.5–2 bp ticks;
@@ -103,7 +105,12 @@ Harbor) haven't run yet.
 - The pools' depth is the snapshot's in every session; the research's
   pools were often thinner, and its triggers' 90th percentile (5,877 bp)
   would open cycles of tens of SOL here, so moves are cut at 3,000 bp and
-  triggers at 100 SOL's worth.
+  triggers at 100 SOL's worth. The tail is cut further: each pool's moves
+  stop where the best cycle they open on the snapshot reaches about 2 SOL
+  of gross profit (600 to 2,000 bp on the thin pools), the size of the
+  research's largest backruns. Larger moves happen on mainnet; here one
+  of them in a quiet session decided the ladder's order on its own
+  (`DESIGN.md`, "Calibration").
 - The other tokens' reference prices drift on their own, not with any
   pool's flow, and JitoSOL's stake value doesn't step at epochs; their
   session levels are drawn evenly, not from a measured distribution.
