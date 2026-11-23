@@ -224,6 +224,46 @@ pub enum Event {
         best_ask: Option<f64>,
         mark: f64,
     },
+    /// A pool the runtime watches without trading it (`control.pools`),
+    /// read in the slot a write changed it and every so often besides:
+    /// its price, and what swaps of growing size get from it each way, so
+    /// a sidecar can price a route through several pools without holding
+    /// any chain code. Amounts are in whole tokens; `base` and `quote` are
+    /// the pool's two mints, in the pool's own order.
+    Pool {
+        /// The pool's program, as venues name it: `orca`, `raydium`.
+        venue: String,
+        address: String,
+        /// The slot the runtime read it in, and the slot of the write it
+        /// read: a pool nobody traded keeps its `written_slot`.
+        slot: u64,
+        written_slot: u64,
+        base: String,
+        quote: String,
+        /// Quote per base, before fees.
+        mid: f64,
+        /// The swap fee, in bps of what goes in.
+        fee_bps: f64,
+        /// The liquidity in range, in the program's own unit.
+        liquidity: f64,
+        /// Swaps that pay base and receive quote, smallest first.
+        sells: Vec<PoolRung>,
+        /// Swaps that pay quote and receive base, smallest first.
+        buys: Vec<PoolRung>,
+        /// How long the read and its quotes took, in microseconds.
+        read_us: u64,
+    },
+}
+
+/// One exact swap through a pool as it stood: the swap that moves its
+/// price by `bps`, what it pays and what it receives, fees included. A
+/// pool's rungs each start from the same state, so each holds the ones
+/// before it: between two rungs a swap gets at least their straight line.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct PoolRung {
+    pub bps: f64,
+    pub amount_in: f64,
+    pub amount_out: f64,
 }
 
 /// Read the runtime's events at `socket`, a line at a time, starting with

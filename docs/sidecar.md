@@ -60,6 +60,17 @@ Beside them, what the runtime's speed depends on:
   read once in `every_slots` (at least 5) and told as a `quote`, with its
   trades as `trade` events. `mtx_kit::venue::PhoenixVenue::markets` lists
   them as `mtx_core::market::MarketInfo` (tick, lot, fees).
+- `pools` (none): pools watched without trading them, for a sidecar that
+  looks for arbitrage across them (`live::pools`):
+  `{"pools": ["orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"], "every_slots": 150, "rungs_bps": [2, 5, 10, 20, 40, 80, 160, 320, 640]}`.
+  Orca Whirlpools and Raydium CLMM pools, 64 at most. A pool's account
+  joins the cache with the accounts a quote needs (tick arrays, oracle,
+  config, bitmap extension); the tick arrays a new price needs are read
+  once from the node. After the steps, each pool a write changed since
+  its last read, and each pool once in `every_slots` (at least 25), is
+  quoted with the kit's exact quotes and told as a `pool`. A rung is the
+  exact swap that moves the price by that many bps; a side's ladder ends
+  where the pool can't fill a rung. The quotes use the host's clock.
 - `tpu.preflight` (false): a live strategy over the TPU sends without
   waiting for its order to land (its `fate` comes on the event stream),
   and without the node's simulation first unless this is on: a round trip
@@ -96,6 +107,7 @@ on the same host, a sidecar reads its own delay off it) and an `event`.
 | `command` | a command that changes something was done or refused | the command (an enum), and the refusal (`code`, `error`) if it was |
 | `lagged` | this connection fell behind and lost events | how many: read `status` again |
 | `quote` | a watched market was read (`control.watch`) | symbol, slot, best bid and ask (null on an empty side), mark |
+| `pool` | a watched pool was read (`control.pools`): a write changed it, or it is due again | venue, address, slot, the slot of the write read, both mints, mid, fee in bps, liquidity, a ladder of exact swaps each way (bps moved, whole tokens in and out), microseconds the read took |
 
 **It never slows the runtime.** An event is serialized once, only when
 someone listens, into a queue of 8192; each connection has its own writer

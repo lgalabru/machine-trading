@@ -261,6 +261,22 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
                     side(best_ask)
                 )
             }
+            Event::Pool {
+                venue,
+                address,
+                written_slot,
+                mid,
+                fee_bps,
+                sells,
+                buys,
+                read_us,
+                ..
+            } => format!(
+                "{venue} pool {address}: {mid} at a {fee_bps} bp fee, written in slot \
+                 {written_slot}, {} rungs down and {} up, read in {read_us} us",
+                sells.len(),
+                buys.len()
+            ),
         };
         println!("{text}");
     }
