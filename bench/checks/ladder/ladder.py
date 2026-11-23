@@ -40,6 +40,12 @@ Usage: python3 ladder.py <task> --mtx target/release/mtx --snapshot DIR
        [--sets 4] [--count N] [--jobs 4] [--parallel 1] [--out DIR]
        [--min-rule-odds P] [--public-seed LABEL] [--config FILE]
 
+A v2 task's rungs are graded against its anchors, and v2 refuses a set whose
+reference reaches the informed bot or comes within 5% of it: a short set can
+draw one by chance. The ladder then compares that set's rungs on raw PnL,
+records the refusal in the summary (`v2_refused`), and fails; `mtx gates
+--fast` reads it on its 12-session set as inconclusive.
+
 `--public-seed LABEL` draws each set from a secret derived from the label
 instead of a fresh one: a fixed, public set that gives the same sessions on
 every run (`mtx gates --fast` uses it in CI). It is never a hidden set: those
@@ -85,6 +91,11 @@ GRADER_VARS = {
 # An exploit bot that moves the mark less than this, in bp over the index on
 # average, moved nothing.
 MIN_DISPLACEMENT_BP = 0.5
+# What opens the grader's error when v2 refuses a set whose anchors are too
+# close to scale on: the reference at or past the informed bot, or within 5%
+# of it (crates/grader/src/scoring_v2.rs, `ANCHORS_TOO_CLOSE`). The sessions
+# drawn decide it, not the grade: a short set can land there by chance.
+ANCHORS_TOO_CLOSE = "anchors too close to scale on"
 
 
 def rung_bot(rung, set_dir, count=None):
@@ -213,17 +224,40 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
     if "push" in rung or rung["name"] == "nop":
         command += ["--details", os.path.join(out, "details", rung["name"])]
     env = dict(os.environ, MTX_EVAL_SEED=secret)
+    log_path = os.path.join(out, f"{rung['name']}.log")
     # A failed grade is an infrastructure failure (a session that couldn't
     # set up), not a score: try once more before giving up on the rung.
     for attempt in (1, 2):
-        with open(os.path.join(out, f"{rung['name']}.log"), "w") as log:
+        with open(log_path, "w") as log:
             done = subprocess.run(command, env=env, stdout=subprocess.DEVNULL, stderr=log)
         if done.returncode == 0:
             break
+        refused = anchors_refused(log_path)
+        if refused and os.path.exists(report):
+            # v2 can't scale this set, a property of its sessions: the grade
+            # is otherwise whole (v2 beside v1 writes the report), and
+            # grading it again would draw the same sessions.
+            with open(report) as f:
+                graded = json.load(f)
+            graded["v2_refused"] = refused
+            with open(report, "w") as f:
+                json.dump(graded, f)
+            return graded
     else:
-        raise SystemExit(f"{rung['name']}: mtx grade failed twice; see {out}/{rung['name']}.log")
+        raise SystemExit(f"{rung['name']}: mtx grade failed twice; see {log_path}")
     with open(report) as f:
         return json.load(f)
+
+
+def anchors_refused(log_path):
+    """The grader's line refusing v2 for anchors too close to scale on, from
+    a grade's log; None when it failed for another reason."""
+    with open(log_path, errors="replace") as f:
+        for line in f:
+            at = line.find(ANCHORS_TOO_CLOSE)
+            if at >= 0:
+                return line[at:].strip()
+    return None
 
 
 def pnls(report):
@@ -994,6 +1028,10 @@ def main():
             }
             reports = {name: future.result() for name, future in futures.items()}
         sets.append(reports)
+        refused = next((r["v2_refused"] for r in reports.values() if r.get("v2_refused")), None)
+        if refused:
+            print(f"set {k + 1}: v2 refused to scale it ({refused}); its rungs are compared "
+                  "on their raw PnL", flush=True)
         print(f"set {k + 1} (reference ${totals(reports)['reference']:.0f}): " + ", ".join(
             f"{name} {s:.2f}" for name, s in skills(reports).items()
         ), flush=True)
@@ -1019,7 +1057,16 @@ def main():
         "disqualified": [],
         "probes_status": "checked" if probes else ("exempt" if exempt else "absent"),
         "probes_exempt": exempt,
+        # Per set, why v2 refused to scale it (its anchors too close: the
+        # reference at or past the informed bot), or null. A refused set's
+        # totals are raw PnL; `mtx gates` reads a refusal on its fast set as
+        # inconclusive and on the full ladder as a failure.
+        "v2_refused": [next((r["v2_refused"] for r in reports.values() if r.get("v2_refused")),
+                            None) for reports in sets],
     }
+    for k, refused in enumerate(summary["v2_refused"]):
+        if refused:
+            failed.append(f"set {k + 1}: v2 refused it ({refused})")
     print("\nskill by set (reference = 1, hindsight = the bound; a disqualified rung is 0):")
     names = [r["name"] for r in config["rungs"]] + ["hindsight"]
     table = [skills(reports) for reports in sets]
@@ -1141,7 +1188,11 @@ def main():
     if not any("disqualified" in f for f in failed):
         print("  ok   no rung was refused or disqualified")
 
-    if probes:
+    if probes and any(summary["v2_refused"]):
+        # The probe rules read each rung's v2 grade, which a refused set has none of.
+        summary["probes_status"] = "unscored"
+        print("\nprobes: not scored, v2 refused a set")
+    elif probes:
         print("\nprobes (scoring v2; raw: 0 = doing nothing, 0.5 = the reference):")
         summary["probes"] = probe_checks(config, sets, count)
         for check in summary["probes"]:

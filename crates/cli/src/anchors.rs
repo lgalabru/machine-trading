@@ -165,6 +165,9 @@ struct Meta {
     /// The informed bot's crate, from the repository's root.
     informed: Option<String>,
     v2_sessions: bool,
+    /// The anchors run as strategy components (`component_anchors`), as the
+    /// image ships them: their `bot.wasm` beside `bin/bot`.
+    component_anchors: bool,
 }
 
 impl Meta {
@@ -184,6 +187,10 @@ impl Meta {
             .to_string();
         let script = read(&folder.join("tests/test.sh")).unwrap_or_default();
         let v2_sessions = String::from_utf8_lossy(&script).contains("--v2-sessions");
+        let component_anchors = toml["metadata"]["mtx"]
+            .get("component_anchors")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false);
         let informed = crate::tasks::load_one(root, task.to_string())
             .ok()
             .and_then(|t| t.informed)
@@ -193,6 +200,7 @@ impl Meta {
             snapshot,
             informed,
             v2_sessions,
+            component_anchors,
         })
     }
 }
@@ -242,25 +250,41 @@ fn build_anchor(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// An anchor as the image ships it: the Justfile and the built process.
-fn stage_anchor(from: &Path, to: &Path) -> Result<()> {
-    let bin = from.join("bin/bot");
-    if !bin.is_file() {
-        bail!(
-            "{} isn't built: run `just --justfile {} build`",
-            from.display(),
-            from.join("Justfile").display()
-        );
+/// An anchor as the image ships it (bench/image/Dockerfile): the Justfile
+/// and the built process, and for a component anchor its `bot.wasm`, which
+/// the grader loads over the process. Without it, a task whose sessions
+/// reach only components (lending, atomic groups) would play its anchors as
+/// processes, which those sessions refuse.
+fn stage_anchor(from: &Path, to: &Path, component: bool) -> Result<()> {
+    let mut built = vec!["bin/bot"];
+    if component {
+        built.push("bot.wasm");
+    }
+    for file in &built {
+        if !from.join(file).is_file() {
+            bail!(
+                "{} has no {file}: run `just --justfile {} build`",
+                from.display(),
+                from.join("Justfile").display()
+            );
+        }
     }
     std::fs::create_dir_all(to.join("bin"))?;
     std::fs::copy(from.join("Justfile"), to.join("Justfile"))?;
-    std::fs::copy(&bin, to.join("bin/bot"))?;
+    for file in &built {
+        std::fs::copy(from.join(file), to.join(file))?;
+    }
+    assert_eq!(to.join("bot.wasm").is_file(), component);
     Ok(())
 }
 
 fn play(root: &Path, folder: &Path, meta: &Meta, work: &Path) -> Result<()> {
     let reference = work.join("reference");
-    stage_anchor(&folder.join("reference"), &reference)?;
+    stage_anchor(
+        &folder.join("reference"),
+        &reference,
+        meta.component_anchors,
+    )?;
     let mut command = Command::new(std::env::current_exe()?);
     command
         .current_dir(root)
@@ -272,7 +296,7 @@ fn play(root: &Path, folder: &Path, meta: &Meta, work: &Path) -> Result<()> {
         .arg(&reference);
     if let Some(informed) = &meta.informed {
         let staged = work.join("informed");
-        stage_anchor(&root.join(informed), &staged)?;
+        stage_anchor(&root.join(informed), &staged, meta.component_anchors)?;
         command.arg("--informed").arg(&staged);
     }
     command
@@ -287,6 +311,11 @@ fn play(root: &Path, folder: &Path, meta: &Meta, work: &Path) -> Result<()> {
         .arg(work.join("details"));
     if meta.v2_sessions {
         command.arg("--v2-sessions");
+    }
+    // As the verifier grades them: the graded bot (the reference itself) is
+    // a component too.
+    if meta.component_anchors {
+        command.arg("--components-only");
     }
     let out = command
         .stdout(std::process::Stdio::null())
@@ -579,5 +608,37 @@ mod tests {
         assert!(!why.contains("GRADER_VERSION"), "{why}");
         let printed = Digest::parse(why.split_once(":\n").unwrap().1).unwrap();
         assert_eq!(printed, file("aa", "dd"));
+    }
+
+    #[test]
+    fn a_component_anchor_is_staged_with_its_bot_wasm_as_the_image_ships_it() {
+        let dir = std::env::temp_dir().join(format!("mtx-stage-{}", uuid::Uuid::new_v4().simple()));
+        let from = dir.join("from");
+        std::fs::create_dir_all(from.join("bin")).unwrap();
+        std::fs::write(from.join("Justfile"), "run:\n").unwrap();
+        std::fs::write(from.join("bin/bot"), "process").unwrap();
+        // A process anchor needs no component, and gets none.
+        stage_anchor(&from, &dir.join("process"), false).unwrap();
+        assert!(!dir.join("process/bot.wasm").exists());
+        // A component anchor without its bot.wasm isn't built.
+        let why = stage_anchor(&from, &dir.join("unbuilt"), true).unwrap_err();
+        assert!(why.to_string().contains("no bot.wasm"), "{why}");
+        std::fs::write(from.join("bot.wasm"), "component").unwrap();
+        stage_anchor(&from, &dir.join("component"), true).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("component/bot.wasm")).unwrap(),
+            "component"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_task_whose_sessions_reach_only_components_plays_its_anchors_as_components() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let read = |p: &Path| std::fs::read(root.join(p)).ok();
+        for (task, component) in [("liquidation-flash", true), ("flash-crash-spcx", false)] {
+            let meta = Meta::of(&root, task, &read).unwrap();
+            assert_eq!(meta.component_anchors, component, "{task}");
+        }
     }
 }

@@ -118,6 +118,47 @@ class BreachingRungs(unittest.TestCase):
             self.assertTrue(grading["informed"].endswith("bench/checks/ladder/rungs/x"))
 
 
+class AnchorRefusal(unittest.TestCase):
+    """A set v2 can't scale (its anchors too close) is kept on raw PnL and
+    marked; any other failed grade still stops the ladder."""
+
+    def grade_with(self, stderr):
+        with tempfile.TemporaryDirectory() as out:
+            mtx = os.path.join(out, "mtx")
+            # A grader that writes its report (v2 beside v1 does) and fails.
+            with open(mtx, "w") as f:
+                f.write("#!/usr/bin/env bash\n"
+                        "while [ $# -gt 0 ]; do [ \"$1\" = --report ] && report=$2; shift; done\n"
+                        f"echo '{json.dumps(report([10.0, 20.0]))}' > \"$report\"\n"
+                        f"echo {json.dumps(stderr)} >&2\n"
+                        "exit 1\n")
+            os.chmod(mtx, 0o755)
+            rung = {"name": "reference", "dir": "bench/tasks/x/reference"}
+            path = os.path.join(out, "reference.json")
+            graded = ladder.run_grade(mtx, "snap", "family", 2, 1, rung, "00", out, path, 0)
+            with open(path) as f:
+                return graded, json.load(f)
+
+    def test_a_refused_set_keeps_its_report_and_says_why(self):
+        line = ("Error: --scoring v2: " + ladder.ANCHORS_TOO_CLOSE
+                + ": the reference (69.83) reaches the ceiling (69.30)")
+        graded, kept = self.grade_with(line)
+        self.assertTrue(graded["v2_refused"].startswith(ladder.ANCHORS_TOO_CLOSE))
+        self.assertIn("reaches the ceiling", graded["v2_refused"])
+        # A rerun of the ladder reads the refusal back from the report.
+        self.assertEqual(kept["v2_refused"], graded["v2_refused"])
+        self.assertEqual(ladder.pnls(graded), [10.0, 20.0])
+
+    def test_any_other_failure_stops_the_ladder(self):
+        with self.assertRaises(SystemExit):
+            self.grade_with("Error: a session couldn't set up")
+
+    def test_the_marker_is_the_graders(self):
+        source = os.path.join(ladder.ROOT, "crates/grader/src/scoring_v2.rs")
+        with open(source) as f:
+            self.assertIn(f'ANCHORS_TOO_CLOSE: &str = "{ladder.ANCHORS_TOO_CLOSE}"', f.read())
+
+
 class ExploitRatio(unittest.TestCase):
     def test_a_ladder_file_that_sets_a_multiple_enforces_it(self):
         self.assertIn("2.50x", ladder.ratio_reason(2.5, {"max_ratio": 2.0}))

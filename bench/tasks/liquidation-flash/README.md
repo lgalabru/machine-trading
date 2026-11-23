@@ -9,7 +9,7 @@ the send that pays the leader most per compute unit lands first.
 | | |
 | --- | --- |
 | Market | Kamino Lend main market (SOL/USDC reserves), Scope, Orca Whirlpool and Raydium CLMM SOL/USDC pools; mainnet snapshot of 2026-11-21 (`atomic-arb-2026-11-21`) |
-| Sessions | 72 hidden per grade, half opening with a falling leg and half with a rising one (about a quarter liquidate nothing); 8 practice. Each is 260–360 slots. |
+| Sessions | 144 hidden per grade (twice the other tasks': see Baselines), half opening with a falling leg and half with a rising one (about a quarter liquidate nothing); 8 practice. Each is 260–360 slots. |
 | Mandate | v0.3.0: SOL and USDC reserves without borrowing, any Orca or Raydium SOL/USDC pool, flash borrows up to 250,000 USDC, at most $100 of anything but USDC after each transaction, $300 of fees and tips, $500 loss limit |
 | Bound | None: scored by v2 alone |
 | Reference | v2's 0.5. Reads the upstream, values every obligation there, and liquidates each one under water in one atomic group (push, flash, liquidate at the close factor, sale on the better pool), tipping 36% of the profit it expects: the middle of what mainnet's liquidators paid the leader of the bonus they kept |
@@ -66,16 +66,17 @@ costs rule is a breach like the loss limit.
 
 ## Baselines
 
-On three fresh 72-session hidden sets (2026-11-23): the reference made
-$146.05, $146.09 and $270.48 (no losing session) and the informed bot
-$279.23, $271.38 and $341.13: the reference is 0.52, 0.54 and 0.79 of the
-informed bot, so the third set is above the strength band. The rungs made
-$61 / $49 / $89 (`scope-reader`), $11 / $10 / $13 (`overbidder`) and
-$134 / $123 / $123 (`min-tip`): `min-tip < reference` holds on each, at
-bootstrap odds 0.75, 0.89 and 1.00, so the first set is under the
-ladder's 0.85. Both are a set of 72's power, not the order: see
-`DESIGN.md`, "Calibration". On the 8 practice sessions, $11.63 and
-$30.67.
+On three fresh 144-session hidden sets (2026-11-23): the reference made
+$303.54, $324.74 and $396.40 (no losing session) and the informed bot
+$614.13, $672.51 and $598.29: the reference is 0.49, 0.48 and 0.66 of the
+informed bot, Sharpe 0.61, 0.56 and 0.55. The rungs made $115 / $134 /
+$134 (`scope-reader`), $18 / $49 / $22 (`overbidder`) and $269 / $276 /
+$272 (`min-tip`): `min-tip < reference` holds on each, at bootstrap odds
+0.84, 0.90 and 1.00, so the first set is just under the ladder's 0.85.
+The hidden set is 144 sessions, twice the other tasks', because 72
+couldn't rank `min-tip` and the reference reliably, and 144 still misses
+one draw in six: see `DESIGN.md`, "Statistical power". On the 8 practice
+sessions, $11.63 and $30.67.
 
 | Rung | What it is | Expected |
 | --- | --- | --- |

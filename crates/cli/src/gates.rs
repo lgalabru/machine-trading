@@ -291,6 +291,11 @@ pub struct LadderSummary {
     /// summaries).
     #[serde(default)]
     pub pnls: Vec<BTreeMap<String, Vec<f64>>>,
+    /// Per set, why v2 refused to scale it (its anchors too close: the
+    /// reference at or past the informed bot), or `None`. A refused set's
+    /// totals are raw PnL.
+    #[serde(default)]
+    pub v2_refused: Vec<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -954,6 +959,7 @@ pub fn signal_gate(summary: &LadderSummary, gate: &SignalGate) -> Check {
 
 /// Why a fast set whose reference lost money can't settle the reference and
 /// order checks.
+const FAST_CEILING: &str = "A fast set's reference reaching the informed bot is the sample's, not the order's; the full ladder decides";
 const THIN_SAMPLE: &str = "The reference lost money on this small sample, but not by enough to say its edge is gone; the full ladder decides";
 
 /// Whether `xs` (a reference's per-session PnL) lose money with confidence: a
@@ -987,15 +993,44 @@ fn t_critical(df: usize) -> f64 {
     }
 }
 
-/// Whether a rule names the `reference` rung among its terms.
-fn rule_names_reference(rule: &str) -> bool {
+/// Whether a rule names `rung` among its terms.
+fn rule_names(rule: &str, rung: &str) -> bool {
     rule.split(|c: char| c.is_whitespace() || "<>=(),".contains(c))
-        .any(|t| t == "reference")
+        .any(|t| t == rung)
+}
+
+/// Where a ladder's reference reached its informed bot: a set v2 refused to
+/// scale, or one whose reference total is at or above the informed bot's.
+/// `None` when no set did, or the task has no anchors (v1).
+fn ceiling_breach(summary: &LadderSummary, anchors: Option<&Anchors>) -> Option<String> {
+    let anchors = anchors?;
+    let mut breaches = Vec::new();
+    for (k, totals) in summary.totals.iter().enumerate() {
+        let refused = summary.v2_refused.get(k).cloned().flatten();
+        let (reference, informed) = (
+            totals.get(&anchors.reference),
+            totals.get(&anchors.informed),
+        );
+        match (refused, reference, informed) {
+            (Some(why), _, _) => breaches.push(format!("set {}: v2 refused it ({why})", k + 1)),
+            (None, Some(r), Some(i)) if r >= i => breaches.push(format!(
+                "set {}: the reference ${r:.2} reaches the informed bot's ${i:.2}",
+                k + 1
+            )),
+            _ => {}
+        }
+    }
+    (!breaches.is_empty()).then(|| breaches.join("; "))
 }
 
 /// The checks the ladder answers: the reference and nop anchors, the order,
 /// the signal gate, the exploit bots, clean runs.
-pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> Vec<Check> {
+pub fn ladder_checks(
+    summary: &LadderSummary,
+    gate: &SignalGate,
+    anchors: Option<&Anchors>,
+    fast: bool,
+) -> Vec<Check> {
     let mut checks = Vec::new();
     let sets = summary.totals.len();
     let reference: Vec<f64> = summary
@@ -1061,7 +1096,18 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
         .map(|r| r.rule.as_str())
         .collect();
     // A noisy reference loss makes inconclusive only the rules that name it.
-    let broken_other = broken.iter().any(|r| !rule_names_reference(r));
+    let broken_other = broken.iter().any(|r| !rule_names(r, "reference"));
+    // A reference at or past the informed bot on a fast set is the anchors'
+    // order, which twelve sessions can't settle (the ladder's floor is a
+    // full set's): inconclusive there, as the band is, for the rules that
+    // compare the two anchors and nothing else broken. The full ladder fails
+    // on it.
+    let breach = ceiling_breach(summary, anchors);
+    let only_anchor_rules = anchors.is_some_and(|a| {
+        broken
+            .iter()
+            .all(|r| rule_names(r, &a.reference) && rule_names(r, &a.informed))
+    });
     let order_detail = if broken.is_empty() {
         format!(
             "{} rule{} hold on {sets} set{} of {} sessions",
@@ -1092,6 +1138,23 @@ pub fn ladder_checks(summary: &LadderSummary, gate: &SignalGate, fast: bool) -> 
             Status::Inconclusive,
             format!("{order_detail}. {THIN_SAMPLE}"),
         )
+    } else if let Some(breach) = breach {
+        if fast && only_anchor_rules {
+            Check::new(
+                SOLVABLE,
+                "ladder-order",
+                "Skill ladder keeps its order",
+                Status::Inconclusive,
+                format!("{order_detail}. {breach}. {FAST_CEILING}"),
+            )
+        } else {
+            Check::fail(
+                SOLVABLE,
+                "ladder-order",
+                "Skill ladder keeps its order",
+                format!("{order_detail}. {breach}"),
+            )
+        }
     } else {
         Check::from(
             SOLVABLE,
@@ -1264,6 +1327,19 @@ fn probe_check(summary: &LadderSummary, fast: bool) -> Check {
                     .unwrap_or("no reason given")
             ),
         );
+    }
+    if summary.probes_status.as_deref() == Some("unscored") {
+        let why = "v2 refused a set, so the probes have no v2 grade to be judged on";
+        if fast {
+            return Check::new(
+                GRADED,
+                id,
+                title,
+                Status::Inconclusive,
+                format!("{why}. {FAST_CEILING}"),
+            );
+        }
+        return Check::fail(GRADED, id, title, why);
     }
     let Some(probes) = summary.probes.as_ref().filter(|p| !p.is_empty()) else {
         return Check::fail(
@@ -1893,7 +1969,16 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
     let summary = match std::fs::read_to_string(&summary_path) {
         Ok(text) => match serde_json::from_str::<LadderSummary>(&text) {
             Ok(summary) => {
-                checks.extend(ladder_checks(&summary, &signal, opts.fast));
+                // A malformed `anchors` fails the strength band, which says why.
+                let anchors: Option<Anchors> = config
+                    .get("anchors")
+                    .and_then(|a| serde_json::from_value(a.clone()).ok());
+                checks.extend(ladder_checks(
+                    &summary,
+                    &signal,
+                    anchors.as_ref(),
+                    opts.fast,
+                ));
                 Some(summary)
             }
             Err(e) => {
@@ -2098,6 +2183,7 @@ mod tests {
             probes_status: None,
             probes_exempt: None,
             pnls: vec![],
+            v2_refused: vec![],
         }
     }
 
@@ -2601,7 +2687,7 @@ mod tests {
             reasons: vec!["profitable in 90% of sessions".into()],
             ..Default::default()
         });
-        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]), false);
+        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]), None, false);
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("reference-scores-1"), Status::Pass);
         assert_eq!(status("nop-scores-0"), Status::Pass);
@@ -2614,7 +2700,7 @@ mod tests {
             rung: "reference".into(),
             scenarios: vec!["a".into()],
         });
-        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]), false);
+        let checks = ladder_checks(&s, &gate(&["told"], &["fade"]), None, false);
         let status = |id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
         assert_eq!(status("nop-scores-0"), Status::Fail);
         assert_eq!(status("ladder-clean"), Status::Fail);
@@ -2647,10 +2733,10 @@ mod tests {
             ("told", &told[..]),
         ]]);
         rules(&mut s);
-        let fast = ladder_checks(&s, &g, true);
+        let fast = ladder_checks(&s, &g, None, true);
         assert_eq!(status(&fast, "reference-scores-1"), Status::Inconclusive);
         assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
-        let full = ladder_checks(&s, &g, false);
+        let full = ladder_checks(&s, &g, None, false);
         assert_eq!(status(&full, "reference-scores-1"), Status::Fail);
         assert_eq!(status(&full, "ladder-order"), Status::Fail);
         // Losing in nearly every session is not noise.
@@ -2662,17 +2748,93 @@ mod tests {
             ("told", &told[..]),
         ]]);
         rules(&mut s);
-        let fast = ladder_checks(&s, &g, true);
+        let fast = ladder_checks(&s, &g, None, true);
         assert_eq!(status(&fast, "reference-scores-1"), Status::Fail);
         assert_eq!(status(&fast, "ladder-order"), Status::Fail);
     }
 
     #[test]
+    fn a_fast_sets_reference_at_the_informed_bot_is_inconclusive_and_fails_the_full_gates() {
+        // liquidation-flash's 12 public sessions: the reference $69.83, the
+        // informed bot $69.30, so v2 refused the set and the ladder compared
+        // its rungs on raw PnL.
+        let reference = [
+            9.0, 4.5, 0.0, 12.33, 3.0, 7.0, 0.0, 11.0, 6.0, 5.0, 8.0, 4.0,
+        ];
+        let informed = [8.0, 6.0, 0.0, 10.0, 4.3, 7.0, 0.0, 12.0, 5.0, 6.0, 6.0, 5.0];
+        let min_tip = [7.0, 4.0, 0.0, 9.0, 3.0, 6.0, 0.0, 9.0, 5.0, 4.0, 6.0, 3.0];
+        let mut s = sessions(&[&[
+            ("nop", &[0.0; 12][..]),
+            ("min-tip", &min_tip[..]),
+            ("reference", &reference[..]),
+            ("informed", &informed[..]),
+        ]]);
+        s.v2_refused = vec![Some(
+            "anchors too close to scale on: the reference (69.83) reaches the ceiling (69.3)"
+                .into(),
+        )];
+        let rule = |rule: &str, ok: bool| RuleResult {
+            rule: rule.into(),
+            ok,
+            sets_holding: usize::from(ok),
+            sets: 1,
+            odds: if ok { 1.0 } else { 0.4 },
+        };
+        s.rules = vec![
+            rule("min-tip < reference", true),
+            rule("reference < informed", false),
+        ];
+        let g = gate(&["informed"], &["nop"]);
+        let a = anchors();
+        let status =
+            |checks: &[Check], id: &str| checks.iter().find(|c| c.id == id).unwrap().status;
+        let fast = ladder_checks(&s, &g, Some(&a), true);
+        assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
+        let settings = scoring_text::Settings::default();
+        assert_eq!(
+            strength_band(&s, &a, &settings, true).status,
+            Status::Inconclusive
+        );
+        let full = ladder_checks(&s, &g, Some(&a), false);
+        assert_eq!(status(&full, "ladder-order"), Status::Fail);
+        assert!(
+            full.iter()
+                .find(|c| c.id == "ladder-order")
+                .unwrap()
+                .detail
+                .contains("v2 refused")
+        );
+        assert_eq!(strength_band(&s, &a, &settings, false).status, Status::Fail);
+        // Without the anchors' names, a broken rule is a broken rule.
+        assert_eq!(
+            status(&ladder_checks(&s, &g, None, true), "ladder-order"),
+            Status::Fail
+        );
+        // Another rule broken beside it fails the fast gates too: only the
+        // anchors' order is the sample's.
+        s.rules[0] = rule("min-tip < reference", false);
+        let fast = ladder_checks(&s, &g, Some(&a), true);
+        assert_eq!(status(&fast, "ladder-order"), Status::Fail);
+        // A ceiling reached with no refusal recorded (an older summary) is
+        // the same breach.
+        s.rules[0] = rule("min-tip < reference", true);
+        s.v2_refused.clear();
+        let fast = ladder_checks(&s, &g, Some(&a), true);
+        assert_eq!(status(&fast, "ladder-order"), Status::Inconclusive);
+        // A probe gate a refused set leaves unscored is inconclusive on a fast
+        // set, a failure on the full one.
+        s.probes_status = Some("unscored".into());
+        assert_eq!(probe_check(&s, true).status, Status::Inconclusive);
+        assert_eq!(probe_check(&s, false).status, Status::Fail);
+    }
+
+    #[test]
     fn a_rule_names_the_reference_only_as_a_term() {
-        assert!(rule_names_reference("reference < informed < hindsight"));
-        assert!(rule_names_reference("min(reference, fade) < informed"));
-        assert!(!rule_names_reference("fade < momentum"));
-        assert!(!rule_names_reference("fade < reference_like"));
+        assert!(rule_names("reference < informed < hindsight", "reference"));
+        assert!(rule_names("min(reference, fade) < informed", "reference"));
+        assert!(rule_names("min(reference, fade) < informed", "informed"));
+        assert!(!rule_names("fade < momentum", "reference"));
+        assert!(!rule_names("fade < reference_like", "reference"));
     }
 
     #[test]

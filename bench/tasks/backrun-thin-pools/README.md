@@ -9,7 +9,7 @@ transaction, racing competing searchers in a Jito-style auction.
 | | |
 | --- | --- |
 | Market | Six Orca Whirlpools and four Raydium CLMM pools over SOL, USDC, JitoSOL, JTO and GEOD; mainnet snapshot of 2026-11-21 (`thin-pools-2026-11-21`) |
-| Sessions | 72 hidden per grade (about a tenth hold no trigger); 8 practice. Each is 400–800 slots. |
+| Sessions | 144 hidden per grade (about a tenth hold no trigger; twice the older tasks' 72, see `DESIGN.md`); 8 practice. Each is 400–800 slots. |
 | Mandate | v0.3.0: any Orca or Raydium pool among the five tokens, SOL the numeraire with at most $5 of anything else after each transaction, $1,000 of fees and tips, $200 loss limit |
 | Bound | None: scored by v2 alone |
 | Reference | v2's 0.5. On each trigger, every cycle through SOL of two and three legs, gated by its marginal rate after fees, sized on exact quotes; the best as one atomic group whose last limit is its least profit, tipping 50% of the profit it expects |

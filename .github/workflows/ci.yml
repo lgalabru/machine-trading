@@ -84,15 +84,21 @@ jobs:
         # practice (`practice_reference = false` in task.toml) carries none:
         # agents shown the reference's PnL tune toward it.
         run: |
+          # A v1 scenario keeps both at its top; a v2 one (`"schema": 2`)
+          # keeps the baseline in `scoring` and the path in `market_model`.
+          # A lending session has no path: its prices move through its
+          # oracle feeds (docs/scenario-format.md).
+          baseline='if .schema == 2 then .scoring.reference_pnl_usd else .reference_pnl_usd end'
+          moves='if .schema == 2 then ((.market_model.path | length > 0) or (.venues.lending != null)) else (.path | length > 0) end'
           for f in bench/tasks/*/environment/practice/*.json; do
             task="${f%%/environment/*}"
             if grep -q '^practice_reference *= *false' "$task/task.toml"; then
               echo "$f: no baseline expected ($task hides its reference from practice)"
-              jq -e '(.reference_pnl_usd == null) and (.path | length > 0)' "$f" > /dev/null \
+              jq -e "(($baseline) == null) and ($moves)" "$f" > /dev/null \
                 || { echo "::error file=$f::a hidden reference's practice scenario has a baseline, or no path"; exit 1; }
               continue
             fi
-            jq -e '(.reference_pnl_usd | type == "number") and (.path | length > 0)' "$f" > /dev/null \
+            jq -e "(($baseline) | type == \"number\") and ($moves)" "$f" > /dev/null \
               || { echo "::error file=$f::missing reference_pnl_usd or path"; exit 1; }
           done
 
@@ -108,8 +114,21 @@ jobs:
     needs: ci-image
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    container: ${{ needs.ci-image.outputs.image }}
+    container:
+      image: ${{ needs.ci-image.outputs.image }}
+      # The runner's own disk, so the first step can clear it.
+      volumes:
+        - /:/host
     steps:
+      - name: Free the runner's disk
+        # The workspace's debug builds (every reference, informed bot and
+        # check bot links the Solana crates) outgrew the runner's disk: the
+        # job died with "No space left on device". The toolchains the
+        # runner ships that this job never uses are about 25 GB.
+        run: |
+          cd /host
+          rm -rf usr/share/dotnet usr/local/lib/android opt/ghc opt/hostedtoolcache/CodeQL usr/local/.ghcup usr/share/swift
+          df -h /host
       - uses: actions/checkout@v4
       - name: Toolchain and libraries
         if: needs.ci-image.outputs.prebuilt != 'true'

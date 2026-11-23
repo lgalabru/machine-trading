@@ -28,8 +28,8 @@ ahead of competing liquidators.
 - **Mandate:** v0.3.0 (`specs/examples/liquidation-flash.json`): SOL and
   USDC reserves (no borrowing), any Orca or Raydium SOL/USDC pool, flash
   borrows up to 250,000 USDC, at most $100 of anything but USDC after any
-  transaction, $300 of fees and tips, a $500 loss limit; 72 hidden
-  sessions per grade.
+  transaction, $300 of fees and tips, a $500 loss limit; 144 hidden
+  sessions per grade, twice the other tasks' ("Statistical power").
 
 ## Expert research
 
@@ -151,7 +151,7 @@ threshold, and a bot that reads the upstream sees it then: there is
 nothing to infer, only to compute. What isn't visible is the competition:
 which rival races which obligation is the auction's draw, and how each bids
 shows only in the races a bot plays (their landed transactions and tips).
-Over 72 sessions about a quarter liquidate nothing (the path never dips
+Over a set of sessions about a quarter liquidate nothing (the path never dips
 past the tightest borrower).
 
 ## Fairness
@@ -200,7 +200,22 @@ should come from composition first and bidding second.
 
 ## Calibration
 
-- **Three hidden sets** (2026-11-23, after the rival range was centred
+- **Three hidden sets of 144** (2026-11-23, the set doubled; three fresh
+  secrets, each rung graded on each, `ladder.py --sets 3`; bootstrap
+  odds per set, floor 0.85):
+
+  | Draw | reference | informed | ratio (band 0.2–0.7) | Sharpe | `scope-reader` | `overbidder` | `min-tip` | `min-tip < reference` odds |
+  | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 1 | $303.54 | $614.13 | 0.49 | 0.61 | $114.7 | $18.0 | $269.0 | **0.84** |
+  | 2 | $324.74 | $672.51 | 0.48 | 0.56 | $134.0 | $48.5 | $275.5 | 0.90 |
+  | 3 | $396.40 | $598.29 | 0.66 | 0.55 | $134.2 | $22.0 | $271.8 | 1.00 |
+
+  No losing session for either anchor, no rung breached, the other two
+  rules at odds 1.00 on each draw, and the band held on all three; the
+  ladder holds (its odds are the draws' mean, 0.91). Draw 1's
+  `min-tip < reference` is 0.008 under the floor: see "Statistical
+  power", whose estimate these 432 sessions lowered.
+- **Three hidden sets of 72** (2026-11-23, after the rival range was centred
   and `scope-reader` tips the reference's share; three fresh 72-session
   secrets, each rung graded on each, `ladder.py --sets 3`; bootstrap odds
   per set, floor 0.85):
@@ -241,9 +256,24 @@ should come from composition first and bidding second.
   against fewer contested ones. Nor is the market short of contest: the
   rivals' winning liquidations landed in the slot the obligation turned
   in 76% of cases (100% above $1,000 repaid), against the research's 50%
-  (93%), so more in-slot rivals would leave the research. What would
-  settle the rule and the band: 144 to 216 hidden sessions (two to three
-  times a verifier run's time), not a looser rule or band.
+  (93%), so more in-slot rivals would leave the research. A looser rule
+  or band would hide the power problem, not solve it.
+- **The hidden set is 144 sessions**, twice the other tasks' 72, for that
+  power. On the 216 sessions above, `min-tip < reference` cleared the 0.85
+  floor on one fresh set of 144 with chance 0.95 (0.85 on all three of the
+  ladder's draws, against 0.80 and 0.52 at 72), and the reference's ratio
+  missed the band in 13% of sets (22% at 72). 144 doubles a verifier's
+  time (about 15 minutes of anchors, up to two hours for a slow bot,
+  inside the four-hour timeout), and narrows a model's score interval by
+  √2, which the task needs anyway: its score moves with a few contested
+  races a session. The three draws of 144 above held the band on each,
+  and the rule on two at 0.85 or more. Pooled with them (648 sessions),
+  the reference's lead over `min-tip` is $0.60 a session with $3.64 of
+  spread (z = 0.17, not 0.22): one set clears the floor with chance 0.83
+  at 144 (all three 0.57), 0.92 at 216 (0.78), 0.96 at 288 (0.89), and
+  the band misses 1.5% of sets of 144. The rule, not the band, now sets
+  the size: 216 or 288 sessions would meet the three-draw bar, at three
+  or four times a 72-session verifier's time.
 - **Rival bids, centred.** On the first family (a session's range's low
   end 0.15 to 0.5, its width 0.05 to 0.3: an average rival bidding 0.41,
   ranges up to 0.8), `min-tip` made 1.09 of the reference on one fresh

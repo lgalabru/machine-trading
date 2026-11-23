@@ -121,6 +121,13 @@ pub enum Error {
         "the machine was too loaded to run these sessions on time, so they can't be scored: {0}; rerun on an idle machine"
     )]
     Degraded(String),
+    /// An anchor (the reference or the informed bot) crashed, breached or
+    /// overran turns: the bot can't be scored against it. Not the machine's
+    /// load: sessions run on no clock.
+    #[error(
+        "{0}: the anchor didn't run cleanly, so the bot can't be scored against it; its session logs say why"
+    )]
+    AnchorBroken(String),
     #[error(
         "{0} is not calibrated: run `mtx calibrate`, and keep the set's total reference PnL positive"
     )]

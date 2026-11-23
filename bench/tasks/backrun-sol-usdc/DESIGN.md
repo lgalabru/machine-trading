@@ -240,6 +240,18 @@ models should come from composition and sizing first, bidding second.
   (Sharpe 0.46, 0.36, 0.36); `fixed-clip` 0.77, 0.66 and 0.70 of the
   reference, `min-tip` 0.10, 0.47 and 0.42; the rules at odds 0.99, 0.98
   and 1.00 or more on each.
+- **The fast gates' public set fails the order, on any machine.** `mtx
+  gates --fast` grades 12 public sessions (`gates-fast-v1`), and there
+  the reference lands in 3 of them, $29.40 in all (a hidden set's 12
+  average $250 to $570): `overbidder` makes 1.36 of it and `min-tip` 1.38
+  (odds 0.13 and 0.39), so `max(fixed-clip, overbidder) < reference` and
+  `min-tip < reference` fail. It is the sample: a Mac and sunburst give the
+  same PnL to the cent in every session, and single cycles decide it
+  (hidden-3: `min-tip`'s one landed cycle, $26.43, the same cycle whose
+  bundle ran out of compute for the reference after the next trigger
+  landed ahead of it, which 1 to 2% of either bot's bundles do on a hidden
+  set). The full ladder decides; the fast set can't rank rungs that differ
+  in a few races.
 - **The `fixed-clip` rung** tipped 0.5, the first reference's share, after
   the reference moved to 0.34 (0.2.0), so it won races the reference lost
   and its rule measured bidding as much as sizing: on the same three draws

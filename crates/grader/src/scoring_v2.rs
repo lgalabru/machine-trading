@@ -504,6 +504,12 @@ pub struct SessionV2 {
 /// ceiling: a set whose anchors are closer is refused.
 pub const MIN_ANCHOR_GAP: f64 = 0.05;
 
+/// Opens the error of a set refused because its anchors are too close (the
+/// reference at or past the ceiling, or within [`MIN_ANCHOR_GAP`] of it).
+/// The skill ladder (bench/checks/ladder/ladder.py) reads it to tell this
+/// refusal, a property of the sessions drawn, from a grade that broke.
+pub const ANCHORS_TOO_CLOSE: &str = "anchors too close to scale on";
+
 /// What a session's scale is read from, by name.
 fn anchors_of(s: &Session) -> Vec<(&'static str, f64)> {
     let mut anchors = vec![
@@ -636,7 +642,8 @@ pub fn score(
     let anchor = sums.anchor(phi);
     if anchor >= sums.ceiling {
         return Err(format!(
-            "the reference ({anchor}) reaches the ceiling ({}): the ceiling is too low",
+            "{ANCHORS_TOO_CLOSE}: the reference ({anchor}) reaches the ceiling ({}): the \
+             ceiling is too low",
             sums.ceiling
         ));
     }
@@ -644,8 +651,8 @@ pub fn score(
     // the more a cent of PnL moves the score.
     if anchor > (1.0 - MIN_ANCHOR_GAP) * sums.ceiling {
         return Err(format!(
-            "the reference ({anchor}) and the ceiling ({}) are less than {}% apart: the \
-             scale between them is too short to score on",
+            "{ANCHORS_TOO_CLOSE}: the reference ({anchor}) and the ceiling ({}) are less \
+             than {}% apart: the scale between them is too short to score on",
             sums.ceiling,
             MIN_ANCHOR_GAP * 100.0
         ));
@@ -1650,7 +1657,16 @@ mod tests {
         let wide = [142.5 - 1e-9; 6];
         assert!(score(&set(&[100.0; 6], &wide), &informed(), None, None).is_ok());
         let inside = [143.0; 6];
-        assert!(score(&set(&[100.0; 6], &inside), &informed(), None, None).is_err());
+        let refused = score(&set(&[100.0; 6], &inside), &informed(), None, None).unwrap_err();
+        assert!(refused.starts_with(ANCHORS_TOO_CLOSE), "{refused}");
+        // A reference past the informed bot is the same refusal, by the same
+        // words: the ladder tells it from a broken grade by them.
+        let above = [151.0; 6];
+        let refused = score(&set(&[100.0; 6], &above), &informed(), None, None).unwrap_err();
+        assert!(
+            refused.starts_with(ANCHORS_TOO_CLOSE) && refused.contains("reaches the ceiling"),
+            "{refused}"
+        );
     }
 
     #[test]

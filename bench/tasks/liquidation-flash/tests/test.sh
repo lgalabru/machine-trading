@@ -39,10 +39,13 @@ fi
 # The informed bot, v2's 1, runs on the same sessions after the reference,
 # told each session's latent state (how the liquidators bid and race, the
 # keeper's cadence; never the path); the bot is told nothing.
+# 144 sessions, twice the other tasks' 72: the reference's lead over a bot
+# that tips the least is a few contested races a session, too thin for 72 to
+# rank the two (DESIGN.md, "Statistical power").
 mtx grade \
   --informed /opt/mtx/anchors/liquidation-flash-informed \
   --draw liquidation-flash \
-  --count 72 \
+  --count 144 \
   --reference /opt/mtx/anchors/liquidation-flash \
   --anchor-jobs 4 \
   --jobs 4 \

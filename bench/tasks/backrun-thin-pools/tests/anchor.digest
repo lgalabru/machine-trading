@@ -8,4 +8,4 @@
 format: 1
 anchors: reference and informed bot
 inputs: e3046c8c116872adf07480898a52a89d6695a48ed5e223698573fc018cb70dfd
-digest: pending: run `mtx task sync --anchors` on Linux
+digest: eb80fd7166301ff26bd0f7988551f7c73e64ade6f0f1bbc8fbb6245e8c96cbac

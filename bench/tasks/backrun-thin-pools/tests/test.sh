@@ -40,10 +40,13 @@ fi
 # told each session's latent state (each searcher's latency, search depth
 # and bid rule, the calm flow's rate; never the triggers); the bot is told
 # nothing.
+# 144 sessions, twice most tasks' 72: the reference's share of
+# the informed bot rides on the few quiet sessions a set holds, too few in
+# 72 to keep it in the strength band (DESIGN.md, "Statistical power").
 mtx grade \
   --informed /opt/mtx/anchors/backrun-thin-pools-informed \
   --draw backrun-thin-pools \
-  --count 72 \
+  --count 144 \
   --reference /opt/mtx/anchors/backrun-thin-pools \
   --anchor-jobs 4 \
   --jobs 4 \
