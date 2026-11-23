@@ -385,6 +385,41 @@ impl State {
         }
     }
 
+    /// `pool`'s state from accounts already read, or the accounts it still
+    /// needs: for a host that keeps the accounts itself, as the live
+    /// runtime does in the cache the chain's writes fill. `account` says
+    /// what is known of each. A pool's tick arrays depend on its price, and
+    /// a Raydium pool's on its bitmap extension, so a state is assembled in
+    /// up to [`ASSEMBLY_ROUNDS_MAX`] rounds.
+    ///
+    /// [`State::read`] reads the same accounts from a node and doesn't go
+    /// through here: sessions replay to the atom, and the released tasks'
+    /// anchor digests moved when its reads were regrouped (2026-11-23), so
+    /// its reads stay exactly as they were.
+    pub fn assemble<'a>(
+        pool: &Pool,
+        timestamp_s: u64,
+        account: &dyn Fn(&Pubkey) -> Lookup<'a>,
+    ) -> Result<Assembly> {
+        let label = pool.instrument.to_string();
+        let data = match account(&pool.address) {
+            Lookup::Data(data) => data,
+            Lookup::Absent => return Err(venue_error(&label, "the pool is gone")),
+            Lookup::Unread => return Ok(Assembly::Needs(vec![pool.address])),
+        };
+        match pool.program {
+            Program::Whirlpool => {
+                let decoded =
+                    whirlpool::Whirlpool::decode(data).map_err(|e| venue_error(&label, e))?;
+                assemble_whirlpool(&label, &pool.address, decoded, timestamp_s, account)
+            }
+            Program::RaydiumClmm => {
+                let decoded = clmm::Pool::decode(data).map_err(|e| venue_error(&label, e))?;
+                assemble_clmm(&label, &pool.address, decoded, timestamp_s, account)
+            }
+        }
+    }
+
     /// The swap of `amount` atoms (in for [`Mode::ExactIn`], out for
     /// [`Mode::ExactOut`]) that `swap_v2` would execute on this state, with
     /// no price limit: an exact-out swap must fill entirely.
@@ -712,6 +747,155 @@ async fn read_clmm(
         tick_arrays,
         timestamp_s: clock_timestamp_s(label, clock.map(|a| a.data))?,
     })
+}
+
+/// What is known of an account a state is assembled from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lookup<'a> {
+    /// Nobody read it yet.
+    Unread,
+    /// It was read, and the chain holds no such account.
+    Absent,
+    Data(&'a [u8]),
+}
+
+/// A state, or what must be read before there is one.
+#[derive(Debug, Clone)]
+pub enum Assembly {
+    /// Boxed: a state is kilobytes, a list of keys isn't.
+    Ready(Box<State>),
+    Needs(Vec<Pubkey>),
+}
+
+/// Rounds of reads a state takes at most after its pool's account: a
+/// Whirlpool's tick arrays and oracle (one), a Raydium pool's config and
+/// extension, then its tick arrays (two).
+pub const ASSEMBLY_ROUNDS_MAX: usize = 2;
+
+/// The keys among `keys` nobody read yet.
+fn unread<'a>(keys: &[Pubkey], account: &dyn Fn(&Pubkey) -> Lookup<'a>) -> Vec<Pubkey> {
+    keys.iter()
+        .filter(|key| account(key) == Lookup::Unread)
+        .copied()
+        .collect()
+}
+
+/// A Whirlpool's tick arrays either way (an address with no account is an
+/// uninitialized array) and its oracle if it has one.
+fn assemble_whirlpool<'a>(
+    label: &str,
+    address: &Pubkey,
+    pool: whirlpool::Whirlpool,
+    timestamp_s: u64,
+    account: &dyn Fn(&Pubkey) -> Lookup<'a>,
+) -> Result<Assembly> {
+    let mut arrays: Vec<(i32, Pubkey)> = Vec::new();
+    for direction in [
+        whirlpool::SwapDirection::AToB,
+        whirlpool::SwapDirection::BToA,
+    ] {
+        for found in whirlpool::tick_array_addresses(address, &pool, direction) {
+            if !arrays.contains(&found) {
+                arrays.push(found);
+            }
+        }
+    }
+    let oracle_key = whirlpool::ix::oracle_address(address);
+    let mut keys: Vec<Pubkey> = arrays.iter().map(|&(_, key)| key).collect();
+    keys.push(oracle_key);
+    let needs = unread(&keys, account);
+    if !needs.is_empty() {
+        return Ok(Assembly::Needs(needs));
+    }
+    let oracle = match account(&oracle_key) {
+        Lookup::Data(data) => {
+            Some(whirlpool::Oracle::decode(data).map_err(|e| venue_error(label, e))?)
+        }
+        Lookup::Absent => None,
+        Lookup::Unread => unreachable!("every key was read"),
+    };
+    let mut tick_arrays = Vec::with_capacity(arrays.len());
+    for &(start, key) in &arrays {
+        tick_arrays.push(match account(&key) {
+            Lookup::Data(data) => {
+                whirlpool::TickArray::decode(data).map_err(|e| venue_error(label, e))?
+            }
+            Lookup::Absent => whirlpool::TickArray::uninitialized(*address, start),
+            Lookup::Unread => unreachable!("every key was read"),
+        });
+    }
+    Ok(Assembly::Ready(Box::new(State::Whirlpool {
+        pool,
+        tick_arrays,
+        oracle,
+        timestamp_s,
+    })))
+}
+
+/// A Raydium pool's config, bitmap extension and the initialized tick
+/// arrays a swap either way enters first.
+fn assemble_clmm<'a>(
+    label: &str,
+    address: &Pubkey,
+    pool: clmm::Pool,
+    timestamp_s: u64,
+    account: &dyn Fn(&Pubkey) -> Lookup<'a>,
+) -> Result<Assembly> {
+    let extension_key = clmm::ix::bitmap_extension_address(address);
+    let needs = unread(&[pool.amm_config, extension_key], account);
+    if !needs.is_empty() {
+        return Ok(Assembly::Needs(needs));
+    }
+    let config = match account(&pool.amm_config) {
+        Lookup::Data(data) => clmm::AmmConfig::decode(data).map_err(|e| venue_error(label, e))?,
+        Lookup::Absent => return Err(venue_error(label, "the pool's config is gone")),
+        Lookup::Unread => unreachable!("every key was read"),
+    };
+    let extension = match account(&extension_key) {
+        Lookup::Data(data) => Some(Box::new(
+            clmm::BitmapExtension::decode(data).map_err(|e| venue_error(label, e))?,
+        )),
+        Lookup::Absent => None,
+        Lookup::Unread => unreachable!("every key was read"),
+    };
+    let mut starts: Vec<i32> = Vec::new();
+    for direction in [Direction::BaseIn, Direction::QuoteIn] {
+        let found = clmm::tick_arrays_in_direction(
+            &pool,
+            extension.as_deref(),
+            clmm_direction(direction),
+            CLMM_TICK_ARRAYS_READ_MAX,
+        )
+        .map_err(|e| venue_error(label, e))?;
+        for start in found {
+            if !starts.contains(&start) {
+                starts.push(start);
+            }
+        }
+    }
+    let array_keys: Vec<Pubkey> = starts
+        .iter()
+        .map(|&start| clmm::ix::tick_array_address(address, start))
+        .collect();
+    let needs = unread(&array_keys, account);
+    if !needs.is_empty() {
+        return Ok(Assembly::Needs(needs));
+    }
+    // The bitmaps list initialized arrays only; one that is gone was
+    // closed since, and a quote that needs it says so.
+    let mut tick_arrays = Vec::with_capacity(array_keys.len());
+    for key in &array_keys {
+        if let Lookup::Data(data) = account(key) {
+            tick_arrays.push(clmm::TickArray::decode(data).map_err(|e| venue_error(label, e))?);
+        }
+    }
+    Ok(Assembly::Ready(Box::new(State::RaydiumClmm {
+        pool,
+        config,
+        extension,
+        tick_arrays,
+        timestamp_s,
+    })))
 }
 
 /// The clock sysvar's Unix time: after the slot, the epoch start, the epoch

@@ -21,6 +21,7 @@ pub mod events;
 pub mod feed;
 pub mod journal;
 pub mod perp;
+pub mod pools;
 pub mod reference;
 pub mod session;
 pub mod shadow;

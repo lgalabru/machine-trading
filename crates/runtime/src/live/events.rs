@@ -71,6 +71,12 @@ impl Events {
         let _ = self.sender.send(Arc::from(text));
     }
 
+    /// Whether anyone listens: work done only to tell an event (reading
+    /// and quoting a watched pool) isn't done for nobody.
+    pub fn has_listeners(&self) -> bool {
+        self.sender.receiver_count() > 0
+    }
+
     fn subscribe(&self) -> broadcast::Receiver<Arc<str>> {
         self.sender.subscribe()
     }

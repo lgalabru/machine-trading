@@ -36,6 +36,7 @@ use mtx_core::{
         OnPause, Reply, StrategyState, StrategyStatus,
     },
     events::{Event, PauseReason, Side as EventSide, StepTimings},
+    feed::Address,
     mandate::{InstrumentRef, Observed},
 };
 use mtx_kit::chain::RpcChainClient;
@@ -95,6 +96,10 @@ pub struct ControlConfig {
     /// its trades (`live::watching`): none by default.
     #[serde(default)]
     pub watch: Option<super::watching::WatchConfig>,
+    /// Pools watched without trading them, each told as a `pool` when a
+    /// write changes it (`live::pools`): none by default.
+    #[serde(default)]
+    pub pools: Option<super::pools::PoolsConfig>,
 }
 
 /// Four: a step is a fraction of a millisecond of one core, and four let
@@ -253,6 +258,7 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<std::thread::JoinH
                 let mut manager = Manager::new(config, shared, tpu);
                 manager.restore().await;
                 manager.start_watching().await;
+                manager.start_pools().await;
                 manager.serve(slots, received).await;
             });
             // The commands' receiver is gone with the manager: the
@@ -718,13 +724,17 @@ impl Ctx {
     /// Watch a new strategy's accounts, and read them once from the node:
     /// the feed only tells of writes.
     async fn backfill(&self, reader: &PerpReader) -> Result<(), String> {
-        let addresses = reader.addresses();
-        for address in &addresses {
+        self.backfill_addresses(&reader.addresses()).await
+    }
+
+    /// Watch `addresses`, and read them once from the node.
+    async fn backfill_addresses(&self, addresses: &[Address]) -> Result<(), String> {
+        for address in addresses {
             self.shared.watch.add(*address)?;
         }
         let chain = RpcChainClient::with_timeout(&self.config.rpc_url, BACKFILL_TIMEOUT);
         let mut found = AccountCache::default();
-        super::backfill(&chain, &addresses, &mut found).await?;
+        super::backfill(&chain, addresses, &mut found).await?;
         lock(&self.shared.cache).merge(found);
         Ok(())
     }
@@ -755,6 +765,8 @@ struct Manager {
     tapes: BTreeMap<String, super::journal::TapeReader>,
     /// The markets watched without trading them (`control.watch`).
     watching: Option<super::watching::Watching>,
+    /// The pools watched without trading them (`control.pools`).
+    pools: Option<super::pools::Pools>,
     /// Strategies being added, off the loop: their names are taken.
     adding: std::collections::BTreeSet<String>,
     /// Where an `add`'s task hands back the strategy it prepared.
@@ -772,6 +784,7 @@ impl Manager {
             slot: 0,
             tapes: BTreeMap::new(),
             watching: None,
+            pools: None,
             adding: std::collections::BTreeSet::new(),
             prepared: {
                 let (sender, receiver) = mpsc::channel(STRATEGIES_MAX);
@@ -851,6 +864,121 @@ impl Manager {
             infos,
             config.every_slots,
         ));
+    }
+
+    /// Start watching `control.pools`' pools: each read once from the node
+    /// for what never changes about it, its account into the feed and the
+    /// cache. A pool that can't be read is left out, and said so.
+    async fn start_pools(&mut self) {
+        let Some(config) = self.config.pools.clone() else {
+            return;
+        };
+        if let Err(error) = config.validate() {
+            tracing::error!(%error, "the watched pools' configuration is refused; none is watched");
+            return;
+        }
+        let chain = RpcChainClient::with_timeout(&self.config.rpc_url, BACKFILL_TIMEOUT);
+        let mut watched = Vec::new();
+        for instrument in &config.pools {
+            let pool = match crate::venue::amm::Pool::read(&chain, instrument).await {
+                Ok(pool) => pool,
+                Err(error) => {
+                    tracing::warn!(%instrument, %error, "a watched pool can't be read");
+                    continue;
+                }
+            };
+            let pool = super::pools::Watched::new(pool);
+            if let Err(error) = self.ctx().backfill_addresses(&pool.addresses()).await {
+                tracing::warn!(%instrument, %error, "a watched pool's account wasn't found");
+                continue;
+            }
+            watched.push(pool);
+        }
+        tracing::info!(pools = watched.len(), "watching pools");
+        self.pools = Some(super::pools::Pools::new(watched, &config));
+    }
+
+    /// Read every watched pool a write changed, or that is due again, each
+    /// told as a `pool`: only when someone listens. Nothing here waits on
+    /// the node: a pool whose price needs accounts not read yet is left
+    /// for a later slot, while a task reads them.
+    fn emit_pools(&mut self, slot: u64) {
+        if !self.shared.events.has_listeners() {
+            return;
+        }
+        // Taken out for the reads, which borrow the manager's context.
+        let Some(mut pools) = self.pools.take() else {
+            return;
+        };
+        for pool in &mut pools.watched {
+            let written_slot = {
+                let cache = lock(&self.shared.cache);
+                cache.slot(&pool.pool.address.to_bytes())
+            };
+            // A write of a later slot than the one stepped on is read
+            // when its slot is.
+            let Some(written_slot) = written_slot.filter(|written| *written <= slot) else {
+                continue;
+            };
+            if !pool.due(slot, written_slot, pools.every_slots) {
+                continue;
+            }
+            let started = std::time::Instant::now();
+            match self.read_pool(pool) {
+                Ok(Some(state)) => {
+                    let event = pool.told(&state, &pools.rungs_bps, slot, written_slot, started);
+                    if let Event::Pool { read_us, .. } = &event {
+                        tracing::info!(
+                            histogram.mtx_pool_read_us = *read_us,
+                            counter.mtx_pool_reads = 1_u64,
+                            pool = %pool.pool.instrument,
+                            "a watched pool was read"
+                        );
+                    }
+                    self.shared.events.emit(event);
+                }
+                // Its accounts are on their way from the node.
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        counter.mtx_pool_read_failures = 1_u64,
+                        pool = %pool.pool.instrument,
+                        %error,
+                        "a watched pool wasn't read"
+                    );
+                }
+            }
+        }
+        self.pools = Some(pools);
+    }
+
+    /// A pool's state from the cache, or `None` while the accounts its
+    /// price newly needs are read from the node, off this loop.
+    fn read_pool(
+        &self,
+        pool: &mut super::pools::Watched,
+    ) -> Result<Option<crate::venue::amm::State>, String> {
+        use crate::venue::amm::Assembly;
+        if !pool.fetched()? {
+            return Ok(None);
+        }
+        let timestamp_s = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        let snapshot = lock(&self.shared.cache).snapshot(&pool.addresses());
+        match pool.assemble(&snapshot, timestamp_s)? {
+            Assembly::Ready(state) => Ok(Some(*state)),
+            Assembly::Needs(keys) => {
+                let ctx = self.ctx();
+                let addresses: Vec<Address> = keys.iter().map(Pubkey::to_bytes).collect();
+                let outcome = pool.fetch(keys)?;
+                tokio::spawn(async move {
+                    // Set once, by this task alone.
+                    let _ = outcome.set(ctx.backfill_addresses(&addresses).await);
+                });
+                Ok(None)
+            }
+        }
     }
 
     /// Read this slot's share of the watched markets, each told as a
@@ -1018,6 +1146,7 @@ impl Manager {
                     // strategy's business.
                     self.emit_trades();
                     self.emit_quotes(self.slot);
+                    self.emit_pools(self.slot);
                 }
                 request = commands.recv() => {
                     let Some((command, reply)) = request else {

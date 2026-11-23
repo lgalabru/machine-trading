@@ -186,6 +186,27 @@ fn lines() -> Vec<(Event, &'static str)> {
             r#"{"at_us":1,"event":"quote","symbol":"MEGA","slot":472500000,"best_bid":0.04661,"best_ask":null,"mark":0.04666}"#,
         ),
         (
+            Event::Pool {
+                venue: "orca".into(),
+                address: "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE".into(),
+                slot: 472500002,
+                written_slot: 472500001,
+                base: "So11111111111111111111111111111111111111112".into(),
+                quote: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".into(),
+                mid: 70.25,
+                fee_bps: 4.0,
+                liquidity: 1.5e15,
+                sells: vec![mtx_core::events::PoolRung {
+                    bps: 5.0,
+                    amount_in: 120.5,
+                    amount_out: 8459.75,
+                }],
+                buys: vec![],
+                read_us: 310,
+            },
+            r#"{"at_us":1,"event":"pool","venue":"orca","address":"Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE","slot":472500002,"written_slot":472500001,"base":"So11111111111111111111111111111111111111112","quote":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","mid":70.25,"fee_bps":4.0,"liquidity":1500000000000000.0,"sells":[{"bps":5.0,"amount_in":120.5,"amount_out":8459.75}],"buys":[],"read_us":310}"#,
+        ),
+        (
             Event::Lagged { dropped: 12 },
             r#"{"at_us":1,"event":"lagged","dropped":12}"#,
         ),
