@@ -36,7 +36,10 @@
 //!   a strategy can be tested without a chain: build markets and call
 //!   [`step_offline`].
 
-use std::error::Error as StdError;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    error::Error as StdError,
+};
 
 use crate::Mandate;
 
@@ -153,6 +156,7 @@ impl From<mtx_core::mandate::Kind> for MarketKind {
             mtx_core::mandate::Kind::Perp => MarketKind::Perp,
             mtx_core::mandate::Kind::Spot => MarketKind::Spot,
             mtx_core::mandate::Kind::MoneyMarket => MarketKind::Lending,
+            mtx_core::mandate::Kind::Amm => MarketKind::Amm,
         }
     }
 }
@@ -509,6 +513,11 @@ pub struct Market {
     pub notes: Vec<String>,
     /// The fee market, where the session reports it.
     pub fees: Option<FeeView>,
+    /// On a trigger step, the transaction the step ended right behind: it
+    /// has landed, its slot is still open, and what the sheet sends now
+    /// competes for the rest of that slot (ADR 0004). `None` on every other
+    /// step.
+    pub trigger: Option<mtx_core::turns::Trigger>,
 }
 
 /// A venue at one step.
@@ -952,6 +961,17 @@ pub enum Intent {
         repay: f64,
         min_received: Option<f64>,
     },
+    /// On a lending reserve, inside an atomic group ([`TxOptions::atomic`]):
+    /// borrow `amount` of the reserve's asset for the group, repaid with
+    /// the reserve's flash fee after the group's last line. A group holds
+    /// at most one; outside a group it isn't sent.
+    Flash {
+        amount: f64,
+    },
+    /// On a lending reserve: refresh its oracle prices (Scope's
+    /// `refresh_price_list`) at the head of the transaction. In an atomic
+    /// group, every one moves to the group's head, in sheet order.
+    PushPrice,
 }
 
 /// How liquidity spreads over a range of bins (Meteora DLMM's strategies).
@@ -1018,6 +1038,12 @@ pub struct TxOptions {
     /// hasn't landed; once its blockhash expires, sign it again with a new
     /// one, after checking it didn't land.
     pub retry_until_slot: Option<u64>,
+    /// Lines with the same atomic id are one transaction, which lands whole
+    /// or not at all: their lines must be next to each other on the sheet,
+    /// and they are planned whole ([`plan_sheet`]). The group is sent with
+    /// its first line's options. Unlike the rest of these options, it
+    /// applies in every session.
+    pub atomic: Option<u32>,
 }
 
 /// What a line of the sheet says beyond its intent. The default is the
@@ -1066,8 +1092,21 @@ const DEFAULT_OPTIONS: LineOptions = LineOptions {
 ///
 /// Each call adds a line; [`Orders::at`], [`Orders::client_id`],
 /// [`Orders::post_only`], [`Orders::ioc`], [`Orders::reduce_only`],
-/// [`Orders::participation`] and [`Orders::tx`] change the line added last:
-/// `orders.bid(99.0, 5.0).post_only()`.
+/// [`Orders::participation`], [`Orders::tx`] and [`Orders::atomic`] change
+/// the line added last: `orders.bid(99.0, 5.0).post_only()`. An atomic
+/// route is lines in one group:
+///
+/// ```
+/// # use mtx_kit::{AmountUnit, Orders, Side};
+/// let mut orders = Orders::new();
+/// // Borrow 10 SOL, sell them for at least 150 USDC each on one pool, buy
+/// // them back on another with the 1,500 USDC at no more than 149.7: at
+/// // least 10.02 SOL, enough to repay the loan and its fee.
+/// orders
+///     .flash(10.0).at("kamino:money-market:SOL").atomic(1)
+///     .swap(Side::Ask, 10.0, AmountUnit::Base, 150.0).at("orca:amm:pool").atomic(1)
+///     .swap(Side::Bid, 1_500.0, AmountUnit::Quote, 149.7).at("raydium:amm:pool").atomic(1);
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct Orders {
     intents: Vec<Intent>,
@@ -1260,6 +1299,27 @@ impl Orders {
         })
     }
 
+    /// Borrow `amount` of a lending reserve's asset for the atomic group the
+    /// line is in (put it in one with [`Orders::atomic`]), repaid with the
+    /// reserve's flash fee after the group's last line.
+    pub fn flash(&mut self, amount: f64) -> &mut Self {
+        self.add(Intent::Flash { amount })
+    }
+
+    /// Refresh a lending reserve's oracle prices at the head of the
+    /// transaction: the head of its atomic group, if it is in one.
+    pub fn push_price(&mut self) -> &mut Self {
+        self.add(Intent::PushPrice)
+    }
+
+    /// The last line is in the atomic group `id`: every line with the same
+    /// id lands in one transaction, or none does. A group's lines must be
+    /// next to each other on the sheet. Keeps the line's other transaction
+    /// options.
+    pub fn atomic(&mut self, id: u32) -> &mut Self {
+        self.last(|o| o.tx.get_or_insert_with(TxOptions::default).atomic = Some(id))
+    }
+
     /// The last line is for `venue`, one of [`Session::venues`]' ids.
     pub fn at(&mut self, venue: &str) -> &mut Self {
         self.last(|o| o.venue = Some(venue.to_string()))
@@ -1302,9 +1362,13 @@ impl Orders {
     }
 
     /// The last line's transactions are sent with `options`, where the
-    /// session applies them.
+    /// session applies them. A line already in an atomic group
+    /// ([`Orders::atomic`]) stays in it unless `options` names another.
     pub fn tx(&mut self, options: TxOptions) -> &mut Self {
-        self.last(|o| o.tx = Some(options))
+        self.last(|o| {
+            let atomic = options.atomic.or(o.tx.and_then(|tx| tx.atomic));
+            o.tx = Some(TxOptions { atomic, ..options })
+        })
     }
 
     /// What the sheet holds so far, without the lines' options.
@@ -1381,6 +1445,13 @@ pub enum Action {
         repay: f64,
         min_received: Option<f64>,
     },
+    /// A flash loan of `amount` of a lending reserve's asset, for the
+    /// atomic group it is in.
+    Flash {
+        amount: f64,
+    },
+    /// A refresh of a lending reserve's oracle prices.
+    PushPrice,
 }
 
 /// An order [`plan_sheet`] made of a line of the sheet.
@@ -1445,6 +1516,21 @@ pub fn plan(intents: &[Intent], market: &Market) -> (Vec<Action>, Vec<String>) {
 /// - A line that asks for what can't be done (a target with no positive
 ///   pacing, an amount or a price that isn't a number) is dropped, with a
 ///   note.
+/// - An atomic group ([`TxOptions::atomic`]) is planned whole: its lines are
+///   cut line by line as above, in sheet order, each counted as if it
+///   landed, and if any of them would be cut, dropped or changed (any note
+///   while planning them), none is planned, the counts are as if the group
+///   weren't on the sheet, and a note says so. A route whose first leg is
+///   cut would leave its later legs spending what it never got; a group
+///   either lands as the strategy wrote it or not at all. This is stricter
+///   than judging the group's net effect: a flash-funded leg counts in full
+///   against its venue's cap, as the mandate's audit sees each leg's
+///   venue. A group whose lines aren't next to each other on the sheet, or
+///   of more than [`MAX_ATOMIC_LINES`] lines, is refused whole; so is one
+///   with a target (paced over steps) or more than one flash loan.
+/// - A flash loan ([`Intent::Flash`]) counts for nothing: it is repaid in
+///   its transaction. Outside an atomic group it is dropped, with a note.
+///   A price push ([`Intent::PushPrice`]) counts for nothing either.
 pub fn plan_sheet(orders: &Orders, market: &Market) -> (Vec<Planned>, Vec<String>) {
     plan_lines(orders.lines(), market, &|_| None, &|_, _| true)
 }
@@ -1554,8 +1640,14 @@ fn plan_lines<'a>(
         market.resting_bids,
         market.resting_asks,
     )];
+    let lines: Vec<(&Intent, &LineOptions)> = lines.into_iter().collect();
+    let refused_groups = refused_groups(&lines);
+    let mut refusals_noted = BTreeSet::new();
     let mut planned = Vec::new();
     let mut notes = Vec::new();
+    // The atomic group being planned, and what to go back to if it is
+    // refused.
+    let mut open: Option<OpenGroup> = None;
     let room = |l: &Ledger, side: Side| {
         let (buy, sell) = mtx_core::mandate::position_room(l.cap, l.position, l.bids, l.asks);
         match side {
@@ -1564,6 +1656,29 @@ fn plan_lines<'a>(
         }
     };
     for (line, (intent, options)) in lines.into_iter().enumerate() {
+        let group = options.tx.and_then(|tx| tx.atomic);
+        if open.as_ref().map(|o| o.id) != group {
+            if let Some(ended) = open.take() {
+                ended.close(&mut planned, &mut ledgers, &mut notes, executes);
+            }
+            if let Some(id) = group {
+                if let Some(why) = refused_groups.get(&id) {
+                    if refusals_noted.insert(id) {
+                        notes.push(format!(
+                            "atomic group {id} {why}: none of its lines is sent"
+                        ));
+                    }
+                    continue;
+                }
+                open = Some(OpenGroup::new(id, &ledgers, planned.len(), notes.len()));
+            }
+        }
+        if let (Some(group), Intent::Target { .. }) = (open.as_mut(), intent) {
+            notes.push(format!(
+                "atomic group {}: a target paces itself over steps, and a route needs fixed amounts",
+                group.id
+            ));
+        }
         let venue = options
             .venue
             .clone()
@@ -1868,6 +1983,28 @@ fn plan_lines<'a>(
                     repay: *repay,
                     min_received: *min_received,
                 }),
+                // A flash loan is never a position: it is repaid in the
+                // transaction that took it.
+                &Intent::Flash { amount } => {
+                    let Some(group) = open.as_mut() else {
+                        notes.push(
+                            "a flash loan lives only inside an atomic group: not sent".into(),
+                        );
+                        break 'line;
+                    };
+                    // Not a number was dropped above.
+                    if amount <= 0.0 {
+                        notes.push(format!("a flash loan of {amount}: not sent"));
+                        break 'line;
+                    }
+                    group.flashes += 1;
+                    if group.flashes > 1 {
+                        notes.push(format!("atomic group {}: at most one flash loan", group.id));
+                        break 'line;
+                    }
+                    push(Action::Flash { amount })
+                }
+                Intent::PushPrice => push(Action::PushPrice),
             }
         }
         // A line the session won't execute counts for nothing.
@@ -1878,7 +2015,104 @@ fn plan_lines<'a>(
             ledgers[index] = before;
         }
     }
+    if let Some(ended) = open {
+        ended.close(&mut planned, &mut ledgers, &mut notes, executes);
+    }
     (planned, notes)
+}
+
+/// The most lines one atomic group may hold: a transaction is at most 1,232
+/// bytes and 64 accounts, and a swap names about fifteen accounts, so more
+/// lines than this can never fit one.
+pub const MAX_ATOMIC_LINES: usize = 8;
+
+/// The atomic groups a sheet can't send, and why: one whose lines aren't
+/// next to each other on the sheet (another line between two of its lines
+/// could land between them, which a group exists to rule out), or one of
+/// more than [`MAX_ATOMIC_LINES`] lines.
+fn refused_groups(lines: &[(&Intent, &LineOptions)]) -> BTreeMap<u32, &'static str> {
+    let mut seen: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut refused = BTreeMap::new();
+    let mut previous = None;
+    for (_, options) in lines {
+        let group = options.tx.and_then(|tx| tx.atomic);
+        if let Some(id) = group {
+            let count = seen.entry(id).or_insert(0);
+            if *count > 0 && previous != Some(id) {
+                refused.insert(id, "has lines that aren't next to each other on the sheet");
+            }
+            *count += 1;
+            if *count > MAX_ATOMIC_LINES {
+                refused
+                    .entry(id)
+                    .or_insert("has more lines than a transaction can hold");
+            }
+        }
+        previous = group;
+    }
+    refused
+}
+
+/// An atomic group as the planner goes down its lines: what the sheet was
+/// before it, to go back to if it is refused.
+struct OpenGroup {
+    id: u32,
+    ledgers: Vec<Ledger>,
+    first_planned: usize,
+    notes_before: usize,
+    flashes: u32,
+}
+
+impl OpenGroup {
+    fn new(id: u32, ledgers: &[Ledger], first_planned: usize, notes_before: usize) -> Self {
+        OpenGroup {
+            id,
+            ledgers: ledgers.to_vec(),
+            first_planned,
+            notes_before,
+            flashes: 0,
+        }
+    }
+
+    /// The group's last line is planned. A note written since its first
+    /// means a line was cut, dropped or changed, which would break the
+    /// route: the whole group is refused, and the sheet is as if it weren't
+    /// on it. A group with a line the session won't execute is planned, so
+    /// its statuses can say so, but counts for nothing.
+    fn close(
+        self,
+        planned: &mut Vec<Planned>,
+        ledgers: &mut Vec<Ledger>,
+        notes: &mut Vec<String>,
+        executes: &dyn Fn(Option<&str>, &Action) -> bool,
+    ) {
+        assert!(
+            self.first_planned <= planned.len(),
+            "a group plans after its start"
+        );
+        assert!(self.notes_before <= notes.len(), "notes are only added");
+        if notes.len() > self.notes_before {
+            planned.truncate(self.first_planned);
+            *ledgers = self.ledgers;
+            notes.push(format!(
+                "atomic group {} refused whole: one of its lines would be cut or dropped, and a route lands whole or not at all",
+                self.id
+            ));
+            return;
+        }
+        let group = &planned[self.first_planned..];
+        if group
+            .iter()
+            .any(|p| !executes(p.venue.as_deref(), &p.action))
+        {
+            *ledgers = self.ledgers;
+        }
+        debug_assert!(
+            group
+                .iter()
+                .all(|p| p.tx.and_then(|tx| tx.atomic) == Some(self.id))
+        );
+    }
 }
 
 /// What is resting after `actions` are sent on top of `bids` and `asks`, in
@@ -1916,7 +2150,10 @@ pub fn resting_after(bids: f64, asks: f64, actions: &[Action]) -> (f64, f64) {
 /// target's position is checked where it's planned).
 fn not_a_number(intent: &Intent) -> Option<&'static str> {
     let (what, numbers): (&str, Vec<f64>) = match intent {
-        Intent::Target { .. } | Intent::CancelAll | Intent::Cancel { .. } => return None,
+        Intent::Target { .. } | Intent::CancelAll | Intent::Cancel { .. } | Intent::PushPrice => {
+            return None;
+        }
+        &Intent::Flash { amount } => ("a flash loan", vec![amount]),
         &Intent::Market { size, limit, .. } => ("a market order", vec![size, limit]),
         &Intent::Limit { price, size, .. } => ("a limit order", vec![price, size]),
         &Intent::Quote { bid, ask, size } => ("a quote", vec![bid, ask, size]),
@@ -2893,5 +3130,211 @@ mod tests {
         assert_eq!(lines[0].1, LineOptions::default());
         assert_eq!(lines[1].1.time_in_force, TimeInForce::PostOnly);
         assert_eq!(lines[1].1.venue.as_deref(), Some("x"));
+    }
+
+    fn group_of(planned: &[Planned]) -> Vec<Option<u32>> {
+        planned
+            .iter()
+            .map(|p| p.tx.and_then(|tx| tx.atomic))
+            .collect()
+    }
+
+    #[test]
+    fn atomic_keeps_the_other_options_and_tx_keeps_the_group() {
+        let mut orders = Orders::new();
+        orders
+            .buy(1.0, 101.0)
+            .tx(TxOptions {
+                cu_price: Some(5),
+                ..TxOptions::default()
+            })
+            .atomic(3)
+            .buy(1.0, 101.0)
+            .atomic(3)
+            .tx(TxOptions {
+                tip: Some(1_000),
+                ..TxOptions::default()
+            });
+        let lines = orders.into_lines();
+        let tx = |n: usize| lines[n].1.tx.expect("options");
+        assert_eq!((tx(0).cu_price, tx(0).atomic), (Some(5), Some(3)));
+        assert_eq!((tx(1).tip, tx(1).atomic), (Some(1_000), Some(3)));
+    }
+
+    /// A flash-funded cycle: the loan counts for nothing, each swap counts
+    /// on its own venue, and every line keeps the group's id.
+    #[test]
+    fn a_group_is_planned_whole_and_keeps_its_id() {
+        let mut orders = Orders::new();
+        orders
+            .push_price()
+            .at("kamino:money-market:SOL")
+            .atomic(1)
+            .flash(10.0)
+            .at("kamino:money-market:SOL")
+            .atomic(1)
+            .swap(Side::Ask, 10.0, AmountUnit::Base, 150.0)
+            .at("orca:amm:A")
+            .atomic(1)
+            .swap(Side::Bid, 1_500.0, AmountUnit::Quote, 149.7)
+            .at("raydium:amm:B")
+            .atomic(1)
+            .buy(1.0, 101.0);
+        let (planned, notes) = plan_sheet(&orders, &market(0.0));
+        assert!(notes.is_empty(), "{notes:?}");
+        assert_eq!(
+            planned.iter().map(|p| p.line).collect::<Vec<_>>(),
+            [0, 1, 2, 3, 4]
+        );
+        assert_eq!(
+            group_of(&planned),
+            [Some(1), Some(1), Some(1), Some(1), None]
+        );
+        assert_eq!(planned[0].action, Action::PushPrice);
+        assert_eq!(planned[1].action, Action::Flash { amount: 10.0 });
+        assert_eq!(
+            planned[3].action,
+            Action::Swap {
+                side: Side::Bid,
+                amount: 1_500.0,
+                unit: AmountUnit::Quote,
+                limit: 149.7
+            }
+        );
+    }
+
+    /// A route whose leg the cap would cut is refused whole, and counts for
+    /// nothing: the buy after it has the whole cap.
+    #[test]
+    fn a_group_with_a_cut_line_is_refused_whole() {
+        let mut orders = Orders::new();
+        orders
+            .buy(50.0, 101.0)
+            .atomic(1)
+            .swap(Side::Bid, 30.0, AmountUnit::Base, 101.0)
+            .atomic(1)
+            .buy(70.0, 101.0);
+        let (planned, notes) = plan_sheet(&orders, &market(0.0));
+        assert_eq!(planned.len(), 1, "{planned:?}");
+        assert_eq!(planned[0].line, 2);
+        assert_eq!(
+            planned[0].action,
+            Action::Market {
+                side: Side::Bid,
+                size: 70.0,
+                limit: 101.0
+            },
+            "the refused group took none of the cap"
+        );
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(notes[0].starts_with("swap of 30 cut to 20"), "{notes:?}");
+        assert!(
+            notes[1].starts_with("atomic group 1 refused whole"),
+            "{notes:?}"
+        );
+    }
+
+    /// A group the session won't execute is planned, so its statuses can
+    /// say so, but takes none of the cap; one line of it is enough.
+    #[test]
+    fn a_group_the_session_wont_execute_counts_for_nothing() {
+        let mut orders = Orders::new();
+        orders
+            .buy(50.0, 101.0)
+            .atomic(1)
+            .swap(Side::Bid, 1.0, AmountUnit::Base, 101.0)
+            .at("x")
+            .atomic(1)
+            .buy(70.0, 101.0);
+        let (planned, notes) = plan_sheet_with(&orders, &market(0.0), |venue, _| venue.is_none());
+        assert!(notes.is_empty(), "{notes:?}");
+        assert_eq!(planned.len(), 3);
+        assert_eq!(
+            planned[2].action,
+            Action::Market {
+                side: Side::Bid,
+                size: 70.0,
+                limit: 101.0
+            }
+        );
+    }
+
+    #[test]
+    fn a_scattered_group_is_refused_and_a_lone_flash_dropped() {
+        let mut orders = Orders::new();
+        orders
+            .buy(1.0, 101.0)
+            .atomic(2)
+            .sell(1.0, 99.0)
+            .buy(1.0, 101.0)
+            .atomic(2)
+            .flash(5.0)
+            .push_price()
+            .at("kamino:money-market:SOL");
+        let (planned, notes) = plan_sheet(&orders, &market(0.0));
+        assert_eq!(
+            planned.iter().map(|p| p.line).collect::<Vec<_>>(),
+            [1, 4],
+            "the sell, and the push, which may go alone"
+        );
+        assert_eq!(
+            notes,
+            [
+                "atomic group 2 has lines that aren't next to each other on the sheet: none of its lines is sent",
+                "a flash loan lives only inside an atomic group: not sent",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_group_with_a_target_two_flashes_or_too_many_lines_is_refused() {
+        let mut target = Orders::new();
+        target
+            .target_position(5.0)
+            .atomic(1)
+            .buy(1.0, 101.0)
+            .atomic(1);
+        let mut flashes = Orders::new();
+        flashes.flash(1.0).atomic(1).flash(2.0).atomic(1);
+        let mut long = Orders::new();
+        for _ in 0..=MAX_ATOMIC_LINES {
+            long.buy(0.1, 101.0).atomic(1);
+        }
+        for orders in [target, flashes, long] {
+            let (planned, notes) = plan_sheet(&orders, &market(0.0));
+            assert!(planned.is_empty(), "{planned:?}");
+            assert!(
+                notes
+                    .last()
+                    .is_some_and(|n| n.starts_with("atomic group 1 ")),
+                "{notes:?}"
+            );
+        }
+        // At the limit, a group is planned.
+        let mut full = Orders::new();
+        for _ in 0..MAX_ATOMIC_LINES {
+            full.buy(0.1, 101.0).atomic(1);
+        }
+        assert_eq!(plan_sheet(&full, &market(0.0)).0.len(), MAX_ATOMIC_LINES);
+    }
+
+    /// Two groups back to back are two groups, each planned on its own.
+    #[test]
+    fn groups_next_to_each_other_stay_apart() {
+        let mut orders = Orders::new();
+        orders
+            .buy(60.0, 101.0)
+            .atomic(1)
+            .buy(20.0, 101.0)
+            .atomic(2)
+            .sell(1.0, 99.0)
+            .atomic(2);
+        let (planned, notes) = plan_sheet(&orders, &market(0.0));
+        assert_eq!(group_of(&planned), [Some(1)]);
+        assert!(
+            notes
+                .last()
+                .is_some_and(|n| n.starts_with("atomic group 2 refused whole"))
+        );
     }
 }

@@ -79,10 +79,19 @@ Liquidation is permissionless. Kamino's
 program's `max_liquidatable_borrowed_amount` agree on its shape:
 
 - Each liquidation repays at most a share of the obligation's debt, the
-  market's close factor (20% in the docs), in exchange for collateral worth
-  more than it repays: the **liquidation bonus**, between each reserve's
-  minimum and maximum (1% and 10% for SOL and USDC at the time of writing),
-  growing with how far the LTV has passed the liquidation LTV.
+  market's close factor, in exchange for collateral worth more than it
+  repays: the **liquidation bonus**, between each reserve's minimum and
+  maximum (1% and 10% for SOL and USDC at the time of writing), growing
+  with how far the LTV has passed the liquidation LTV.
+  - The docs give a close factor of 20%. The main market
+    (`7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF`) sets 10%, and 88% of
+    its liquidations repay exactly that share. Most other markets set 20%.
+  - Debts under the market's `min_full_liquidation_value`, $2 on the main
+    market, are liquidated in full.
+  - The protocol keeps a share of the bonus, the reserve's
+    `protocol_liquidation_fee_pct`: 50% on most reserves, so a liquidator
+    keeps about 0.5% on SOL and USDC. These figures were read on
+    2026-11-21 ([research](../../docs/RESEARCH.md#kamino-lend-liquidations-2026-11-12-to-2026-11-21)).
 - An obligation whose LTV passes the market's insolvency threshold (95% in
   the docs) can be liquidated in full at once.
 - Kamino also liquidates for other reasons than health: auto-deleveraging,
@@ -139,7 +148,9 @@ obligation) goes through a raw transaction.
 A scenario with a `lending` section runs a lending session on a snapshot of
 Kamino's markets (`snapshots/kamino-2026-11-13`: the Backpack and xStocks
 markets, their reserves, Scope's prices and the klend, Farms and Scope
-programs, pinned by code hash). Only the reserves the scenario names are
+programs, pinned by code hash; `snapshots/atomic-arb-2026-11-21`: the main
+market's SOL and USDC reserves and two SOL/USDC pools). Only the reserves
+the scenario names, and the pools it lists beside them (`venues.amm`), are
 the bot's universe.
 
 - **Measured** every step, after the step's blocks: each of the bot's
@@ -157,9 +168,25 @@ the bot's universe.
   the price entry a reserve's chain starts with, any further chain entries
   restamped, and the TWAP entry with an hour's moving average of the path,
   so a fast move opens the divergence Kamino checks. Every other session
-  reserve gets a feed that holds its price fresh.
+  reserve gets a feed that holds its price fresh. A feed may instead be
+  **pushed** (ADR 0004): its price and TWAP entries become `FixedPrice`
+  before the session starts, the path goes into the mapping's `generic`
+  data (the upstream, which anyone reads), and Scope's price moves only
+  when someone sends `refresh_price_list`: the session's keeper on
+  mainnet's cadence, a competing liquidator, or the bot, ahead of its
+  liquidation. The account is valued at the path all the same.
 - **Others in the market.** Synthetic borrowers, drawn from the scenario's
   seed near their liquidation threshold, and competing liquidators that
   act in a drawn order after a drawn delay; their liquidations are in the
-  report. Real mainnet obligations are not copied.
+  report. Under the transaction layer the liquidators bid in its auction
+  instead, reading the upstream, at the research's latencies, competition
+  and bids (`docs/actors.md`). Real mainnet obligations are not copied.
+- **Atomic routes.** `mtx:strategy@0.3.0`'s `flash` and `push-price`
+  lines, in an atomic group with the bot's liquidation and a swap through
+  a session pool, land as one transaction; the session's lookup table holds
+  the accounts they name.
+- **Mandate v0.3.0.** Rules 11 to 13 are judged on each of the bot's
+  transactions, read back from the chain: its fees, priority fees and tips,
+  its flash borrows, and what the account held beside the numeraire at the
+  step's measurement after it.
 - **Not enforced yet:** the mandate's `min_health` limit.

@@ -1,0 +1,25 @@
+# A check, not a strategy: a component that liquidates Kamino obligations
+# with a flash loan, a price push and a swap in one atomic group
+# (bench/checks/kamino/liquidation-flash.json, RFD 0005).
+[package]
+name = "mtx-bot-liquidation-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+# `split`: the liquidation and the sale of what it seized as two
+# transactions in one step, a route mandate v0.3.0's rule 11 must refuse
+# (`just liquidation-flash-smoke`).
+[features]
+split = []
+
+[dependencies]
+base64 = "0.22"
+bs58 = "0.5"
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component"] }
+serde_json = "1"

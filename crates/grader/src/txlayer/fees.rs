@@ -13,6 +13,28 @@ const TOKEN_PROGRAMS: [&str; 2] = [
     "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
 ];
 
+/// Wrapped SOL's mint, whose token accounts hold the SOL they wrap as
+/// lamports beside their rent.
+const NATIVE_MINT: Pubkey = solana_pubkey::pubkey!("So11111111111111111111111111111111111111112");
+
+/// The rent a token account (as `getTokenAccountsByOwner` serves it,
+/// base64) holds: its lamports, less the SOL it wraps if it is wrapped
+/// SOL's. That SOL is a holding the session values with the rest of the
+/// account's tokens, not rent.
+fn rent_of(account: &serde_json::Value) -> Option<u64> {
+    use base64::Engine as _;
+    let lamports = account["lamports"].as_u64()?;
+    let data = account["data"][0]
+        .as_str()
+        .and_then(|d| base64::engine::general_purpose::STANDARD.decode(d).ok())?;
+    let mint = Pubkey::new_from_array(data.get(..32)?.try_into().ok()?);
+    if mint != NATIVE_MINT {
+        return Some(lamports);
+    }
+    let wrapped = u64::from_le_bytes(data.get(64..72)?.try_into().ok()?);
+    Some(lamports.saturating_sub(wrapped))
+}
+
 /// A wallet's SOL: its own lamports, and those in token accounts it can
 /// close, which are its rent, not a cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +58,7 @@ impl Wallet {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|a| a["account"]["lamports"].as_u64())
+                .filter_map(|a| rent_of(&a["account"]))
                 .sum::<u64>();
         }
         Ok(Self { lamports, closable })
@@ -132,6 +154,29 @@ impl FeeLedger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Wrapped SOL's account holds its rent and the SOL it wraps: only
+    /// the rent is the wallet's to close; another token's lamports are all
+    /// rent.
+    #[test]
+    fn a_wrapped_sol_account_is_rent_and_a_holding() {
+        use base64::Engine as _;
+        let account = |mint: Pubkey, amount: u64, lamports: u64| {
+            let mut data = vec![0u8; 165];
+            data[..32].copy_from_slice(mint.as_ref());
+            data[64..72].copy_from_slice(&amount.to_le_bytes());
+            json!({ "lamports": lamports, "data": [base64::engine::general_purpose::STANDARD.encode(&data), "base64"] })
+        };
+        assert_eq!(
+            rent_of(&account(NATIVE_MINT, 5_000_000, 7_039_280)),
+            Some(2_039_280)
+        );
+        assert_eq!(
+            rent_of(&account(Pubkey::new_unique(), 5_000_000, 2_039_280)),
+            Some(2_039_280)
+        );
+        assert_eq!(rent_of(&json!({ "lamports": 1 })), None);
+    }
 
     #[test]
     fn the_ledger_splits_fees_and_reconciles() {

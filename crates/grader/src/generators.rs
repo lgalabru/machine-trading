@@ -17,9 +17,12 @@ use serde_json::json;
 
 #[cfg(feature = "generators")]
 use crate::{
+    backrun::{BackrunFamily, BackrunShape},
     carry::{CarryFamily, Shape as CarryShape},
+    liquidation_flash::{LiquidationFamily, LiquidationShape},
     making::MakingFamily,
     scenario::{Shape, ShockFamily},
+    thin_pools::{ThinPoolsFamily, ThinPoolsShape},
     weekend::{WeekendFamily, WeekendShape},
 };
 use crate::{error::Result, scenario::Scenario};
@@ -159,6 +162,60 @@ pub const GENERATORS: &[Generator] = &[
         },
         params: || format!("{:?}", WeekendFamily::spcx()),
     },
+    Generator {
+        name: "liquidation-flash",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                LiquidationFamily::kamino_main().draw_set(prefix, count, seed),
+                false,
+                LiquidationShape::latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                LiquidationFamily::kamino_main().draw_set("hidden", count, seed),
+                tell,
+                LiquidationShape::latent,
+            )
+        },
+        params: || format!("{:?}", LiquidationFamily::kamino_main()),
+    },
+    Generator {
+        name: "backrun-sol-usdc",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                BackrunFamily::sol_usdc().draw_set(prefix, count, seed),
+                false,
+                BackrunShape::latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                BackrunFamily::sol_usdc().draw_set("hidden", count, seed),
+                tell,
+                BackrunShape::latent,
+            )
+        },
+        params: || format!("{:?}", BackrunFamily::sol_usdc()),
+    },
+    Generator {
+        name: "backrun-thin-pools",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                ThinPoolsFamily::snapshot().draw_set(prefix, count, seed),
+                false,
+                ThinPoolsShape::latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                ThinPoolsFamily::snapshot().draw_set("hidden", count, seed),
+                tell,
+                ThinPoolsShape::latent,
+            )
+        },
+        params: || format!("{:?}", ThinPoolsFamily::snapshot()),
+    },
 ];
 
 /// The generator called `name`.
@@ -285,6 +342,19 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
+    ("liquidation-flash", "liquidators", Knowable::Identity),
+    ("liquidation-flash", "bids", Knowable::Identity),
+    ("liquidation-flash", "bid_share", Knowable::Process),
+    ("liquidation-flash", "tipping_share", Knowable::Process),
+    ("liquidation-flash", "same_slot_share", Knowable::Process),
+    ("liquidation-flash", "competition", Knowable::Process),
+    ("liquidation-flash", "keeper_every_slots", Knowable::Process),
+    ("backrun-sol-usdc", "searchers", Knowable::Identity),
+    ("backrun-sol-usdc", "pool_searchers", Knowable::Identity),
+    ("backrun-sol-usdc", "flow_scale", Knowable::Process),
+    ("backrun-thin-pools", "searchers", Knowable::Identity),
+    ("backrun-thin-pools", "pool_searchers", Knowable::Identity),
+    ("backrun-thin-pools", "flow_scale", Knowable::Process),
 ];
 
 /// The members of a latent state itself, which no shipped practice file may

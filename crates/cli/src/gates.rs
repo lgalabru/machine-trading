@@ -3055,11 +3055,15 @@ mod tests {
         for task in tasks::load(&root).unwrap() {
             let snapshot = snapshot(&root, &task.dir);
             assert!(root.join(&snapshot).is_dir(), "{snapshot}");
-            assert_eq!(
-                snapshot, "snapshots/phoenix-spcx-2026-10-29",
-                "{}",
-                task.dir
-            );
+            // The Kamino and backrun tasks trade the atomic-arb snapshot
+            // (its main market and SOL/USDC pools), the thin-pools task its
+            // ten pools; the perp tasks Phoenix's SPCX.
+            let want = match task.dir.as_str() {
+                "liquidation-flash" | "backrun-sol-usdc" => "snapshots/atomic-arb-2026-11-21",
+                "backrun-thin-pools" => "snapshots/thin-pools-2026-11-21",
+                _ => "snapshots/phoenix-spcx-2026-10-29",
+            };
+            assert_eq!(snapshot, want, "{}", task.dir);
         }
         // A task on another market: task.toml's `[metadata] snapshot` first,
         // then the verifier image's MTX_SNAPSHOT, then the Justfile's.

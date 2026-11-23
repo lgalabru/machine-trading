@@ -11,7 +11,7 @@ async-trait = "0.1"
 mtx-core.workspace = true
 # The kit's strategy types, which the host converts to and from the WIT
 # world's, and its venues, which the seats trade on.
-mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2"] }
+mtx-kit = { workspace = true, features = ["phoenix-v1", "openbook-v2", "orca-whirlpool", "raydium-clmm"] }
 phoenix-rise.workspace = true
 solana-keypair.workspace = true
 solana-pubkey = { workspace = true, features = ["curve25519"] }
@@ -69,6 +69,9 @@ webpki-roots = { version = "1", optional = true }
 proptest = "1"
 # A chain held in memory, for the backfill's tests.
 mtx-kit = { workspace = true, features = ["test-util"] }
+# The kit's mainnet pool fixtures, gzipped base64 (src/venue/amm.rs).
+base64 = "0.22"
+flate2 = "1"
 solana-account = "4"
 # A transfer, for the TPU's test against a validator (tests/tpu.rs).
 solana-system-interface = { version = "3", features = ["bincode"] }

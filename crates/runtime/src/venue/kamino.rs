@@ -12,9 +12,12 @@
 //! A [`LendingSeat`] sends each lending action as one transaction: a refresh
 //! of every reserve the obligation touches and of the obligation, then the
 //! action, as klend requires, through the market's lookup table where the
-//! snapshot holds it.
+//! snapshot holds it. It also builds what only an atomic group joins: a
+//! flash loan ([`Seat::flash`]), and a push of the reserve's oracle prices
+//! ([`scope`]), which may go alone too.
 
 pub mod klend;
+pub mod scope;
 
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -25,17 +28,18 @@ use mtx_core::{
 };
 use mtx_kit::{
     Action, Planned, SendState, Sent,
-    chain::{
-        AddressLookupTableAccount, ChainClient, InstructionGroup, RpcChainClient, TransactionPlan,
-    },
+    chain::{AddressLookupTableAccount, ChainClient, RpcChainClient, TransactionPlan},
 };
 use solana_keypair::Keypair;
 use solana_pubkey::{Pubkey, pubkey};
 use solana_signer::Signer;
-use solana_transaction::{Instruction, versioned::VersionedTransaction};
+use solana_transaction::Instruction;
 
 use self::klend::{Obligation, Reserve, ReserveKeys};
-use super::{Market, Seat, SeatResult, Venue, not_offered};
+use super::{
+    Built, Flash, Market, Seat, SeatChain, SeatResult, Venue, not_offered, send_built, sent_on,
+    tail,
+};
 use crate::{Error, Result, reads::INTERNAL_RPC_TIMEOUT};
 
 /// A reserve the profile names, its lending market, and the market's lookup
@@ -98,6 +102,15 @@ pub const NAMED: [Named; 6] = [
 /// Compute a lending transaction may use: a refresh of every reserve it
 /// touches, the farms' bookkeeping, and the action.
 const COMPUTE_UNIT_LIMIT: u32 = 1_400_000;
+
+/// Compute a flash loan's borrow and repay use together, with the token
+/// account the borrow lends into: mainnet's flash liquidations spend about
+/// 60,000 on them; twice that, for margin.
+const FLASH_COMPUTE_UNIT_LIMIT: u32 = 120_000;
+
+/// Compute a price push uses: Scope's refresh of a reserve's chain of at
+/// most four entries, about 30,000 each on mainnet's keepers.
+const PUSH_PRICE_COMPUTE_UNIT_LIMIT: u32 = 150_000;
 
 /// One reserve of a session's: its instrument, its keys and its asset.
 #[derive(Debug, Clone)]
@@ -385,18 +398,7 @@ fn plan(
     label: &str,
     instructions: Vec<Instruction>,
 ) -> TransactionPlan {
-    let plan = TransactionPlan::from_group(
-        &InstructionGroup::new(label, instructions),
-        COMPUTE_UNIT_LIMIT,
-    );
-    match books.lookup_tables.get(market) {
-        Some(table) => plan.with_lookup_tables(std::slice::from_ref(table)),
-        None => plan,
-    }
-}
-
-fn tail(logs: &[String]) -> String {
-    logs[logs.len().saturating_sub(14)..].join(" | ")
+    built(books, market, label, instructions).plan()
 }
 
 /// The refresh klend wants right before an action on `obligation` (whose
@@ -489,24 +491,23 @@ pub async fn send(
     label: &str,
     instructions: Vec<Instruction>,
 ) -> std::result::Result<mtx_kit::Signature, String> {
-    let plan = plan(books, market, label, instructions);
-    let blockhash = chain
-        .get_latest_blockhash()
-        .await
-        .map_err(|e| e.to_string())?;
-    let unsigned = plan
-        .versioned(&signer.pubkey(), blockhash)
-        .map_err(|e| e.to_string())?;
-    let simulation = chain
-        .simulate(&unsigned, &[])
-        .await
-        .map_err(|e| e.to_string())?;
-    if let Some(error) = simulation.error {
-        return Err(format!("{error}: {}", tail(&simulation.logs)));
+    send_built(chain, signer, &built(books, market, label, instructions)).await
+}
+
+/// One lending line: `instructions`, through the market's lookup table
+/// where there is one.
+fn built(books: &Books, market: &Pubkey, label: &str, instructions: Vec<Instruction>) -> Built {
+    Built {
+        instructions,
+        lookup_tables: books
+            .lookup_tables
+            .get(market)
+            .cloned()
+            .into_iter()
+            .collect(),
+        compute_unit_limit: COMPUTE_UNIT_LIMIT,
+        label: label.into(),
     }
-    let tx =
-        VersionedTransaction::try_new(unsigned.message, &[signer]).map_err(|e| e.to_string())?;
-    chain.send(&tx).await.map_err(|e| e.to_string())
 }
 
 #[async_trait]
@@ -609,13 +610,20 @@ impl Market for ReserveMarket {
     }
 
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>> {
-        Ok(Box::new(LendingSeat {
-            market: self.book.instrument.to_string(),
-            book: self.book.clone(),
-            books: self.books.clone(),
+        let on = SeatChain {
             chain: Arc::new(RpcChainClient::with_timeout(rpc_url, INTERNAL_RPC_TIMEOUT)),
-            signer,
-        }))
+            pooled: false,
+            lookup_tables: Vec::new(),
+        };
+        self.seat_on(signer, on).await
+    }
+
+    async fn seat_on(&self, signer: Keypair, on: SeatChain) -> Result<Box<dyn Seat>> {
+        Ok(Box::new(
+            LendingSeat::new(self.book.clone(), self.books.clone(), on.chain, signer)
+                .pooled(on.pooled)
+                .with_lookup_tables(on.lookup_tables),
+        ))
     }
 }
 
@@ -639,9 +647,58 @@ pub struct LendingSeat {
     books: Arc<Books>,
     chain: Arc<dyn ChainClient>,
     signer: Keypair,
+    /// Its chain pools sends (see [`SeatChain::pooled`]).
+    pooled: bool,
+    /// Lookup tables beside the lending market's own.
+    lookup_tables: Vec<AddressLookupTableAccount>,
 }
 
 impl LendingSeat {
+    /// An account at `book`'s reserve, one of `books`, reading and sending
+    /// through `chain`, signed by `signer`.
+    pub fn new(
+        book: Book,
+        books: Arc<Books>,
+        chain: Arc<dyn ChainClient>,
+        signer: Keypair,
+    ) -> Self {
+        Self {
+            market: book.instrument.to_string(),
+            book,
+            books,
+            chain,
+            signer,
+            pooled: false,
+            lookup_tables: Vec::new(),
+        }
+    }
+
+    /// This seat, its sends into a pool if `pooled` (see
+    /// [`SeatChain::pooled`]).
+    pub fn pooled(self, pooled: bool) -> Self {
+        Self { pooled, ..self }
+    }
+
+    /// This seat, its transactions free to use `tables` too.
+    pub fn with_lookup_tables(self, tables: Vec<AddressLookupTableAccount>) -> Self {
+        Self {
+            lookup_tables: tables,
+            ..self
+        }
+    }
+
+    /// A line of `instructions` through the market's lookup table and the
+    /// seat's own.
+    fn built(&self, label: &str, instructions: Vec<Instruction>) -> Built {
+        let mut line = built(&self.books, &self.book.keys.market, label, instructions);
+        for table in &self.lookup_tables {
+            if line.lookup_tables.iter().all(|t| t.key != table.key) {
+                line.lookup_tables.push(table.clone());
+            }
+        }
+        line
+    }
+
     fn atoms(&self, units: f64, decimals: u32) -> Option<u64> {
         let atoms = (units * 10f64.powi(decimals as i32)).floor();
         (atoms.is_finite() && atoms >= 1.0 && atoms < u64::MAX as f64).then_some(atoms as u64)
@@ -649,7 +706,10 @@ impl LendingSeat {
 
     /// The instructions for a lending action, refresh first; `Err` is why it
     /// isn't sent.
-    async fn instructions(&self, action: &Action) -> std::result::Result<Vec<Instruction>, String> {
+    async fn action_instructions(
+        &self,
+        action: &Action,
+    ) -> std::result::Result<Vec<Instruction>, String> {
         let owner = self.signer.pubkey();
         let keys = &self.book.keys;
         let market = keys.market;
@@ -798,20 +858,6 @@ impl LendingSeat {
             .and_then(|a| mtx_kit::token::TokenAccountInfo::decode(&a.owner, &a.data).ok())
             .map_or(0, |t| t.amount))
     }
-
-    /// What became of a send the world will land in its next block.
-    async fn outcome(&self, signature: mtx_kit::Signature) -> SendState {
-        match self.chain.get_transaction(&signature).await {
-            Ok(Some(summary)) => match summary.error {
-                None => SendState::Landed(signature.to_string()),
-                Some(error) => SendState::Failed {
-                    reason: error.to_string(),
-                    signature: Some(signature.to_string()),
-                },
-            },
-            Ok(None) | Err(_) => SendState::Delayed,
-        }
-    }
 }
 
 #[async_trait]
@@ -828,18 +874,14 @@ impl Seat for LendingSeat {
                 | Action::Borrow { .. }
                 | Action::Repay { .. }
                 | Action::Liquidate { .. }
+                | Action::Flash { .. }
+                | Action::PushPrice
         )
     }
 
     async fn send(&self, planned: &Planned) -> Sent {
-        if planned.reduce_only {
-            return Sent {
-                state: SendState::NotSent("reduce-only doesn't apply to lending".into()),
-                sent: false,
-            };
-        }
-        let instructions = match self.instructions(&planned.action).await {
-            Ok(instructions) => instructions,
+        let built = match self.instructions(planned).await {
+            Ok(built) => built,
             Err(reason) => {
                 return Sent {
                     state: SendState::NotSent(reason),
@@ -847,26 +889,74 @@ impl Seat for LendingSeat {
                 };
             }
         };
-        let label = format!("{} {:?}", self.market, planned.action);
-        match send(
+        sent_on(
             self.chain.as_ref(),
-            &self.books,
-            &self.book.keys.market,
             &self.signer,
-            &label,
-            instructions,
+            &built.plan(),
+            self.pooled,
         )
         .await
-        {
-            Ok(signature) => Sent {
-                state: self.outcome(signature).await,
-                sent: true,
-            },
-            Err(reason) => Sent {
-                state: SendState::failed(reason),
-                sent: false,
-            },
+    }
+
+    /// A lending action, refresh first, through the lending market's lookup
+    /// table.
+    async fn instructions(&self, planned: &Planned) -> SeatResult<Built> {
+        if planned.reduce_only {
+            return Err("reduce-only doesn't apply to lending".into());
         }
+        match planned.action {
+            Action::Flash { .. } => {
+                return Err("a flash loan lives only inside an atomic group".into());
+            }
+            Action::PushPrice => {
+                let reserve = self.reserve().await?;
+                let refresh = scope::refresh_reserve(self.chain.as_ref(), &reserve).await?;
+                return Ok(Built {
+                    compute_unit_limit: PUSH_PRICE_COMPUTE_UNIT_LIMIT,
+                    ..self.built(&format!("{} push price", self.market), vec![refresh])
+                });
+            }
+            _ => {}
+        }
+        let instructions = self.action_instructions(&planned.action).await?;
+        let label = format!("{} {:?}", self.market, planned.action);
+        Ok(self.built(&label, instructions))
+    }
+
+    /// The borrow into the owner's token account for the reserve's asset
+    /// (made if it isn't there), and its repay, which klend checks follows
+    /// it in the same transaction and returns the reserve's flash fee too.
+    async fn flash(&self, planned: &Planned, at: u8) -> SeatResult<Flash> {
+        let Action::Flash { amount } = planned.action else {
+            return Err("not a flash loan".into());
+        };
+        let atoms = self
+            .atoms(amount, self.book.decimals)
+            .ok_or("a flash loan that rounds to nothing")?;
+        let owner = self.signer.pubkey();
+        let keys = &self.book.keys;
+        let mut instructions = vec![mtx_kit::chain::token::create_ata_idempotent_for(
+            &owner,
+            &owner,
+            &keys.mint,
+            &keys.token_program,
+        )];
+        instructions.push(klend::flash_borrow(&owner, keys, atoms));
+        let borrow_index = u8::try_from(usize::from(at) + instructions.len() - 1)
+            .map_err(|_| "the borrow is past the instructions a transaction can name")?;
+        let repay = klend::flash_repay(&owner, keys, atoms, borrow_index);
+        let label = format!("{} flash {amount}", self.market);
+        Ok(Flash {
+            borrow: Built {
+                compute_unit_limit: FLASH_COMPUTE_UNIT_LIMIT,
+                ..self.built(&label, instructions)
+            },
+            repay: vec![repay],
+        })
+    }
+
+    async fn send_plan(&self, plan: &TransactionPlan) -> Sent {
+        sent_on(self.chain.as_ref(), &self.signer, plan, self.pooled).await
     }
 
     async fn position(&self) -> SeatResult<f64> {

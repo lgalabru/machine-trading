@@ -5312,6 +5312,84 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-backrun-probe"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+ "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-backrun-sol-usdc"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-sol-usdc-fixed-clip"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-sol-usdc-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-sol-usdc-min-tip"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-sol-usdc-overbidder"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-thin-pools"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-thin-pools-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-thin-pools-min-tip"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-thin-pools-overbidder"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-backrun-thin-pools-two-leg"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-book-maker"
 version = "0.1.0"
 dependencies = [
@@ -5415,6 +5493,51 @@ version = "0.1.0"
 dependencies = [
  "mtx-kit",
  "proptest",
+]
+
+[[package]]
+name = "mtx-bot-liquidation-flash"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-liquidation-flash-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-liquidation-flash-min-tip"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-liquidation-flash-overbidder"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-liquidation-flash-scope-reader"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-liquidation-probe"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bs58",
+ "mtx-kit",
+ "serde_json",
 ]
 
 [[package]]
@@ -5677,9 +5800,11 @@ name = "mtx-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "bytes 1.12.1",
  "chrono",
  "core_affinity",
+ "flate2",
  "futures-util",
  "mtx-core",
  "mtx-kit",

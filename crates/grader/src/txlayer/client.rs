@@ -135,23 +135,7 @@ impl PoolClient {
         let to: Pubkey = jito::TIP_ACCOUNTS[(n % 8) as usize]
             .parse()
             .expect("a tip account");
-        let mut data = 2u32.to_le_bytes().to_vec();
-        data.extend(lamports.to_le_bytes());
-        let ix = solana_transaction::Instruction::new_with_bytes(
-            pool::SYSTEM,
-            &data,
-            vec![
-                solana_transaction::AccountMeta::new(self.signer.pubkey(), true),
-                solana_transaction::AccountMeta::new(to, false),
-            ],
-        );
-        let message = solana_message::Message::new_with_blockhash(
-            &[ix],
-            Some(&self.signer.pubkey()),
-            &blockhash,
-        );
-        let tx = VersionedTransaction::try_new(VersionedMessage::Legacy(message), &[&self.signer])
-            .map_err(|e| e.to_string())?;
+        let tx = jito::tip_transaction(&self.signer, &to, lamports, blockhash)?;
         wincode::serialize(&tx).map_err(|e| e.to_string())
     }
 
@@ -437,8 +421,13 @@ pub fn ensure_key(message: &mut VersionedMessage, key: Pubkey) -> Result<u8, Str
     Ok(at as u8)
 }
 
-/// Set the message's compute-unit limit and price, where given, adding the
-/// compute budget's instructions it lacks.
+/// Set the message's compute-unit limit and price, where given: an
+/// instruction the message has is changed in place; one it lacks is added
+/// at the end of its leading compute-budget instructions. A transaction
+/// whose instructions name each other by index (a flash loan's repay names
+/// its borrow's; Scope's refresh checks that only compute-budget
+/// instructions come before it) must carry both already, as an atomic
+/// group's does: then no instruction moves.
 pub fn set_budget(
     message: &mut VersionedMessage,
     limit: Option<u64>,
@@ -459,14 +448,20 @@ pub fn set_budget(
             .find(|ix| ix.program_id_index == program && ix.data.first() == Some(&tag));
         match found {
             Some(ix) => ix.data = data,
-            None => instructions.insert(
-                0,
-                CompiledInstruction {
-                    program_id_index: program,
-                    accounts: Vec::new(),
-                    data,
-                },
-            ),
+            None => {
+                let budget = instructions
+                    .iter()
+                    .take_while(|ix| ix.program_id_index == program)
+                    .count();
+                instructions.insert(
+                    budget,
+                    CompiledInstruction {
+                        program_id_index: program,
+                        accounts: Vec::new(),
+                        data,
+                    },
+                );
+            }
         }
     };
     if let Some(limit) = limit {
@@ -533,5 +528,44 @@ mod tests {
             }
             assert!(parsed.readonly.contains(&jito::DONT_FRONT));
         }
+    }
+
+    /// A transaction that already has its budget (an atomic group's, whose
+    /// flash repay names its borrow by index) keeps every instruction where
+    /// it is; one that lacks the price gets it right after its limit.
+    #[test]
+    fn the_budget_is_set_in_place_and_never_moves_an_instruction() {
+        let payer = Keypair::new();
+        let writes: Vec<Pubkey> = (0..2).map(|_| Pubkey::new_unique()).collect();
+        let body = [ix(&payer.pubkey(), &writes), ix(&payer.pubkey(), &writes)];
+        let compile = |budget: Vec<Instruction>| {
+            let all: Vec<Instruction> = budget.into_iter().chain(body.iter().cloned()).collect();
+            VersionedMessage::V0(
+                v0::Message::try_compile(&payer.pubkey(), &all, &[], Hash::new_unique()).unwrap(),
+            )
+        };
+        let budget = |tag: u8, value: &[u8]| {
+            let data: Vec<u8> = std::iter::once(tag).chain(value.iter().copied()).collect();
+            Instruction::new_with_bytes(pool::COMPUTE_BUDGET, &data, Vec::new())
+        };
+        let limit = budget(2, &1_000u32.to_le_bytes());
+        let price = budget(3, &5u64.to_le_bytes());
+
+        let mut full = compile(vec![limit.clone(), price]);
+        let before: Vec<CompiledInstruction> = full.instructions().to_vec();
+        set_budget(&mut full, Some(321_000), Some(7_777)).unwrap();
+        let after = full.instructions();
+        assert_eq!(after.len(), before.len(), "nothing added");
+        assert_eq!(after[0].data[1..5], 321_000u32.to_le_bytes());
+        assert_eq!(after[1].data[1..9], 7_777u64.to_le_bytes());
+        assert_eq!(after[2..], before[2..], "the body stays where it was");
+
+        let mut lacking = compile(vec![limit]);
+        set_budget(&mut lacking, Some(321_000), Some(7_777)).unwrap();
+        let after = lacking.instructions();
+        assert_eq!(after.len(), 4);
+        assert_eq!(after[0].data[0], 2, "the limit first");
+        assert_eq!(after[1].data[0], 3, "the price right after it");
+        assert_eq!(after[2..], full.instructions()[2..]);
     }
 }

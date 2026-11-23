@@ -689,6 +689,57 @@ pub fn liquidate(
     )
 }
 
+/// The accounts a flash borrow and its repay name, in the program's order:
+/// the two differ only in what they call the vault and the user's account.
+fn flash_accounts(user: &Pubkey, reserve: &ReserveKeys) -> Vec<AccountMeta> {
+    vec![
+        AccountMeta::new_readonly(*user, true),
+        r(market_authority(&reserve.market)),
+        r(reserve.market),
+        w(reserve.address),
+        r(reserve.mint),
+        w(reserve.supply_vault),
+        w(user_ata(user, reserve)),
+        w(reserve.fee_vault),
+        // No referrer: the program reads its own id as an absent account.
+        none(),
+        none(),
+        r(INSTRUCTIONS_SYSVAR),
+        r(reserve.token_program),
+    ]
+}
+
+/// Lend `atoms` of `reserve`'s asset to `user`'s account for the rest of
+/// the transaction. The program refuses the transaction unless a
+/// [`flash_repay`] of the same amount follows at a later instruction.
+pub fn flash_borrow(user: &Pubkey, reserve: &ReserveKeys, atoms: u64) -> Instruction {
+    assert!(atoms > 0, "a flash borrow lends something");
+    ix(
+        "flash_borrow_reserve_liquidity",
+        &atoms.to_le_bytes(),
+        flash_accounts(user, reserve),
+    )
+}
+
+/// Repay the [`flash_borrow`] at instruction `borrow_index` of the same
+/// transaction (its index among the top-level instructions), with the
+/// reserve's flash fee on top, from `user`'s account.
+pub fn flash_repay(
+    user: &Pubkey,
+    reserve: &ReserveKeys,
+    atoms: u64,
+    borrow_index: u8,
+) -> Instruction {
+    assert!(atoms > 0, "a flash repay returns something");
+    let mut args = atoms.to_le_bytes().to_vec();
+    args.push(borrow_index);
+    ix(
+        "flash_repay_reserve_liquidity",
+        &args,
+        flash_accounts(user, reserve),
+    )
+}
+
 /// The liquidator's account for a reserve's collateral token, which a
 /// liquidation passes through.
 pub fn collateral_ata(owner: &Pubkey, reserve: &ReserveKeys) -> Pubkey {
@@ -740,6 +791,42 @@ mod tests {
             account_tag("Obligation"),
             [168, 206, 141, 106, 88, 76, 172, 167]
         );
+    }
+
+    #[test]
+    fn a_flash_loan_is_laid_out_as_mainnet_sends_it() {
+        // Kamino's own tags, as mainnet liquidators send them (2026-11-20).
+        assert_eq!(
+            instruction_tag("flash_borrow_reserve_liquidity"),
+            [0x87, 0xe7, 0x34, 0xa7, 0x07, 0x34, 0xd4, 0xc1]
+        );
+        assert_eq!(
+            instruction_tag("flash_repay_reserve_liquidity"),
+            [0xb9, 0x75, 0x00, 0xcb, 0x60, 0xf5, 0xb4, 0xba]
+        );
+        let reserve = ReserveKeys {
+            address: Pubkey::new_unique(),
+            market: Pubkey::new_unique(),
+            mint: Pubkey::new_unique(),
+            supply_vault: Pubkey::new_unique(),
+            fee_vault: Pubkey::new_unique(),
+            collateral_mint: Pubkey::new_unique(),
+            collateral_vault: Pubkey::new_unique(),
+            token_program: mtx_kit::token::TOKEN_PROGRAM_ID,
+            farm_collateral: Pubkey::default(),
+            farm_debt: Pubkey::default(),
+            scope_prices: Pubkey::new_unique(),
+        };
+        let user = Pubkey::new_unique();
+        let borrow = flash_borrow(&user, &reserve, 1_000);
+        let repay = flash_repay(&user, &reserve, 1_000, 2);
+        assert_eq!(borrow.accounts.len(), 12);
+        assert_eq!(borrow.accounts, repay.accounts);
+        assert_eq!(borrow.data.len(), 16);
+        assert_eq!(&repay.data[8..], &[0xe8, 0x03, 0, 0, 0, 0, 0, 0, 2]);
+        assert!(borrow.accounts[0].is_signer);
+        assert_eq!(borrow.accounts[5].pubkey, reserve.supply_vault);
+        assert_eq!(borrow.accounts[8].pubkey, PROGRAM_ID);
     }
 
     #[test]

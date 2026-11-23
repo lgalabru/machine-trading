@@ -1,0 +1,125 @@
+name = "atomic-arb-2026-11-21"
+kind = "lending"
+symbol = "SOL"
+
+# Kamino Lend, its farms and its oracle.
+[[program]]
+name = "klend"
+expect_code_sha256 = "6482390f659a6774b059768313b6f701b14819110f9e10db8fa651a311e9c97b"
+address = "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD"
+
+[[program]]
+name = "kamino-farms"
+expect_code_sha256 = "67c4a989342024efedf6181c1d91cf6aac2bb2bcd17f43b8848c9f3d8ba21011"
+address = "FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr"
+
+[[program]]
+name = "kamino-scope"
+expect_code_sha256 = "0d4a3bcdb27b245b9a6b6fd4ecf151fc55de0fc78fbb8b7f90de143a36d400ce"
+address = "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ"
+
+# The pools' programs.
+[[program]]
+name = "orca-whirlpool"
+expect_code_sha256 = "c422b22f3eefe86dd55878a4f505b9c68c26e241dc96af1573ca032b24b8ee3f"
+address = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
+
+[[program]]
+name = "raydium-clmm"
+expect_code_sha256 = "e9ae00f7bdfa3b104595e68b3e328d108029e16af3ba4fb1f3968210178ffc5c"
+address = "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK"
+
+# What a swap and a deposit pass along.
+[[program]]
+name = "spl-token"
+expect_code_sha256 = "53e587eee80c786bcfba1450397d92179a0f01def776d19fb4ddf690d64431cc"
+address = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+
+[[program]]
+name = "spl-token-2022"
+expect_code_sha256 = "495e9d7680dd555cb126a6a8e5464af5be9b01f02f2cd70634352722d22e3cad"
+address = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+[[program]]
+name = "spl-associated-token-account"
+expect_code_sha256 = "6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d"
+address = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+
+[[program]]
+name = "spl-memo"
+expect_code_sha256 = "0c92063c6838d9ad8af50aaefea9a166b5bb41a2bfa2bc6327d7db320849bc78"
+address = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+
+# Kamino's main market.
+[[account]]
+name = "kamino main market"
+kind = "market"
+address = "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF"
+
+[[account]]
+name = "kamino main lookup table"
+kind = "lookup-table"
+address = "FGMSBiyVE8TvZcdQnZETAAKw28tkQJ2ccZy6pyp95URb"
+
+[[account]]
+name = "kamino main SOL"
+kind = "reserve"
+address = "d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q"
+
+[[account]]
+name = "kamino main USDC"
+kind = "reserve"
+address = "D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59"
+
+# Scope's main feed: what the reserves read (prices), what a refresh reads
+# (mappings, TWAPs) and what links them (configuration, metadata).
+[[account]]
+name = "scope prices"
+kind = "oracle"
+address = "3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH"
+
+[[account]]
+name = "scope mappings"
+kind = "oracle"
+address = "4zh6bmb77qX2CL7t5AJYCqa6YqFafbz3QJNeFvZjLowg"
+
+[[account]]
+name = "scope twaps"
+kind = "oracle"
+address = "6L6vUts9tYqxHVUCEFVc2mzZw6yxMn8C6a44cp5ga7e9"
+
+[[account]]
+name = "scope configuration"
+kind = "oracle"
+address = "6cMwdbrJ95D7v5655Zsoe7oXmjQJMnagWK8EcdG6qmGM"
+
+[[account]]
+name = "scope token metadata"
+kind = "oracle"
+address = "3wHxoHowen78mskgqKQmaYVQV8Mqd5PUFXja2xcfviSV"
+
+[[account]]
+name = "wSOL"
+kind = "mint"
+address = "So11111111111111111111111111111111111111112"
+
+[[account]]
+name = "USDC"
+kind = "mint"
+address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+[[warmup]]
+action = "kamino-markets"
+pairs = [
+  ["d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q", "D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59"],
+]
+
+[[warmup]]
+action = "clone-pool"
+name = "orca-whirlpool SOL/USDC"
+address = "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"
+
+[[warmup]]
+action = "clone-pool"
+name = "raydium-clmm SOL/USDC"
+address = "3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"

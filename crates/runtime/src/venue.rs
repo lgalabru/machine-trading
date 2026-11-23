@@ -21,22 +21,31 @@
 //! | `perp` | `perp` | [`Holding::Perp`] |
 //! | `spot` | `spot` | [`Holding::Spot`] |
 //! | `lending` | `money-market` | [`Holding::MoneyMarket`] |
-//! | `amm` | `amm` (draft profile) | none yet |
+//! | `amm` | `amm` (draft profile) | [`Holding::Spot`], both assets |
 //! | `stake-pool` | `stake-pool` (draft profile) | none yet |
 //!
 //! A market answers what it can and leaves the rest at the defaults. Its
 //! seat says which of the sheet's actions it executes ([`Seat::executes`]);
 //! a line it doesn't comes back [`SendState::NotSent`](mtx_kit::SendState).
-//! A new venue (Raydium, Meteora, Kamino) is one more [`Venue`] offering its
-//! markets: a pool's top is the price of a small trade each way, its fills
-//! come from its vaults, and its seat executes swaps, liquidity or
-//! deposits.
+//! A new venue (Meteora, Raydium's constant-product pools) is one more
+//! [`Venue`] offering its markets: a pool's top is the price of a small
+//! trade each way, its fills come from its vaults, and its seat executes
+//! swaps, liquidity or deposits.
+//!
+//! A seat that can say what it would send without sending it
+//! ([`Seat::instructions`], a [`Built`]) can have its line joined with
+//! others into one transaction: an atomic route
+//! (`docs/rfd/0005-atomic-arbitrage-tasks.md`, "Atomic groups in the
+//! sheet"). Its own [`Seat::send`] sends the same [`Built`] alone, through
+//! [`send_built`], so a line has one path to the chain either way.
 //!
 //! - [`phoenix`]: Phoenix, its Eternal perpetuals ([`perps`]) and its v1
 //!   spot books ([`books`]).
 //! - [`openbook`]: OpenBook v2 and its spot books ([`books`]).
 //! - [`kamino`]: Kamino Lending and its reserves, money markets.
+//! - [`amm`]: Orca Whirlpool and Raydium CLMM pools.
 
+pub mod amm;
 pub mod books;
 pub mod kamino;
 pub mod openbook;
@@ -53,12 +62,14 @@ use mtx_core::{
 };
 pub use mtx_kit::MarketKind;
 use mtx_kit::{
-    Action, Planned, Sent, Side, VenueInfo,
-    chain::ChainClient,
+    Action, Planned, SendState, Sent, Side, Signature, VenueInfo,
+    chain::{AddressLookupTableAccount, ChainClient, InstructionGroup, TransactionPlan},
     protocols::{USDC_MINT, pyth, spot::MarketFill},
 };
 use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
+use solana_signer::Signer;
+use solana_transaction::{Instruction, versioned::VersionedTransaction};
 
 use crate::{Error, Result};
 
@@ -170,10 +181,198 @@ pub trait Market: Send + Sync {
     /// An account on this market, signed with `signer`, trading through
     /// `rpc_url`. It must already hold what it trades (setup funds it).
     async fn seat(&self, signer: Keypair, rpc_url: &str) -> Result<Box<dyn Seat>>;
+
+    /// An account on this market, signed with `signer`, reading and sending
+    /// through the chain `on` injects: a transaction layer's pool, say. A
+    /// market whose seats can't take one refuses.
+    async fn seat_on(&self, signer: Keypair, on: SeatChain) -> Result<Box<dyn Seat>> {
+        let _ = (signer, on);
+        Err(Error::Transaction {
+            label: self.instrument().to_string(),
+            reason: "this market's seats send through their own client only".into(),
+        })
+    }
+}
+
+/// The chain a seat reads and sends through, when its host injects one
+/// ([`Market::seat_on`]).
+#[derive(Clone)]
+pub struct SeatChain {
+    pub chain: std::sync::Arc<dyn ChainClient>,
+    /// The chain pools sends rather than landing them: a send reports
+    /// [`SendState::Landed`] with its signature at once, which the desk
+    /// then follows to its fate, as a perp seat's under the transaction
+    /// layer does.
+    pub pooled: bool,
+    /// Lookup tables every transaction the seat builds may use, besides its
+    /// venue's own: a session's table of the accounts its routes name.
+    pub lookup_tables: Vec<AddressLookupTableAccount>,
 }
 
 /// What a seat answers for a book's method on a market with no book.
 pub const NOT_A_BOOK: &str = "unsupported: not an order book";
+
+/// What a seat that sends whole transactions only answers
+/// [`Seat::instructions`].
+pub const NOT_BUILT: &str = "unsupported: this seat sends whole transactions only";
+
+/// Program log lines a failed simulation's reason keeps, from its end:
+/// enough for the failing program's own message and the frames above it.
+const FAILURE_LOG_LINES_MAX: usize = 14;
+
+/// One line of a sheet as instructions, not yet a transaction: what
+/// [`Seat::instructions`] returns. An atomic group joins several, in sheet
+/// order, into one transaction, and adds their compute and lookup tables
+/// up; a seat's own send sends one alone ([`send_built`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Built {
+    /// The line's instructions, in order, without a compute budget: setup
+    /// (token accounts, refreshes) first, then the action.
+    pub instructions: Vec<Instruction>,
+    /// Lookup tables the instructions' accounts may come from.
+    pub lookup_tables: Vec<AddressLookupTableAccount>,
+    /// Compute units the instructions may use, at most.
+    pub compute_unit_limit: u32,
+    /// What the line is, for errors and logs.
+    pub label: String,
+}
+
+impl Built {
+    /// The line as one transaction: a version 0 transaction if it has
+    /// lookup tables, else legacy.
+    pub fn plan(&self) -> TransactionPlan {
+        TransactionPlan::from_group(
+            &InstructionGroup::new(&self.label, self.instructions.clone()),
+            self.compute_unit_limit,
+        )
+        .with_lookup_tables(&self.lookup_tables)
+    }
+}
+
+/// A flash loan for an atomic group, as a lending seat builds it
+/// ([`Seat::flash`]): what goes before the group's lines, the borrow last,
+/// and the repay that goes after them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Flash {
+    /// The setup the borrow needs (the account it lends into), then the
+    /// borrow; its lookup tables and compute.
+    pub borrow: Built,
+    /// The repay, which names the borrow by its index in the transaction.
+    pub repay: Vec<Instruction>,
+}
+
+/// Sign and send `built` alone as `signer`: simulated first, so a refusal
+/// comes back with the program's reason and never reaches the chain.
+pub async fn send_built(
+    chain: &dyn ChainClient,
+    signer: &Keypair,
+    built: &Built,
+) -> SeatResult<Signature> {
+    send_plan(chain, signer, &built.plan()).await
+}
+
+/// Sign and send the transaction `plan` as `signer`, simulated first: a
+/// line alone ([`send_built`]), or an atomic group's lines joined.
+pub async fn send_plan(
+    chain: &dyn ChainClient,
+    signer: &Keypair,
+    plan: &TransactionPlan,
+) -> SeatResult<Signature> {
+    assert!(
+        !plan.instructions.is_empty(),
+        "{}: a transaction with nothing to send",
+        plan.label()
+    );
+    let blockhash = chain
+        .get_latest_blockhash()
+        .await
+        .map_err(|e| e.to_string())?;
+    let unsigned = plan
+        .versioned(&signer.pubkey(), blockhash)
+        .map_err(|e| e.to_string())?;
+    let simulation = chain
+        .simulate(&unsigned, &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(error) = simulation.error {
+        return Err(format!("{error}: {}", tail(&simulation.logs)));
+    }
+    let tx =
+        VersionedTransaction::try_new(unsigned.message, &[signer]).map_err(|e| e.to_string())?;
+    assert_eq!(tx.signatures.len(), 1, "{}: one signer", plan.label());
+    chain.send(&tx).await.map_err(|e| e.to_string())
+}
+
+/// Sign and send `plan` as `signer` ([`send_plan`]), and say what became
+/// of it: a seat's send, alone or a group's.
+pub async fn sent_plan(chain: &dyn ChainClient, signer: &Keypair, plan: &TransactionPlan) -> Sent {
+    match send_plan(chain, signer, plan).await {
+        Ok(signature) => Sent {
+            state: landed(chain, signature).await,
+            sent: true,
+        },
+        Err(reason) => Sent {
+            state: SendState::failed(reason),
+            sent: false,
+        },
+    }
+}
+
+/// Sign and send `plan` as `signer` ([`send_plan`]) into a pool that lands
+/// it later: its signature as [`SendState::Landed`], which the desk follows
+/// to its fate, or why it wasn't sent.
+pub async fn pooled_plan(
+    chain: &dyn ChainClient,
+    signer: &Keypair,
+    plan: &TransactionPlan,
+) -> Sent {
+    match send_plan(chain, signer, plan).await {
+        Ok(signature) => Sent {
+            state: SendState::Landed(signature.to_string()),
+            sent: true,
+        },
+        Err(reason) => Sent {
+            state: SendState::failed(reason),
+            sent: false,
+        },
+    }
+}
+
+/// [`sent_plan`], or [`pooled_plan`] where `pooled`: a seat's one path to
+/// its chain.
+pub async fn sent_on(
+    chain: &dyn ChainClient,
+    signer: &Keypair,
+    plan: &TransactionPlan,
+    pooled: bool,
+) -> Sent {
+    if pooled {
+        pooled_plan(chain, signer, plan).await
+    } else {
+        sent_plan(chain, signer, plan).await
+    }
+}
+
+/// What became of a send the world will land in its next block: landed or
+/// failed if the chain already has it, else delayed.
+pub async fn landed(chain: &dyn ChainClient, signature: Signature) -> SendState {
+    match chain.get_transaction(&signature).await {
+        Ok(Some(summary)) => match summary.error {
+            None => SendState::Landed(signature.to_string()),
+            Some(error) => SendState::Failed {
+                reason: error.to_string(),
+                signature: Some(signature.to_string()),
+            },
+        },
+        // Not yet in a block, or not readable yet: the step after says.
+        Ok(None) | Err(_) => SendState::Delayed,
+    }
+}
+
+/// The last lines of a failed simulation's logs, joined.
+fn tail(logs: &[String]) -> String {
+    logs[logs.len().saturating_sub(FAILURE_LOG_LINES_MAX)..].join(" | ")
+}
 
 /// One account trading on one market.
 #[async_trait]
@@ -188,6 +387,37 @@ pub trait Seat: Send + Sync {
     /// of it: the bot's, for a component. Its line's options go on it where
     /// the venue has them.
     async fn send(&self, planned: &Planned) -> Sent;
+
+    /// The instructions [`Seat::send`] would send for `planned`, unsent, so
+    /// a host can join several lines into one transaction; `Err` says why
+    /// the line can't be built. A seat that sends whole transactions only
+    /// answers [`NOT_BUILT`].
+    async fn instructions(&self, planned: &Planned) -> SeatResult<Built> {
+        let _ = planned;
+        Err(NOT_BUILT.into())
+    }
+
+    /// The flash loan `planned` (an [`Action::Flash`]) asks for, for an
+    /// atomic group whose transaction will hold [`Flash::borrow`]'s first
+    /// instruction at index `at`, so the repay can name the borrow. A seat
+    /// that lends nothing answers [`NOT_BUILT`].
+    async fn flash(&self, planned: &Planned, at: u8) -> SeatResult<Flash> {
+        let _ = (planned, at);
+        Err(NOT_BUILT.into())
+    }
+
+    /// Sign and send `plan`, an atomic group's lines joined into one
+    /// transaction, through the seat's chain with its key, and say what
+    /// became of it. A seat that builds lines ([`Seat::instructions`])
+    /// sends them; every seat of a component's session signs with the same
+    /// key, so any of the group's seats can.
+    async fn send_plan(&self, plan: &TransactionPlan) -> Sent {
+        let _ = plan;
+        Sent {
+            state: SendState::NotSent(NOT_BUILT.into()),
+            sent: false,
+        }
+    }
 
     /// Take up to `size` base units on `side`, at no worse than `limit`.
     async fn take(&self, side: Side, size: f64, limit: f64) -> SeatResult {

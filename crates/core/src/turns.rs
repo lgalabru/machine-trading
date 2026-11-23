@@ -115,6 +115,29 @@ pub struct Step {
     /// The top of each venue's book at this step.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depth: Vec<BookLevels>,
+    /// A trigger step's trigger (ADR 0004): the transaction the step ended
+    /// right behind. It has landed and its slot is still open: what the bot
+    /// sends now competes for the rest of that slot. `None` on every other
+    /// step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<Trigger>,
+}
+
+/// The transaction a trigger step ends behind: a large swap through one
+/// pool, as the scenario lands it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Trigger {
+    /// Its signature, in base58.
+    pub signature: String,
+    /// The slot it landed in, which is still open.
+    pub slot: u64,
+    /// Where it traded, as the mandate names instruments
+    /// (`raydium:amm:3ucNos…`).
+    pub market: String,
+    /// The trader's side: `sell` sold the pool's base.
+    pub side: Side,
+    /// Its size, in base units.
+    pub base: f64,
 }
 
 impl Step {

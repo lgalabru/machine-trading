@@ -12,7 +12,9 @@ The code is in `crates/grader/src/txlayer/`.
 
 ## Collect, then build
 
-1. **Collect.** The bot's sends go into one pool:
+1. **Collect.** The bot's sends, and those of the actors that compete
+   through the layer (see [Actors' sends](#actors-sends)), go into one
+   pool:
    - a process bot's through its guard: `sendTransaction`, the staked route
      at `/staked` where the scenario offers one, and the mock block engine
      under `/api/v1/`;
@@ -38,34 +40,37 @@ The code is in `crates/grader/src/txlayer/`.
         attempt, more likely when the block is full and the send pays less
         than the price that clears it;
       - its blockhash is still valid: 150 blocks.
-   3. On a **Jito leader**, bundles are ranked:
-      - by what they bid per requested compute unit: the tip plus the
-        transactions' priority fees, over all their requested units; then
-        by tip;
-      - a bundle that conflicts with one already taken is skipped. Jito's tip
-        accounts don't count as a conflict;
-      - a bundle with a `jitodontfront` transaction anywhere but first is
-        refused.
+   3. Every eligible entry is **ranked** the same way, a transaction and a
+      bundle alike, whoever sent it (see [Ranking](#ranking)):
+      - by the slot it reached the leader in, earliest first: an earlier
+        arrival isn't reordered behind a later one, whatever the later one
+        pays;
+      - then by what it pays the leader per compute unit it requests: its
+        priority fees, its tips (on a Jito leader) and the leader's half of
+        its base fees, over all its transactions' requested units;
+      - then by the step it was sent in;
+      - then by a seeded hash of the sender, drawn afresh each slot, never
+        by a transaction's bytes, so grinding a memo can't win a tie; then
+        by each sender's own order.
+   4. The builder **takes** them in that order. One lands if it pays at
+      least the price that clears the block and every hot account it
+      writes, and if its requested units fit what the background left of
+      the block (100M) and of each account it writes (12M). A bundle also
+      has to win Jito's auction:
+      - only a Jito leader takes one; on any other leader it waits;
+      - its tip is at least the least tip (1,000 lamports), and above the
+        background's bundles on every contended hot account it writes
+        (Jito's tip accounts aside, which every bundle pays); under
+        congestion, a bundle with the least tip waits like a transaction
+        with no priority fee;
+      - no bundle taken before it writes an account it writes;
+      - it fits a quarter of the block, with the bundles taken before it;
+      - a `jitodontfront` transaction is its first, or it is refused.
 
-      A bundle lands whole, at the top of the block, if it fits a quarter of
-      the block and pays at least the least tip (1,000 lamports). It buys
-      the same block space a transaction does, so its bid has to clear the
-      same price: the block's, congestion floor included, and that of every
-      hot account it writes. Its tip also has to outbid the background's
-      bundles on those hot accounts. Under congestion, a bundle with the
-      least tip waits like a transaction with no priority fee. The tip
-      floor the block engine serves is the calibration's, whatever the
-      slot: what a bundle has to pay comes from the recent fees.
-   4. **Transactions** are sorted:
-      - by what they pay per requested compute unit, base fee included;
-      - then by arrival;
-      - then by a seeded hash of the sender and its sequence number. Never by
-        a transaction's bytes, so grinding a memo can't win a tie.
-
-      One lands if its price clears the block and every hot account it
-      writes, and if its requested units fit what the background left of the
-      block (100M) and of each account it writes (12M). With the calibrated
-      small chance, two adjacent conflicting transactions swap places.
+      A bundle lands whole, where its rank puts it: not at the top of the
+      block. The tip floor the block engine serves is the calibration's,
+      whatever the slot. With the calibrated small chance, two adjacent
+      conflicting transactions swap places (never a bundle).
    5. A send the chain accepts and never runs (the node takes it without
       preflight and drops it: two compute-budget instructions of a kind, a
       fee its payer can't cover) fails unpaid, "the chain didn't process
@@ -89,6 +94,59 @@ The code is in `crates/grader/src/txlayer/`.
    bundle costs nothing.
 
 A skipped slot is an empty block: block height keeps pace with slots.
+
+## Ranking
+
+One scale, after arrival. A Jito leader doesn't land every bundle above
+every transaction, and the builder doesn't either: Jito's validators
+schedule bundles beside transactions through the slot, and Agave's
+scheduler ranks what it holds by the leader's reward over the cost
+(`calculate_priority_and_cost`: the priority fee and the leader's half of
+the base fee, over the cost, the requested units most of it). A tip is the
+leader's too. So an entry's rank is what it pays the leader per unit it
+requests, its kind aside.
+
+What reaches the leader later doesn't jump ahead of what it already holds.
+The builder's window is the slot: entries that reached the leader in the
+same slot rank by pay, an earlier slot's go first. A step's turns run with
+the chain paused, so every send of one step reaches the same slot, the
+bot's and the actors' alike, and the order the grader runs the turns in
+wins no tie. In a trigger's slot that means the send of the trigger step's
+turns that pays the most per unit lands right behind the trigger, and a
+searcher whose latency puts it a slot later lands after the bot, whatever
+it bids. An actor's latency (a searcher's `latency_slots`, a liquidator's
+drawn lag) is how the session models arriving late.
+
+**Checked against mainnet** (2026-11-22,
+`ops/research/atomic-arb/ordering/rules.py` on blocks re-fetched for the
+research's cases). For 22 of the 26 SOL/USDC
+backruns (19 of the explorer's 21 arbs and 7 first responders of the whale
+windows) and 30 of 40 contested Kamino liquidations above about $1k, other
+transactions writing the same pools, or attempting the same obligation,
+landed in the winner's slot. Which rule puts the actual winner first among
+them, given their observed priority fees and tips over their requested
+units:
+
+| Rule | SOL/USDC (22) | Kamino (30) |
+| --- | --- | --- |
+| Bundles first (any tip outranks any priority fee), then priority per unit: the builder until 2026-11-22 | 8 | 11 |
+| One scale, pay per unit, the whole slot at once | 13 | 11 |
+| One scale, among contenders landing within 5 positions of each other | 20 | 28 |
+| ... within 20 positions | 17 | 25 |
+
+Winners usually arrived first: a contender that paid more per unit and
+still landed after the winner did so a median 155 positions later on
+SOL/USDC (347 contenders in 9 slots) and 382 on Kamino (126 in 19): it
+arrived later. Among those that arrived together, the one that paid the
+most won 20 times in 22 and 28 in 30; tips decided nothing on their own
+(Kamino's losers never tipped, and 6 of the 26 SOL/USDC winners did). 11
+of 23 same-slot SOL/USDC winners landed right behind the trigger; 4 of 26
+paid nothing above the base fee, winning by arrival. The builder's window
+is a whole slot, coarser than mainnet's, so it ranks by pay some arrivals
+mainnet orders by time; a session's actors' latencies stand in for the
+rest. Limits: index stands in for arrival time; failed bundles never land,
+so tipped losers are mostly invisible; on SOL/USDC a contender is any
+transaction that writes either pool.
 
 ## Background demand
 
@@ -204,16 +262,102 @@ That is a v1 file's top-level field. A v2 file (`"schema": 2`, see
   of the execution faults are dropped. The close itself goes through the
   grader's own endpoint, past the layer, and lands at once; its fees leave
   the bot's wallet and are booked in the ledger's `forced_close`.
-- **Session kinds.** Only perp sessions take the layer for now: a spot or
-  lending session with one is refused. Their seats join when they can send
-  through the pool.
+- **Session kinds.** Perp, lending and amm sessions take the layer; an amm
+  session needs it. In a lending session the bot's reserve and pool seats
+  send through the pool (an atomic group as one transaction), each send
+  reported `delayed` until a block says what became of it, and its
+  liquidators and Scope keeper bid in the same auction ([Actors'
+  sends](#actors-sends)); its borrowers' own actions, the keeper's reserve
+  refreshes and the pools' arbitrageur land at once, as in a session
+  without the layer. In an amm session the bot's pool seats send through
+  the pool, and the calm flow and the searchers bid in the auction; the
+  whale's chunks land at once ([Trigger steps](#trigger-steps)). A spot
+  session with one is refused: its seats don't send through the pool yet.
 - **Actors hooked on the bot's sends.** A front-runner with `on_send` (see
   `docs/actors.md`) acts on each of the bot's sends as it arrives, just
   before it would land. Under the layer a send only enters the pool, and
   lands when a block takes it, so a scenario can't have both: it is
-  refused when it loads, naming the actor. Actors that see the pool and
-  act inside the builder's blocks come with PR 17b. The library's other
-  actors run as usual.
+  refused when it loads, naming the actor. An actor competes under the
+  layer by sending into its auction instead, as a lending session's do.
+  The library's other actors run as usual.
+
+## Actors' sends
+
+An actor that competes with the bot for the same block space sends into the
+same pool (`TxEngine::submit` with a `sender`): a lending session's
+liquidators (`kamino-liquidator/<n>`) and its Scope keeper (`scope-keeper`),
+and an amm session's calm flow (`background`), cycle searchers
+(`cycle-searcher/<n>`) and pool searchers (`pool-searcher/<n>`), see
+`docs/actors.md`. Each entry carries its sender's name, and the builder
+ranks every entry by the same rules, whoever sent it and whatever its
+kind ([Ranking](#ranking)): the slot it reached the leader in, then pay
+per requested unit, then the step it was sent in, then the seeded hash of
+the sender. An actor's tip or priority fee outbids the bot's the way
+another of the bot's would. Each sender draws its own route latencies and losses from
+the layer's seed, keyed by its name, and its own `max_pending`.
+
+- **Determinism.** An actor decides what to send from the chain as it is
+  after the step's blocks and from draws on the scenario's seeds, never wall
+  time, and sends before the bot's turn. Its sends and the bot's in one
+  step arrive together: neither goes first for having been sent first. A
+  session replays its blocks exactly.
+- **The ledger** follows the bot's wallet alone: an actor's fees and tips
+  are not in `fees`.
+- **Ghosts** are unchanged: the background demand prices the block for
+  every sender alike.
+- **The report** gives each actor's sends in `senders`: how many landed,
+  landed and failed (paying their fee), failed without running (a refused
+  bundle, say), expired or were still pending, and the fees and tips of
+  those that landed. Each landed transaction in `blocks` names its sender.
+  A lending session's report also lists each liquidation an actor sent, with
+  the slot it landed in, its drawn latency, its bid and whether it pushed
+  Scope (`lending.actions`).
+
+## Trigger steps
+
+A scenario with triggers (an amm session's whale chunks,
+[ADR 0004](adr/0004-atomic-arbitrage-in-the-sheet.md)) ends a step on each
+(`crates/grader/src/trigger.rs`):
+
+1. **Where a step ends.** Each step ends when the chain reaches its last
+   slot: the layer has committed that slot's block so far, and the slot is
+   still open. What the session lands then, and what the turns send with
+   no latency, lands in that same slot, behind it, before the next step's
+   first block closes it. A step is two slots; a step that reaches a
+   trigger's slot ends there instead, so the one before may be shorter.
+   The steps are a function of the session's length and the triggers'
+   slots, so the hello announces their count and a replay meets the same
+   steps.
+2. **The trigger lands** through the grader's own endpoint, not the
+   auction: it is the whale's ordinary transaction, in the slot the
+   scenario names, at the head of what that slot holds from then on.
+3. **The turns.** The actors that react look at the state the trigger
+   left and send into the pool (the searchers, the calm flow); the account
+   is measured; then the bot's turn, whose `Step` names the trigger
+   (`trigger`: its signature, slot, pool, side and size; a component's
+   `market.trigger`).
+4. **The rest of the slot.** The next step's first block is the rest of
+   the trigger's slot: the builder ranks what reached it by the usual rules
+   ([Ranking](#ranking)): every send of the trigger step's turns reached it
+   together, so the one that pays the most per requested unit lands right
+   behind the trigger, a bundle or a transaction; the ghosts contend for it
+   as for any other.
+
+**Latency in a trigger step.** While the trigger's slot is open
+(`TxEngine::set_trigger_open`), a send gets no route latency: it reaches the
+trigger's slot, as mainnet's backrunners do, who read shreds and land at
+the next position 12 times in 21. What a sender adds itself still applies:
+a scenario's latency fault on the bot's sends, and a searcher's own drawn
+`latency_slots`, which put its send that many slots later. A route's chance
+of losing a delivery still applies too. Sends in any other step take their
+route's latency as before.
+
+The layer counts a block one slot past the ledger's: the block it builds
+"for slot `s + 1`" is committed while the chain's slot is `s`, and
+`getTransaction` puts its transactions in slot `s`, with the trigger. The
+report's `blocks[].at` and a send's `slot` in the bot's statuses are the
+layer's count; `amm.triggers[].at`, the step's `trigger.slot` and the
+transactions' `at` are the ledger's.
 
 ## What the bot sees
 
@@ -242,7 +386,7 @@ next 8 leaders. Each line's options apply:
 |---|---|
 | `cu_limit` | The transaction's compute-unit limit. None, with other options set, is what its simulation used plus 10% and 1,000. |
 | `cu_price` | Its priority fee, in micro-lamports per compute unit. |
-| `tip` | Adds a transaction paying one of the tip accounts, and makes the line a bundle on the Jito route. |
+| `tip` | Adds a transaction paying one of the tip accounts, asking for 1,000 compute units (a transfer and its limit use 300; the runtime's default 200,000 would dilute the bundle's pay per unit), and makes the line a bundle on the Jito route. The actors' tips are the same transaction. |
 | `bundle` | Lines with the same id go as one bundle, in sheet order, at most five transactions, tip included. |
 | `route` | `rpc`, `staked`, or `jito { bundle_only, dont_front }`. `dont_front` adds a `jitodontfront` key, read-only, to the bundle's first transaction. |
 | `retry_until_slot` | Rebroadcasts the same transaction each slot until then if a delivery is lost. Once its blockhash has expired and it never landed, the grader signs it again on a new one. |
@@ -265,6 +409,9 @@ The session report gains a `tx_layer` section:
 - **`sends`:** what became of each of the bot's sends: its step and sequence
   number, route, state, slot, fee, tip, delivery attempts, and times signed
   again.
+- **`senders`:** what became of each actor's sends (see
+  [Actors' sends](#actors-sends)); absent where no actor sends through the
+  layer.
 - **`fees`:** the ledger. It splits what the bot paid into base, priority,
   tips, failed transactions' fees, and route fees. It is checked against the
   wallet's SOL change, and `unexplained` is 0 when they agree. The risk
@@ -272,7 +419,10 @@ The session report gains a `tx_layer` section:
   tips of the bot's transactions that another key pays (a process bot can sign
   with a key of its own) are in `paid_by_others`, outside that check. SOL
   the bot moves out of its wallet itself (a transfer to another key) shows
-  in `unexplained`: the ledger explains fees, not trades.
+  in `unexplained`: the ledger explains fees, not trades. A token
+  account's lamports count as rent the bot can close, except the SOL a
+  wrapped-SOL account wraps, which is a holding the session values with the
+  rest of the account.
 
 `--replay` compares the whole report, so ordering is part of the replay
 check.

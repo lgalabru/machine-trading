@@ -1407,3 +1407,95 @@ async fn the_tx_probe_pays_for_what_it_lands_and_replays() {
     };
     assert_eq!(strip(&runs[0].0), strip(&runs[1].0));
 }
+
+/// An actor's send enters the same auction as the bot's, under its own
+/// name: the one paying more per unit lands first in the block, the report
+/// counts the actor's sends apart, and the bot's ledger leaves its fees out.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_actors_send_competes_with_the_bots_under_its_own_name() {
+    use super::engine::{Accepted, Submission};
+    let mut w = world(layer(false), None).await;
+    w.slots(2).await;
+    let actor = Keypair::new();
+    w.world
+        .surfnet
+        .cheatcodes()
+        .fund_sol(&actor.pubkey(), SOL)
+        .unwrap();
+    let start = w.balance(&w.bot.pubkey());
+    let h = w.blockhash();
+    let (bot_wire, bot_sig) = transfer(
+        &w.bot,
+        &[(hot(), SOL / 10)],
+        Some(10_000),
+        Some(1_000),
+        None,
+        h,
+    );
+    let (actor_wire, actor_sig) = transfer(
+        &actor,
+        &[(hot(), SOL / 10)],
+        Some(10_000),
+        Some(500_000),
+        None,
+        h,
+    );
+    assert_eq!(
+        send(w.guard.url(), &bot_wire, json!({ "encoding": "base64" })).await["result"],
+        bot_sig
+    );
+    let accepted = w
+        .engine
+        .submit(Submission {
+            sender: "kamino-liquidator/0".into(),
+            wires: vec![actor_wire],
+            route: super::RouteKind::Rpc,
+            bundle: false,
+            retry_until_slot: None,
+            resign: false,
+            delay_slots: 0,
+            dropped: false,
+        })
+        .await
+        .unwrap();
+    assert_eq!(accepted, Accepted::Signature(actor_sig.clone()));
+    w.slots(6).await;
+    let (
+        Some(Fate::Landed { slot: bot_slot, .. }),
+        Some(Fate::Landed {
+            slot: actor_slot, ..
+        }),
+    ) = (w.engine.fate(&bot_sig), w.engine.fate(&actor_sig))
+    else {
+        panic!(
+            "both land: {:?} {:?}",
+            w.engine.fate(&bot_sig),
+            w.engine.fate(&actor_sig)
+        );
+    };
+    let report = w.engine.report(None);
+    if bot_slot == actor_slot {
+        let block = report
+            .blocks
+            .iter()
+            .find(|b| b.landed.len() == 2)
+            .expect("one block with both");
+        let senders: Vec<&str> = block.landed.iter().map(|l| l.sender.as_str()).collect();
+        assert_eq!(
+            senders,
+            ["kamino-liquidator/0", "bot"],
+            "the higher bid first"
+        );
+    }
+    let actor_record = &report.senders["kamino-liquidator/0"];
+    assert_eq!((actor_record.sends, actor_record.landed), (1, 1));
+    assert_eq!(actor_record.fees, 5_000 + 5_000);
+    assert!(
+        !report.senders.contains_key("bot"),
+        "the bot's are in `sends`"
+    );
+    assert_eq!(report.sends.len(), 1);
+    // The ledger follows the bot's wallet only.
+    assert_eq!((report.fees.base, report.fees.priority), (5_000, 10));
+    assert_eq!(w.balance(&w.bot.pubkey()), start - SOL / 10 - 5_010);
+}

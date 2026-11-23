@@ -88,11 +88,12 @@ fn every_shipped_mandate_states_its_minimal_version() {
         }
     }
     assert!(count > 0, "no task scenarios found");
-    // Market-making takes only to reduce (v0.2.0); the other tasks are
-    // v0.1.0.
+    // Market-making takes only to reduce (v0.2.0); liquidation-flash's
+    // atomic routes need v0.3.0 (flash borrows, pools, inventory, costs);
+    // the other tasks are v0.1.0.
     assert_eq!(
         versions,
-        std::collections::BTreeSet::from([Version::V0_1_0, Version::V0_2_0])
+        std::collections::BTreeSet::from([Version::V0_1_0, Version::V0_2_0, Version::V0_3_0])
     );
     for file in json_files(&root().join("specs/examples")) {
         let mandate = Mandate::load(&file).unwrap();

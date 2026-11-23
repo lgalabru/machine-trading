@@ -1,0 +1,154 @@
+{
+  "created_at_unix": 1795318115,
+  "fork_host": "mainnet.helius-rpc.com",
+  "fork_slot": 472390207,
+  "accounts": 497,
+  "symbol": "SOL",
+  "mark_price_usd": 69.406521689756,
+  "kind": "amm",
+  "recipe_sha256": "3b8604c6a7b0568c209e886ace7a0bb1cb2ad0aea624d48d805d1f3b354e8270",
+  "sources": [
+    {
+      "role": "program",
+      "name": "orca-whirlpool",
+      "address": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+      "programdata": "CtXfPzz36dH5Ws4UYKZvrQ1Xqzn42ecDW6y8NKuiN8nD",
+      "deploy_slot": 457152296,
+      "code_sha256": "c422b22f3eefe86dd55878a4f505b9c68c26e241dc96af1573ca032b24b8ee3f"
+    },
+    {
+      "role": "program",
+      "name": "raydium-clmm",
+      "address": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+      "programdata": "HzD2cCXXT3UQNjMMY6kDv9w6gZ9qquSdfoGXrLL3LXx",
+      "deploy_slot": 459932378,
+      "code_sha256": "e9ae00f7bdfa3b104595e68b3e328d108029e16af3ba4fb1f3968210178ffc5c"
+    },
+    {
+      "role": "program",
+      "name": "spl-stake-pool",
+      "address": "SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy",
+      "programdata": "EmiU8AQkB2sswTxVB6aCmsAJftoowZGGDXuytm6X65R3",
+      "deploy_slot": 469669929,
+      "code_sha256": "71f5918f08cb9314b814ca6ffce4bf31ffbb7887bbd7e87cf0b79907ebc71ba3"
+    },
+    {
+      "role": "program",
+      "name": "spl-token",
+      "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "programdata": "3gvYRKWyXRR9xKWe1ZjPhLY5ZJRN7KDB4rFZFGoJfFk2",
+      "deploy_slot": 454464000,
+      "code_sha256": "53e587eee80c786bcfba1450397d92179a0f01def776d19fb4ddf690d64431cc"
+    },
+    {
+      "role": "program",
+      "name": "spl-token-2022",
+      "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "programdata": "DoU57AYuPFu2QU514RktNPG22QhApEjnKxnBcu4BHDTY",
+      "deploy_slot": 454464000,
+      "code_sha256": "495e9d7680dd555cb126a6a8e5464af5be9b01f02f2cd70634352722d22e3cad"
+    },
+    {
+      "role": "program",
+      "name": "spl-associated-token-account",
+      "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "code_sha256": "6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d"
+    },
+    {
+      "role": "program",
+      "name": "spl-memo",
+      "address": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+      "code_sha256": "0c92063c6838d9ad8af50aaefea9a166b5bb41a2bfa2bc6327d7db320849bc78"
+    },
+    {
+      "role": "mint",
+      "name": "wSOL",
+      "address": "So11111111111111111111111111111111111111112"
+    },
+    {
+      "role": "mint",
+      "name": "USDC",
+      "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    },
+    {
+      "role": "mint",
+      "name": "JitoSOL",
+      "address": "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn"
+    },
+    {
+      "role": "mint",
+      "name": "JTO",
+      "address": "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL"
+    },
+    {
+      "role": "mint",
+      "name": "GEOD",
+      "address": "7JA5eZdCzztSfQbJvS8aVVxMFfd81Rs9VvwnocV1mKHu"
+    },
+    {
+      "role": "stake-pool",
+      "name": "jito stake pool",
+      "address": "Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb"
+    },
+    {
+      "role": "stake-pool",
+      "name": "jito reserve stake",
+      "address": "BgKUXdS29YcHCFrPm5M8oLHiTzZaMDjsebggjoaQ6KFL"
+    },
+    {
+      "role": "stake-pool",
+      "name": "jito manager fee account",
+      "address": "8yoigZfzZ1nNaadumY9uPVD118225UYHTDpmjpr2nrSa"
+    },
+    {
+      "role": "pool",
+      "name": "orca-whirlpool SOL/USDC",
+      "address": "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"
+    },
+    {
+      "role": "pool",
+      "name": "raydium-clmm SOL/USDC",
+      "address": "3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"
+    },
+    {
+      "role": "pool",
+      "name": "orca-whirlpool SOL/JitoSOL",
+      "address": "Hp53XEtt4S8SvPCXarsLSdGfZBuUr5mMmZmX2DRNXQKp"
+    },
+    {
+      "role": "pool",
+      "name": "orca-whirlpool JTO/JitoSOL 30bp",
+      "address": "G2FiE1yn9N9ZJx5e1E2LxxMnHvb1H3hCuHLPfKJ98smA"
+    },
+    {
+      "role": "pool",
+      "name": "orca-whirlpool JTO/JitoSOL 100bp",
+      "address": "4UVvSVdeth9mxpPe4nwwZseXPd2bqqDm4xVaJSve3DXw"
+    },
+    {
+      "role": "pool",
+      "name": "raydium-clmm SOL/JTO",
+      "address": "JVoPtWWDsRcLvQosu5fWc2CaNF6jEtJzbxdPtcEuvZo"
+    },
+    {
+      "role": "pool",
+      "name": "orca-whirlpool SOL/JTO",
+      "address": "2UhFnySoJi6c89aydGAGS7ZRemo2dbkFRhvSJqDX4gHJ"
+    },
+    {
+      "role": "pool",
+      "name": "orca-whirlpool SOL/GEOD",
+      "address": "FsPFkRRTyCJrwK3S8x8JvU8Vmruk5EGKKQsLqywfvF5E"
+    },
+    {
+      "role": "pool",
+      "name": "raydium-clmm SOL/GEOD",
+      "address": "3RA4PDZAZ49nm6hdDCnCTrnECqQD93ny8oHP4T1CSTcR"
+    },
+    {
+      "role": "pool",
+      "name": "raydium-clmm GEOD/USDC",
+      "address": "BkX9RSHoDJGkU7pbHiksv3DprdLM3KWGoDSfGN9cGJ5d"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+# A check, not a strategy: a component that backruns a whale's chunk with
+# an atomic two-pool cycle in the trigger's own slot
+# (bench/checks/amm/backrun-sol-usdc.json, RFD 0005).
+[package]
+name = "mtx-bot-backrun-probe"
+edition = "2024"
+version = "0.1.0"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+# `split`: the cycle's two swaps as two transactions in one step, a route
+# mandate v0.3.0's rule 11 must refuse (`just backrun-smoke`).
+[features]
+split = []
+
+[dependencies]
+mtx-kit = { path = "../../crates/kit", default-features = false, features = ["component", "orca-whirlpool-venue", "raydium-clmm-venue"] }
+serde_json = "1"

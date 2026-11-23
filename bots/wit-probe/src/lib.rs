@@ -1,4 +1,4 @@
-//! A probe of `mtx:strategy@0.2.0`: it logs the session and every market it
+//! A probe of `mtx:strategy@0.3.0`: it logs the session and every market it
 //! is handed, and puts one line of each kind the interface allows on its
 //! first sheet. At step 3 it rests a reduce-only ask, which Phoenix holds to
 //! reduce-only, and asks for a swap the session can't execute before a buy
@@ -37,6 +37,7 @@ pub fn first_sheet(market: &Market, orders: &mut Orders) {
                 dont_front: true,
             }),
             retry_until_slot: Some(market.slot + 10),
+            atomic: None,
         })
         // Bought now or never: a market order bounded by the price.
         .bid(round(mark * 1.02), 2.0)
@@ -108,7 +109,19 @@ pub fn first_sheet(market: &Market, orders: &mut Orders) {
                 min_received: Some(0.9),
             },
             LineOptions::default(),
-        );
+        )
+        // An atomic group: a price push, a flash loan and a swap, which land
+        // together or not at all. A perp session trades none of these
+        // venues: the group comes back not sent, every line of it.
+        .push_price()
+        .at("kamino:money-market:SOL")
+        .atomic(7)
+        .flash(2.0)
+        .at("kamino:money-market:SOL")
+        .atomic(7)
+        .swap(Side::Ask, 2.0, AmountUnit::Base, round(mark * 0.99))
+        .at("orca:amm:pool")
+        .atomic(7);
 }
 
 /// A raw transaction shaped like Raydium CLMM's `open_position_v2`: a

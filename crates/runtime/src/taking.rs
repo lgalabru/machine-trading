@@ -117,7 +117,9 @@ impl TakingGuard {
             | Action::Withdraw { .. }
             | Action::Borrow { .. }
             | Action::Repay { .. }
-            | Action::Liquidate { .. } => return Ok(()),
+            | Action::Liquidate { .. }
+            | Action::Flash { .. }
+            | Action::PushPrice => return Ok(()),
         };
         let side = match side {
             mtx_kit::Side::Bid => Side::Buy,

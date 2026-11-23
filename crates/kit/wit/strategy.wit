@@ -12,10 +12,19 @@
 /// swaps, liquidity and lending actions; requests for quotes and responses;
 /// what became of every order the previous step planned, and the strategy's
 /// own fills; and, reserved, raw transactions the grader signs (`send`).
+///
+/// 0.3.0 keeps 0.2.0's fields and meanings, and adds atomic groups
+/// (`docs/adr/0004-atomic-arbitrage-in-the-sheet.md`): lines that share
+/// `tx-options.atomic` land as one transaction or not at all; a `flash`
+/// action that borrows a lending reserve's asset for the group; and a
+/// `push-price` action that refreshes a reserve's oracle at the head of a
+/// transaction; and, on a trigger step, the trigger the step ended behind
+/// (`market.trigger`).
+///
 /// The records and variants are closed: what a session doesn't support yet
-/// comes back `not-sent`, or empty. The grader still loads a 0.1.0
-/// component, and hands it 0.1.0's market.
-package mtx:strategy@0.2.0;
+/// comes back `not-sent`, or empty. The grader still loads a 0.2.0 or a
+/// 0.1.0 component, and hands each its own version's market.
+package mtx:strategy@0.3.0;
 
 interface types {
   /// The session, as `start` sees it.
@@ -59,7 +68,8 @@ interface types {
     reports: reports,
     /// Whether the session applies intents' transaction options: one with a
     /// transaction layer does. Elsewhere they are accepted and counted, and
-    /// every order is sent as it would be without them.
+    /// every order is sent as it would be without them; atomic groups
+    /// (`tx-options.atomic`) apply everywhere.
     applies-tx-options: bool,
   }
 
@@ -280,6 +290,24 @@ interface types {
     notes: list<string>,
     /// The fee market, where the session reports it.
     fees: option<fee-view>,
+    /// On a trigger step, the transaction the step ended right behind: it
+    /// has landed, its slot is still open, and what the strategy sends now
+    /// competes for the rest of that slot. None on every other step.
+    trigger: option<trigger>,
+  }
+
+  /// The transaction a trigger step ends behind: a large swap through one
+  /// pool.
+  record trigger {
+    signature: string,
+    /// The slot it landed in, still open.
+    slot: u64,
+    /// Where it traded, as `venue-info` names it.
+    venue: string,
+    /// The trader's side: `ask` sold the pool's base.
+    side: side,
+    /// Its size, in base units.
+    base: f64,
   }
 
   enum side { bid, ask }
@@ -438,6 +466,22 @@ interface types {
     %borrow(amount),
     repay(amount),
     liquidate(liquidate),
+    /// On a lending reserve, inside an atomic group (`tx-options.atomic`):
+    /// borrow this much of the reserve's asset for the group, in its units.
+    /// The grader puts the borrow before the group's first line and its
+    /// repay, with the reserve's flash fee on top, after its last; the
+    /// group fails whole if the account can't repay. A group holds at most
+    /// one. Outside a group it isn't sent: a flash loan lives only inside
+    /// one transaction, and is never a position.
+    flash(f64),
+    /// On a lending reserve: refresh the reserve's oracle prices (Scope's
+    /// `refresh-price-list`, for the entries the reserve prices with), so
+    /// what follows reads the price the oracle's source has now. Scope
+    /// takes it only as a transaction's first instruction after the compute
+    /// budget: in an atomic group, the grader moves every `push-price` line
+    /// to the head of the transaction, in sheet order; alone, it is its own
+    /// transaction.
+    push-price,
   }
 
   /// Where a transaction is sent.
@@ -458,9 +502,9 @@ interface types {
     dont-front: bool,
   }
 
-  /// How the line's transactions are sent. None of this is applied unless
-  /// the session says so (`session.applies-tx-options`); elsewhere it is
-  /// accepted and counted, and changes nothing.
+  /// How the line's transactions are sent. None of this but `atomic` is
+  /// applied unless the session says so (`session.applies-tx-options`);
+  /// elsewhere it is accepted and counted, and changes nothing.
   record tx-options {
     /// Compute units the transaction asks for; none is the simulation's
     /// units plus a margin.
@@ -476,6 +520,17 @@ interface types {
     /// hasn't landed; once its blockhash expires, sign it again with a new
     /// one, after checking it didn't land.
     retry-until-slot: option<u64>,
+    /// Lines with the same atomic id are one transaction: the grader joins
+    /// their instructions, in sheet order, and the transaction lands whole
+    /// or not at all, so a route's last swap's `limit` is its least profit.
+    /// A group's lines must be next to each other on the sheet, and it is
+    /// planned whole: if the sheet's limits would cut or drop any of its
+    /// lines, none is sent (`market.notes` says why). The group is sent
+    /// with its first line's options (priority fee, tip, bundle, route,
+    /// retries); its other lines' options other than this id are ignored.
+    /// Every line of a group gets the same send status. Unlike the rest of
+    /// these options, it applies in every session, layer or not.
+    atomic: option<u32>,
   }
 
   /// One line of the order sheet, as `mtx_kit::Orders` records it.
@@ -508,6 +563,9 @@ interface types {
     %borrow(amount),
     repay(amount),
     liquidate(liquidate),
+    /// A flash loan of the reserve's asset, as `action.flash`.
+    flash(f64),
+    push-price,
   }
 
   /// What became of an order.

@@ -149,8 +149,143 @@ doing. A client that has traded its funds away with the bot declines
 With `on_send`, a front-runner acts on the bot's sends as they arrive, so it
 can't run in a scenario with the transaction layer (`tx_layer`, see
 `docs/tx-layer.md`), which pools the bot's sends until a block takes them:
-such a scenario is refused when it loads. Pool-aware actors come with PR
-17b.
+such a scenario is refused when it loads. An actor competes under the layer
+by sending into its auction instead, as a lending session's liquidators
+and keeper do (below).
+
+## A lending session's actors
+
+A lending session (`venues.lending`, `crates/grader/src/lending/`) has
+actors of its own, outside the library. Every number below is the
+research's (`docs/RESEARCH.md`, "Kamino Lend liquidations", and
+`ops/research/atomic-arb/kamino-liquidations/NOTES.md` §3 and §6), and
+every draw comes from the scenario's lending seed, keyed by the actor, the
+borrower's place and the step, so a session replays them.
+
+- **Borrowers** (`borrowers`): obligations seeded near their liquidation
+  threshold; some top up or repay once their health falls under 1.05. They
+  act through the grader's endpoint, at once.
+- **Liquidators** (`liquidators`), without the transaction layer, look
+  after each step's blocks at Scope's price, and liquidate what is below 1
+  after `delay_steps`, in a drawn order, landing at once.
+- **Liquidators under the layer** bid in its auction, each under its own
+  name (`kamino-liquidator/<n>`):
+  - They read the **upstream**: a pushed feed's `FixedPrice` in Scope's
+    mappings, as a bot can. An obligation is liquidatable when its debt,
+    adjusted by its borrow factor, reaches its deposits' value times their
+    liquidation threshold, at upstream prices (the program's own values give
+    each side's weights, so an elevation group's terms hold).
+  - **How many race** grows with what they would repay: on average 0.56 of
+    them under $10, 2.6 from $10 to $1,000 and 4.4 above, each joining with
+    the chance that makes that mean, all of them when there are fewer.
+  - **When**: a latency in slots per liquidator and obligation, drawn so
+    that 50% act in the slot they see it, 71% within 2 slots and 90% within
+    21; above $1,000 repaid, 93% in the same slot.
+  - **What**: one transaction, from its own USDC: a push of the
+    collateral's Scope entries when Scope still reads the obligation
+    healthy, the refreshes, and the liquidation of the close factor's share
+    of the largest debt against the largest deposit. It sends only what its
+    simulation passes; one that lands after another's liquidation fails
+    with `ObligationHealthy`, and pays its fee, as 30,928 did on mainnet.
+  - **Its bid**, drawn once per liquidator: 25 to 45% of the bonus it
+    expects to keep (half the reserve's minimum bonus), as a Jito tip in a
+    bundle for 46% of them and as a priority fee for the rest. It pays that
+    share per compute unit as mainnet's liquidations did on their median
+    333,000 units: a transaction asking fewer pays less in all, and ranks
+    where theirs did. A tip and a priority fee rank alike
+    (`docs/tx-layer.md`, "Ranking").
+  - **A session's own race** (`liquidators.race`, every member optional):
+    `bid_share` (the range each bid share is drawn from), `tipping_share`
+    (the chance a liquidator tips), `same_slot_share` (the share of races
+    up to $1,000 joined in the slot the obligation turned; the lag keeps
+    the research's shape, and above $1,000 the same slot takes
+    `1 − 0.07 (1 − s) / 0.5`) and `competition` (the research's mean count
+    per size, times this; above $1,000 repaid it only raises the mean). Absent, each is the research's. The
+    `liquidation-flash` family draws them per session.
+  - The liquidators look at the obligations in the borrowers' order, not
+    their addresses': each role of a grade (the reference, the informed
+    bot, the bot) plays with keys of its own, and the order they send in
+    keys the layer's latency draws.
+  - The report lists each attempt in `lending.actions`, with the slot it
+    landed in, its latency, its bid, and whether it pushed Scope, and the
+    layer's report counts each liquidator's sends (`tx_layer.senders`).
+- **Scope's keeper** (`scope-keeper`), in a session with a pushed feed,
+  pushes every pushed entry every `keeper.every_slots` (5 by default, Scope's
+  median cadence while active) at a low priority fee, one
+  `refresh_price_list` per feed: through the layer's auction where there is
+  one, timed to land on its cadence, else at once. Between its pushes,
+  Scope lags the upstream unless someone pushes first.
+- **The pools' arbitrageur**, in a session with pools (`venues.amm`): after
+  each step's blocks, before the other actors and the bot, it swaps each
+  pool back to the scenario's price once it strays more than 4 bp (the
+  pools' fee), with a real swap the program stops at that price. Without it
+  nothing moves the pools but the session's own swaps, and selling seized
+  SOL into a pool left at the opening price after a fall would earn the
+  fall, not the bonus. Its swaps land at once.
+
+## An amm session's actors
+
+An amm session (`venues.amm` alone, `crates/grader/src/amm/`) has actors of
+its own, outside the library, each sending through the transaction
+layer's auction under its own name but the whale. The numbers are the
+research's (`docs/RESEARCH.md`, "SOL/USDC backruns on concentrated pools",
+and `ops/research/atomic-arb/clmm-backrun/NOTES.md`), and every draw comes
+from the section's `seed` through `txlayer::draw`, keyed by the actor, the
+slot or its count of looks, so a session replays them exactly.
+
+- **The whale** (`amm-whale/<n>`): its chunks are the session's triggers.
+  Each lands through the grader's endpoint, as mainnet's did (an ordinary
+  transaction, 15,000 lamports in fees, no tip), in the slot the scenario
+  names, from one of its accounts drawn per chunk: a market order on one
+  pool, a sale of the base or a buy of it, or, for a chunk with an
+  `impact_bps`, a swap the program stops once the price has moved that
+  far (halved until it fills where the pool's liquidity ends first: a thin
+  pool's trigger, `backrun-thin-pools`). The step ends right behind it
+  (`docs/tx-layer.md`, "Trigger steps"). The report keeps each chunk
+  (`amm.triggers`): the gap between the pools before and after it (a
+  session of two pools), what the best cycle of up to four legs would
+  have made right after it, what the layer landed
+  in the rest of its slot, and the first of the bot and the searchers to
+  land and run behind it within 4 slots (`winner`, `winner_after_slots`).
+- **The calm flow** (`background`): each slot, each pool swaps with the
+  chance its rate a minute gives (150 slots a minute), either side at even
+  odds, a log-normal size in SOL's worth through the median and the 90th
+  percentile, capped. What the step drew is sent after its blocks, through the auction
+  at a 30,000 micro-lamport priority fee (about 15,000 lamports in all).
+- **Cycle searchers** (`cycle-searcher/<n>`): after each step's blocks,
+  each reads every pool and finds the cycle from SOL back to SOL of at
+  most its `max_legs` legs that profits most on the pools' exact quotes
+  (`amm::cycle::Graph::best`, which lists every simple cycle through SOL
+  once, skips those whose prices after fees multiply to 1 or less, and
+  sizes the rest by golden-section search, as the research's detector
+  does). On two SOL/USDC pools that is the sale of SOL where it is dear
+  and its buy back where it is cheap; on a graph, a route through a third
+  token too, unless the searcher only looks at two legs; or a fixed size,
+  like the research's 200-SOL bot. If it expects at least its
+  `min_profit_sol`, it sends the swaps as one transaction: each leg but
+  the last may give 10 bp less than quoted, and the last must give back
+  the SOL put in and the least profit, so a cycle that comes too late
+  fails whole and pays its fee (a tip's bundle fails unpaid). It bids `bid_share` of what it
+  expects as a priority fee over its simulated units, or as a tip, after a
+  latency drawn per send. It sends again only once its last send is no
+  longer pending.
+- **Pool searchers** (`pool-searcher/<n>`): milestone D's pools
+  arbitrageur, competing. After each step's blocks each reads every pool
+  and, when one strays from its reference price (SOL's for SOL/USDC, the
+  ratio of its tokens' `reference_sol` otherwise) past its fee and
+  `margin_bps`, swaps it back to the reference less the fee, with a swap the program
+  stops at that price and that must give what it was quoted. It bids
+  `bid_share` of what that makes at the reference (the research's: 76 to
+  99%). Between chunks it is what keeps the calm flow's pools on the
+  reference; behind a chunk it races the cycles, as mainnet's strongest
+  backrunners did.
+
+The searchers and the flow hold 200,000 SOL, 20 million USDC, 200,000
+SOL's worth of every other token and 1,000 native SOL each, far more than
+any of their trades take. The layer's report
+counts each sender's sends (`tx_layer.senders`), and `amm.attempts` lists
+each searcher's send: what it expected, what it bid, its latency and what
+became of it.
 
 ## The reactive competitor
 

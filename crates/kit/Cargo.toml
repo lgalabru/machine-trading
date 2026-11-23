@@ -75,6 +75,23 @@ openbook-v2-venue = ["spot-venue"]
 # program addresses and associated token accounts, and Token-2022 mint and
 # account decoding.
 spot-venue = ["dep:solana-pubkey", "solana-pubkey/curve25519", "dep:solana-instruction"]
+# Orca Whirlpool concentrated-liquidity pools: pool, tick array (fixed
+# and dynamic) and oracle decoding, an exact-in and exact-out swap quote
+# that reproduces the program's integer math, and the `swap_v2`
+# instruction with its token accounts.
+orca-whirlpool = ["chain", "orca-whirlpool-venue"]
+# What a strategy reads of a Whirlpool without the chain: the decoding, the
+# exact quote and the `swap_v2` instruction. Builds for wasm32-wasip2.
+orca-whirlpool-venue = ["spot-venue"]
+# Raydium CLMM concentrated-liquidity pools: pool, config, tick array and
+# bitmap extension decoding, an exact-in and exact-out swap quote that
+# reproduces the program's integer math, and the `swap_v2` instruction
+# with its token accounts.
+raydium-clmm = ["chain", "raydium-clmm-venue"]
+# What a strategy reads of a Raydium CLMM pool without the chain: the
+# decoding, the exact quote and the `swap_v2` instruction. Builds for
+# wasm32-wasip2.
+raydium-clmm-venue = ["spot-venue"]
 # Pyth push-oracle price feeds: PriceUpdateV2 decoding and feed addresses;
 # the spot venues value their base assets at them.
 pyth = ["chain"]

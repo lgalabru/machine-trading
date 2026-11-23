@@ -819,6 +819,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
         roster: Default::default(),
         cranks: Vec::new(),
         account: Box::new(account),
+        triggers: None,
     })
 }
 
@@ -1143,6 +1144,7 @@ impl Account for SpotAccount {
             obligations: None,
             tx_layer: None,
             lending: None,
+            amm: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
             liquidator: done.liquidator,
@@ -1228,6 +1230,7 @@ mod tests {
             oracles: None,
             lending: None,
             warps: Vec::new(),
+            amm: None,
             order: None,
             participation: None,
             net: None,

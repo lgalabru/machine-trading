@@ -4,25 +4,42 @@
 //! blockhash still valid), the builder:
 //!
 //! 1. lands nothing if `s`'s leader skipped it;
-//! 2. on a Jito leader, runs the auction: bundles ranked by what they bid
-//!    per requested compute unit (tip and priority fees), then by tip, each
-//!    landing whole if it doesn't conflict with one taken before and fits
-//!    what's left of the bundle share of the block. A bundle buys the same
-//!    block space a transaction does, so its bid has to clear the same
-//!    price: the block's and every hot account's it writes. Its tip also
-//!    has to outbid the ghosts' bundles on those hot accounts (Jito's tip
-//!    accounts aside, which every bundle pays). A bundle with a
-//!    `jitodontfront` transaction anywhere but first is invalid. Bundles go
-//!    at the top of the block;
-//! 3. sorts the transactions by what they pay per requested compute unit
-//!    (their priority fee plus their base fee), then by arrival (step, then
-//!    sequence in the step), then by a seeded hash of the sender and its
-//!    sequence number: never by a transaction's bytes, which a sender could
-//!    grind. One lands if it pays at least what clears the block and every
-//!    hot account it writes, and its requested units fit what's left of the
-//!    block and of each account it writes, after the ghosts' share;
+//! 2. ranks the entries by when they reached the leader, then on **one
+//!    scale**. Entries that reached it in the same slot are one window
+//!    (for a trigger's slot, every send of the trigger step's turns, which
+//!    run with the chain paused); an earlier window goes first, whatever a
+//!    later one pays. Within a window, transactions and bundles alike rank
+//!    by what they pay the leader per compute unit they request (priority
+//!    fees, tips on a Jito leader, and the leader's half of the base fees,
+//!    over all their transactions' units: [`Entry::pay_per_cu`]); then by
+//!    the step sent in, earlier first; then by a seeded hash of the sender,
+//!    drawn afresh each slot, never by a transaction's bytes, which a
+//!    sender could grind; then by each sender's own order. The order the
+//!    grader runs a step's turns in (actors before the bot) is no race;
+//! 3. takes them in that order. One lands if its bid clears what landing
+//!    costs in the slot (the block's price and that of every hot account it
+//!    writes) and its requested units fit what the ghosts left of the block
+//!    and of each account it writes. A bundle also has to win Jito's
+//!    auction: only a Jito leader takes it, with at least the least tip, a
+//!    tip above the ghosts' bundles on every contended hot account it
+//!    writes (Jito's tip accounts aside, which every bundle pays), no
+//!    account written by a bundle taken before it, room in the bundle share
+//!    of the block, and a `jitodontfront` transaction only first. A bundle
+//!    lands where its rank puts it, not at the top of the block: Jito's
+//!    validators schedule bundles beside transactions through the slot, and
+//!    mainnet's liquidations land mid-block (median index 347) whether they
+//!    tip or not (`docs/tx-layer.md`, "Ranking");
 //! 4. with the calibrated small chance, swaps two adjacent conflicting
 //!    transactions: the scheduler isn't a strict sort.
+//!
+//! So of the entries that reach a trigger's slot together, the one that
+//! pays the most per unit lands right behind the trigger, and one that
+//! arrives a slot later lands after them all. Mainnet's contested slots
+//! read the same way (`docs/tx-layer.md`, "Ranking"): among contenders that
+//! landed within five positions of each other the winner paid the most per
+//! unit in 20 of 22 SOL/USDC backruns and 28 of 30 Kamino liquidations,
+//! while across the whole slot it did in only 13 and 11, the richer ones
+//! having arrived later.
 //!
 //! A signature lands once: an entry holding a transaction another one took
 //! for the block waits, and the session lets it go once that one landed.
@@ -30,7 +47,10 @@
 //! It is a pure function of its inputs: the session commits its picks in
 //! order.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 use solana_pubkey::Pubkey;
 
@@ -57,7 +77,7 @@ pub struct Slot<'a> {
 /// The builder's decision for one slot.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Block {
-    /// Entry ids to commit, in order: bundles first.
+    /// Entry ids to commit, in order.
     pub picks: Vec<u64>,
     /// Bundles refused outright, with why.
     pub invalid: Vec<(u64, String)>,
@@ -69,135 +89,175 @@ pub fn build(slot: &Slot<'_>, eligible: &[&Entry]) -> Block {
     if slot.skipped {
         return block;
     }
-    let block_clearing = slot.ghost.block(slot.slot);
-    let mut block_left = ((1.0 - block_clearing.utilization) * slot.cu_cap as f64) as u64;
-    let mut account_used: BTreeMap<Pubkey, u64> = BTreeMap::new();
-    let account_left = |used: &BTreeMap<Pubkey, u64>, account: &Pubkey| {
-        let clearing = slot.ghost.account(account, slot.slot);
-        let cap = ((1.0 - clearing.utilization) * slot.account_cu_cap as f64) as u64;
-        cap.saturating_sub(used.get(account).copied().unwrap_or(0))
-    };
-    let tie = |e: &Entry| {
-        hash(
-            slot.seed,
-            "tie",
-            &[slot.slot, e.sender_seq],
-            e.sender.as_bytes(),
-        )
-    };
-
-    let (bundles, txs): (Vec<&Entry>, Vec<&Entry>) =
-        eligible.iter().copied().partition(|e| e.is_bundle());
-    let mut taken: BTreeSet<&str> = BTreeSet::new();
-
-    // The auction.
-    if slot.jito_leader {
-        let mut ranked: Vec<&Entry> = Vec::new();
-        for bundle in bundles {
-            if let Some(i) = bundle.txs.iter().position(|t| t.dont_front)
+    let mut ranked: Vec<&Entry> = Vec::with_capacity(eligible.len());
+    for entry in eligible.iter().copied() {
+        if entry.is_bundle() {
+            // A leader without Jito's client takes no bundle: it waits.
+            if !slot.jito_leader {
+                continue;
+            }
+            if let Some(i) = entry.txs.iter().position(|t| t.dont_front)
                 && i != 0
             {
                 block.invalid.push((
-                    bundle.id,
+                    entry.id,
                     "a jitodontfront transaction that isn't the bundle's first".into(),
                 ));
                 continue;
             }
-            ranked.push(bundle);
         }
-        ranked.sort_by(|a, b| {
-            b.bid()
-                .cmp(&a.bid())
-                .then(b.tip().cmp(&a.tip()))
-                .then(a.arrival.cmp(&b.arrival))
-                .then(tie(a).cmp(&tie(b)))
-        });
-        let mut bundle_left = (BUNDLE_SHARE * block_left as f64) as u64;
-        let mut locked: Vec<Pubkey> = Vec::new();
-        for bundle in ranked {
-            let tip = bundle.tip();
-            // The tip accounts take every bundle's tip: they set no order.
-            let writes: Vec<Pubkey> = bundle
-                .writable()
-                .filter(|w| !jito::is_tip_account(w))
-                .copied()
-                .collect();
-            let outbid = tip >= jito::MIN_TIP
-                && bundle.bid() >= slot.ghost.price_to_land(slot.slot, &writes)
-                && writes
-                    .iter()
-                    .filter(|a| slot.ghost.is_hot(a))
-                    .all(|a| tip >= (slot.ghost_tip)(a));
-            let cu = bundle.cu();
-            if !outbid
-                || cu > bundle_left
-                || writes.iter().any(|w| locked.contains(w))
-                || writes.iter().any(|w| account_left(&account_used, w) < cu)
-                || bundle
-                    .txs
-                    .iter()
-                    .any(|t| taken.contains(t.signature.as_str()))
-            {
-                continue;
-            }
-            taken.extend(bundle.txs.iter().map(|t| t.signature.as_str()));
-            bundle_left -= cu;
-            block_left -= cu;
-            for w in &writes {
-                *account_used.entry(*w).or_default() += cu;
-                locked.push(*w);
-            }
-            block.picks.push(bundle.id);
+        ranked.push(entry);
+    }
+    ranked.sort_by(|a, b| rank(slot, a, b));
+
+    let mut space = Space::new(slot);
+    let mut taken: BTreeSet<&str> = BTreeSet::new();
+    let mut landed: Vec<&Entry> = Vec::with_capacity(ranked.len());
+    for entry in ranked {
+        if entry
+            .txs
+            .iter()
+            .any(|t| taken.contains(t.signature.as_str()))
+        {
+            continue;
+        }
+        // The tip accounts take every bundle's tip: they set no order.
+        let writes: Vec<Pubkey> = entry
+            .writable()
+            .filter(|w| !jito::is_tip_account(w))
+            .copied()
+            .collect();
+        if entry.bid_on(slot.jito_leader) < slot.ghost.price_to_land(slot.slot, &writes) {
+            continue;
+        }
+        if entry.is_bundle() && !space.wins_auction(entry, &writes) {
+            continue;
+        }
+        if !space.fits(entry.cu(), &writes) {
+            continue;
+        }
+        space.take(entry, &writes);
+        taken.extend(entry.txs.iter().map(|t| t.signature.as_str()));
+        landed.push(entry);
+    }
+    invert(slot, &mut landed);
+    block.picks.extend(landed.iter().map(|e| e.id));
+    assert!(
+        block.picks.iter().collect::<BTreeSet<_>>().len() == block.picks.len(),
+        "an entry is picked once"
+    );
+    block
+}
+
+/// The builder's order: the slot an entry reached the leader in, earliest
+/// first (an earlier arrival isn't reordered behind a later one, whatever
+/// the later one pays); within it, pay per requested unit, highest first;
+/// then the step sent in, earliest first; then a seeded coin between
+/// senders, drawn afresh each slot; then each sender's own sends in the
+/// order it made them.
+fn rank(slot: &Slot<'_>, a: &Entry, b: &Entry) -> Ordering {
+    let tie = |e: &Entry| hash(slot.seed, "tie", &[slot.slot], e.sender.as_bytes());
+    a.ready_slot
+        .cmp(&b.ready_slot)
+        .then(
+            b.pay_per_cu(slot.jito_leader)
+                .cmp(&a.pay_per_cu(slot.jito_leader)),
+        )
+        .then(a.arrival.step.cmp(&b.arrival.step))
+        .then(tie(a).cmp(&tie(b)))
+        .then(a.sender_seq.cmp(&b.sender_seq))
+        .then(a.id.cmp(&b.id))
+}
+
+/// What is left of the slot's block space as entries are taken.
+struct Space<'s, 'a> {
+    slot: &'s Slot<'a>,
+    block_left: u64,
+    bundle_left: u64,
+    account_used: BTreeMap<Pubkey, u64>,
+    /// Accounts written by the bundles taken: Jito's auction lands one
+    /// bundle per account.
+    bundle_locked: BTreeSet<Pubkey>,
+}
+
+impl<'s, 'a> Space<'s, 'a> {
+    fn new(slot: &'s Slot<'a>) -> Self {
+        let clearing = slot.ghost.block(slot.slot);
+        let block_left = ((1.0 - clearing.utilization) * slot.cu_cap as f64) as u64;
+        Self {
+            slot,
+            block_left,
+            bundle_left: (BUNDLE_SHARE * block_left as f64) as u64,
+            account_used: BTreeMap::new(),
+            bundle_locked: BTreeSet::new(),
         }
     }
 
-    // Normal transactions.
-    let mut sorted = txs;
-    sorted.sort_by(|a, b| {
-        let price = |e: &Entry| e.txs[0].effective_price();
-        price(b)
-            .cmp(&price(a))
-            .then(a.arrival.cmp(&b.arrival))
-            .then(tie(a).cmp(&tie(b)))
-    });
-    let mut landed: Vec<&Entry> = Vec::new();
-    for entry in sorted {
-        let tx = &entry.txs[0];
-        if entry.bid() < slot.ghost.price_to_land(slot.slot, &tx.writable)
-            || taken.contains(tx.signature.as_str())
-        {
-            continue;
-        }
-        if tx.cu_limit > block_left
-            || tx
-                .writable
-                .iter()
-                .any(|w| account_left(&account_used, w) < tx.cu_limit)
-        {
-            continue;
-        }
-        taken.insert(tx.signature.as_str());
-        block_left -= tx.cu_limit;
-        for w in &tx.writable {
-            *account_used.entry(*w).or_default() += tx.cu_limit;
-        }
-        landed.push(entry);
+    fn account_left(&self, account: &Pubkey) -> u64 {
+        let clearing = self.slot.ghost.account(account, self.slot.slot);
+        let cap = ((1.0 - clearing.utilization) * self.slot.account_cu_cap as f64) as u64;
+        cap.saturating_sub(self.account_used.get(account).copied().unwrap_or(0))
     }
-    // The scheduler's inversions.
-    if slot.inversion_p > 0.0 {
-        for i in 0..landed.len().saturating_sub(1) {
-            let (a, b) = (&landed[i], &landed[i + 1]);
-            let conflict = a.txs[0]
-                .writable
+
+    /// Whether `cu` requested units fit the block and every account in
+    /// `writes`.
+    fn fits(&self, cu: u64, writes: &[Pubkey]) -> bool {
+        cu <= self.block_left && writes.iter().all(|w| self.account_left(w) >= cu)
+    }
+
+    /// Whether a bundle wins Jito's auction for what it writes: the least
+    /// tip, the ghosts' bundles outbid on every contended hot account, no
+    /// account a bundle taken before it writes, and room in the bundle
+    /// share.
+    fn wins_auction(&self, bundle: &Entry, writes: &[Pubkey]) -> bool {
+        assert!(
+            bundle.is_bundle() && self.slot.jito_leader,
+            "a Jito leader's bundle"
+        );
+        let tip = bundle.tip();
+        tip >= jito::MIN_TIP
+            && writes
                 .iter()
-                .any(|w| b.txs[0].writable.contains(w));
-            if conflict && draw(slot.seed, "inversion", &[slot.slot, i as u64]) < slot.inversion_p {
-                landed.swap(i, i + 1);
-            }
+                .filter(|a| self.slot.ghost.is_hot(a))
+                .all(|a| tip >= (self.slot.ghost_tip)(a))
+            && writes.iter().all(|w| !self.bundle_locked.contains(w))
+            && bundle.cu() <= self.bundle_left
+    }
+
+    fn take(&mut self, entry: &Entry, writes: &[Pubkey]) {
+        let cu = entry.cu();
+        assert!(self.fits(cu, writes), "an entry taken fits");
+        self.block_left -= cu;
+        for w in writes {
+            *self.account_used.entry(*w).or_default() += cu;
+        }
+        if entry.is_bundle() {
+            self.bundle_left -= cu;
+            self.bundle_locked.extend(writes.iter().copied());
         }
     }
-    block.picks.extend(landed.iter().map(|e| e.id));
-    block
+}
+
+/// The scheduler's inversions: with the calibrated chance, two adjacent
+/// transactions that write an account in common land the other way round.
+/// A bundle never swaps: Jito's block engine fixes where it goes.
+fn invert(slot: &Slot<'_>, landed: &mut [&Entry]) {
+    if slot.inversion_p <= 0.0 {
+        return;
+    }
+    for i in 0..landed.len().saturating_sub(1) {
+        let (a, b) = (landed[i], landed[i + 1]);
+        if a.is_bundle() || b.is_bundle() {
+            continue;
+        }
+        let conflict = a.txs[0]
+            .writable
+            .iter()
+            .any(|w| b.txs[0].writable.contains(w));
+        if conflict && draw(slot.seed, "inversion", &[slot.slot, i as u64]) < slot.inversion_p {
+            landed.swap(i, i + 1);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -542,16 +602,10 @@ mod tests {
         assert_eq!(build(&slot(&g, quiet, &tip), &[&first, &again]).picks, [0]);
     }
 
-    #[test]
-    fn bundles_go_first_by_tip_and_dont_front_holds() {
-        let g = ghost(false);
-        let tip = |_: &Pubkey| 0;
-        let quiet = (950..1_000).find(|s| g.block(*s).price == 0).unwrap();
-        let payer = Keypair::new();
-        let h = Hash::new_unique();
-        // Each from its own payer: two bundles that write the same account
-        // (a payer included) don't land in one auction.
-        let bundle = |id: u64, tip: u64, salt: &[u8]| Entry {
+    /// A bundle on `account` from its own payer, its tip inside its one
+    /// transaction.
+    fn bundle_on(id: u64, account: Pubkey, cu: u32, price: Option<u64>, tip: u64) -> Entry {
+        Entry {
             bundle: Some(format!("b{id}")),
             route: RouteKind::Jito,
             ..entry(
@@ -560,61 +614,183 @@ mod tests {
                 id,
                 signed(
                     &Keypair::new(),
-                    &[Pubkey::new_unique()],
-                    Some(100_000),
-                    None,
+                    &[account],
+                    Some(cu),
+                    price,
                     Some(tip),
-                    salt,
-                    h,
+                    &id.to_le_bytes(),
+                    Hash::new_unique(),
                 ),
                 0,
             )
-        };
-        let low = bundle(0, 2_000, b"l");
-        let high = bundle(1, 50_000, b"h");
-        let too_low = bundle(2, 500, b"t");
-        let tx = entry(
-            3,
-            "bot",
-            3,
-            signed(&payer, &[], Some(100_000), Some(1_000_000), None, b"n", h),
+        }
+    }
+
+    /// A transaction on `account` from its own payer.
+    fn plain_on(id: u64, sender: &str, account: Pubkey, cu: u32, price: u64) -> Entry {
+        entry(
+            id,
+            sender,
+            id,
+            signed(
+                &Keypair::new(),
+                &[account],
+                Some(cu),
+                Some(price),
+                None,
+                &id.to_le_bytes(),
+                Hash::new_unique(),
+            ),
             0,
-        );
-        let block = build(&slot(&g, quiet, &tip), &[&tx, &low, &high, &too_low]);
-        assert_eq!(block.picks, [1, 0, 3]);
-        // A second bundle from the same payer conflicts with the first.
-        let shared = Entry {
-            bundle: Some("b5".into()),
-            route: RouteKind::Jito,
-            ..entry(
-                5,
-                "bot",
-                5,
-                signed(&payer, &[], Some(100_000), None, Some(3_000), b"s", h),
-                0,
-            )
-        };
-        let shared_too = Entry {
-            bundle: Some("b6".into()),
-            route: RouteKind::Jito,
-            ..entry(
-                6,
-                "bot",
-                6,
-                signed(&payer, &[], Some(100_000), None, Some(2_500), b"t", h),
-                0,
-            )
-        };
-        assert_eq!(
-            build(&slot(&g, quiet, &tip), &[&shared, &shared_too]).picks,
-            [5]
-        );
-        // A non-Jito leader lands no bundle.
+        )
+    }
+
+    #[test]
+    fn bundles_and_transactions_rank_on_one_scale() {
+        let g = ghost(false);
+        let tip = |_: &Pubkey| 0;
+        let quiet = (950..1_000).find(|s| g.block(*s).price == 0).unwrap();
+        let pool = Pubkey::new_unique();
+        // 100,000 units each. The bundle's 50,000-lamport tip is 500,000
+        // micro-lamports a unit; the transaction's priority fee is
+        // 1,000,000: the transaction pays more, and lands first, ahead of
+        // the bundle on the same pool.
+        let bundle = bundle_on(0, pool, 100_000, None, 50_000);
+        let rich = plain_on(1, "actor:searcher/0", pool, 100_000, 1_000_000);
+        let block = build(&slot(&g, quiet, &tip), &[&bundle, &rich]);
+        assert_eq!(block.picks, [1, 0]);
+        // A transaction that pays less than the bundle lands behind it.
+        let poor = plain_on(2, "actor:searcher/0", pool, 100_000, 100_000);
+        let block = build(&slot(&g, quiet, &tip), &[&poor, &bundle]);
+        assert_eq!(block.picks, [0, 2]);
+        // Per unit: the same tip over twice the units bids half as much.
+        let heavy = bundle_on(3, pool, 200_000, None, 150_000);
+        let light = plain_on(4, "actor:searcher/0", pool, 100_000, 800_000);
+        let block = build(&slot(&g, quiet, &tip), &[&heavy, &light]);
+        assert_eq!(block.picks, [4, 3], "750,000 a unit against 800,000");
+        // On a leader without Jito, the bundle waits and its tip buys
+        // nothing.
         let mut plain = slot(&g, quiet, &tip);
         plain.jito_leader = false;
-        assert_eq!(build(&plain, &[&tx, &low, &high]).picks, [3]);
+        assert_eq!(build(&plain, &[&bundle, &poor]).picks, [2]);
+    }
+
+    #[test]
+    fn the_first_to_reach_a_trigger_at_the_best_pay_lands_right_behind_it() {
+        // Sends in one step's turns arrive together: the order the grader
+        // runs the turns in (actors before the bot) wins no tie. An equal
+        // bid is a seeded coin, whatever the kind of send.
+        let g = ghost(false);
+        let tip = |_: &Pubkey| 0;
+        let quiet: Vec<u64> = (950..1_000).filter(|s| g.block(*s).price == 0).collect();
+        let pool = Pubkey::new_unique();
+        let firsts: BTreeSet<String> = quiet
+            .iter()
+            .map(|s| {
+                let actor = Entry {
+                    arrival: Arrival { step: 7, seq: 0 },
+                    ..plain_on(0, "actor:cycle-searcher/0", pool, 100_000, 500_000)
+                };
+                let bot = Entry {
+                    arrival: Arrival { step: 7, seq: 1 },
+                    ..plain_on(1, "bot", pool, 100_000, 500_000)
+                };
+                let picks = build(&slot(&g, *s, &tip), &[&actor, &bot]).picks;
+                assert_eq!(picks.len(), 2);
+                if picks[0] == 0 { "actor" } else { "bot" }.to_string()
+            })
+            .collect();
+        assert_eq!(firsts.len(), 2, "the tie goes both ways across slots");
+        // A send that arrived a step earlier, at the same pay, goes first.
+        let s = quiet[0];
+        let early = Entry {
+            arrival: Arrival { step: 6, seq: 3 },
+            ..plain_on(0, "actor:cycle-searcher/0", pool, 100_000, 500_000)
+        };
+        let late = Entry {
+            arrival: Arrival { step: 7, seq: 0 },
+            ..plain_on(1, "bot", pool, 100_000, 500_000)
+        };
+        assert_eq!(build(&slot(&g, s, &tip), &[&late, &early]).picks, [0, 1]);
+        // One micro-lamport more a unit and the later one goes first.
+        let later_richer = Entry {
+            arrival: Arrival { step: 7, seq: 0 },
+            ..plain_on(2, "bot", pool, 100_000, 500_001)
+        };
+        assert_eq!(
+            build(&slot(&g, s, &tip), &[&early, &later_richer]).picks,
+            [2, 0]
+        );
+    }
+
+    #[test]
+    fn an_earlier_arrival_isnt_reordered_behind_a_richer_later_one() {
+        let g = ghost(false);
+        let tip = |_: &Pubkey| 0;
+        let quiet = (950..1_000).find(|s| g.block(*s).price == 0).unwrap();
+        let pool = Pubkey::new_unique();
+        // It reached the leader a slot earlier and waited (a skipped slot,
+        // say): it goes first, though the later one pays ten times more.
+        let early = Entry {
+            ready_slot: quiet - 1,
+            ..plain_on(0, "actor:cycle-searcher/0", pool, 100_000, 50_000)
+        };
+        let late = Entry {
+            ready_slot: quiet,
+            ..bundle_on(1, pool, 100_000, None, 50_000)
+        };
+        assert_eq!(
+            build(&slot(&g, quiet, &tip), &[&late, &early]).picks,
+            [0, 1]
+        );
+    }
+
+    #[test]
+    fn jitos_auction_still_holds_for_bundles() {
+        let g = ghost(false);
+        let tip = |_: &Pubkey| 0;
+        let quiet = (950..1_000).find(|s| g.block(*s).price == 0).unwrap();
+        let payer = Keypair::new();
+        let h = Hash::new_unique();
+        // Two bundles that write the same account: Jito's auction lands the
+        // better one.
+        let shared = Pubkey::new_unique();
+        let high = bundle_on(0, shared, 100_000, None, 50_000);
+        let low = bundle_on(1, shared, 100_000, None, 2_000);
+        assert_eq!(build(&slot(&g, quiet, &tip), &[&low, &high]).picks, [0]);
+        // Below the least tip: refused by the auction, whatever its fee.
+        let too_low = bundle_on(2, Pubkey::new_unique(), 100_000, Some(1_000_000), 500);
+        assert!(build(&slot(&g, quiet, &tip), &[&too_low]).picks.is_empty());
+        // A second bundle from the same payer conflicts with the first.
+        let from = |id: u64, tip: u64| Entry {
+            bundle: Some(format!("b{id}")),
+            route: RouteKind::Jito,
+            ..entry(
+                id,
+                "bot",
+                id,
+                signed(&payer, &[], Some(100_000), None, Some(tip), &[id as u8], h),
+                0,
+            )
+        };
+        let (first, second) = (from(5, 3_000), from(6, 2_500));
+        assert_eq!(build(&slot(&g, quiet, &tip), &[&first, &second]).picks, [5]);
+        // A contended hot account's ghosts tip more than the bundle: it
+        // loses Jito's auction there, though a transaction paying less per
+        // unit lands.
+        let pool: Pubkey = layer().hot_accounts[0].address.parse().unwrap();
+        let ghosts = |a: &Pubkey| if *a == pool { 1_000_000 } else { 0 };
+        let open = (950..1_000)
+            .find(|s| g.block(*s).price == 0 && g.price_to_land(*s, &[pool]) == 0)
+            .unwrap();
+        let tipped = bundle_on(7, pool, 100_000, None, 500_000);
+        let plain = plain_on(8, "bot", pool, 100_000, 10);
+        assert_eq!(
+            build(&slot(&g, open, &ghosts), &[&tipped, &plain]).picks,
+            [8]
+        );
         // jitodontfront anywhere but first: invalid.
-        let mut fronted = bundle(4, 9_000, b"f");
+        let mut fronted = bundle_on(4, Pubkey::new_unique(), 100_000, None, 9_000);
         let mut second = fronted.txs[0].clone();
         second.dont_front = true;
         fronted.txs.push(second);

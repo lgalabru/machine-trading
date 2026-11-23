@@ -10,9 +10,12 @@
 
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use solana_keypair::Keypair;
 use solana_pubkey::Pubkey;
+use solana_signer::Signer;
+use solana_transaction::{AccountMeta, Hash, Instruction, versioned::VersionedTransaction};
 
-use super::calibration::Tips;
+use super::{calibration::Tips, pool};
 
 /// Jito's tip accounts on mainnet (`getTipAccounts`, 2026-11-12), owned by
 /// the tip payment program.
@@ -38,6 +41,45 @@ pub const DONT_FRONT: Pubkey =
 /// The most transactions in a bundle, and the least tip that lands one.
 pub const MAX_BUNDLE: usize = 5;
 pub const MIN_TIP: u64 = 1_000;
+
+/// The compute units a tip transaction asks for: a system transfer and the
+/// limit's own instruction cost 150 each, and a bundle ranks by what it pays
+/// over every unit its transactions ask for, so a tip that asked for the
+/// runtime's default 200,000 would dilute its own bundle's bid by about a
+/// third.
+pub const TIP_TX_UNITS: u32 = 1_000;
+
+/// A transaction from `payer` that tips `lamports` to `to`, one of
+/// [`TIP_ACCOUNTS`], asking for [`TIP_TX_UNITS`]: what a bundle's tip is,
+/// the host's and the actors' alike.
+pub fn tip_transaction(
+    payer: &Keypair,
+    to: &Pubkey,
+    lamports: u64,
+    blockhash: Hash,
+) -> Result<VersionedTransaction, String> {
+    assert!(is_tip_account(to), "a tip goes to a tip account");
+    let mut limit = vec![2u8];
+    limit.extend(TIP_TX_UNITS.to_le_bytes());
+    let budget = Instruction::new_with_bytes(pool::COMPUTE_BUDGET, &limit, Vec::new());
+    let mut data = 2u32.to_le_bytes().to_vec();
+    data.extend(lamports.to_le_bytes());
+    let pay = Instruction::new_with_bytes(
+        pool::SYSTEM,
+        &data,
+        vec![
+            AccountMeta::new(payer.pubkey(), true),
+            AccountMeta::new(*to, false),
+        ],
+    );
+    let message = solana_message::Message::new_with_blockhash(
+        &[budget, pay],
+        Some(&payer.pubkey()),
+        &blockhash,
+    );
+    VersionedTransaction::try_new(solana_message::VersionedMessage::Legacy(message), &[payer])
+        .map_err(|e| e.to_string())
+}
 
 pub fn is_tip_account(key: &Pubkey) -> bool {
     let key = key.to_string();
@@ -76,6 +118,19 @@ pub fn tip_floor(tips: &Tips) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tip_transaction_asks_for_the_units_it_needs() {
+        let payer = Keypair::new();
+        let to: Pubkey = TIP_ACCOUNTS[2].parse().unwrap();
+        let tx = tip_transaction(&payer, &to, 12_345, Hash::new_unique()).unwrap();
+        let pooled = pool::PooledTx::parse(wincode::serialize(&tx).unwrap(), &|_| None).unwrap();
+        assert_eq!(pooled.cu_limit, u64::from(TIP_TX_UNITS));
+        assert_eq!(
+            (pooled.tip, pooled.cu_price, pooled.payer),
+            (12_345, 0, payer.pubkey())
+        );
+    }
 
     #[test]
     fn the_tip_accounts_and_dont_front_key_parse() {

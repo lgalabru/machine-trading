@@ -18,7 +18,10 @@ fn root() -> PathBuf {
 
 /// A process bot that prints what it was told, and whether the informed
 /// bot's logs are where it could read them, then answers every turn and
-/// trades nothing.
+/// trades nothing. It looks only for this grader's private directories
+/// (`<prefix>-<pid>-<uuid>`, the grader runs in this process): the temp
+/// directory is shared with every other grader on the machine, and on a
+/// workstation another grader's, running or killed, would be seen too.
 fn probe(dir: &Path, logs: &Path) {
     std::fs::create_dir_all(dir).unwrap();
     std::fs::write(
@@ -29,7 +32,7 @@ echo "MTX_REGIME=${{MTX_REGIME-<unset>}}"
 echo "UID=$(id -u)"
 env | grep -q '^MTX_REGIME=' && echo "ENV_HAS_REGIME"
 [ -e "{logs}/informed" ] && echo "SAW_INFORMED_LOGS"
-for dir in "{tmp}"/mtx-informed-logs-*; do
+for dir in "{tmp}"/mtx-informed-logs-{pid}-*; do
   [ -e "$dir" ] && echo "SAW_PRIVATE_DIR"
   grep -rqs "MTX_REGIME" "$dir" && echo "READ_PRIVATE_LOGS"
 done
@@ -42,7 +45,8 @@ while IFS= read -r line <&3; do
 done
 "#,
             logs = logs.display(),
-            tmp = std::env::temp_dir().display()
+            tmp = std::env::temp_dir().display(),
+            pid = std::process::id()
         ),
     )
     .unwrap();

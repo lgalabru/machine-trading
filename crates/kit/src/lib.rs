@@ -64,6 +64,8 @@
 //! | `phoenix-v1-venue` | Phoenix v1's decoding, conversions and instructions alone, for `wasm32-wasip2` |
 //! | `openbook-v2` | [`protocols::openbook::v2`]: OpenBook v2 spot order books |
 //! | `openbook-v2-venue` | OpenBook v2's decoding, conversions and instructions alone, for `wasm32-wasip2` |
+//! | `orca-whirlpool` | [`protocols::orca::whirlpool`]: Orca Whirlpool pools, exact quotes and `swap_v2` |
+//! | `raydium-clmm` | [`protocols::raydium::clmm`]: Raydium CLMM pools, exact quotes and `swap_v2` |
 //! | `pyth` | [`protocols::pyth`]: Pyth push-oracle price feeds |
 //! | `test-util` | [`chain::mock::MockChainClient`] for downstream tests |
 //! | `candle` | [`candle`], [`candle_nn`] and [`nn`]: small neural networks from embedded weights, for `wasm32-wasip2` too |
@@ -130,6 +132,9 @@ pub use mtx_core::{
     turns,
 };
 pub use raw::{RawReceipt, RawTransaction, send_raw};
+/// The JSON the session speaks (a venue's metadata, the mandate, an RPC
+/// answer), so a strategy reads it with the kit's own version.
+pub use serde_json;
 /// The Solana types the kit's signatures use, so callers need not pin
 /// matching versions of the Solana crates themselves.
 #[cfg(any(feature = "chain", feature = "venue", feature = "spot-venue"))]

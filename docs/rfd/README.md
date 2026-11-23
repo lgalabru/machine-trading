@@ -12,3 +12,4 @@ and never reuse a number. Decisions themselves live in [`../adr/`](../adr/).
 | [0002](0002-wasm-strategies.md) | Strategies compiled to wasm, called by the grader | Discussion |
 | [0003](0003-studio.md) | `mtx studio`, a workbench for a strategy and its scenario | Discussion |
 | [0004](0004-strategies-on-mainnet.md) | Strategies on mainnet, run by a geyser plugin | Discussion |
+| [0005](0005-atomic-arbitrage-tasks.md) | Atomic arbitrage tasks: liquidations with flash loans, backruns, LST cycles | Discussion |

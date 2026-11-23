@@ -1585,7 +1585,8 @@ async fn run() -> Result<()> {
             let mut written = Vec::new();
             for scenario in scenarios {
                 let path = out.join(format!("{}.json", scenario.name));
-                scenario.save(&path)?;
+                // A family with pools draws scenarios that have no v1 form.
+                scenario.save_any(&path)?;
                 written.push(path);
             }
             serde_json::to_string_pretty(&written)?
@@ -2092,10 +2093,18 @@ async fn run() -> Result<()> {
 }
 
 #[cfg(feature = "generate")]
-/// Save a practice file as v1 without the per-account role maps a family
-/// draws for the host-side informed run: the file goes into the agent's image.
+/// Save a practice file without the per-account role maps a family draws
+/// for the host-side informed run: the file goes into the agent's image. It
+/// is v1 where the scenario has a v1 form, and v2 where it has pools or
+/// several markets, which v1 can't say (a v1 file would drop them).
 fn save_practice(scenario: &Scenario, path: &Path) -> Result<()> {
-    let mut value = serde_json::to_value(scenario)?;
+    let mut value = if scenario.amm.is_some() || !scenario.markets.is_empty() {
+        let v2 = mtx_grader::scenario_v2::ScenarioV2::try_from(scenario)
+            .map_err(|reason| anyhow::anyhow!("{}: {reason}", path.display()))?;
+        serde_json::to_value(v2)?
+    } else {
+        serde_json::to_value(scenario)?
+    };
     generators::strip_identity_roles(&mut value);
     let text = serde_json::to_string_pretty(&value)? + "\n";
     std::fs::write(path, text).with_context(|| path.display().to_string())

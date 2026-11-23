@@ -12,11 +12,13 @@
 //! again, so it plays no more of the session. Its memory is capped. A
 //! component that doesn't load plays the session without trading.
 //!
-//! A component is built on `mtx:strategy@0.2.0` (`wit/strategy.wit`) or on
-//! 0.1.0 (`wit/0.1.0/strategy.wit`). Both play the same way: the grader
-//! reads the market into `mtx_kit::Market`, hands each version its own
-//! view of it, and plans either's sheet with `mtx_kit::plan_sheet`. A 0.1.0
-//! sheet is a 0.2.0 sheet whose lines say nothing beyond their intent.
+//! A component is built on `mtx:strategy@0.3.0` (`wit/strategy.wit`), or on
+//! 0.2.0 or 0.1.0 (`wit/0.2.0/strategy.wit`, `wit/0.1.0/strategy.wit`). All
+//! play the same way: the grader reads the market into `mtx_kit::Market`,
+//! hands each version its own view of it, and plans every version's sheet
+//! with `mtx_kit::plan_sheet`. A 0.2.0 sheet is a 0.3.0 sheet without atomic
+//! groups, flash loans or price pushes; a 0.1.0 sheet is one whose lines say
+//! nothing beyond their intent.
 
 use std::{
     io::Write,
@@ -36,11 +38,21 @@ use wasmtime_wasi::{
 
 use crate::Error;
 
-/// `mtx:strategy@0.2.0`, the kit's.
-pub mod v2 {
+/// `mtx:strategy@0.3.0`, the kit's.
+pub mod v3 {
     wasmtime::component::bindgen!({
         world: "strategy",
         path: "../kit/wit/strategy.wit",
+        imports: { default: async },
+        exports: { default: async },
+    });
+}
+
+/// `mtx:strategy@0.2.0`, which the tasks released before 0.3.0 build on.
+pub mod v2 {
+    wasmtime::component::bindgen!({
+        world: "strategy",
+        path: "../kit/wit/0.2.0/strategy.wit",
         imports: { default: async },
         exports: { default: async },
     });
@@ -381,6 +393,53 @@ impl<R: RawSend> Host<R> {
     }
 }
 
+impl<R: RawSend> Host<R> {
+    /// A raw send ([`RawSend`]), as the kit has it: a malformed transaction
+    /// is refused for what is wrong with it; any other, in a session
+    /// without raw sends, because they are off.
+    async fn send(
+        &mut self,
+        tx: mtx_kit::RawTransaction,
+    ) -> std::result::Result<mtx_kit::RawReceipt, String> {
+        self.raw_calls += 1;
+        if self.raw_calls > RPC_CALLS_PER_STEP {
+            return Err(format!("more than {RPC_CALLS_PER_STEP} sends this step"));
+        }
+        let checked = tx.check();
+        if self.raw_sends.len() < RAW_SENDS_KEPT {
+            self.raw_sends.push(tx.clone());
+        }
+        checked?;
+        let Some(raw) = self.raw.as_mut() else {
+            return Err("raw sends aren't enabled in this session".into());
+        };
+        raw.take(tx).await
+    }
+}
+
+impl<R: RawSend> v3::mtx::strategy::types::Host for Host<R> {}
+
+impl<R: RawSend> v3::StrategyImports for Host<R> {
+    async fn log(&mut self, line: String) {
+        Host::log(self, line)
+    }
+
+    async fn rpc(&mut self, method: String, params: String) -> std::result::Result<String, String> {
+        Host::rpc(self, method, params).await
+    }
+
+    async fn send(
+        &mut self,
+        tx: v3::mtx::strategy::types::RawTransaction,
+    ) -> std::result::Result<v3::mtx::strategy::types::RawReceipt, String> {
+        let receipt = Host::send(self, wit3::raw_transaction(tx)).await?;
+        Ok(v3::mtx::strategy::types::RawReceipt {
+            id: receipt.id,
+            fresh_signers: receipt.fresh_signers,
+        })
+    }
+}
+
 impl<R: RawSend> v2::mtx::strategy::types::Host for Host<R> {}
 
 impl<R: RawSend> v2::StrategyImports for Host<R> {
@@ -392,27 +451,11 @@ impl<R: RawSend> v2::StrategyImports for Host<R> {
         Host::rpc(self, method, params).await
     }
 
-    /// A raw send ([`RawSend`]): a malformed transaction is refused for
-    /// what is wrong with it; any other, in a session without raw sends,
-    /// because they are off.
     async fn send(
         &mut self,
         tx: v2::mtx::strategy::types::RawTransaction,
     ) -> std::result::Result<v2::mtx::strategy::types::RawReceipt, String> {
-        self.raw_calls += 1;
-        if self.raw_calls > RPC_CALLS_PER_STEP {
-            return Err(format!("more than {RPC_CALLS_PER_STEP} sends this step"));
-        }
-        let tx = wit2::raw_transaction(tx);
-        let checked = tx.check();
-        if self.raw_sends.len() < RAW_SENDS_KEPT {
-            self.raw_sends.push(tx.clone());
-        }
-        checked?;
-        let Some(raw) = self.raw.as_mut() else {
-            return Err("raw sends aren't enabled in this session".into());
-        };
-        let receipt = raw.take(tx).await?;
+        let receipt = Host::send(self, wit2::raw_transaction(tx)).await?;
         Ok(v2::mtx::strategy::types::RawReceipt {
             id: receipt.id,
             fresh_signers: receipt.fresh_signers,
@@ -469,8 +512,16 @@ pub enum Outcome<T> {
 
 /// The world a component was built on, and its instance.
 enum Bindings {
+    V3(v3::Strategy),
     V2(v2::Strategy),
     V1(v1::Strategy),
+}
+
+/// A component checked against a world, not yet instantiated.
+enum Pre<R: RawSend> {
+    V3(v3::StrategyPre<Host<R>>),
+    V2(v2::StrategyPre<Host<R>>),
+    V1(v1::StrategyPre<Host<R>>),
 }
 
 /// A strategy component, instantiated for one session.
@@ -534,21 +585,32 @@ impl<R: RawSend> WasmStrategy<R> {
             add(&mut linker)?;
             Ok::<_, wasmtime::Error>(linker)
         };
+        let v3_linker = linker(|l| v3::Strategy::add_to_linker::<_, HasSelf<_>>(l, |host| host))
+            .map_err(wasm_error)?;
         let v2_linker = linker(|l| v2::Strategy::add_to_linker::<_, HasSelf<_>>(l, |host| host))
             .map_err(wasm_error)?;
         let v1_linker = linker(|l| v1::Strategy::add_to_linker::<_, HasSelf<_>>(l, |host| host))
             .map_err(wasm_error)?;
-        // Which world it was built on: the one whose imports and exports
-        // type-check, before any of its code runs.
-        let pre = match v2_linker
+        // Which world it was built on: the newest whose imports and exports
+        // type-check, before any of its code runs. A component that fits
+        // none is refused with the newest world's reason.
+        let pre = match v3_linker
             .instantiate_pre(&component)
-            .and_then(v2::StrategyPre::new)
+            .and_then(v3::StrategyPre::new)
         {
-            Ok(pre) => Ok(pre),
-            Err(v2_error) => Err(v1_linker
+            Ok(v3) => Pre::V3(v3),
+            Err(v3_error) => match v2_linker
                 .instantiate_pre(&component)
-                .and_then(v1::StrategyPre::new)
-                .map_err(|_| wasm_error(v2_error))?),
+                .and_then(v2::StrategyPre::new)
+            {
+                Ok(v2) => Pre::V2(v2),
+                Err(_) => Pre::V1(
+                    v1_linker
+                        .instantiate_pre(&component)
+                        .and_then(v1::StrategyPre::new)
+                        .map_err(|_| wasm_error(v3_error))?,
+                ),
+            },
         };
         let printed = Printed::default();
         let wasi = WasiCtxBuilder::new()
@@ -588,8 +650,15 @@ impl<R: RawSend> WasmStrategy<R> {
         let mut this_fuel = session_fuel.min(FUEL_PER_CALL);
         store.set_fuel(this_fuel).map_err(wasm_error)?;
         let strategy = match pre {
-            Ok(v2) => Bindings::V2(v2.instantiate_async(&mut store).await.map_err(wasm_error)?),
-            Err(v1) => Bindings::V1(v1.instantiate_async(&mut store).await.map_err(wasm_error)?),
+            Pre::V3(v3) => {
+                Bindings::V3(v3.instantiate_async(&mut store).await.map_err(wasm_error)?)
+            }
+            Pre::V2(v2) => {
+                Bindings::V2(v2.instantiate_async(&mut store).await.map_err(wasm_error)?)
+            }
+            Pre::V1(v1) => {
+                Bindings::V1(v1.instantiate_async(&mut store).await.map_err(wasm_error)?)
+            }
         };
         let used = this_fuel - store.get_fuel().unwrap_or(0);
         this_fuel = session_fuel.saturating_sub(used);
@@ -606,9 +675,10 @@ impl<R: RawSend> WasmStrategy<R> {
         })
     }
 
-    /// The world the component was built on: `0.2.0` or `0.1.0`.
+    /// The world the component was built on: `0.3.0`, `0.2.0` or `0.1.0`.
     pub fn interface(&self) -> &'static str {
         match self.strategy {
+            Bindings::V3(_) => "0.3.0",
             Bindings::V2(_) => "0.2.0",
             Bindings::V1(_) => "0.1.0",
         }
@@ -699,6 +769,10 @@ impl<R: RawSend> WasmStrategy<R> {
         };
         let timer = self.arm();
         let result = match &self.strategy {
+            Bindings::V3(s) => {
+                s.call_start(&mut self.store, &wit3::session(session, mandate))
+                    .await
+            }
             Bindings::V2(s) => {
                 s.call_start(&mut self.store, &wit2::session(session, mandate))
                     .await
@@ -724,6 +798,10 @@ impl<R: RawSend> WasmStrategy<R> {
         }
         let timer = self.arm();
         let result = match &self.strategy {
+            Bindings::V3(s) => s
+                .call_step(&mut self.store, &wit3::market(market))
+                .await
+                .map(|r| r.map(|intents| intents.into_iter().map(wit3::line).collect())),
             Bindings::V2(s) => s
                 .call_step(&mut self.store, &wit2::market(market))
                 .await
@@ -755,6 +833,10 @@ impl<R: RawSend> WasmStrategy<R> {
         }
         let timer = self.arm();
         let result = match &self.strategy {
+            Bindings::V3(s) => {
+                let last = last.map(wit3::market);
+                s.call_end(&mut self.store, last.as_ref()).await
+            }
             Bindings::V2(s) => {
                 let last = last.map(wit2::market);
                 s.call_end(&mut self.store, last.as_ref()).await
@@ -770,536 +852,594 @@ impl<R: RawSend> WasmStrategy<R> {
     }
 }
 
-/// `mtx:strategy@0.2.0`'s side of the kit's types.
-mod wit2 {
-    use mtx_kit::{
-        Action, AmountUnit, Intent, LineOptions, LiquidityShape, Market, MarketKind, PriceRange,
-        Route, SendSource, SendState, Session, Side, TimeInForce, TxOptions, raw,
-    };
+/// The kit's types on the side of a world from 0.2.0 on, in a module that
+/// names the world's types `w`: one body for every version, so they can't
+/// drift. What a later version added comes in as match arms: `orders` turns
+/// the kit's newer actions into the world's planned orders (or returns
+/// `None`, for a world that can't say them), `actions` the world's newer
+/// actions into the kit's intents, `atomic` reads a line's atomic id, and
+/// `trigger` (from 0.3.0) gives the market a trigger step's trigger.
+macro_rules! since_0_2_0 {
+    (
+        orders: { $($orders:tt)* },
+        actions: { $($actions:tt)* },
+        atomic: $atomic:expr
+        $(, trigger: $trigger:expr)? $(,)?
+    ) => {
+        use mtx_kit::{
+            Action, AmountUnit, Intent, LineOptions, LiquidityShape, Market, MarketKind, PriceRange,
+            Route, SendSource, SendState, Session, Side, TimeInForce, TxOptions, raw,
+        };
 
-    use super::v2::mtx::strategy::types as w;
 
-    pub fn session(s: &Session, mandate: String) -> w::Session {
-        w::Session {
-            steps: s.steps,
-            slots_per_step: s.slots_per_step,
-            start_slot: s.start_slot,
-            end_slot: s.end_slot,
-            symbol: s.symbol.clone(),
-            start_mark: s.start_mark,
-            start_oracle: s.start_oracle,
-            cap: s.cap,
-            max_drawdown: s.max_drawdown,
-            mandate,
-            venue: s.venue.clone(),
-            authority: s.authority.clone(),
-            vars: s.vars.clone(),
-            seed: s.seed,
-            venues: s
-                .venues
-                .iter()
-                .map(|v| w::VenueInfo {
-                    id: v.id.clone(),
-                    kind: match v.kind {
-                        MarketKind::Perp => w::MarketKind::Perp,
-                        MarketKind::Spot => w::MarketKind::Spot,
-                        MarketKind::Amm => w::MarketKind::Amm,
-                        MarketKind::Lending => w::MarketKind::Lending,
-                        MarketKind::StakePool => w::MarketKind::StakePool,
-                    },
-                    address: v.address.clone(),
-                    tradable: v.tradable,
-                })
-                .collect(),
-            reports: w::Reports {
-                tape: s.reports.tape,
-                depth: s.reports.depth,
-                timestamps: s.reports.timestamps,
-                fees: s.reports.fees,
-            },
-            applies_tx_options: s.applies_tx_options,
-        }
-    }
-
-    fn side(side: Side) -> w::Side {
-        match side {
-            Side::Bid => w::Side::Bid,
-            Side::Ask => w::Side::Ask,
-        }
-    }
-
-    fn kit_side(side: w::Side) -> Side {
-        match side {
-            w::Side::Bid => Side::Bid,
-            w::Side::Ask => Side::Ask,
-        }
-    }
-
-    fn position(p: mtx_kit::Position) -> w::Position {
-        w::Position {
-            size: p.size,
-            entry_usd: p.entry_usd,
-        }
-    }
-
-    fn role(role: mtx_kit::Role) -> w::Role {
-        match role {
-            mtx_kit::Role::Taker => w::Role::Taker,
-            mtx_kit::Role::Maker => w::Role::Maker,
-        }
-    }
-
-    fn range(r: PriceRange) -> w::PriceRange {
-        w::PriceRange {
-            lower: r.lower,
-            upper: r.upper,
-        }
-    }
-
-    fn kit_range(r: w::PriceRange) -> PriceRange {
-        PriceRange {
-            lower: r.lower,
-            upper: r.upper,
-        }
-    }
-
-    fn unit(unit: AmountUnit) -> w::AmountUnit {
-        match unit {
-            AmountUnit::Base => w::AmountUnit::Base,
-            AmountUnit::Quote => w::AmountUnit::Quote,
-        }
-    }
-
-    fn levels(levels: &[mtx_core::turns::Level]) -> Vec<w::Level> {
-        levels
-            .iter()
-            .map(|l| w::Level {
-                price: l.price,
-                size: l.base,
-            })
-            .collect()
-    }
-
-    fn shape(shape: LiquidityShape) -> w::LiquidityShape {
-        match shape {
-            LiquidityShape::Spot => w::LiquidityShape::Spot,
-            LiquidityShape::Curve => w::LiquidityShape::Curve,
-            LiquidityShape::BidAsk => w::LiquidityShape::BidAsk,
-        }
-    }
-
-    /// An order as planned, with its line's expiry.
-    fn order(action: &Action, expires_slot: Option<u64>) -> w::Order {
-        let amount = |amount: &Option<f64>| w::Amount { amount: *amount };
-        match action {
-            &Action::Market {
-                side: s,
-                size,
-                limit,
-            } => w::Order::Market(w::MarketOrder {
-                side: side(s),
-                size,
-                limit,
-            }),
-            &Action::Limit {
-                side: s,
-                price,
-                size,
-            } => w::Order::Limit(w::LimitOrder {
-                side: side(s),
-                price,
-                size,
-                time_in_force: w::TimeInForce::Gtc,
-                expires_slot,
-            }),
-            &Action::PostOnly {
-                side: s,
-                price,
-                size,
-            } => w::Order::Limit(w::LimitOrder {
-                side: side(s),
-                price,
-                size,
-                time_in_force: w::TimeInForce::PostOnly,
-                expires_slot,
-            }),
-            Action::CancelAll => w::Order::CancelAll,
-            &Action::Cancel { client_id } => w::Order::Cancel(client_id),
-            Action::Respond { id, bid, ask, size } => w::Order::Respond(w::RfqResponse {
-                id: id.clone(),
-                bid: *bid,
-                ask: *ask,
-                size: *size,
-                expiry_slot: expires_slot,
-            }),
-            &Action::Swap {
-                side: s,
-                amount,
-                unit: u,
-                limit,
-            } => w::Order::Swap(w::Swap {
-                side: side(s),
-                amount,
-                unit: unit(u),
-                limit,
-            }),
-            Action::AddLiquidity {
-                base,
-                quote,
-                range: r,
-                position,
-                shape: s,
-            } => w::Order::AddLiquidity(w::AddLiquidity {
-                base: *base,
-                quote: *quote,
-                range: r.map(range),
-                position: position.clone(),
-                shape: s.map(shape),
-            }),
-            Action::RemoveLiquidity {
-                position,
-                share,
-                min_base,
-                min_quote,
-            } => w::Order::RemoveLiquidity(w::RemoveLiquidity {
-                position: position.clone(),
-                share: *share,
-                min_base: *min_base,
-                min_quote: *min_quote,
-            }),
-            Action::Deposit { amount: a } => w::Order::Deposit(amount(a)),
-            Action::Withdraw { amount: a } => w::Order::Withdraw(amount(a)),
-            Action::Borrow { amount: a } => w::Order::Borrow(amount(a)),
-            Action::Repay { amount: a } => w::Order::Repay(amount(a)),
-            Action::Liquidate {
-                obligation,
-                collateral,
-                repay,
-                min_received,
-            } => w::Order::Liquidate(w::Liquidate {
-                obligation: obligation.clone(),
-                collateral: collateral.clone(),
-                repay: *repay,
-                min_received: *min_received,
-            }),
-        }
-    }
-
-    pub fn market(m: &Market) -> w::Market {
-        w::Market {
-            k: m.k,
-            slot: m.slot,
-            last: m.last,
-            steps_left: m.steps_left,
-            slots_left: m.slots_left,
-            mark: m.mark,
-            oracle: m.oracle,
-            index: m.index,
-            best_bid: m.best_bid,
-            best_ask: m.best_ask,
-            position: position(m.position),
-            cap: m.cap,
-            max_drawdown: m.max_drawdown,
-            resting_bids: m.resting_bids,
-            resting_asks: m.resting_asks,
-            pnl: m.pnl,
-            peak_pnl: m.peak_pnl,
-            drawdown: m.drawdown,
-            unix_timestamp: m.unix_timestamp,
-            venues: m
-                .venues
-                .iter()
-                .map(|v| w::VenueView {
-                    id: v.id.clone(),
-                    best_bid: v.best_bid,
-                    best_ask: v.best_ask,
-                    depth: v.depth.as_ref().map(|book| w::Book {
-                        bids: levels(&book.bids),
-                        asks: levels(&book.asks),
-                    }),
-                    tape: v.tape.as_ref().map(|tape| {
-                        tape.iter()
-                            .map(|t| w::Trade {
-                                slot: t.slot,
-                                side: match t.side {
-                                    mtx_core::Side::Buy => w::Side::Bid,
-                                    mtx_core::Side::Sell => w::Side::Ask,
-                                },
-                                price: t.price,
-                                size: t.base,
-                                taker: t.taker.clone(),
-                                maker: t.maker.clone(),
-                                role: t.own.map(role),
-                            })
-                            .collect()
-                    }),
-                    position: v.position.map(position),
-                    orders: v
-                        .orders
-                        .iter()
-                        .map(|o| w::OpenOrder {
-                            client_id: o.client_id,
-                            side: side(o.side),
-                            price: o.price,
-                            size: o.size,
-                        })
-                        .collect(),
-                    liquidity: v
-                        .liquidity
-                        .iter()
-                        .map(|p| w::LiquidityPosition {
-                            id: p.id.clone(),
-                            range: p.range.map(range),
-                            base: p.base,
-                            quote: p.quote,
-                            fees_base: p.fees_base,
-                            fees_quote: p.fees_quote,
-                        })
-                        .collect(),
-                    lending: v.lending.map(|l| w::LendingPosition {
-                        supplied: l.supplied,
-                        borrowed: l.borrowed,
-                        health: l.health,
-                    }),
-                    stats: v.stats.clone(),
-                })
-                .collect(),
-            sends: m
-                .sends
-                .iter()
-                .map(|s| w::SendStatus {
-                    step: s.step,
-                    source: match s.source {
-                        SendSource::Line(n) => w::SendSource::Line(n),
-                        SendSource::Raw(n) => w::SendSource::Raw(n),
-                    },
-                    venue: s.venue.clone(),
-                    client_id: s.client_id,
-                    order: s.order.as_ref().map(|o| order(o, s.expires_slot)),
-                    state: match &s.state {
-                        SendState::Landed(signature) => w::SendState::Landed(signature.clone()),
-                        SendState::Failed { reason, signature } => {
-                            w::SendState::Failed(w::Failure {
-                                reason: reason.clone(),
-                                signature: signature.clone(),
-                            })
-                        }
-                        SendState::NotSent(why) => w::SendState::NotSent(why.clone()),
-                        SendState::Delayed => w::SendState::Delayed,
-                        SendState::Expired => w::SendState::Expired,
-                    },
-                    slot: s.slot,
-                    fee: s.fee,
-                    tip: s.tip,
-                })
-                .collect(),
-            fills: m
-                .fills
-                .iter()
-                .map(|f| w::Fill {
-                    venue: f.venue.clone(),
-                    slot: f.slot,
-                    side: side(f.side),
-                    price: f.price,
-                    size: f.size,
-                    role: role(f.role),
-                })
-                .collect(),
-            rfqs: m
-                .rfqs
-                .iter()
-                .map(|r| w::Rfq {
-                    id: r.id.clone(),
-                    venue: r.venue.clone(),
-                    side: r.side.map(side),
-                    size: r.size,
-                    deadline_slot: r.deadline_slot,
-                })
-                .collect(),
-            notes: m.notes.clone(),
-            fees: m.fees.as_ref().map(|f| w::FeeView {
-                cu_prices: f.cu_prices.clone(),
-                tip_floor: f.tip_floor,
-                leaders: f.leaders.clone(),
-            }),
-        }
-    }
-
-    fn tx_options(tx: w::TxOptions) -> TxOptions {
-        TxOptions {
-            cu_limit: tx.cu_limit,
-            cu_price: tx.cu_price,
-            tip: tx.tip,
-            bundle: tx.bundle,
-            route: tx.route.map(|route| match route {
-                w::Route::Rpc => Route::Rpc,
-                w::Route::Staked => Route::Staked,
-                w::Route::Jito(j) => Route::Jito {
-                    bundle_only: j.bundle_only,
-                    dont_front: j.dont_front,
+        pub fn session(s: &Session, mandate: String) -> w::Session {
+            w::Session {
+                steps: s.steps,
+                slots_per_step: s.slots_per_step,
+                start_slot: s.start_slot,
+                end_slot: s.end_slot,
+                symbol: s.symbol.clone(),
+                start_mark: s.start_mark,
+                start_oracle: s.start_oracle,
+                cap: s.cap,
+                max_drawdown: s.max_drawdown,
+                mandate,
+                venue: s.venue.clone(),
+                authority: s.authority.clone(),
+                vars: s.vars.clone(),
+                seed: s.seed,
+                venues: s
+                    .venues
+                    .iter()
+                    .map(|v| w::VenueInfo {
+                        id: v.id.clone(),
+                        kind: match v.kind {
+                            MarketKind::Perp => w::MarketKind::Perp,
+                            MarketKind::Spot => w::MarketKind::Spot,
+                            MarketKind::Amm => w::MarketKind::Amm,
+                            MarketKind::Lending => w::MarketKind::Lending,
+                            MarketKind::StakePool => w::MarketKind::StakePool,
+                        },
+                        address: v.address.clone(),
+                        tradable: v.tradable,
+                    })
+                    .collect(),
+                reports: w::Reports {
+                    tape: s.reports.tape,
+                    depth: s.reports.depth,
+                    timestamps: s.reports.timestamps,
+                    fees: s.reports.fees,
                 },
-            }),
-            retry_until_slot: tx.retry_until_slot,
+                applies_tx_options: s.applies_tx_options,
+            }
         }
-    }
 
-    fn account_key(key: w::AccountKey) -> raw::AccountKey {
-        match key {
-            w::AccountKey::Address(address) => raw::AccountKey::Address(address),
-            w::AccountKey::Authority => raw::AccountKey::Authority,
-            w::AccountKey::Fresh(n) => raw::AccountKey::Fresh(n),
-            w::AccountKey::Derived(n) => raw::AccountKey::Derived(n),
+        fn side(side: Side) -> w::Side {
+            match side {
+                Side::Bid => w::Side::Bid,
+                Side::Ask => w::Side::Ask,
+            }
         }
-    }
 
-    /// A raw transaction, as the kit has it.
-    pub fn raw_transaction(tx: w::RawTransaction) -> raw::RawTransaction {
-        raw::RawTransaction {
-            instructions: tx
-                .instructions
-                .into_iter()
-                .map(|ix| raw::RawInstruction {
-                    program: ix.program,
-                    accounts: ix
-                        .accounts
-                        .into_iter()
-                        .map(|a| raw::RawAccount {
-                            key: account_key(a.key),
-                            signer: a.signer,
-                            writable: a.writable,
-                        })
-                        .collect(),
-                    data: ix.data,
+        fn kit_side(side: w::Side) -> Side {
+            match side {
+                w::Side::Bid => Side::Bid,
+                w::Side::Ask => Side::Ask,
+            }
+        }
+
+        fn position(p: mtx_kit::Position) -> w::Position {
+            w::Position {
+                size: p.size,
+                entry_usd: p.entry_usd,
+            }
+        }
+
+        fn role(role: mtx_kit::Role) -> w::Role {
+            match role {
+                mtx_kit::Role::Taker => w::Role::Taker,
+                mtx_kit::Role::Maker => w::Role::Maker,
+            }
+        }
+
+        fn range(r: PriceRange) -> w::PriceRange {
+            w::PriceRange {
+                lower: r.lower,
+                upper: r.upper,
+            }
+        }
+
+        fn kit_range(r: w::PriceRange) -> PriceRange {
+            PriceRange {
+                lower: r.lower,
+                upper: r.upper,
+            }
+        }
+
+        fn unit(unit: AmountUnit) -> w::AmountUnit {
+            match unit {
+                AmountUnit::Base => w::AmountUnit::Base,
+                AmountUnit::Quote => w::AmountUnit::Quote,
+            }
+        }
+
+        fn levels(levels: &[mtx_core::turns::Level]) -> Vec<w::Level> {
+            levels
+                .iter()
+                .map(|l| w::Level {
+                    price: l.price,
+                    size: l.base,
                 })
-                .collect(),
-            lookup_tables: tx.lookup_tables,
-            fresh_signers: tx.fresh_signers,
-            derived: tx
-                .derived
-                .into_iter()
-                .map(|d| match d {
-                    w::Derivation::Pda(p) => raw::Derivation::Pda {
-                        program: account_key(p.program),
-                        seeds: p
-                            .seeds
-                            .into_iter()
-                            .map(|seed| match seed {
-                                w::Seed::Bytes(bytes) => raw::Seed::Bytes(bytes),
-                                w::Seed::Key(key) => raw::Seed::Key(account_key(key)),
+                .collect()
+        }
+
+        fn shape(shape: LiquidityShape) -> w::LiquidityShape {
+            match shape {
+                LiquidityShape::Spot => w::LiquidityShape::Spot,
+                LiquidityShape::Curve => w::LiquidityShape::Curve,
+                LiquidityShape::BidAsk => w::LiquidityShape::BidAsk,
+            }
+        }
+
+        /// An order as planned, with its line's expiry.
+        fn order(action: &Action, expires_slot: Option<u64>) -> Option<w::Order> {
+            let amount = |amount: &Option<f64>| w::Amount { amount: *amount };
+            Some(match action {
+                &Action::Market {
+                    side: s,
+                    size,
+                    limit,
+                } => w::Order::Market(w::MarketOrder {
+                    side: side(s),
+                    size,
+                    limit,
+                }),
+                &Action::Limit {
+                    side: s,
+                    price,
+                    size,
+                } => w::Order::Limit(w::LimitOrder {
+                    side: side(s),
+                    price,
+                    size,
+                    time_in_force: w::TimeInForce::Gtc,
+                    expires_slot,
+                }),
+                &Action::PostOnly {
+                    side: s,
+                    price,
+                    size,
+                } => w::Order::Limit(w::LimitOrder {
+                    side: side(s),
+                    price,
+                    size,
+                    time_in_force: w::TimeInForce::PostOnly,
+                    expires_slot,
+                }),
+                Action::CancelAll => w::Order::CancelAll,
+                &Action::Cancel { client_id } => w::Order::Cancel(client_id),
+                Action::Respond { id, bid, ask, size } => w::Order::Respond(w::RfqResponse {
+                    id: id.clone(),
+                    bid: *bid,
+                    ask: *ask,
+                    size: *size,
+                    expiry_slot: expires_slot,
+                }),
+                &Action::Swap {
+                    side: s,
+                    amount,
+                    unit: u,
+                    limit,
+                } => w::Order::Swap(w::Swap {
+                    side: side(s),
+                    amount,
+                    unit: unit(u),
+                    limit,
+                }),
+                Action::AddLiquidity {
+                    base,
+                    quote,
+                    range: r,
+                    position,
+                    shape: s,
+                } => w::Order::AddLiquidity(w::AddLiquidity {
+                    base: *base,
+                    quote: *quote,
+                    range: r.map(range),
+                    position: position.clone(),
+                    shape: s.map(shape),
+                }),
+                Action::RemoveLiquidity {
+                    position,
+                    share,
+                    min_base,
+                    min_quote,
+                } => w::Order::RemoveLiquidity(w::RemoveLiquidity {
+                    position: position.clone(),
+                    share: *share,
+                    min_base: *min_base,
+                    min_quote: *min_quote,
+                }),
+                Action::Deposit { amount: a } => w::Order::Deposit(amount(a)),
+                Action::Withdraw { amount: a } => w::Order::Withdraw(amount(a)),
+                Action::Borrow { amount: a } => w::Order::Borrow(amount(a)),
+                Action::Repay { amount: a } => w::Order::Repay(amount(a)),
+                Action::Liquidate {
+                    obligation,
+                    collateral,
+                    repay,
+                    min_received,
+                } => w::Order::Liquidate(w::Liquidate {
+                    obligation: obligation.clone(),
+                    collateral: collateral.clone(),
+                    repay: *repay,
+                    min_received: *min_received,
+                }),
+                $($orders)*
+            })
+        }
+
+        pub fn market(m: &Market) -> w::Market {
+            w::Market {
+                k: m.k,
+                slot: m.slot,
+                last: m.last,
+                steps_left: m.steps_left,
+                slots_left: m.slots_left,
+                mark: m.mark,
+                oracle: m.oracle,
+                index: m.index,
+                best_bid: m.best_bid,
+                best_ask: m.best_ask,
+                position: position(m.position),
+                cap: m.cap,
+                max_drawdown: m.max_drawdown,
+                resting_bids: m.resting_bids,
+                resting_asks: m.resting_asks,
+                pnl: m.pnl,
+                peak_pnl: m.peak_pnl,
+                drawdown: m.drawdown,
+                unix_timestamp: m.unix_timestamp,
+                venues: m
+                    .venues
+                    .iter()
+                    .map(|v| w::VenueView {
+                        id: v.id.clone(),
+                        best_bid: v.best_bid,
+                        best_ask: v.best_ask,
+                        depth: v.depth.as_ref().map(|book| w::Book {
+                            bids: levels(&book.bids),
+                            asks: levels(&book.asks),
+                        }),
+                        tape: v.tape.as_ref().map(|tape| {
+                            tape.iter()
+                                .map(|t| w::Trade {
+                                    slot: t.slot,
+                                    side: match t.side {
+                                        mtx_core::Side::Buy => w::Side::Bid,
+                                        mtx_core::Side::Sell => w::Side::Ask,
+                                    },
+                                    price: t.price,
+                                    size: t.base,
+                                    taker: t.taker.clone(),
+                                    maker: t.maker.clone(),
+                                    role: t.own.map(role),
+                                })
+                                .collect()
+                        }),
+                        position: v.position.map(position),
+                        orders: v
+                            .orders
+                            .iter()
+                            .map(|o| w::OpenOrder {
+                                client_id: o.client_id,
+                                side: side(o.side),
+                                price: o.price,
+                                size: o.size,
                             })
                             .collect(),
-                    },
-                    w::Derivation::Ata(a) => raw::Derivation::Ata {
-                        owner: account_key(a.owner),
-                        mint: account_key(a.mint),
-                        token_program: account_key(a.token_program),
-                    },
-                })
-                .collect(),
-            tx: tx.tx.map(tx_options),
-        }
-    }
-
-    /// A line of the sheet, as the kit plans it.
-    pub fn line(intent: w::Intent) -> (Intent, LineOptions) {
-        let mut options = LineOptions {
-            venue: intent.venue,
-            client_id: intent.client_id,
-            reduce_only: intent.reduce_only,
-            tx: intent.tx.map(tx_options),
-            ..LineOptions::default()
-        };
-        let intent = match intent.action {
-            w::Action::Target(t) => {
-                options.participation = t.execution.participation;
-                Intent::Target {
-                    position: t.position,
-                    execution: mtx_kit::Execution {
-                        max_per_step: t.execution.max_per_step,
-                        slice: t.execution.slice,
-                        slippage_bps: t.execution.slippage_bps,
-                        min_trade: t.execution.min_trade,
-                    },
-                }
-            }
-            w::Action::Quote(q) => {
-                if q.post_only {
-                    options.time_in_force = TimeInForce::PostOnly;
-                }
-                options.expires_slot = q.expires_slot;
-                Intent::Quote {
-                    bid: q.bid,
-                    ask: q.ask,
-                    size: q.size,
-                }
-            }
-            w::Action::Market(o) => Intent::Market {
-                side: kit_side(o.side),
-                size: o.size,
-                limit: o.limit,
-            },
-            w::Action::Limit(o) => {
-                options.time_in_force = match o.time_in_force {
-                    w::TimeInForce::Gtc => TimeInForce::Gtc,
-                    w::TimeInForce::PostOnly => TimeInForce::PostOnly,
-                    w::TimeInForce::Ioc => TimeInForce::Ioc,
-                };
-                options.expires_slot = o.expires_slot;
-                Intent::Limit {
-                    side: kit_side(o.side),
-                    price: o.price,
-                    size: o.size,
-                }
-            }
-            w::Action::CancelAll => Intent::CancelAll,
-            w::Action::Cancel(client_id) => Intent::Cancel { client_id },
-            w::Action::Respond(r) => {
-                options.expires_slot = r.expiry_slot;
-                Intent::Respond {
-                    id: r.id,
-                    bid: r.bid,
-                    ask: r.ask,
-                    size: r.size,
-                }
-            }
-            w::Action::Swap(o) => Intent::Swap {
-                side: kit_side(o.side),
-                amount: o.amount,
-                unit: match o.unit {
-                    w::AmountUnit::Base => AmountUnit::Base,
-                    w::AmountUnit::Quote => AmountUnit::Quote,
-                },
-                limit: o.limit,
-            },
-            w::Action::AddLiquidity(o) => Intent::AddLiquidity {
-                base: o.base,
-                quote: o.quote,
-                range: o.range.map(kit_range),
-                position: o.position,
-                shape: o.shape.map(|shape| match shape {
-                    w::LiquidityShape::Spot => LiquidityShape::Spot,
-                    w::LiquidityShape::Curve => LiquidityShape::Curve,
-                    w::LiquidityShape::BidAsk => LiquidityShape::BidAsk,
+                        liquidity: v
+                            .liquidity
+                            .iter()
+                            .map(|p| w::LiquidityPosition {
+                                id: p.id.clone(),
+                                range: p.range.map(range),
+                                base: p.base,
+                                quote: p.quote,
+                                fees_base: p.fees_base,
+                                fees_quote: p.fees_quote,
+                            })
+                            .collect(),
+                        lending: v.lending.map(|l| w::LendingPosition {
+                            supplied: l.supplied,
+                            borrowed: l.borrowed,
+                            health: l.health,
+                        }),
+                        stats: v.stats.clone(),
+                    })
+                    .collect(),
+                sends: m
+                    .sends
+                    .iter()
+                    .map(|s| w::SendStatus {
+                        step: s.step,
+                        source: match s.source {
+                            SendSource::Line(n) => w::SendSource::Line(n),
+                            SendSource::Raw(n) => w::SendSource::Raw(n),
+                        },
+                        venue: s.venue.clone(),
+                        client_id: s.client_id,
+                        order: s.order.as_ref().and_then(|o| order(o, s.expires_slot)),
+                        state: match &s.state {
+                            SendState::Landed(signature) => w::SendState::Landed(signature.clone()),
+                            SendState::Failed { reason, signature } => {
+                                w::SendState::Failed(w::Failure {
+                                    reason: reason.clone(),
+                                    signature: signature.clone(),
+                                })
+                            }
+                            SendState::NotSent(why) => w::SendState::NotSent(why.clone()),
+                            SendState::Delayed => w::SendState::Delayed,
+                            SendState::Expired => w::SendState::Expired,
+                        },
+                        slot: s.slot,
+                        fee: s.fee,
+                        tip: s.tip,
+                    })
+                    .collect(),
+                fills: m
+                    .fills
+                    .iter()
+                    .map(|f| w::Fill {
+                        venue: f.venue.clone(),
+                        slot: f.slot,
+                        side: side(f.side),
+                        price: f.price,
+                        size: f.size,
+                        role: role(f.role),
+                    })
+                    .collect(),
+                rfqs: m
+                    .rfqs
+                    .iter()
+                    .map(|r| w::Rfq {
+                        id: r.id.clone(),
+                        venue: r.venue.clone(),
+                        side: r.side.map(side),
+                        size: r.size,
+                        deadline_slot: r.deadline_slot,
+                    })
+                    .collect(),
+                notes: m.notes.clone(),
+                fees: m.fees.as_ref().map(|f| w::FeeView {
+                    cu_prices: f.cu_prices.clone(),
+                    tip_floor: f.tip_floor,
+                    leaders: f.leaders.clone(),
                 }),
+                $(trigger: ($trigger)(m),)?
+            }
+        }
+
+        fn tx_options(tx: w::TxOptions) -> TxOptions {
+            TxOptions {
+                atomic: ($atomic)(&tx),
+                cu_limit: tx.cu_limit,
+                cu_price: tx.cu_price,
+                tip: tx.tip,
+                bundle: tx.bundle,
+                route: tx.route.map(|route| match route {
+                    w::Route::Rpc => Route::Rpc,
+                    w::Route::Staked => Route::Staked,
+                    w::Route::Jito(j) => Route::Jito {
+                        bundle_only: j.bundle_only,
+                        dont_front: j.dont_front,
+                    },
+                }),
+                retry_until_slot: tx.retry_until_slot,
+            }
+        }
+
+        fn account_key(key: w::AccountKey) -> raw::AccountKey {
+            match key {
+                w::AccountKey::Address(address) => raw::AccountKey::Address(address),
+                w::AccountKey::Authority => raw::AccountKey::Authority,
+                w::AccountKey::Fresh(n) => raw::AccountKey::Fresh(n),
+                w::AccountKey::Derived(n) => raw::AccountKey::Derived(n),
+            }
+        }
+
+        /// A raw transaction, as the kit has it.
+        pub fn raw_transaction(tx: w::RawTransaction) -> raw::RawTransaction {
+            raw::RawTransaction {
+                instructions: tx
+                    .instructions
+                    .into_iter()
+                    .map(|ix| raw::RawInstruction {
+                        program: ix.program,
+                        accounts: ix
+                            .accounts
+                            .into_iter()
+                            .map(|a| raw::RawAccount {
+                                key: account_key(a.key),
+                                signer: a.signer,
+                                writable: a.writable,
+                            })
+                            .collect(),
+                        data: ix.data,
+                    })
+                    .collect(),
+                lookup_tables: tx.lookup_tables,
+                fresh_signers: tx.fresh_signers,
+                derived: tx
+                    .derived
+                    .into_iter()
+                    .map(|d| match d {
+                        w::Derivation::Pda(p) => raw::Derivation::Pda {
+                            program: account_key(p.program),
+                            seeds: p
+                                .seeds
+                                .into_iter()
+                                .map(|seed| match seed {
+                                    w::Seed::Bytes(bytes) => raw::Seed::Bytes(bytes),
+                                    w::Seed::Key(key) => raw::Seed::Key(account_key(key)),
+                                })
+                                .collect(),
+                        },
+                        w::Derivation::Ata(a) => raw::Derivation::Ata {
+                            owner: account_key(a.owner),
+                            mint: account_key(a.mint),
+                            token_program: account_key(a.token_program),
+                        },
+                    })
+                    .collect(),
+                tx: tx.tx.map(tx_options),
+            }
+        }
+
+        /// A line of the sheet, as the kit plans it.
+        pub fn line(intent: w::Intent) -> (Intent, LineOptions) {
+            let mut options = LineOptions {
+                venue: intent.venue,
+                client_id: intent.client_id,
+                reduce_only: intent.reduce_only,
+                tx: intent.tx.map(tx_options),
+                ..LineOptions::default()
+            };
+            let intent = match intent.action {
+                w::Action::Target(t) => {
+                    options.participation = t.execution.participation;
+                    Intent::Target {
+                        position: t.position,
+                        execution: mtx_kit::Execution {
+                            max_per_step: t.execution.max_per_step,
+                            slice: t.execution.slice,
+                            slippage_bps: t.execution.slippage_bps,
+                            min_trade: t.execution.min_trade,
+                        },
+                    }
+                }
+                w::Action::Quote(q) => {
+                    if q.post_only {
+                        options.time_in_force = TimeInForce::PostOnly;
+                    }
+                    options.expires_slot = q.expires_slot;
+                    Intent::Quote {
+                        bid: q.bid,
+                        ask: q.ask,
+                        size: q.size,
+                    }
+                }
+                w::Action::Market(o) => Intent::Market {
+                    side: kit_side(o.side),
+                    size: o.size,
+                    limit: o.limit,
+                },
+                w::Action::Limit(o) => {
+                    options.time_in_force = match o.time_in_force {
+                        w::TimeInForce::Gtc => TimeInForce::Gtc,
+                        w::TimeInForce::PostOnly => TimeInForce::PostOnly,
+                        w::TimeInForce::Ioc => TimeInForce::Ioc,
+                    };
+                    options.expires_slot = o.expires_slot;
+                    Intent::Limit {
+                        side: kit_side(o.side),
+                        price: o.price,
+                        size: o.size,
+                    }
+                }
+                w::Action::CancelAll => Intent::CancelAll,
+                w::Action::Cancel(client_id) => Intent::Cancel { client_id },
+                w::Action::Respond(r) => {
+                    options.expires_slot = r.expiry_slot;
+                    Intent::Respond {
+                        id: r.id,
+                        bid: r.bid,
+                        ask: r.ask,
+                        size: r.size,
+                    }
+                }
+                w::Action::Swap(o) => Intent::Swap {
+                    side: kit_side(o.side),
+                    amount: o.amount,
+                    unit: match o.unit {
+                        w::AmountUnit::Base => AmountUnit::Base,
+                        w::AmountUnit::Quote => AmountUnit::Quote,
+                    },
+                    limit: o.limit,
+                },
+                w::Action::AddLiquidity(o) => Intent::AddLiquidity {
+                    base: o.base,
+                    quote: o.quote,
+                    range: o.range.map(kit_range),
+                    position: o.position,
+                    shape: o.shape.map(|shape| match shape {
+                        w::LiquidityShape::Spot => LiquidityShape::Spot,
+                        w::LiquidityShape::Curve => LiquidityShape::Curve,
+                        w::LiquidityShape::BidAsk => LiquidityShape::BidAsk,
+                    }),
+                },
+                w::Action::RemoveLiquidity(o) => Intent::RemoveLiquidity {
+                    position: o.position,
+                    share: o.share,
+                    min_base: o.min_base,
+                    min_quote: o.min_quote,
+                },
+                w::Action::Deposit(a) => Intent::Deposit { amount: a.amount },
+                w::Action::Withdraw(a) => Intent::Withdraw { amount: a.amount },
+                w::Action::Borrow(a) => Intent::Borrow { amount: a.amount },
+                w::Action::Repay(a) => Intent::Repay { amount: a.amount },
+                w::Action::Liquidate(o) => Intent::Liquidate {
+                    obligation: o.obligation,
+                    collateral: o.collateral,
+                    repay: o.repay,
+                    min_received: o.min_received,
+                },
+                $($actions)*
+            };
+            (intent, options)
+        }
+    };
+}
+
+/// `mtx:strategy@0.3.0`'s side of the kit's types.
+mod wit3 {
+    use super::v3::mtx::strategy::types as w;
+
+    since_0_2_0! {
+        orders: {
+            &Action::Flash { amount } => w::Order::Flash(amount),
+            Action::PushPrice => w::Order::PushPrice,
+        },
+        actions: {
+            w::Action::Flash(amount) => Intent::Flash { amount },
+            w::Action::PushPrice => Intent::PushPrice,
+        },
+        atomic: |tx: &w::TxOptions| tx.atomic,
+        trigger: |m: &Market| m.trigger.as_ref().map(|t| w::Trigger {
+            signature: t.signature.clone(),
+            slot: t.slot,
+            venue: t.market.clone(),
+            side: match t.side {
+                mtx_core::Side::Buy => w::Side::Bid,
+                mtx_core::Side::Sell => w::Side::Ask,
             },
-            w::Action::RemoveLiquidity(o) => Intent::RemoveLiquidity {
-                position: o.position,
-                share: o.share,
-                min_base: o.min_base,
-                min_quote: o.min_quote,
-            },
-            w::Action::Deposit(a) => Intent::Deposit { amount: a.amount },
-            w::Action::Withdraw(a) => Intent::Withdraw { amount: a.amount },
-            w::Action::Borrow(a) => Intent::Borrow { amount: a.amount },
-            w::Action::Repay(a) => Intent::Repay { amount: a.amount },
-            w::Action::Liquidate(o) => Intent::Liquidate {
-                obligation: o.obligation,
-                collateral: o.collateral,
-                repay: o.repay,
-                min_received: o.min_received,
-            },
-        };
-        (intent, options)
+            base: t.base,
+        }),
+    }
+}
+
+/// `mtx:strategy@0.2.0`'s side of the kit's types: 0.3.0 without atomic
+/// groups, flash loans or price pushes. A 0.2.0 strategy never asks for
+/// them, so a planned order of either is one it can't be handed: none.
+mod wit2 {
+    use super::v2::mtx::strategy::types as w;
+
+    since_0_2_0! {
+        orders: {
+            Action::Flash { .. } | Action::PushPrice => return None,
+        },
+        actions: {},
+        atomic: |_: &w::TxOptions| None,
     }
 }
 
@@ -1539,6 +1679,46 @@ mod tests {
         assert!(wasmtime::Module::new(&engine, "(module (memory 1) (memory 1))").is_err());
     }
 
+    /// A component built on 0.2.0 loads on its own world and plays: every
+    /// call crosses it and returns, and a sheet comes back as the kit's
+    /// lines, with no atomic group. The repository keeps no built
+    /// components, so `just compat-0-2-0` builds the book maker as it was
+    /// at `7538c774`, the last commit on 0.2.0, and runs this test on it
+    /// (`MTX_COMPAT_0_2_0_WASM`).
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "needs a 0.2.0 component: run `just compat-0-2-0`"]
+    async fn a_0_2_0_component_still_plays() {
+        let path = std::path::PathBuf::from(
+            std::env::var("MTX_COMPAT_0_2_0_WASM")
+                .expect("MTX_COMPAT_0_2_0_WASM: a component built on mtx:strategy@0.2.0"),
+        );
+        let log = Shared::default();
+        let mut strategy = load(&path, &log).await;
+        assert_eq!(strategy.interface(), "0.2.0");
+        let mandate = mtx_core::Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        let exchange = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../snapshots/phoenix-spcx-2026-10-29/exchange.json");
+        let session = Session {
+            venue: std::fs::read_to_string(exchange).expect("the snapshot's exchange"),
+            ..session(mandate)
+        };
+        let started = strategy.start(&session).await;
+        assert!(matches!(started, Outcome::Done(())), "{started:?}");
+        let mut market = market(0, 100.0, 0.0);
+        (market.best_bid, market.best_ask) = (Some(99.9), Some(100.1));
+        match strategy.step(&market).await {
+            Outcome::Done(lines) => assert!(
+                lines
+                    .iter()
+                    .all(|(_, options)| options.tx.and_then(|tx| tx.atomic).is_none()),
+                "{lines:?}"
+            ),
+            Outcome::Failed(error) => panic!("{error}"),
+            Outcome::Trapped(trap) => panic!("{trap}"),
+        }
+        assert!(matches!(strategy.end(None).await, Outcome::Done(())));
+    }
+
     /// The reference as a component: set `MTX_TEST_WASM` to the flash-crash reference's
     /// component build (`just build`), and `MTX_TEST_WASM_V1` to one built
     /// on `mtx:strategy@0.1.0` to check that it plays the same.
@@ -1554,7 +1734,7 @@ mod tests {
             let interface = if var == "MTX_TEST_WASM_V1" {
                 "0.1.0"
             } else {
-                "0.2.0"
+                "0.3.0"
             };
             assert_eq!(strategy.interface(), interface, "{var}");
             let mandate = mtx_core::Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
@@ -1748,7 +1928,7 @@ mod tests {
         let path = PathBuf::from(std::env::var("MTX_TEST_PROBE_WASM").unwrap());
         let log = Shared::default();
         let mut strategy = load(&path, &log).await;
-        assert_eq!(strategy.interface(), "0.2.0");
+        assert_eq!(strategy.interface(), "0.3.0");
         let mut mandate = mtx_core::Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
         mandate
             .universe
@@ -1782,6 +1962,7 @@ mod tests {
                     dont_front: true,
                 }),
                 retry_until_slot: Some(112),
+                atomic: None,
             })
             .bid(102.0, 2.0)
             .ioc()
@@ -1843,7 +2024,16 @@ mod tests {
                     min_received: Some(0.9),
                 },
                 LineOptions::default(),
-            );
+            )
+            .push_price()
+            .at("kamino:money-market:SOL")
+            .atomic(7)
+            .flash(2.0)
+            .at("kamino:money-market:SOL")
+            .atomic(7)
+            .swap(Side::Ask, 2.0, AmountUnit::Base, 99.0)
+            .at("orca:amm:pool")
+            .atomic(7);
         assert_eq!(lines, expected.clone().into_lines());
 
         // The raw transactions it asked for came across whole, fresh
@@ -1917,8 +2107,17 @@ mod tests {
         let lines: Vec<_> = planned.iter().map(|p| p.line).collect();
         assert_eq!(
             lines,
-            [0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+            [
+                0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21
+            ]
         );
+        assert!(
+            planned[17..]
+                .iter()
+                .all(|p| p.tx.and_then(|tx| tx.atomic) == Some(7)),
+            "the group keeps its id"
+        );
+        assert_eq!(planned[18].action, Action::Flash { amount: 2.0 });
         assert!(planned[2].reduce_only);
         assert_eq!(planned[6].expires_slot, Some(107));
         assert_eq!(

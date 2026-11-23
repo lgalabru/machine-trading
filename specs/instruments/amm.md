@@ -42,6 +42,70 @@ swap each way.
 Both assets, wherever the account holds them (wallet and every liquidity
 position, fees included), at the [spot](spot.md#value) reference prices.
 
+## Arbitrage
+
+Most trading through pools on Solana is atomic arbitrage: one transaction
+that swaps through two or more pools and ends holding what it started
+with, plus a profit ([research](../../docs/RESEARCH.md#atomic-sol-arbitrage-on-mainnet-from-jitos-explorer-2026-11-21)).
+The proposal profiles it as follows:
+
+- **Symbol.** A pool's symbol is its account address, in base58. Pairs
+  aren't unique: a token pair has many pools on one venue, one per fee tier
+  or curve. `orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE` is
+  Whirlpool's SOL/USDC pool with 4 bp fees.
+- **Venues.** The profile covers these programs:
+
+  | Venue | Program | Curve |
+  | --- | --- | --- |
+  | `orca` | Whirlpool `whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc` | concentrated, ticks |
+  | `raydium` | CLMM `CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK` | concentrated, ticks |
+  | `raydium` | AMM v4 `675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8` and CPMM `CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C` | constant product |
+  | `meteora` | DLMM `LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo` | bins |
+  | `meteora` | DAMM v1 `Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB` | constant product or stable |
+
+  A pool's symbol says which program it belongs to.
+- **A route is several fills.** Each swap in a route is a fill in its
+  pool, with the side and price the [Sides](#sides) and [Prices](#prices)
+  sections give. A route is not an instrument. The mandate audits each of
+  its swaps, and audits what the account holds once the transaction ends.
+- **Positions between transactions.** On-chain state can only be read
+  between transactions, so a token the route passes through never shows
+  up as a holding. An enforcer that measures after every transaction the
+  account lands sees exactly what the route leaves behind. Mandate v0.3.0
+  bounds that with an [inventory limit](../mandate.md#proposed-v030-atomic-routes).
+- **Flash loans.** A flash borrow from a money market, repaid in the same
+  transaction, is not a position either: the program refuses a transaction
+  that doesn't repay it. The mandate bounds its size per transaction.
+- **Price for valuation.** Pools are moved by the trades they price, so a
+  pool's own price is never the price an account is valued at. A session
+  values every asset at the scenario's reference price for it, as for
+  [spot](spot.md#value).
+
+## Implementation status
+
+What the grader and the kit implement of this profile (2026-11-21):
+
+- **Venues**: `orca` Whirlpool and `raydium` CLMM, with exact quotes in the
+  kit (`mtx_kit::protocols::orca::whirlpool`,
+  `mtx_kit::protocols::raydium::clmm`), which a strategy component can also
+  build in (features `orca-whirlpool-venue` and `raydium-clmm-venue`). The
+  runtime's `amm` venue swaps through them (`crates/runtime/src/venue/amm.rs`).
+  Raydium AMM v4 and CPMM and the Meteora programs aren't implemented.
+- **Swaps only**: no liquidity positions, so the position is the wallet's
+  base, and adding or removing liquidity isn't sent.
+- **Fills** are read from each pool's vaults, one per transaction that
+  moved them in opposite directions, at the average price they recorded,
+  fee included; the worst tick isn't named, so a limit price is judged at
+  the average.
+- **Valuation**: an `amm` session values the wallet's SOL at the scenario's
+  reference price (`venues.amm.reference_usd`, moved by its path) and USDC
+  at a dollar, never at a pool's price (`docs/scenario-format.md`, "An amm
+  session").
+- **Routes**: an atomic group of swap lines is one transaction
+  (`tx-options.atomic`); the last line's limit is the route's least
+  profit. Mandate v0.3.0's inventory rule is judged after each of the
+  account's transactions from that transaction's own token balances.
+
 ## Open questions
 
 - A new `Holding` variant (`Holding::Liquidity`: range, base, quote, fees),

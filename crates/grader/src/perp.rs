@@ -818,6 +818,7 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
             .into_iter()
             .collect(),
         account: Box::new(account),
+        triggers: None,
     })
 }
 
@@ -2521,6 +2522,7 @@ impl Account for PerpAccount {
             obligations,
             tx_layer: None,
             lending: None,
+            amm: None,
             crank_refusals: done.crank_refusals,
             forced_closes: done.forced_closes,
             liquidator: done.liquidator,

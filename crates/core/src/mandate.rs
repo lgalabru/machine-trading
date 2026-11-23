@@ -28,17 +28,22 @@ pub enum Version {
     /// `"v0.2.0"` (was `"v0.1"`): adds notional limits, net exposures from
     /// a point in the term, hedge bounds and reduce-only taking.
     V0_2_0,
+    /// `"v0.3.0"`: atomic routes. Adds the `amm` kind (a pool named by its
+    /// address), wildcard allowances over a venue's pools, `assets`,
+    /// `limits.inventory`, `max_flash_borrow` and `limits.max_costs_usd`.
+    V0_3_0,
 }
 
 impl Version {
     /// Every version this crate reads, oldest first.
-    pub const SUPPORTED: [Version; 2] = [Version::V0_1_0, Version::V0_2_0];
+    pub const SUPPORTED: [Version; 3] = [Version::V0_1_0, Version::V0_2_0, Version::V0_3_0];
 
     /// The version's name in a document: `"v0.1.0"`.
     pub fn as_str(self) -> &'static str {
         match self {
             Version::V0_1_0 => "v0.1.0",
             Version::V0_2_0 => "v0.2.0",
+            Version::V0_3_0 => "v0.3.0",
         }
     }
 
@@ -48,6 +53,7 @@ impl Version {
         match name {
             "v0.1.0" | "v0" => Some(Version::V0_1_0),
             "v0.2.0" | "v0.1" => Some(Version::V0_2_0),
+            "v0.3.0" => Some(Version::V0_3_0),
             _ => None,
         }
     }
@@ -68,7 +74,7 @@ impl TryFrom<String> for Version {
                 .iter()
                 .map(|version| format!("{:?}", version.as_str()))
                 .collect::<Vec<_>>()
-                .join(" and ");
+                .join(", ");
             format!("version {name:?}, this reader knows {known}")
         })
     }
@@ -135,37 +141,123 @@ impl Term {
     }
 }
 
-/// One instrument the mandate allows, and its limits. Build it with
-/// [`Allowance::new`]: later versions may add members.
+/// One instrument the mandate allows, and its limits, or (v0.3.0) a
+/// wildcard over every pool of a venue. Build it with [`Allowance::new`] or
+/// [`Allowance::wildcard`]: later versions may add members.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "AllowanceData", into = "AllowanceData")]
 #[non_exhaustive]
 pub struct Allowance {
     pub instrument: InstrumentRef,
+    /// v0.3.0, wildcards only: the mints a matched pool's two assets must
+    /// both be among. Absent, the wildcard matches every pool of its venue.
+    pub assets: Option<Vec<String>>,
     /// The largest position, in base units. Without `min_position`, it
-    /// bounds a short too.
+    /// bounds a short too. A wildcard has none to write: the reader holds
+    /// it as `f64::INFINITY`, no bound, since `limits.inventory` bounds what
+    /// its fills leave.
     pub max_position: f64,
     /// The smallest position allowed, in base units: `-max_position` when
     /// absent. `0` forbids a negative position.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_position: Option<f64>,
     /// The sides the account may trade, as a taker or a maker: both when
     /// absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sides: Option<Vec<Side>>,
     /// The lowest price a sell may fill at, in quote units per base unit.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_sell_price: Option<f64>,
     /// The highest price a buy may fill at, in the same units.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_buy_price: Option<f64>,
     /// v0.2.0: the position may only be held against another instrument's,
     /// on the opposite side, up to a ratio of its notional.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hedge: Option<Hedge>,
     /// v0.2.0: what a taker fill may do to the position. Absent, anything.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub taking: Option<Taking>,
+    /// v0.3.0, money markets only: the largest flash borrow from the
+    /// reserve in one transaction, in base units. Absent, the account may
+    /// not flash borrow from it.
+    pub max_flash_borrow: Option<f64>,
+}
+
+/// An [`Allowance`] as written: `max_position` is required of a named
+/// instrument and absent from a wildcard, which the reader checks as it
+/// reads, so a named allowance without a cap is never read as uncapped.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AllowanceData {
+    instrument: InstrumentRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    assets: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_position: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    min_position: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sides: Option<Vec<Side>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    min_sell_price: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_buy_price: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hedge: Option<Hedge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    taking: Option<Taking>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    max_flash_borrow: Option<f64>,
+}
+
+impl TryFrom<AllowanceData> for Allowance {
+    type Error = String;
+
+    fn try_from(data: AllowanceData) -> std::result::Result<Self, String> {
+        let max_position = match (data.instrument.is_wildcard(), data.max_position) {
+            (false, Some(max_position)) => max_position,
+            (false, None) => return Err(format!("{} has no max_position", data.instrument)),
+            (true, None) => f64::INFINITY,
+            (true, Some(_)) => {
+                return Err(format!(
+                    "{} is a wildcard, which must not set max_position: limits.inventory bounds \
+                     what its fills leave",
+                    data.instrument
+                ));
+            }
+        };
+        Ok(Self {
+            instrument: data.instrument,
+            assets: data.assets,
+            max_position,
+            min_position: data.min_position,
+            sides: data.sides,
+            min_sell_price: data.min_sell_price,
+            max_buy_price: data.max_buy_price,
+            hedge: data.hedge,
+            taking: data.taking,
+            max_flash_borrow: data.max_flash_borrow,
+        })
+    }
+}
+
+impl From<Allowance> for AllowanceData {
+    fn from(allowance: Allowance) -> Self {
+        // A wildcard's unbounded cap is not written; a named allowance's
+        // always is, even one validation would refuse.
+        let max_position = if allowance.instrument.is_wildcard() {
+            None
+        } else {
+            Some(allowance.max_position)
+        };
+        Self {
+            instrument: allowance.instrument,
+            assets: allowance.assets,
+            max_position,
+            min_position: allowance.min_position,
+            sides: allowance.sides,
+            min_sell_price: allowance.min_sell_price,
+            max_buy_price: allowance.max_buy_price,
+            hedge: allowance.hedge,
+            taking: allowance.taking,
+            max_flash_borrow: allowance.max_flash_borrow,
+        }
+    }
 }
 
 /// What an order that trades on arrival may do to the position. Written
@@ -217,6 +309,76 @@ impl Hedge {
     }
 }
 
+/// The longest base58 text of a 32-byte address.
+const ADDRESS_BASE58_LEN_MAX: usize = 44;
+/// The shortest: an address with many leading zero bytes, as the system
+/// program's (`11111111111111111111111111111111`).
+const ADDRESS_BASE58_LEN_MIN: usize = 32;
+
+/// The symbol of a wildcard allowance (v0.3.0): every instrument of its
+/// venue and kind.
+pub const WILDCARD: &str = "*";
+
+/// The most mints a wildcard's `assets` may list. A route passes through a
+/// handful of tokens; 32 is far above any mandate we write, and bounds the
+/// quadratic check for repeats.
+const ASSETS_COUNT_MAX: usize = 32;
+
+/// Whether `text` reads as base58 text of a 32-byte address: a pool's
+/// symbol, a mint. The venue or the enforcer decodes it; the reader only
+/// refuses what can't be one.
+fn is_address(text: &str) -> bool {
+    let is_base58 = text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() && !matches!(c, '0' | 'O' | 'I' | 'l'));
+    let is_address_length = (ADDRESS_BASE58_LEN_MIN..=ADDRESS_BASE58_LEN_MAX).contains(&text.len());
+    is_base58 && is_address_length
+}
+
+/// A pool's symbol is its account address (`specs/instruments/amm.md`,
+/// "Arbitrage"), since a pair has many pools.
+fn validate_pool_symbol(instrument: &InstrumentRef) -> std::result::Result<(), String> {
+    assert!(!instrument.is_wildcard(), "a wildcard is not a pool");
+    if !is_address(&instrument.symbol) {
+        return Err(format!(
+            "{instrument}: a pool's symbol is its account address, in base58"
+        ));
+    }
+    Ok(())
+}
+
+/// A wildcard's `assets`: at least two mints (a pool has two, so one alone
+/// matches nothing), each an address, none twice, at most
+/// [`ASSETS_COUNT_MAX`].
+fn validate_assets(
+    instrument: &InstrumentRef,
+    assets: &[String],
+) -> std::result::Result<(), String> {
+    if assets.len() < 2 {
+        return Err(format!(
+            "{instrument} assets must list at least two mints, a pool's two, not {}",
+            assets.len()
+        ));
+    }
+    if assets.len() > ASSETS_COUNT_MAX {
+        return Err(format!(
+            "{instrument} assets lists {} mints, over this reader's {ASSETS_COUNT_MAX}",
+            assets.len()
+        ));
+    }
+    for (i, mint) in assets.iter().enumerate() {
+        if !is_address(mint) {
+            return Err(format!(
+                "{instrument} assets: {mint:?} is not a mint address, in base58"
+            ));
+        }
+        if assets[..i].contains(mint) {
+            return Err(format!("{instrument} assets lists {mint} twice"));
+        }
+    }
+    Ok(())
+}
+
 /// [`Allowance::room`] for a cap of `max_position`, for callers that hold
 /// the cap without the allowance, such as a bot's run loop.
 pub fn position_room(
@@ -248,7 +410,49 @@ impl Allowance {
             max_buy_price: None,
             hedge: None,
             taking: None,
+            max_flash_borrow: None,
+            assets: None,
         }
+    }
+
+    /// A wildcard (v0.3.0) over every pool of `venue` (`<venue>:amm:*`),
+    /// or, with `assets`, over those whose two assets are both listed.
+    pub fn wildcard(venue: &str, assets: Option<Vec<String>>) -> Self {
+        Self {
+            assets,
+            ..Self::new(
+                InstrumentRef {
+                    venue: venue.into(),
+                    kind: Kind::Amm,
+                    symbol: WILDCARD.into(),
+                },
+                f64::INFINITY,
+            )
+        }
+    }
+
+    /// Whether this allowance is a wildcard rather than one instrument's.
+    pub fn is_wildcard(&self) -> bool {
+        self.instrument.is_wildcard()
+    }
+
+    /// Whether this wildcard admits `instrument`, a pool whose two asset
+    /// mints are `pool_assets`: same venue and kind, and, if the wildcard
+    /// lists `assets`, both of the pool's among them. A pool whose assets
+    /// the enforcer didn't supply is not admitted by a wildcard that lists
+    /// any: never read looser than written. A named allowance admits
+    /// nothing here; [`Mandate::allowance_of`] looks those up first.
+    pub fn admits(&self, instrument: &InstrumentRef, pool_assets: Option<&[String; 2]>) -> bool {
+        if !self.is_wildcard() || instrument.is_wildcard() {
+            return false;
+        }
+        if self.instrument.venue != instrument.venue || self.instrument.kind != instrument.kind {
+            return false;
+        }
+        let Some(listed) = &self.assets else {
+            return true;
+        };
+        pool_assets.is_some_and(|[a, b]| a != b && listed.contains(a) && listed.contains(b))
     }
 
     /// How much more the account may buy and sell in this instrument,
@@ -336,6 +540,37 @@ pub struct Limits {
     /// v0.2.0: bounds on weighted sums of the account's notionals.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exposures: Vec<Exposure>,
+    /// v0.3.0: what the account may hold other than its numeraire after
+    /// each transaction it lands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory: Option<Inventory>,
+    /// v0.3.0: the most, in USD, the account may spend over the term on
+    /// transaction fees, priority fees and tips, landed or failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_costs_usd: Option<f64>,
+}
+
+/// v0.3.0: after every transaction the account lands, the value of what it
+/// holds other than `numeraire` is at most `max_other_usd`. A route must
+/// end holding what it started with, so this bounds what it leaves behind.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct Inventory {
+    /// The mint the account keeps its value in, in base58.
+    pub numeraire: String,
+    /// The most, in USD, of everything else. `0` asks the account to end
+    /// every transaction holding the numeraire alone.
+    pub max_other_usd: f64,
+}
+
+impl Inventory {
+    pub fn new(numeraire: impl Into<String>, max_other_usd: f64) -> Self {
+        Self {
+            numeraire: numeraire.into(),
+            max_other_usd,
+        }
+    }
 }
 
 /// A bound on a weighted sum of notionals: a net limit across instruments,
@@ -726,6 +961,10 @@ pub enum Kind {
     /// A money market's reserve. The position is what the account supplied
     /// there minus what it borrowed.
     MoneyMarket,
+    /// A pool (`specs/instruments/amm.md`, v0.3.0), named by its account
+    /// address. As for spot, the position is the account's holdings of the
+    /// pool's base asset.
+    Amm,
 }
 
 impl Mandate {
@@ -790,13 +1029,34 @@ impl Mandate {
     }
 
     /// The lowest version that can state this mandate: v0.1.0 unless it
-    /// uses a member v0.2.0 added. Writers write it, so a mandate that needs
-    /// nothing newer reads the same to a v0.1.0 reader.
+    /// uses a member v0.2.0 or v0.3.0 added. Writers write it, so a mandate
+    /// that needs nothing newer reads the same to a v0.1.0 reader.
     pub fn minimal_version(&self) -> Version {
-        if self.first_v0_2_member().is_some() {
+        if self.first_v0_3_member().is_some() {
+            Version::V0_3_0
+        } else if self.first_v0_2_member().is_some() {
             Version::V0_2_0
         } else {
             Version::V0_1_0
+        }
+    }
+
+    /// The first thing in the mandate that v0.3.0 added.
+    fn first_v0_3_member(&self) -> Option<&'static str> {
+        if self.universe.iter().any(Allowance::is_wildcard) {
+            Some("a wildcard allowance")
+        } else if self.universe.iter().any(|a| a.instrument.kind == Kind::Amm) {
+            Some("an amm instrument")
+        } else if self.universe.iter().any(|a| a.assets.is_some()) {
+            Some("member assets")
+        } else if self.universe.iter().any(|a| a.max_flash_borrow.is_some()) {
+            Some("member max_flash_borrow")
+        } else if self.limits.inventory.is_some() {
+            Some("member limits.inventory")
+        } else if self.limits.max_costs_usd.is_some() {
+            Some("member limits.max_costs_usd")
+        } else {
+            None
         }
     }
 
@@ -838,6 +1098,11 @@ impl Mandate {
         {
             return Err(format!("member {member} needs version {}", Version::V0_2_0));
         }
+        if self.version < Version::V0_3_0
+            && let Some(member) = self.first_v0_3_member()
+        {
+            return Err(format!("{member} needs version {}", Version::V0_3_0));
+        }
         if let Some(Term {
             from_slot: Some(from),
             until_slot,
@@ -858,62 +1123,7 @@ impl Mandate {
             {
                 return Err(format!("{} is listed twice", allowance.instrument));
             }
-            let name = |member: &str| format!("{} {member}", allowance.instrument);
-            positive(&name("max_position"), allowance.max_position)?;
-            if let Some(min) = allowance.min_position
-                && !(min.is_finite() && min <= allowance.max_position)
-            {
-                return Err(format!(
-                    "{} must be a number no greater than max_position, not {min}",
-                    name("min_position")
-                ));
-            }
-            if allowance.instrument.kind == Kind::MoneyMarket
-                && (allowance.sides.is_some()
-                    || allowance.min_sell_price.is_some()
-                    || allowance.max_buy_price.is_some()
-                    || allowance.taking.is_some())
-            {
-                return Err(format!(
-                    "{}: sides, prices and taking don't apply to a money market",
-                    allowance.instrument
-                ));
-            }
-            if let Some(sides) = &allowance.sides {
-                if sides.is_empty() {
-                    return Err(format!("{} is empty", name("sides")));
-                }
-                if sides.len() == 2 && sides[0] == sides[1] {
-                    return Err(format!("{} repeats a side", name("sides")));
-                }
-            }
-            if let Some(price) = allowance.min_sell_price {
-                positive(&name("min_sell_price"), price)?;
-            }
-            if let Some(price) = allowance.max_buy_price {
-                positive(&name("max_buy_price"), price)?;
-            }
-            if let Some(hedge) = &allowance.hedge {
-                positive(&name("hedge max_ratio"), hedge.max_ratio)?;
-                if hedge.against == allowance.instrument {
-                    return Err(format!("{} is hedged against itself", allowance.instrument));
-                }
-                match self.allowance(&hedge.against) {
-                    None => {
-                        return Err(format!(
-                            "{} is hedged against {}, which isn't in the universe",
-                            allowance.instrument, hedge.against
-                        ));
-                    }
-                    Some(against) if against.hedge.is_some() => {
-                        return Err(format!(
-                            "{} is hedged against {}, itself a hedge",
-                            allowance.instrument, hedge.against
-                        ));
-                    }
-                    Some(_) => {}
-                }
-            }
+            self.validate_allowance(allowance)?;
         }
         if let Some(limit) = self.limits.max_drawdown_usd {
             positive("max_drawdown_usd", limit)?;
@@ -930,7 +1140,99 @@ impl Mandate {
                 return Err(format!("exposure {:?} is named twice", exposure.name));
             }
         }
+        if let Some(inventory) = &self.limits.inventory {
+            if !is_address(&inventory.numeraire) {
+                return Err(format!(
+                    "limits.inventory numeraire {:?} is not a mint address, in base58",
+                    inventory.numeraire
+                ));
+            }
+            let most = inventory.max_other_usd;
+            if !(most.is_finite() && most >= 0.0) {
+                return Err(format!(
+                    "limits.inventory max_other_usd must be a number no less than 0, not {most}"
+                ));
+            }
+        }
+        if let Some(limit) = self.limits.max_costs_usd {
+            positive("max_costs_usd", limit)?;
+        }
         Ok(())
+    }
+
+    /// One allowance's members, on their own and against the universe.
+    fn validate_allowance(&self, allowance: &Allowance) -> std::result::Result<(), String> {
+        let instrument = &allowance.instrument;
+        let name = |member: &str| format!("{instrument} {member}");
+        if allowance.is_wildcard() {
+            validate_wildcard(allowance)?;
+        } else {
+            validate_named(allowance)?;
+        }
+        if instrument.kind == Kind::MoneyMarket
+            && (allowance.sides.is_some()
+                || allowance.min_sell_price.is_some()
+                || allowance.max_buy_price.is_some()
+                || allowance.taking.is_some())
+        {
+            return Err(format!(
+                "{instrument}: sides, prices and taking don't apply to a money market"
+            ));
+        }
+        if let Some(most) = allowance.max_flash_borrow {
+            if instrument.kind != Kind::MoneyMarket {
+                return Err(format!(
+                    "{instrument}: max_flash_borrow is for a money market's reserve"
+                ));
+            }
+            positive(&name("max_flash_borrow"), most)?;
+        }
+        if let Some(sides) = &allowance.sides {
+            if sides.is_empty() {
+                return Err(format!("{} is empty", name("sides")));
+            }
+            if sides.len() == 2 && sides[0] == sides[1] {
+                return Err(format!("{} repeats a side", name("sides")));
+            }
+        }
+        if let Some(price) = allowance.min_sell_price {
+            positive(&name("min_sell_price"), price)?;
+        }
+        if let Some(price) = allowance.max_buy_price {
+            positive(&name("max_buy_price"), price)?;
+        }
+        if let Some(hedge) = &allowance.hedge {
+            self.validate_hedge(instrument, hedge)?;
+        }
+        Ok(())
+    }
+
+    fn validate_hedge(
+        &self,
+        instrument: &InstrumentRef,
+        hedge: &Hedge,
+    ) -> std::result::Result<(), String> {
+        positive(&format!("{instrument} hedge max_ratio"), hedge.max_ratio)?;
+        if hedge.against == *instrument {
+            return Err(format!("{instrument} is hedged against itself"));
+        }
+        if hedge.against.is_wildcard() {
+            return Err(format!(
+                "{instrument} is hedged against {}, a wildcard rather than an instrument",
+                hedge.against
+            ));
+        }
+        match self.allowance(&hedge.against) {
+            None => Err(format!(
+                "{instrument} is hedged against {}, which isn't in the universe",
+                hedge.against
+            )),
+            Some(against) if against.hedge.is_some() => Err(format!(
+                "{instrument} is hedged against {}, itself a hedge",
+                hedge.against
+            )),
+            Some(_) => Ok(()),
+        }
     }
 
     fn validate_exposure(&self, exposure: &Exposure) -> std::result::Result<(), String> {
@@ -945,9 +1247,9 @@ impl Mandate {
             if exposure.weights[..i].iter().any(|(w, _)| w == instrument) {
                 return Err(format!("exposure {name:?} weighs {instrument} twice"));
             }
-            if self.allowance(instrument).is_none() {
+            if instrument.is_wildcard() || self.allowance(instrument).is_none() {
                 return Err(format!(
-                    "exposure {name:?} weighs {instrument}, which isn't in the universe"
+                    "exposure {name:?} weighs {instrument}, which isn't an instrument in the universe"
                 ));
             }
             if !weight.is_finite() {
@@ -982,44 +1284,97 @@ impl Mandate {
         Ok(())
     }
 
+    /// The allowance written for `instrument` exactly: a named one, or, for
+    /// a wildcard reference, the wildcard itself. To find what governs an
+    /// instrument the account traded, use [`Mandate::allowance_of`].
     pub fn allowance(&self, instrument: &InstrumentRef) -> Option<&Allowance> {
         self.universe.iter().find(|a| &a.instrument == instrument)
     }
 
-    /// The first rule the observed session broke, if any.
+    /// The allowance that governs `instrument`, an instrument the account
+    /// held, ordered or traded: the one naming it, which wins over any
+    /// wildcard, or else the wildcard over its venue and kind that admits
+    /// it (see [`Allowance::admits`]). `pool_assets` are a pool's two asset
+    /// mints, which the enforcer reads from the pool; `None` for anything
+    /// else. `None` if the mandate doesn't allow `instrument`.
+    pub fn allowance_of(
+        &self,
+        instrument: &InstrumentRef,
+        pool_assets: Option<&[String; 2]>,
+    ) -> Option<&Allowance> {
+        if instrument.is_wildcard() {
+            // The account trades instruments, never a wildcard.
+            return None;
+        }
+        let found = self.allowance(instrument).or_else(|| {
+            self.universe
+                .iter()
+                .find(|a| a.admits(instrument, pool_assets))
+        });
+        debug_assert!(found.is_none_or(|a| a.instrument == *instrument || a.is_wildcard()));
+        found
+    }
+
+    /// The first rule the observed session broke, if any, in the order of
+    /// the specification's rules.
     pub fn audit(&self, observed: &Observed) -> Option<Breach> {
+        self.audit_positions(observed)
+            .or_else(|| {
+                let limit = self.limits.max_drawdown_usd?;
+                (observed.max_drawdown_usd > limit).then_some(Breach::Drawdown {
+                    drawn: observed.max_drawdown_usd,
+                    limit,
+                })
+            })
+            .or_else(|| self.audit_samples(observed))
+            .or_else(|| self.audit_fills(observed))
+            .or_else(|| self.audit_takes(observed))
+            .or_else(|| self.audit_transactions(&observed.transactions))
+    }
+
+    /// Rules 1 and 2: every position, and every fill, in an instrument the
+    /// mandate allows, and every position within its allowance's bounds.
+    fn audit_positions(&self, observed: &Observed) -> Option<Breach> {
         if observed.positions_outside_universe > 0 {
             return Some(Breach::OutsideUniverse {
                 positions: observed.positions_outside_universe,
             });
         }
         for range in &observed.positions {
-            let Some(allowance) = self.allowance(&range.instrument) else {
+            let pool_assets = observed.pool_assets(&range.instrument);
+            let Some(allowance) = self.allowance_of(&range.instrument, pool_assets) else {
                 return Some(Breach::OutsideUniverse { positions: 1 });
             };
             if let Some(breach) = allowance.breach(range.lowest, range.highest) {
                 return Some(breach);
             }
         }
-        if let Some(limit) = self.limits.max_drawdown_usd
-            && observed.max_drawdown_usd > limit
-        {
-            return Some(Breach::Drawdown {
-                drawn: observed.max_drawdown_usd,
-                limit,
-            });
-        }
-        if let Some(breach) = self.audit_samples(observed) {
-            return Some(breach);
-        }
+        // A route's fills leave no position between transactions, so a
+        // pool outside the universe shows up in its fills alone.
+        observed.fills.iter().find_map(|fill| {
+            let pool_assets = observed.pool_assets(&fill.instrument);
+            match self.allowance_of(&fill.instrument, pool_assets) {
+                Some(_) => None,
+                None => Some(Breach::FillOutsideUniverse {
+                    instrument: fill.instrument.clone(),
+                }),
+            }
+        })
+    }
+
+    /// Rules 4 and 5: every fill and resting order on an allowed side, and
+    /// every fill within its limit price.
+    fn audit_fills(&self, observed: &Observed) -> Option<Breach> {
+        let governing = |instrument: &InstrumentRef| {
+            self.allowance_of(instrument, observed.pool_assets(instrument))
+        };
         for (instrument, side) in observed
             .fills
             .iter()
             .map(|fill| (&fill.instrument, fill.side))
             .chain(observed.open_orders.iter().map(|(i, side)| (i, *side)))
         {
-            let allowed = self
-                .allowance(instrument)
+            let allowed = governing(instrument)
                 .is_none_or(|a| a.sides.as_ref().is_none_or(|sides| sides.contains(&side)));
             if !allowed {
                 return Some(Breach::Side {
@@ -1028,10 +1383,8 @@ impl Mandate {
                 });
             }
         }
-        for fill in &observed.fills {
-            let Some(allowance) = self.allowance(&fill.instrument) else {
-                continue;
-            };
+        observed.fills.iter().find_map(|fill| {
+            let allowance = governing(&fill.instrument)?;
             let limit = match fill.side {
                 Side::Sell => allowance
                     .min_sell_price
@@ -1039,40 +1392,104 @@ impl Mandate {
                 Side::Buy => allowance
                     .max_buy_price
                     .filter(|cap| fill.worst_price > cap + cap * 1e-9),
-            };
-            if let Some(limit) = limit {
-                return Some(Breach::Price {
-                    instrument: fill.instrument.clone(),
-                    side: fill.side,
-                    price: fill.worst_price,
-                    limit,
-                });
-            }
-        }
+            }?;
+            Some(Breach::Price {
+                instrument: fill.instrument.clone(),
+                side: fill.side,
+                price: fill.worst_price,
+                limit,
+            })
+        })
+    }
+
+    /// Rule 10: every take in a reduce-only instrument brings its position
+    /// toward zero, and none is left unjudged.
+    fn audit_takes(&self, observed: &Observed) -> Option<Breach> {
+        let governing = |instrument: &InstrumentRef| {
+            self.allowance_of(instrument, observed.pool_assets(instrument))
+        };
         for instrument in &observed.takes_unjudged {
-            if self
-                .allowance(instrument)
-                .is_some_and(|a| a.taking.is_some())
-            {
+            if governing(instrument).is_some_and(|a| a.taking.is_some()) {
                 return Some(Breach::TakesUnjudged {
                     instrument: instrument.clone(),
                 });
             }
         }
-        for take in &observed.takes {
-            let allowed = self
-                .allowance(&take.instrument)
+        observed.takes.iter().find_map(|take| {
+            let allowed = governing(&take.instrument)
                 .is_none_or(|a| a.may_take(take.position_before, take.side, take.quantity));
-            if !allowed {
-                return Some(Breach::Taking {
-                    instrument: take.instrument.clone(),
-                    side: take.side,
-                    quantity: take.quantity,
-                    position_before: take.position_before,
-                });
+            (!allowed).then(|| Breach::Taking {
+                instrument: take.instrument.clone(),
+                side: take.side,
+                quantity: take.quantity,
+                position_before: take.position_before,
+            })
+        })
+    }
+
+    /// Whether the mandate has a rule judged on every transaction (11 to
+    /// 13): any v0.3.0 mandate, since one forbids flash borrows it doesn't
+    /// allow. The enforcer then reads each of the account's transactions,
+    /// landed or failed, into [`Observed::transactions`].
+    pub fn checks_transactions(&self) -> bool {
+        self.version >= Version::V0_3_0
+    }
+
+    /// Rules 11 to 13, on the account's transactions in the order they
+    /// were sent: inventory after each landed one, each flash borrow, and
+    /// the costs of them all.
+    fn audit_transactions(&self, transactions: &[ObservedTransaction]) -> Option<Breach> {
+        if !self.checks_transactions() {
+            return None;
+        }
+        if let Some(inventory) = &self.limits.inventory {
+            let landed = transactions
+                .iter()
+                .filter(|tx| tx.outcome == TransactionOutcome::Landed);
+            for tx in landed {
+                let held = tx.other_holdings_usd;
+                if held.is_none_or(|held| over(held, inventory.max_other_usd)) {
+                    return Some(Breach::Inventory {
+                        signature: tx.signature.clone(),
+                        slot: tx.slot,
+                        held_usd: held,
+                        limit: inventory.max_other_usd,
+                    });
+                }
             }
         }
-        None
+        for tx in transactions {
+            if let Some(breach) = self.audit_flash_borrows(tx) {
+                return Some(breach);
+            }
+        }
+        let limit = self.limits.max_costs_usd?;
+        let spent_usd: f64 = transactions
+            .iter()
+            .map(ObservedTransaction::costs_usd)
+            .sum();
+        over(spent_usd, limit).then_some(Breach::Costs { spent_usd, limit })
+    }
+
+    /// Rule 12 for one transaction: each flash borrow from a reserve whose
+    /// allowance sets `max_flash_borrow`, and within it. A borrow is judged
+    /// whether or not its transaction landed: the agent asked for it.
+    fn audit_flash_borrows(&self, tx: &ObservedTransaction) -> Option<Breach> {
+        tx.flash_borrows.iter().find_map(|borrow| {
+            let limit = self
+                .allowance(&borrow.reserve)
+                .and_then(|allowance| allowance.max_flash_borrow);
+            let is_allowed = match limit {
+                None => false,
+                Some(limit) => borrow.amount >= 0.0 && !over(borrow.amount, limit),
+            };
+            (!is_allowed).then(|| Breach::FlashBorrow {
+                signature: tx.signature.clone(),
+                reserve: borrow.reserve.clone(),
+                amount: borrow.amount,
+                limit,
+            })
+        })
     }
 
     /// The first notional rule the samples in `observed` break, judged
@@ -1126,7 +1543,9 @@ impl Mandate {
     /// [`Mandate::gross_notional_usd`], or the first instrument `sample`
     /// can't price.
     fn priced_gross(&self, sample: &Sample) -> std::result::Result<f64, &InstrumentRef> {
-        self.universe.iter().try_fold(0.0, |sum, allowance| {
+        // A wildcard's pools are bounded by the inventory limit, not here.
+        let mut named = self.universe.iter().filter(|a| !a.is_wildcard());
+        named.try_fold(0.0, |sum, allowance| {
             let notional = sample
                 .notional(&allowance.instrument)
                 .ok_or(&allowance.instrument)?;
@@ -1250,6 +1669,66 @@ impl Mandate {
     }
 }
 
+/// A wildcard's members: over pools only, with no position bound, hedge or
+/// taking rule of its own (`limits.inventory` bounds what its fills leave),
+/// and `assets`, if any, a set of mints.
+fn validate_wildcard(allowance: &Allowance) -> std::result::Result<(), String> {
+    let instrument = &allowance.instrument;
+    assert!(allowance.is_wildcard());
+    if instrument.kind != Kind::Amm {
+        return Err(format!(
+            "{instrument}: a wildcard allowance is for pools (amm) only"
+        ));
+    }
+    if allowance.max_position != f64::INFINITY {
+        return Err(format!(
+            "{instrument} is a wildcard, which must not set max_position"
+        ));
+    }
+    for (member, is_set) in [
+        ("min_position", allowance.min_position.is_some()),
+        ("hedge", allowance.hedge.is_some()),
+        ("taking", allowance.taking.is_some()),
+    ] {
+        if is_set {
+            return Err(format!(
+                "{instrument} is a wildcard, which must not set {member}"
+            ));
+        }
+    }
+    match &allowance.assets {
+        Some(assets) => validate_assets(instrument, assets),
+        None => Ok(()),
+    }
+}
+
+/// A named allowance's members: a cap, a floor below it, no `assets`, and a
+/// pool named by its address.
+fn validate_named(allowance: &Allowance) -> std::result::Result<(), String> {
+    let instrument = &allowance.instrument;
+    assert!(!allowance.is_wildcard());
+    positive(
+        &format!("{instrument} max_position"),
+        allowance.max_position,
+    )?;
+    if let Some(min) = allowance.min_position
+        && !(min.is_finite() && min <= allowance.max_position)
+    {
+        return Err(format!(
+            "{instrument} min_position must be a number no greater than max_position, not {min}"
+        ));
+    }
+    if allowance.assets.is_some() {
+        return Err(format!(
+            "{instrument}: assets is for a wildcard allowance, which names no pool"
+        ));
+    }
+    if instrument.kind == Kind::Amm {
+        validate_pool_symbol(instrument)?;
+    }
+    Ok(())
+}
+
 /// How far past a notional bound a measurement may read before it breaks
 /// it, as for positions.
 fn slack(bound: f64) -> f64 {
@@ -1305,6 +1784,76 @@ pub struct Observed {
     /// fills in them didn't add up to its positions): a mandate that limits
     /// taking in one of them is then not judged kept.
     pub takes_unjudged: Vec<InstrumentRef>,
+    /// Each pool the account held or traded in, with its two asset mints as
+    /// read from the pool, so a wildcard with `assets` can be matched (see
+    /// [`Observed::record_pool`]). A pool missing here matches no such
+    /// wildcard.
+    pub pools: Vec<ObservedPool>,
+    /// Every transaction the account sent during the term, landed or
+    /// failed, in the order sent, for rules 11 to 13 (see
+    /// [`Mandate::checks_transactions`]).
+    pub transactions: Vec<ObservedTransaction>,
+}
+
+/// A pool and its two asset mints, in base58, in the pool's own order.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObservedPool {
+    pub instrument: InstrumentRef,
+    pub assets: [String; 2],
+}
+
+/// Whether a transaction landed. A failed one changed nothing but its
+/// fees, which it paid all the same.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionOutcome {
+    Landed,
+    Failed,
+}
+
+/// One of the account's transactions, as rules 11 to 13 read it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObservedTransaction {
+    /// Its signature, in base58: a breach names it.
+    pub signature: String,
+    pub slot: u64,
+    pub outcome: TransactionOutcome,
+    /// The base fee, in USD.
+    pub fee_usd: f64,
+    /// The priority fee (compute unit price times units asked), in USD.
+    pub priority_fee_usd: f64,
+    /// Tips to a block engine or a validator, in USD.
+    pub tip_usd: f64,
+    /// After a landed transaction, the value in USD of everything the
+    /// account held other than the inventory limit's numeraire, measured as
+    /// account value is. `None` for a failed one, or where not measured: a
+    /// mandate with an inventory limit then reads a landed one as broken.
+    pub other_holdings_usd: Option<f64>,
+    /// Each flash borrow its instructions asked for.
+    pub flash_borrows: Vec<FlashBorrow>,
+}
+
+impl ObservedTransaction {
+    /// What it cost, in USD: fee, priority fee and tips. Not a number if
+    /// any of them is negative or not finite, so the costs rule, which
+    /// sums them, can't be read as kept.
+    pub fn costs_usd(&self) -> f64 {
+        let costs = [self.fee_usd, self.priority_fee_usd, self.tip_usd];
+        if costs.iter().all(|cost| cost.is_finite() && *cost >= 0.0) {
+            costs.iter().sum()
+        } else {
+            f64::NAN
+        }
+    }
+}
+
+/// A flash borrow from a money market's reserve, repaid in its transaction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FlashBorrow {
+    /// The reserve, as the mandate names it: `kamino:money-market:USDC`.
+    pub reserve: InstrumentRef,
+    /// In the reserve's base units.
+    pub amount: f64,
 }
 
 /// A fill in which the account was the taker: which way, how much in base
@@ -1387,6 +1936,32 @@ impl Observed {
         {
             self.open_orders.push((instrument.clone(), side));
         }
+    }
+
+    /// Notes `instrument`'s two asset mints, read from the pool, so the
+    /// audit can match it against a wildcard's `assets`. A pool recorded
+    /// twice keeps its first mints: a pool's assets never change.
+    pub fn record_pool(&mut self, instrument: &InstrumentRef, assets: [String; 2]) {
+        assert!(!instrument.is_wildcard(), "a pool, not a wildcard");
+        match self
+            .pools
+            .iter()
+            .find(|pool| &pool.instrument == instrument)
+        {
+            Some(pool) => debug_assert_eq!(pool.assets, assets, "{instrument}'s assets changed"),
+            None => self.pools.push(ObservedPool {
+                instrument: instrument.clone(),
+                assets,
+            }),
+        }
+    }
+
+    /// The two asset mints recorded for the pool `instrument`, if any.
+    pub fn pool_assets(&self, instrument: &InstrumentRef) -> Option<&[String; 2]> {
+        self.pools
+            .iter()
+            .find(|pool| &pool.instrument == instrument)
+            .map(|pool| &pool.assets)
     }
 
     /// The range seen in `instrument`, if it was measured.
@@ -1496,6 +2071,32 @@ pub enum Breach {
     TakesUnjudged {
         instrument: InstrumentRef,
     },
+    /// A fill in an instrument the mandate doesn't allow: a pool no
+    /// allowance names and no wildcard admits.
+    FillOutsideUniverse {
+        instrument: InstrumentRef,
+    },
+    /// After a landed transaction, more than `max_other_usd` of assets other
+    /// than the numeraire, or no measure of them (`held_usd` absent).
+    Inventory {
+        signature: String,
+        slot: u64,
+        held_usd: Option<f64>,
+        limit: f64,
+    },
+    /// A flash borrow from a reserve whose allowance doesn't set
+    /// `max_flash_borrow` (`limit` absent), or over it.
+    FlashBorrow {
+        signature: String,
+        reserve: InstrumentRef,
+        amount: f64,
+        limit: Option<f64>,
+    },
+    /// Fees, priority fees and tips over the term above `max_costs_usd`.
+    Costs {
+        spent_usd: f64,
+        limit: f64,
+    },
 }
 
 impl fmt::Display for Breach {
@@ -1601,11 +2202,64 @@ impl fmt::Display for Breach {
                 "its reduce-only taking in {instrument} could not be judged: its fills did not \
                  add up to its positions"
             ),
+            Self::FillOutsideUniverse { instrument } => {
+                write!(f, "traded {instrument}, outside its mandate")
+            }
+            Self::Inventory {
+                signature,
+                slot,
+                held_usd: Some(held),
+                limit,
+            } => write!(
+                f,
+                "held ${held:.2} of assets other than its numeraire after transaction {signature} \
+                 at slot {slot}, over the ${limit} inventory limit"
+            ),
+            Self::Inventory {
+                signature,
+                slot,
+                held_usd: None,
+                ..
+            } => write!(
+                f,
+                "landed transaction {signature} at slot {slot} without a measure of what it held \
+                 after, which its mandate's inventory limit needs"
+            ),
+            Self::FlashBorrow {
+                signature,
+                reserve,
+                amount,
+                limit: None,
+            } => write!(
+                f,
+                "flash borrowed {amount} from {reserve} in transaction {signature}, a reserve its \
+                 mandate allows no flash borrow from"
+            ),
+            Self::FlashBorrow {
+                signature,
+                reserve,
+                amount,
+                limit: Some(limit),
+            } => write!(
+                f,
+                "flash borrowed {amount} from {reserve} in transaction {signature}, over its \
+                 max_flash_borrow of {limit}"
+            ),
+            Self::Costs { spent_usd, limit } => write!(
+                f,
+                "spent ${spent_usd:.2} on fees, priority fees and tips, over the ${limit} limit"
+            ),
         }
     }
 }
 
 impl InstrumentRef {
+    /// Whether this names a wildcard (v0.3.0, `<venue>:<kind>:*`) rather
+    /// than one instrument.
+    pub fn is_wildcard(&self) -> bool {
+        self.symbol == WILDCARD
+    }
+
     /// The instrument's [`InstrumentId`]: the reference itself,
     /// `<venue>:<kind>:<symbol>`, which a meter reports holdings under.
     pub fn id(&self) -> InstrumentId {
@@ -1623,6 +2277,9 @@ impl InstrumentRef {
         };
         match id.0.split(':').nth(1) {
             Some(kind) if kind == held => id.0.parse(),
+            // A pool's holdings are spot assets (`specs/instruments/amm.md`,
+            // "Position").
+            Some("amm") if held == "spot" => id.0.parse(),
             Some(kind) => Err(format!(
                 "{id} names a {kind}, but the meter reports a {held} holding"
             )),
@@ -1678,6 +2335,7 @@ impl fmt::Display for Kind {
             Self::Perp => "perp",
             Self::Spot => "spot",
             Self::MoneyMarket => "money-market",
+            Self::Amm => "amm",
         })
     }
 }
@@ -1690,8 +2348,9 @@ impl FromStr for Kind {
             "perp" => Ok(Self::Perp),
             "spot" => Ok(Self::Spot),
             "money-market" => Ok(Self::MoneyMarket),
+            "amm" => Ok(Self::Amm),
             "future" | "option" => Err(format!(
-                "instrument kind {s:?} is reserved; this reader enforces perp, spot and money-market only"
+                "instrument kind {s:?} is reserved; this reader enforces perp, spot, money-market and amm only"
             )),
             _ => Err(format!("unknown instrument kind {s:?}")),
         }
@@ -1795,7 +2454,7 @@ mod tests {
         assert!(empty.validate().is_err());
 
         // A version this reader doesn't know is refused as it is read.
-        for future in ["v1", "v0.3.0", "v0.2", "0.1.0", ""] {
+        for future in ["v1", "v0.4.0", "v0.2", "0.1.0", ""] {
             let json = format!(
                 r#"{{"version":"{future}","universe":[{{"instrument":"phoenix:perp:SPCX","max_position":70.0}}],"limits":{{}}}}"#
             );
@@ -1803,10 +2462,61 @@ mod tests {
                 .unwrap_err()
                 .to_string();
             assert!(
-                error.contains(r#"this reader knows "v0.1.0" and "v0.2.0""#),
+                error.contains(r#"this reader knows "v0.1.0", "v0.2.0", "v0.3.0""#),
                 "{future}: {error}"
             );
         }
+    }
+
+    /// A pool is named by its address, in a v0.3.0 mandate, and holds spot
+    /// assets: `orca:amm:<pool>`.
+    #[test]
+    fn a_pool_is_an_amm_instrument_of_v0_3_0() {
+        const POOL: &str = "orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE";
+        let pool: InstrumentRef = POOL.parse().unwrap();
+        assert_eq!(pool.kind, Kind::Amm);
+        assert_eq!(pool.to_string(), POOL);
+
+        let mut mandate = Mandate::spot(&["phoenix"], "SOL-USDC", 10.0);
+        mandate.universe[0].instrument = pool.clone();
+        assert_eq!(mandate.minimal_version(), Version::V0_3_0);
+        assert!(
+            mandate
+                .validate()
+                .unwrap_err()
+                .contains("needs version v0.3.0"),
+            "an older document can't name a pool"
+        );
+        mandate.version = Version::V0_3_0;
+        mandate.universe[0].sides = Some(vec![Side::Sell]);
+        mandate.universe[0].min_sell_price = Some(100.0);
+        mandate.validate().unwrap();
+        let json = serde_json::to_string(&mandate).unwrap();
+        assert!(json.contains(r#""version":"v0.3.0""#));
+        assert_eq!(serde_json::from_str::<Mandate>(&json).unwrap(), mandate);
+
+        for (symbol, refusal) in [
+            // A pool allowance with `*` is a wildcard, which has no cap.
+            ("*", "must not set max_position"),
+            ("SOL-USDC", "address"),
+            ("Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44z0", "address"),
+            ("Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zEE", "address"),
+        ] {
+            mandate.universe[0].instrument.symbol = symbol.into();
+            let error = mandate.validate().unwrap_err();
+            assert!(error.contains(refusal), "{symbol}: {error}");
+        }
+
+        // Its holdings are spot assets; a perp's are not.
+        let id = InstrumentId::new(POOL);
+        let usdc = crate::Asset::new("USDC", "USDC", 6).unwrap();
+        let spot = Holding::Spot(crate::Holdings::empty(usdc));
+        assert_eq!(InstrumentRef::of_holding(&id, &spot).unwrap(), pool);
+        let perp = Holding::Perp(crate::Position::flat(
+            id.clone(),
+            crate::VenueId::new("orca"),
+        ));
+        assert!(InstrumentRef::of_holding(&id, &perp).is_err());
     }
 
     /// The spellings before semantic versioning still read, as the
@@ -1818,6 +2528,7 @@ mod tests {
             ("v0", Version::V0_1_0),
             ("v0.2.0", Version::V0_2_0),
             ("v0.1", Version::V0_2_0),
+            ("v0.3.0", Version::V0_3_0),
         ] {
             let json = format!(
                 r#"{{"version":"{name}","universe":[{{"instrument":"phoenix:perp:SPCX","max_position":70.0}}],"limits":{{}}}}"#
@@ -1828,6 +2539,7 @@ mod tests {
             assert_eq!(written["version"], version.as_str(), "{name}");
         }
         assert!(Version::V0_1_0 < Version::V0_2_0);
+        assert!(Version::V0_2_0 < Version::V0_3_0);
         assert_eq!(Version::SUPPORTED.first(), Some(&Version::V0_1_0));
     }
 
@@ -2889,5 +3601,587 @@ mod tests {
             two.audit(&flagged),
             Some(Breach::TakesUnjudged { .. })
         ));
+    }
+
+    const SOL: &str = "So11111111111111111111111111111111111111112";
+    const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+    const USDT: &str = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB";
+    const WHIRLPOOL_SOL_USDC: &str = "orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE";
+    const WHIRLPOOL_SOL_USDT: &str = "orca:amm:FwewVm8u6tFPGewAyHmWAqad9hmF7mvqxK4mJ7iNqqGC";
+
+    fn sol_usdc() -> [String; 2] {
+        [SOL.into(), USDC.into()]
+    }
+
+    /// `specs/examples/backrun-sol-usdc.json`, as the spec writes it.
+    fn backrun() -> Mandate {
+        let mut mandate = Mandate {
+            version: Version::V0_3_0,
+            term: None,
+            universe: vec![
+                Allowance::wildcard("orca", Some(sol_usdc().to_vec())),
+                Allowance::wildcard("raydium", Some(sol_usdc().to_vec())),
+            ],
+            limits: Limits::default(),
+        };
+        mandate.limits.max_drawdown_usd = Some(200.0);
+        mandate.limits.inventory = Some(Inventory::new(SOL, 5.0));
+        mandate.limits.max_costs_usd = Some(500.0);
+        mandate
+    }
+
+    /// A flash-funded liquidator's mandate, as
+    /// `specs/examples/liquidation-flash.json` writes it.
+    fn liquidation() -> Mandate {
+        let reserve = |symbol: &str, max_position: f64, max_flash_borrow: f64| {
+            let mut allowance = Allowance::new(
+                format!("kamino:money-market:{symbol}").parse().unwrap(),
+                max_position,
+            );
+            allowance.min_position = Some(0.0);
+            allowance.max_flash_borrow = Some(max_flash_borrow);
+            allowance
+        };
+        let mut mandate = backrun();
+        mandate
+            .universe
+            .insert(0, reserve("USDC", 50_000.0, 250_000.0));
+        mandate.universe.insert(1, reserve("SOL", 1.0, 1_500.0));
+        mandate.limits.max_drawdown_usd = Some(500.0);
+        mandate.limits.inventory = Some(Inventory::new(USDC, 100.0));
+        mandate.limits.max_costs_usd = Some(300.0);
+        mandate
+    }
+
+    #[test]
+    fn the_v0_3_0_examples_read_as_written() {
+        for (written, expected) in [
+            (
+                include_str!("../../../specs/examples/backrun-sol-usdc.json"),
+                backrun(),
+            ),
+            (
+                include_str!("../../../specs/examples/liquidation-flash.json"),
+                liquidation(),
+            ),
+        ] {
+            let mandate: Mandate = serde_json::from_str(written).unwrap();
+            assert_eq!(mandate.validate(), Ok(()));
+            assert_eq!(mandate, expected);
+            assert_eq!(mandate.minimal_version(), Version::V0_3_0);
+            assert_eq!(
+                serde_json::to_string_pretty(&mandate).unwrap() + "\n",
+                written
+            );
+        }
+        let wildcard = &backrun().universe[0];
+        assert!(wildcard.is_wildcard());
+        assert_eq!(wildcard.max_position, f64::INFINITY);
+        assert_eq!(wildcard.room(3.0, 0.0, 0.0), (f64::INFINITY, f64::INFINITY));
+    }
+
+    /// Each member v0.3.0 added needs v0.3.0: an older reader would refuse
+    /// it, so an older document that uses it is refused too.
+    #[test]
+    fn v0_3_0_members_need_v0_3_0() {
+        type Edit = fn(&mut Mandate);
+        let edits: [(&str, Edit); 5] = [
+            ("a wildcard allowance", |m| {
+                m.universe[0].instrument = "orca:amm:*".parse().unwrap();
+                m.universe[0].max_position = f64::INFINITY;
+            }),
+            ("assets", |m| {
+                m.universe[0].assets = Some(sol_usdc().to_vec())
+            }),
+            ("max_flash_borrow", |m| {
+                m.universe[0].instrument = "kamino:money-market:USDC".parse().unwrap();
+                m.universe[0].max_flash_borrow = Some(1.0);
+            }),
+            ("limits.inventory", |m| {
+                m.limits.inventory = Some(Inventory::new(USDC, 1.0))
+            }),
+            ("limits.max_costs_usd", |m| {
+                m.limits.max_costs_usd = Some(1.0)
+            }),
+        ];
+        for (member, edit) in edits {
+            for version in [Version::V0_1_0, Version::V0_2_0] {
+                let mut mandate = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+                mandate.version = version;
+                edit(&mut mandate);
+                assert_eq!(mandate.minimal_version(), Version::V0_3_0, "{member}");
+                let error = mandate.validate().unwrap_err();
+                assert!(error.contains(member), "{member}: {error}");
+                assert!(error.contains("needs version v0.3.0"), "{member}: {error}");
+            }
+        }
+        // As written: a v0.2.0 document with a wildcard is refused.
+        let json = r#"{"version":"v0.2.0","universe":[{"instrument":"orca:amm:*"}],"limits":{}}"#;
+        let mandate: Mandate = serde_json::from_str(json).unwrap();
+        assert!(
+            mandate
+                .validate()
+                .unwrap_err()
+                .contains("needs version v0.3.0")
+        );
+    }
+
+    #[test]
+    fn the_reader_refuses_what_v0_3_0_forbids() {
+        let read = |universe: &str, limits: &str| -> std::result::Result<(), String> {
+            let json = format!(r#"{{"version":"v0.3.0","universe":{universe},"limits":{limits}}}"#);
+            let mandate: Mandate = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            mandate.validate()
+        };
+        let pools = format!(r#"[{{"instrument":"orca:amm:*","assets":["{SOL}","{USDC}"]}}]"#);
+        read(&pools, "{}").unwrap();
+        read(r#"[{"instrument":"orca:amm:*"}]"#, "{}").unwrap();
+        let refused = [
+            // A wildcard has no position bound, hedge or taking rule.
+            (r#"[{"instrument":"orca:amm:*","max_position":1}]"#.to_string(), "{}", "must not set max_position"),
+            (r#"[{"instrument":"orca:amm:*","min_position":0}]"#.into(), "{}", "must not set min_position"),
+            (r#"[{"instrument":"orca:amm:*","taking":"reduce_only"}]"#.into(), "{}", "must not set taking"),
+            (
+                format!(r#"[{{"instrument":"{WHIRLPOOL_SOL_USDC}","max_position":1}},{{"instrument":"orca:amm:*","hedge":{{"against":"{WHIRLPOOL_SOL_USDC}","max_ratio":1}}}}]"#),
+                "{}",
+                "must not set hedge",
+            ),
+            // Wildcards are over pools only.
+            (r#"[{"instrument":"phoenix:perp:*"}]"#.into(), "{}", "pools (amm) only"),
+            (r#"[{"instrument":"kamino:money-market:*"}]"#.into(), "{}", "pools (amm) only"),
+            // `assets`: two mints or more, addresses, none twice.
+            (r#"[{"instrument":"orca:amm:*","assets":[]}]"#.into(), "{}", "at least two"),
+            (format!(r#"[{{"instrument":"orca:amm:*","assets":["{SOL}"]}}]"#), "{}", "at least two"),
+            (format!(r#"[{{"instrument":"orca:amm:*","assets":["{SOL}","{SOL}"]}}]"#), "{}", "twice"),
+            (format!(r#"[{{"instrument":"orca:amm:*","assets":["{SOL}","USDC"]}}]"#), "{}", "not a mint"),
+            (
+                format!(r#"[{{"instrument":"orca:amm:*","assets":[{}]}}]"#, vec![format!("\"{SOL}\""); 33].join(",")),
+                "{}",
+                "over this reader's 32",
+            ),
+            (format!(r#"[{{"instrument":"{WHIRLPOOL_SOL_USDC}","max_position":1,"assets":["{SOL}","{USDC}"]}}]"#), "{}", "assets is for a wildcard"),
+            // A named allowance still needs its cap.
+            (format!(r#"[{{"instrument":"{WHIRLPOOL_SOL_USDC}"}}]"#), "{}", "has no max_position"),
+            // A flash borrow is from a money market, and bounded above zero.
+            (format!(r#"[{{"instrument":"{WHIRLPOOL_SOL_USDC}","max_position":1,"max_flash_borrow":1}}]"#), "{}", "money market's reserve"),
+            (r#"[{"instrument":"kamino:money-market:USDC","max_position":1,"max_flash_borrow":0}]"#.into(), "{}", "positive"),
+            // The limits.
+            (pools.clone(), r#"{"inventory":{"numeraire":"SOL","max_other_usd":5}}"#, "not a mint"),
+            (pools.clone(), r#"{"inventory":{"numeraire":"So11111111111111111111111111111111111111112","max_other_usd":-1}}"#, "no less than 0"),
+            (pools.clone(), r#"{"inventory":{"numeraire":"So11111111111111111111111111111111111111112"}}"#, "max_other_usd"),
+            (pools.clone(), r#"{"inventory":{"numeraire":"So11111111111111111111111111111111111111112","max_other_usd":5,"min":1}}"#, "unknown field"),
+            (pools.clone(), r#"{"max_costs_usd":0}"#, "positive"),
+            // A wildcard is no instrument to hedge against or weigh.
+            (
+                format!(r#"[{{"instrument":"orca:amm:*"}},{{"instrument":"{WHIRLPOOL_SOL_USDC}","max_position":1,"hedge":{{"against":"orca:amm:*","max_ratio":1}}}}]"#),
+                "{}",
+                "a wildcard rather than an instrument",
+            ),
+            (r#"[{"instrument":"orca:amm:*"}]"#.into(), r#"{"exposures":[{"name":"net","weights":{"orca:amm:*":1},"max_abs_usd":1}]}"#, "isn't an instrument"),
+            // One wildcard per venue.
+            (r#"[{"instrument":"orca:amm:*"},{"instrument":"orca:amm:*"}]"#.into(), "{}", "listed twice"),
+        ];
+        for (universe, limits, refusal) in refused {
+            let error = read(&universe, limits).unwrap_err();
+            assert!(error.contains(refusal), "{universe} {limits}: {error}");
+        }
+        let unbounded = Mandate {
+            universe: vec![Allowance::new("orca:amm:*".parse().unwrap(), 5.0)],
+            ..backrun()
+        };
+        assert!(
+            unbounded
+                .validate()
+                .unwrap_err()
+                .contains("must not set max_position")
+        );
+    }
+
+    #[test]
+    fn a_named_allowance_wins_over_a_wildcard() {
+        let named_pool: InstrumentRef = WHIRLPOOL_SOL_USDC.parse().unwrap();
+        let other_pool: InstrumentRef = "orca:amm:HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ"
+            .parse()
+            .unwrap();
+        let mut mandate = backrun();
+        mandate
+            .universe
+            .push(Allowance::new(named_pool.clone(), 10.0));
+        mandate.validate().unwrap();
+
+        let found = mandate
+            .allowance_of(&named_pool, Some(&sol_usdc()))
+            .unwrap();
+        assert_eq!(found.instrument, named_pool);
+        assert_eq!(found.max_position, 10.0);
+        let found = mandate
+            .allowance_of(&other_pool, Some(&sol_usdc()))
+            .unwrap();
+        assert!(found.is_wildcard());
+        assert_eq!(found.instrument.venue, "orca");
+        let raydium: InstrumentRef = "raydium:amm:3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            mandate
+                .allowance_of(&raydium, Some(&sol_usdc()))
+                .unwrap()
+                .instrument
+                .venue,
+            "raydium"
+        );
+        // Reversed, the pool's assets still match; one outside `assets`,
+        // or none supplied, does not.
+        assert!(
+            mandate
+                .allowance_of(&other_pool, Some(&[USDC.into(), SOL.into()]))
+                .is_some()
+        );
+        assert!(
+            mandate
+                .allowance_of(&other_pool, Some(&[SOL.into(), USDT.into()]))
+                .is_none()
+        );
+        assert!(
+            mandate
+                .allowance_of(&other_pool, Some(&[SOL.into(), SOL.into()]))
+                .is_none()
+        );
+        assert!(mandate.allowance_of(&other_pool, None).is_none());
+        // Not a venue the universe names, not a pool, not an instrument.
+        let meteora: InstrumentRef = "meteora:amm:HJPjoWUrhoZzkNfRpHuieeFk9WcZWjwy6PBjZ81ngndJ"
+            .parse()
+            .unwrap();
+        assert!(mandate.allowance_of(&meteora, Some(&sol_usdc())).is_none());
+        assert!(
+            mandate
+                .allowance_of(&"orca:spot:SOL-USDC".parse().unwrap(), Some(&sol_usdc()))
+                .is_none()
+        );
+        assert!(
+            mandate
+                .allowance_of(&"orca:amm:*".parse().unwrap(), Some(&sol_usdc()))
+                .is_none()
+        );
+
+        // A wildcard without `assets` admits every pool of its venue.
+        let open = Allowance::wildcard("orca", None);
+        assert!(open.admits(&other_pool, None));
+        assert!(!open.admits(&raydium, None));
+        assert!(!Allowance::new(named_pool.clone(), 1.0).admits(&named_pool, None));
+    }
+
+    /// Rules 1 and 2 through a wildcard: a pool it admits has no cap of its
+    /// own, one it doesn't is outside the universe, whether the account
+    /// held it or only traded through it.
+    #[test]
+    fn a_wildcard_admits_its_pools_and_no_others() {
+        let usdc_pool: InstrumentRef = WHIRLPOOL_SOL_USDC.parse().unwrap();
+        let usdt_pool: InstrumentRef = WHIRLPOOL_SOL_USDT.parse().unwrap();
+        let mandate = backrun();
+        let traded = |instrument: &InstrumentRef| {
+            let mut observed = Observed::default();
+            observed.record_pool(&usdc_pool, sol_usdc());
+            observed.record_pool(&usdt_pool, [SOL.into(), USDT.into()]);
+            observed.fills.push(ObservedFill {
+                instrument: instrument.clone(),
+                side: Side::Buy,
+                price: 100.0,
+                worst_price: 100.0,
+            });
+            observed
+        };
+        assert_eq!(mandate.audit(&traded(&usdc_pool)), None);
+        let breach = mandate.audit(&traded(&usdt_pool)).unwrap();
+        assert_eq!(
+            breach,
+            Breach::FillOutsideUniverse {
+                instrument: usdt_pool.clone()
+            }
+        );
+        assert!(
+            breach.to_string().contains("outside its mandate"),
+            "{breach}"
+        );
+
+        let mut held = traded(&usdc_pool);
+        held.record(&usdc_pool, 1e9);
+        assert_eq!(mandate.audit(&held), None, "a wildcard has no cap");
+        held.record(&usdt_pool, 1.0);
+        assert_eq!(
+            mandate.audit(&held),
+            Some(Breach::OutsideUniverse { positions: 1 })
+        );
+
+        // A pool whose assets the enforcer didn't record matches nothing.
+        let unknown = Observed {
+            fills: traded(&usdc_pool).fills,
+            ..Observed::default()
+        };
+        assert!(matches!(
+            mandate.audit(&unknown),
+            Some(Breach::FillOutsideUniverse { .. })
+        ));
+
+        // A named pool keeps its cap under a wildcard over its venue.
+        let mut capped = backrun();
+        capped
+            .universe
+            .push(Allowance::new(usdc_pool.clone(), 10.0));
+        let mut over = traded(&usdc_pool);
+        over.record(&usdc_pool, 11.0);
+        assert!(matches!(
+            capped.audit(&over),
+            Some(Breach::Position { cap: 10.0, .. })
+        ));
+
+        // A wildcard's sides and limit prices bind its pools' fills.
+        let mut sells_only = backrun();
+        sells_only.universe[0].sides = Some(vec![Side::Sell]);
+        assert!(matches!(
+            sells_only.audit(&traded(&usdc_pool)),
+            Some(Breach::Side {
+                side: Side::Buy,
+                ..
+            })
+        ));
+        let mut capped_price = backrun();
+        capped_price.universe[0].max_buy_price = Some(99.0);
+        assert!(matches!(
+            capped_price.audit(&traded(&usdc_pool)),
+            Some(Breach::Price { limit: 99.0, .. })
+        ));
+    }
+
+    fn transaction(
+        outcome: TransactionOutcome,
+        other_holdings_usd: Option<f64>,
+    ) -> ObservedTransaction {
+        ObservedTransaction {
+            signature: "5sig".into(),
+            slot: 42,
+            outcome,
+            fee_usd: 0.001,
+            priority_fee_usd: 0.01,
+            tip_usd: 0.1,
+            other_holdings_usd,
+            flash_borrows: Vec::new(),
+        }
+    }
+
+    fn transacted(transactions: Vec<ObservedTransaction>) -> Observed {
+        Observed {
+            transactions,
+            ..Observed::default()
+        }
+    }
+
+    #[test]
+    fn inventory_is_judged_after_every_landed_transaction() {
+        use TransactionOutcome::{Failed, Landed};
+        let mandate = backrun();
+        assert!(mandate.checks_transactions());
+        let kept = transacted(vec![
+            transaction(Landed, Some(0.0)),
+            transaction(Landed, Some(5.0)),
+            // A failed transaction left nothing behind to judge.
+            transaction(Failed, None),
+            transaction(Failed, Some(1e6)),
+        ]);
+        assert_eq!(mandate.audit(&kept), None);
+
+        let over = transacted(vec![
+            transaction(Landed, Some(1.0)),
+            transaction(Landed, Some(5.01)),
+        ]);
+        let breach = mandate.audit(&over).unwrap();
+        assert_eq!(
+            breach,
+            Breach::Inventory {
+                signature: "5sig".into(),
+                slot: 42,
+                held_usd: Some(5.01),
+                limit: 5.0
+            }
+        );
+        assert!(
+            breach.to_string().contains("other than its numeraire"),
+            "{breach}"
+        );
+
+        for unmeasured in [None, Some(f64::NAN), Some(f64::INFINITY)] {
+            let breach = mandate
+                .audit(&transacted(vec![transaction(Landed, unmeasured)]))
+                .unwrap();
+            assert!(matches!(breach, Breach::Inventory { .. }), "{unmeasured:?}");
+        }
+        assert!(
+            mandate
+                .audit(&transacted(vec![transaction(Landed, None)]))
+                .unwrap()
+                .to_string()
+                .contains("without a measure")
+        );
+
+        // Without an inventory limit, nothing is measured or needed.
+        let mut free = backrun();
+        free.limits.inventory = None;
+        assert_eq!(
+            free.audit(&transacted(vec![transaction(Landed, None)])),
+            None
+        );
+    }
+
+    #[test]
+    fn a_flash_borrow_needs_an_allowance_and_stays_within_it() {
+        use TransactionOutcome::{Failed, Landed};
+        let mandate = liquidation();
+        let borrowing = |reserve: &str, amount: f64, outcome| {
+            let mut tx = transaction(outcome, Some(0.0));
+            tx.flash_borrows.push(FlashBorrow {
+                reserve: reserve.parse().unwrap(),
+                amount,
+            });
+            transacted(vec![tx])
+        };
+        assert_eq!(
+            mandate.audit(&borrowing("kamino:money-market:USDC", 250_000.0, Landed)),
+            None
+        );
+        assert_eq!(
+            mandate.audit(&borrowing("kamino:money-market:SOL", 1.0, Failed)),
+            None
+        );
+
+        let over = mandate
+            .audit(&borrowing("kamino:money-market:USDC", 250_001.0, Landed))
+            .unwrap();
+        assert!(matches!(
+            over,
+            Breach::FlashBorrow {
+                limit: Some(250_000.0),
+                ..
+            }
+        ));
+        assert!(
+            over.to_string().contains("over its max_flash_borrow"),
+            "{over}"
+        );
+        // Judged landed or failed: the agent asked for it.
+        assert!(
+            mandate
+                .audit(&borrowing("kamino:money-market:SOL", 1_501.0, Failed))
+                .is_some()
+        );
+        for amount in [-1.0, f64::NAN] {
+            assert!(
+                mandate
+                    .audit(&borrowing("kamino:money-market:SOL", amount, Landed))
+                    .is_some()
+            );
+        }
+
+        // A reserve outside the universe, or allowed without a flash
+        // borrow, allows none.
+        let outside = mandate
+            .audit(&borrowing("kamino:money-market:JitoSOL", 1.0, Landed))
+            .unwrap();
+        assert!(matches!(outside, Breach::FlashBorrow { limit: None, .. }));
+        assert!(
+            outside.to_string().contains("allows no flash borrow"),
+            "{outside}"
+        );
+        let mut no_flash = liquidation();
+        no_flash.universe[0].max_flash_borrow = None;
+        assert!(matches!(
+            no_flash.audit(&borrowing("kamino:money-market:USDC", 1.0, Landed)),
+            Some(Breach::FlashBorrow { limit: None, .. })
+        ));
+        // Nor does the backrun's mandate, which names no reserve.
+        assert!(
+            backrun()
+                .audit(&borrowing("kamino:money-market:USDC", 1.0, Landed))
+                .is_some()
+        );
+
+        // Before v0.3.0, a flash borrow is no rule's.
+        let older = Mandate::perp("phoenix", "SPCX", 70.0, 1_000.0);
+        assert!(!older.checks_transactions());
+        assert_eq!(
+            older.audit(&borrowing("kamino:money-market:USDC", 1.0, Landed)),
+            None
+        );
+    }
+
+    #[test]
+    fn costs_sum_landed_and_failed_transactions_over_the_term() {
+        use TransactionOutcome::{Failed, Landed};
+        let mut mandate = backrun();
+        mandate.limits.max_costs_usd = Some(1.0);
+        let costing = |outcome, tip_usd: f64| ObservedTransaction {
+            tip_usd,
+            ..transaction(outcome, Some(0.0))
+        };
+        // 0.011 in fees each, plus tips.
+        let kept = transacted(vec![costing(Landed, 0.489), costing(Failed, 0.489)]);
+        assert_eq!(mandate.audit(&kept), None);
+        let spent = transacted(vec![costing(Landed, 0.489), costing(Failed, 0.5)]);
+        let breach = mandate.audit(&spent).unwrap();
+        let Breach::Costs { spent_usd, limit } = breach else {
+            panic!("{breach:?}");
+        };
+        assert!((spent_usd - 1.011).abs() < 1e-12 && limit == 1.0);
+        assert!(
+            breach.to_string().contains("fees, priority fees and tips"),
+            "{breach}"
+        );
+        for bad in [-0.1, f64::NAN, f64::INFINITY] {
+            let breach = mandate.audit(&transacted(vec![costing(Failed, bad)]));
+            assert!(matches!(breach, Some(Breach::Costs { .. })), "{bad}");
+        }
+        assert_eq!(mandate.audit(&Observed::default()), None);
+    }
+
+    #[test]
+    fn v0_3_0_breaches_read_back_as_written() {
+        for breach in [
+            Breach::FillOutsideUniverse {
+                instrument: WHIRLPOOL_SOL_USDT.parse().unwrap(),
+            },
+            Breach::Inventory {
+                signature: "5sig".into(),
+                slot: 9,
+                held_usd: Some(6.0),
+                limit: 5.0,
+            },
+            Breach::Inventory {
+                signature: "5sig".into(),
+                slot: 9,
+                held_usd: None,
+                limit: 5.0,
+            },
+            Breach::FlashBorrow {
+                signature: "5sig".into(),
+                reserve: "kamino:money-market:USDC".parse().unwrap(),
+                amount: 2.0,
+                limit: None,
+            },
+            Breach::Costs {
+                spent_usd: 2.0,
+                limit: 1.0,
+            },
+        ] {
+            let json = serde_json::to_value(&breach).unwrap();
+            assert!(json["rule"].is_string(), "{json}");
+            assert_eq!(serde_json::from_value::<Breach>(json).unwrap(), breach);
+        }
+        let mut observed = transacted(vec![transaction(TransactionOutcome::Landed, Some(1.0))]);
+        observed.record_pool(&WHIRLPOOL_SOL_USDC.parse().unwrap(), sol_usdc());
+        let json = serde_json::to_string(&observed.transactions).unwrap();
+        assert!(json.contains(r#""outcome":"landed""#), "{json}");
+        assert_eq!(
+            serde_json::from_str::<Vec<ObservedTransaction>>(&json).unwrap(),
+            observed.transactions
+        );
     }
 }

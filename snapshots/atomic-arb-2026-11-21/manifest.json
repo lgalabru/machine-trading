@@ -1,0 +1,145 @@
+{
+  "created_at_unix": 1795304963,
+  "fork_host": "mainnet.helius-rpc.com",
+  "fork_slot": 472329069,
+  "accounts": 372,
+  "symbol": "SOL",
+  "mark_price_usd": 70.25723983350373,
+  "kind": "lending",
+  "recipe_sha256": "3b648ae49267179ad99a351e0a790762647770ca8ea8e4796f87b20899028ed0",
+  "sources": [
+    {
+      "role": "program",
+      "name": "klend",
+      "address": "KLend2g3cP87fffoy8q1mQqGKjrxjC8boSyAYavgmjD",
+      "programdata": "9uSbGW1y9H5Av6H5TKxQ1wnFApSq2t3oEpfF2YfjDQGA",
+      "deploy_slot": 461744249,
+      "code_sha256": "6482390f659a6774b059768313b6f701b14819110f9e10db8fa651a311e9c97b"
+    },
+    {
+      "role": "program",
+      "name": "kamino-farms",
+      "address": "FarmsPZpWu9i7Kky8tPN37rs2TpmMrAZrC7S7vJa91Hr",
+      "programdata": "5Fz4tY19ihWJAW1j9RNoEQJKSdn5mQHjcVrcZ5BRK5E9",
+      "deploy_slot": 444035168,
+      "code_sha256": "67c4a989342024efedf6181c1d91cf6aac2bb2bcd17f43b8848c9f3d8ba21011"
+    },
+    {
+      "role": "program",
+      "name": "kamino-scope",
+      "address": "HFn8GnPADiny6XqUoWE8uRPPxb29ikn4yTuPa9MF2fWJ",
+      "programdata": "DuKtB88SQGJbow5jxmUSwgJWmC7zma8mX3Nodz1Gsjs2",
+      "deploy_slot": 467682419,
+      "code_sha256": "0d4a3bcdb27b245b9a6b6fd4ecf151fc55de0fc78fbb8b7f90de143a36d400ce"
+    },
+    {
+      "role": "program",
+      "name": "orca-whirlpool",
+      "address": "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+      "programdata": "CtXfPzz36dH5Ws4UYKZvrQ1Xqzn42ecDW6y8NKuiN8nD",
+      "deploy_slot": 457152296,
+      "code_sha256": "c422b22f3eefe86dd55878a4f505b9c68c26e241dc96af1573ca032b24b8ee3f"
+    },
+    {
+      "role": "program",
+      "name": "raydium-clmm",
+      "address": "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",
+      "programdata": "HzD2cCXXT3UQNjMMY6kDv9w6gZ9qquSdfoGXrLL3LXx",
+      "deploy_slot": 459932378,
+      "code_sha256": "e9ae00f7bdfa3b104595e68b3e328d108029e16af3ba4fb1f3968210178ffc5c"
+    },
+    {
+      "role": "program",
+      "name": "spl-token",
+      "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+      "programdata": "3gvYRKWyXRR9xKWe1ZjPhLY5ZJRN7KDB4rFZFGoJfFk2",
+      "deploy_slot": 454464000,
+      "code_sha256": "53e587eee80c786bcfba1450397d92179a0f01def776d19fb4ddf690d64431cc"
+    },
+    {
+      "role": "program",
+      "name": "spl-token-2022",
+      "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+      "programdata": "DoU57AYuPFu2QU514RktNPG22QhApEjnKxnBcu4BHDTY",
+      "deploy_slot": 454464000,
+      "code_sha256": "495e9d7680dd555cb126a6a8e5464af5be9b01f02f2cd70634352722d22e3cad"
+    },
+    {
+      "role": "program",
+      "name": "spl-associated-token-account",
+      "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+      "code_sha256": "6804554e69fd3a58caa191dc4a58f4c67223d30ca28ab8987f39fc18d2f7374d"
+    },
+    {
+      "role": "program",
+      "name": "spl-memo",
+      "address": "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+      "code_sha256": "0c92063c6838d9ad8af50aaefea9a166b5bb41a2bfa2bc6327d7db320849bc78"
+    },
+    {
+      "role": "market",
+      "name": "kamino main market",
+      "address": "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF"
+    },
+    {
+      "role": "lookup-table",
+      "name": "kamino main lookup table",
+      "address": "FGMSBiyVE8TvZcdQnZETAAKw28tkQJ2ccZy6pyp95URb"
+    },
+    {
+      "role": "reserve",
+      "name": "kamino main SOL",
+      "address": "d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q"
+    },
+    {
+      "role": "reserve",
+      "name": "kamino main USDC",
+      "address": "D6q6wuQSrifJKZYpR1M8R4YawnLDtDsMmWM1NbBmgJ59"
+    },
+    {
+      "role": "oracle",
+      "name": "scope prices",
+      "address": "3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH"
+    },
+    {
+      "role": "oracle",
+      "name": "scope mappings",
+      "address": "4zh6bmb77qX2CL7t5AJYCqa6YqFafbz3QJNeFvZjLowg"
+    },
+    {
+      "role": "oracle",
+      "name": "scope twaps",
+      "address": "6L6vUts9tYqxHVUCEFVc2mzZw6yxMn8C6a44cp5ga7e9"
+    },
+    {
+      "role": "oracle",
+      "name": "scope configuration",
+      "address": "6cMwdbrJ95D7v5655Zsoe7oXmjQJMnagWK8EcdG6qmGM"
+    },
+    {
+      "role": "oracle",
+      "name": "scope token metadata",
+      "address": "3wHxoHowen78mskgqKQmaYVQV8Mqd5PUFXja2xcfviSV"
+    },
+    {
+      "role": "mint",
+      "name": "wSOL",
+      "address": "So11111111111111111111111111111111111111112"
+    },
+    {
+      "role": "mint",
+      "name": "USDC",
+      "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    },
+    {
+      "role": "pool",
+      "name": "orca-whirlpool SOL/USDC",
+      "address": "Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"
+    },
+    {
+      "role": "pool",
+      "name": "raydium-clmm SOL/USDC",
+      "address": "3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"
+    }
+  ]
+}

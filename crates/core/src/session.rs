@@ -84,8 +84,8 @@ pub struct Wallet {
     pub venues: Vec<VenueReading>,
 }
 
-/// One reserve of a measured account, as a component's step shows it: the
-/// supply and debt there, and the reserve's numbers.
+/// One venue of a measured account, as a component's step shows it: a
+/// reserve's supply and debt there, and the venue's numbers.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct VenueReading {
     pub id: String,
@@ -93,6 +93,12 @@ pub struct VenueReading {
     pub borrowed: f64,
     pub health: Option<f64>,
     pub stats: Vec<(String, f64)>,
+    /// A pool's prices for a small trade each way, fees included. A
+    /// reserve has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_bid: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub best_ask: Option<f64>,
 }
 
 impl Wallet {

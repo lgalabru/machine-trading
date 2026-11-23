@@ -50,6 +50,24 @@ Real venues:
 | `phoenix-eternal` (`symbol`, `phoenix_api`) | Onboards a throwaway trader, reads the market, rests and cancels an order, and replays the market-move scenario templates so the oracle and maker accounts load. Writes `exchange.json`. |
 | `spot-exercise` | Funds a throwaway trader and takes the paths a spot session takes on Phoenix v1 and OpenBook v2 SOL/USDC: seat or open orders account, a resting order and its cancel, a small sell. |
 | `kamino-markets` (`pairs`: `[collateral reserve, debt reserve]` addresses) | Fetches every reserve in one call, moves the fork's clock past their last refresh (a reserve refreshed after the clock can't be refreshed again), loads each reserve's market, lookup table, vaults, mints, farms and Scope prices, freshens Scope's entries, freezes any Token-2022 UI multiplier at today's, and has a throwaway account deposit, borrow, repay and withdraw on each pair. |
+| `clone-pool` (`name`, `address`, `tick_arrays`) | Loads a mainnet Orca Whirlpool or Raydium CLMM pool (told apart by the account's owner) with every account a swap through it reads, so the snapshot swaps through it offline: the program and its code, the pool, its config (`whirlpools_config` or `amm_config`), both mints and vaults, the Whirlpool oracle PDA if the pool has one, Raydium's observation and tick-array bitmap extension, and tick arrays around the current price. Listed in the manifest's `sources` with role `pool`. A SOL/USDC pool reports SOL's price, the snapshot's `mark_price_usd` when no earlier action reported one. |
+
+`tick_arrays` (default 12, at most 64) is how many tick arrays a clone takes
+on each side of the current one, and each program counts them its own way,
+as its swap walks them:
+
+- **Whirlpool** walks contiguous arrays and reads a missing one as
+  uninitialized, so the clone takes every array within the span, fixed or
+  dynamic layout. Arrays the chain doesn't hold stay absent. SOL/USDC's span
+  352 ticks each, so 12 a side reach about ±40%.
+- **Raydium CLMM** skips to the next initialized array through the pool's
+  bitmap (and its extension), so the clone takes the `tick_arrays`
+  initialized arrays nearest the price each way, however far apart. SOL/USDC's
+  span 60 ticks each, about 0.6%.
+
+A clone fetches the pool first and the rest in one call after it, so they
+are from about the same slot. It refuses a pool whose config, mints, vaults
+or (Raydium) observation is missing, or an array of another pool.
 
 Real accounts a build that starts from a snapshot can't fetch:
 
@@ -64,8 +82,18 @@ source's, byte for byte. A recipe that only adds accounts reports the source's
 `mark_price_usd` and `marks`.
 
 Simulated assets (see below): `create-mint`, `phoenix-v1-market`,
-`openbook-v2-market`. Pool creation for AMMs is left for the AMM venue
-modules; they add actions here.
+`openbook-v2-market`. AMM pools are cloned from mainnet (`clone-pool`) rather
+than created: a pool's tick arrays must agree with its price, and a session
+moves a cloned pool with real swaps.
+
+`snapshots/atomic-arb-2026-11-21` is the snapshot of the atomic-arbitrage
+tasks ([RFD 0005](rfd/0005-atomic-arbitrage-tasks.md)): Kamino's main market
+(`kamino-markets`), Scope's main feed and the two SOL/USDC pools
+(`clone-pool`). Its `README.md` says what it holds and what was checked on it.
+`snapshots/thin-pools-2026-11-21` is `backrun-thin-pools`'s: ten pools over
+SOL, USDC, JitoSOL, JTO and GEOD (`clone-pool` alone), and JitoSOL's stake
+pool with what `DepositSol` and `WithdrawSol` read. Its `README.md` gives
+each pool's depth.
 
 The account set depends on what the warm-up touches, which is why warm-up
 is part of the recipe: a path a session takes that no warm-up exercised
@@ -176,6 +204,10 @@ ProgramData account, deploy slot and a hash of its code (`programdata`,
   the chain's ProgramData with the one in that snapshot, so the rebuild runs
   the code the task was built on. The source's name is recorded as
   `pinned_from`.
+
+A program under the original BPF loaders (SPL Token, Memo) can't be upgraded
+and has no ProgramData: its `code_sha256` is the hash of the program account
+itself, `expect_code_sha256` checks it, and `pin_from` is refused.
 
 The two committed recipes pin to their own snapshots. The Kamino recipe
 (`snapshots/kamino-2026-11-13`) pins its programs by `expect_code_sha256`

@@ -25,9 +25,9 @@ docs together.
 | --- | --- |
 | `schema`, `name`, `description`, `duration_slots` | The version, labels and the session length |
 | `assets` | `symbol`; a spot session's starting `wallet`; a perp session's `start_positions`, signed base units by market symbol |
-| `venues` | Exactly one of `perp` (with its `funding`, `liquidator` and `impact`), `spot` (`markets`, `turn_data`) and `lending` (Kamino's reserves, the bot's wallet and opening, borrowers and liquidators; [Kamino](../specs/venues/kamino.md)) |
+| `venues` | Exactly one of `perp` (with its `funding`, `liquidator` and `impact`), `spot` (`markets`, `turn_data`), `lending` (Kamino's reserves, the bot's wallet and opening, borrowers, liquidators and Scope's keeper; [Kamino](../specs/venues/kamino.md)) and `amm` (pools, the bot's wallet, a reference price, the whale whose chunks are the session's triggers, the calm flow and the searchers; see [An amm session](#an-amm-session-triggers-and-searchers)); and, beside `lending`, `amm`'s `pools` alone (see [Lending with pools and a pushed oracle](#lending-with-pools-and-a-pushed-oracle)) |
 | `market_model` | `path`, `fair_path`, a `closed_period` with Phoenix's index through it, the `record` of the market calibration the path was drawn from, and a lending session's `warps` (clock jumps). `record.jump_rate_per_hour`, `record.jump_size` and `record.scheduled` (all optional, absent unless stated) state a jump rate, jump sizes and scheduled releases in place of the calibration's. Values must come from measured real event or opening-window data with the source cited, and no all-session rate may exceed the instrument's measured opening-window rate (reference table, Phoenix 1 m archives and the calibration's 5-sigma rule: [market calibration](market-calibration.md#stated-jump-regimes), realism rule: [market realism](../skills/trading-task-design/references/market-realism.md)) |
-| `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures |
+| `oracles` | Feeds for the prices venues read (Phoenix, Pyth, Scope), their cadence, and seeded failures; a lending session's Scope feed may be `pushed` |
 | `actors` | The `competitor` maker (in a market-making scenario with the bot's quoting `obligations`, and `makers_bps`, where the snapshot's makers are widened to when not `competitor_bps`, at least that: a book whose depth near the touch is the grader's maker alone, the snapshot's deep curve behind it), the grader's `takers` and what they are priced off (`takers_pricing`: `level`, `book` or `fair`; without it the scenario's kind picks, and `fair` needs the market model's `fair_path`) |
 | `faults` | Execution faults on the bot's sends and reads |
 | `tx` | The transaction layer: `layer`, fees, busy blocks and Jito bundles deciding what lands (see `docs/tx-layer.md`); `raw_sends`, the programs a component's own transactions may run |
@@ -58,8 +58,12 @@ leaf types' own). A few rules join sections and are listed, one function
 each, at the end of `ScenarioV2::validate`: one venue kind, spot scenarios
 having no path or competitor (their takers are a tape), lending scenarios
 moving prices through their Scope feeds only (no path, actors, order or spot
-scoring; clock jumps inside the session and without faults), the mandate
-covering exactly the scenario's markets, a sell order fitting the wallet, and,
+scoring; clock jumps inside the session and without faults), amm scenarios
+on their own wallet and path under the transaction layer, a lending
+session's liquidators taking `delay_steps` without the transaction layer and
+none with it, the mandate covering exactly the scenario's markets (a lending
+session's: its reserves, and each of its pools, named or under its venue's
+wildcard), a sell order fitting the wallet, and,
 on a perp (`positions_fit_the_market`):
 
 - `start_positions` and `close_out` are perp-only and name the scenario's
@@ -87,6 +91,190 @@ nothing moves with the price, or earns or pays the funding, and v2 refuses
 the grade. A v1
 grade takes a funded start position as it is: the funding the start earns
 or pays is in the session's PnL, order or not.
+
+## Lending with pools and a pushed oracle
+
+RFD 0005's `liquidation-flash` needs three things a lending scenario adds
+to its sections: pools to sell seized collateral through, a Scope price the
+bot can push, and the transaction layer's auction.
+
+```json
+"venues": {
+  "lending": { "seed": 23, "reserves": ["SOL", "USDC"], "wallet": { "USDC": 1000 },
+               "borrowers": { "count": 8, "collateral": "SOL", "debt": "USDC",
+                              "health": [1.0005, 1.02], "size_usd": [1200, 2400] },
+               "liquidators": { "count": 4 },
+               "keeper": { "every_slots": 5, "cu_price": 100 } },
+  "amm": { "pools": ["orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
+                     "raydium:amm:3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"] }
+},
+"oracles": { "seed": 5, "feeds": [{ "name": "sol", "cadence_slots": 1,
+  "source": { "kind": "scope", "account": "3t4JZcueEzTbVP6kLxXrL3VpWx45jDer4eqysweBchNH",
+              "index": 3, "twap_index": 455, "mode": "pushed" },
+  "path": [{ "slot": 280, "level_pct": -4.5 }] }] },
+"tx": { "layer": { "seed": 29, "fees_in_pnl": true, "native_sol": 1.0, "sol_usd": 70.26 } }
+```
+
+- **`venues.amm.pools`** (v2 only: `Scenario::save` refuses a scenario
+  with pools, and `save_any` writes it as v2): one to four cloned pools of
+  the snapshot, by instrument (`orca:amm:<address>`, `raydium:amm:<address>`). The bot gets a
+  seat on each, and each must trade only the session's reserves' assets, so
+  the account values what it holds at the scenario's prices. The mandate
+  covers each, named or under its venue's wildcard; a wildcard's `assets`
+  are checked against the pool's own when the session starts. A pools
+  arbitrageur swaps each pool back to the scenario's price after every
+  step's blocks (`docs/actors.md`). The session writes one address lookup
+  table of every reserve, Scope and pool account a route names, and the
+  bot's own token accounts, which its seats compile with and its venue
+  metadata names (`lookup_table`), so a push, a flash loan, a liquidation
+  and a swap fit one transaction.
+- **A pushed Scope feed** (`"mode": "pushed"`, lending sessions only):
+  before the cheatcodes lock, the feed's entry and its TWAP entry become
+  `FixedPrice` (Scope's type 23) at the price Scope holds then. Each
+  publication then writes the path (and an hour's EMA of it, for the TWAP)
+  into the mapping's `generic` data: the upstream, which the bot reads in
+  `scope_mappings` (its reserve's metadata names it, with `scope_entries`).
+  Scope's own price moves only when someone sends `refresh_price_list`.
+  The feed's reserve must price from its entry alone (its chain is empty).
+  The default, `written`, writes Scope's price as before.
+- **`venues.lending.keeper`**: who pushes the pushed entries on a schedule,
+  every `every_slots` (5 by default: Scope's median cadence while active
+  on the main market) at a priority fee of `cu_price` micro-lamports per
+  unit (100 by default). A session with a pushed feed has one, at the
+  defaults if the section doesn't say.
+- **`venues.lending.liquidators`** under the layer: no `delay_steps`
+  (refused there; required without the layer). Each liquidator bids in the
+  slot auction at a latency and with a bid the research measured
+  (`docs/actors.md`), or by the session's own `race`:
+  `{ "bid_share": [0.2, 0.6], "tipping_share": 0.7, "same_slot_share": 0.4,
+  "competition": 1.3 }`, each member optional. `competition` scales the
+  research's mean count of rivals for a race's size; above $1,000 repaid it
+  only raises it. A liquidator pays its `bid_share` of the bonus per compute
+  unit as mainnet's liquidations did on their median 333,000 units, so a
+  transaction asking fewer pays less in all.
+- **`venues.lending.borrowers.size_sigma`** (optional): the borrowers'
+  collateral is log-normal around the geometric middle of `size_usd`, with
+  this spread of its logarithm (at most 4), clipped to the range; absent,
+  log-uniform over it.
+- **The mandate** may be v0.3.0: the session reads back each of the bot's
+  transactions for rules 11 to 13 (`specs/mandate.md`).
+
+`bench/checks/kamino/liquidation-flash.json` is such a scenario, on
+`snapshots/atomic-arb-2026-11-21`; the `liquidation-flash` generator
+(`crates/grader/src/liquidation_flash.rs`) draws them for the task of that
+name.
+
+## An amm session: triggers and searchers
+
+RFD 0005's `backrun-sol-usdc` is a session of its own kind: `venues.amm`
+alone. The bot holds a wallet of SOL and USDC among the pools, a whale
+works large orders into one of them a chunk at a time, and each chunk is a
+**trigger** ([ADR 0004](adr/0004-atomic-arbitrage-in-the-sheet.md)): the
+step ends right behind it, with its slot still open, and the bot and the
+searchers race to backrun it in that slot.
+
+```json
+"venues": { "amm": {
+  "pools": ["orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE",
+            "raydium:amm:3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"],
+  "seed": 41,
+  "wallet": { "SOL": 1500 },
+  "whale": { "accounts": 3, "orders": [
+    { "pool": "raydium:amm:3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv", "side": "sell",
+      "chunks": [{ "slot": 41, "sol": 500 }, { "slot": 113, "sol": 600 }] }] },
+  "background": { "pools": [{ "pool": "orca:amm:Czfq3x…", "swaps_per_minute": 15,
+                              "median_sol": 3.4, "p90_sol": 41, "max_sol": 280 }] },
+  "searchers": [{ "latency_slots": [0, 2], "bid_share": 0.34, "pays": "priority_fee" },
+                { "latency_slots": [0, 1], "bid_share": 0.0, "pays": "priority_fee", "fixed_sol": 200 }],
+  "pool_searchers": [{ "latency_slots": [1, 3], "bid_share": 0.85, "pays": "priority_fee", "margin_bps": 2 }],
+  "bound_usd": 400
+} },
+"tx": { "layer": { "seed": 43, "fees_in_pnl": true, "native_sol": 10.0, "sol_usd": 70.24 } }
+```
+
+- **`pools`**: one to twelve cloned pools; the first trades SOL for USDC,
+  and every other token a pool trades has a reference price in
+  `reference_sol`. The session's lookup table holds every account a swap
+  through them names, once each, and the bot's token accounts; past a
+  table's 256 addresses the session writes as many as it needs. The bot's
+  seats compile with them and the venue metadata names them
+  (`lookup_table`, the first, and `lookup_tables` where there are several,
+  with each pool's `program`, mints and vaults).
+- **`seed`** (required): every actor's draws.
+- **`wallet`**: whole `SOL` (held wrapped) and `USDC`; the bot also holds
+  an empty account of every other token its pools trade. The layer's
+  `native_sol` pays fees and tips.
+- **`reference_sol`** (optional): every other token's reference price, in
+  SOL a unit, by mint: what the account values it at and the pool
+  searchers trade its pools back to. It doesn't move during a session
+  unless `reference_paths` moves it.
+- **`reference_paths`** (optional): by mint (each one `reference_sol`
+  names), waypoints (`slot`, `level_pct`) that move that token's
+  reference price, in percent of its start, as `market_model.path` moves
+  SOL's: up to 4,096 in slot order inside the session, each within 50%.
+  The venue metadata a bot reads lists in `reference_sol` only the
+  tokens whose price no path moves.
+- **`reference_usd`** (optional): SOL's price at the start, which
+  `market_model.path` moves (its waypoints, as a perp's level) and the
+  account is valued at, never the pools' own prices, which a trade moves.
+  Without it, the first pool's price as the session is set up. Where the
+  mandate's inventory numeraire is SOL, the account is measured in SOL
+  (its USDC at the reference then) and priced at the starting reference,
+  so the path moves no PnL by itself.
+- **`whale`**: its `accounts` (each chunk's is drawn from the seed) and
+  its parent `orders`: a pool, a `side` (`sell` or `buy` the base) and its
+  `chunks`, each a `slot` (from the session's start) and a size in `sol`
+  (at most 2,000; SOL's worth of the base at the reference prices where
+  the base isn't SOL). A chunk with an `impact_bps` (up to 10,000) is
+  sized by the move it makes instead: a sale divides the pool's price by
+  1 + the impact, a buy multiplies it, `sol` is the most it trades, and
+  where the pool's liquidity ends short of the price the impact is halved
+  until the swap fills. Every chunk is a trigger; chunks land in
+  increasing slots, after slot 0 and before the session's last. Mainnet's
+  SOL/USDC chunks were 200 to 1,000 SOL, often round, every 30 to 200
+  slots, into the thinner pool, as the `backrun-sol-usdc` family
+  (`crates/grader/src/backrun.rs`) draws them; thin pools' triggers move
+  them a median 545 bp, as `backrun-thin-pools`
+  (`crates/grader/src/thin_pools.rs`) draws them.
+- **`background`**: each pool's calm flow, `swaps_per_minute` (at most
+  150, a slot each) of either side, log-normal through `median_sol` and
+  `p90_sol` (SOL's worth), capped at `max_sol`.
+- **`searchers`** (two pools at least): each closes the most profitable
+  cycle from SOL back to SOL through the pools, of at most `max_legs` legs
+  (2, a pair's two pools, unless it says 3 or 4), with one atomic
+  transaction, after a latency drawn in `latency_slots` per send (0 lands
+  in the trigger's own slot), bidding `bid_share` of the profit it expects
+  as a `priority_fee` or a `tip` (a bundle), at the size that profits most
+  or `fixed_sol`, if it expects at least `min_profit_sol` (0.01). The
+  cycles are every simple one through SOL (`crate::amm::cycle`): no pool
+  twice, no token but SOL twice.
+- **`pool_searchers`**: each trades any pool back to its reference price
+  (SOL's dollar price for SOL/USDC, else the ratio of its tokens'
+  reference prices) once it strays past its fee and `margin_bps`, bidding
+  `bid_share` of what that makes at the reference.
+- **`bound_usd`**: what the reward divides PnL by.
+
+An amm scenario runs under the transaction layer and has no fair path,
+warps, oracles, library actors, order, faults (they count two-slot steps)
+or spot scoring. Its mandate's universe is its pools, named or under a
+venue's wildcard with `assets`; v0.3.0's rules 11 to 13 are judged on every
+transaction of the bot's (see `crates/grader/src/amm.rs`).
+
+**Steps.** A step is two slots; a step that reaches a chunk's slot ends
+there instead (`crate::trigger::schedule`). The count is fixed by the
+session's length and the chunks' slots, so the hello announces it and a
+replay meets the same steps. The hello's `slots_per_step` stays 2: a step
+that ends on a trigger is shorter, and a bot reads each step's `slot`. On a trigger step the bot's `Step` (and a
+component's `market.trigger`) names the chunk: its signature, its slot,
+its pool, its side and size; it has landed, and the pools show it.
+
+`bench/checks/amm/backrun-sol-usdc.json` is such a scenario, on
+`snapshots/atomic-arb-2026-11-21`; `just backrun-smoke` grades doing
+nothing and `bots/backrun-probe` on it.
+`bench/checks/amm/backrun-thin-pools.json` is one over ten pools and five
+tokens, on `snapshots/thin-pools-2026-11-21`, with `reference_sol`,
+triggers sized by `impact_bps` and searchers of two and three legs; `just
+thin-pools-smoke` grades doing nothing and the task's reference on it.
 
 ## Several perp markets
 

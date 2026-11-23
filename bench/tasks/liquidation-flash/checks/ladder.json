@@ -1,0 +1,57 @@
+{
+  "family": "liquidation-flash",
+  "count": 72,
+  "min_rule_odds": 0.85,
+  "rungs": [
+    {
+      "name": "nop",
+      "dir": "bots/starter"
+    },
+    {
+      "name": "scope-reader",
+      "dir": "bench/tasks/liquidation-flash/checks/bots/scope-reader"
+    },
+    {
+      "name": "overbidder",
+      "dir": "bench/tasks/liquidation-flash/checks/bots/overbidder"
+    },
+    {
+      "name": "min-tip",
+      "dir": "bench/tasks/liquidation-flash/checks/bots/min-tip"
+    },
+    {
+      "name": "reference",
+      "dir": "bench/tasks/liquidation-flash/reference"
+    },
+    {
+      "name": "informed",
+      "dir": "bench/tasks/liquidation-flash/checks/bots/informed",
+      "tell_latent": true
+    }
+  ],
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
+  },
+  "gates": {
+    "informed": [
+      "informed"
+    ],
+    "non_reading": [
+      "nop"
+    ]
+  },
+  "rules": [
+    "max(scope-reader, overbidder) < reference",
+    "min-tip < reference",
+    "reference < informed"
+  ],
+  "exploits": {
+    "bots": [],
+    "max_profitable": 0.75,
+    "below": "informed"
+  },
+  "probes": {
+    "exempt": "the probe bots (bench/checks/probes) hold a Phoenix perp position: coin flips, martingales, levers and the breacher have no counterpart in a session whose only trades are atomic liquidations under a $100 inventory limit. The task's own rungs (scope-reader, a push too late; overbidder, every race overpaid; min-tip, every contested race lost) stand in until a lending probe set exists"
+  }
+}

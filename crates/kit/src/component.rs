@@ -1,7 +1,8 @@
 //! A [`Strategy`](crate::Strategy) as a WebAssembly component the grader
 //! calls (feature `component`; `docs/rfd/0002-wasm-strategies.md`). The world
-//! is `wit/strategy.wit`, `mtx:strategy@0.2.0`; the grader still loads a
-//! component built on 0.1.0 (`wit/0.1.0/strategy.wit`).
+//! is `wit/strategy.wit`, `mtx:strategy@0.3.0`; the grader still loads a
+//! component built on 0.2.0 (`wit/0.2.0/strategy.wit`) or 0.1.0
+//! (`wit/0.1.0/strategy.wit`).
 //!
 //! Build the strategy's crate as a `cdylib` for `wasm32-wasip2`, with
 //! `mtx-kit` at `default-features = false, features = ["component"]`, and
@@ -146,6 +147,16 @@ pub fn market(m: wit::Market) -> Market {
             cu_prices: f.cu_prices,
             tip_floor: f.tip_floor,
             leaders: f.leaders,
+        }),
+        trigger: m.trigger.map(|t| mtx_core::turns::Trigger {
+            signature: t.signature,
+            slot: t.slot,
+            market: t.venue,
+            side: match t.side {
+                wit::Side::Bid => mtx_core::Side::Buy,
+                wit::Side::Ask => mtx_core::Side::Sell,
+            },
+            base: t.base,
         }),
     }
 }
@@ -315,6 +326,8 @@ fn send_status(s: wit::SendStatus) -> SendStatus {
                 repay: o.repay,
                 min_received: o.min_received,
             },
+            wit::Order::Flash(amount) => Action::Flash { amount },
+            wit::Order::PushPrice => Action::PushPrice,
         }),
         state: match s.state {
             wit::SendState::Landed(signature) => SendState::Landed(signature),
@@ -490,6 +503,8 @@ pub fn intent((intent, options): (Intent, LineOptions)) -> wit::Intent {
             repay,
             min_received,
         }),
+        Intent::Flash { amount } => wit::Action::Flash(amount),
+        Intent::PushPrice => wit::Action::PushPrice,
     };
     wit::Intent {
         action,
@@ -518,6 +533,7 @@ fn tx_options(tx: TxOptions) -> wit::TxOptions {
             }),
         }),
         retry_until_slot: tx.retry_until_slot,
+        atomic: tx.atomic,
     }
 }
 

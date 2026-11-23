@@ -115,6 +115,13 @@ pub struct Scenario {
     /// (see [`crate::lending`]). With it, the session runs on Kamino.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lending: Option<crate::lending::Lending>,
+    /// Opt-in, beside `lending`: the cloned pools the session trades
+    /// (see [`crate::pools::AmmVenue`]), each a seat of the bot's and in
+    /// the session's lookup table. v2 only (`venues.amm`): v1 never gains
+    /// fields, so a v1 file can't say it, and [`Scenario::save`] refuses a
+    /// scenario that has it.
+    #[serde(skip)]
+    pub amm: Option<crate::pools::AmmVenue>,
     /// Jumps of the session's clock, for interest over days (see
     /// [`crate::lending::Warp`]). Lending sessions only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -513,15 +520,21 @@ impl Scenario {
                 reason: "a scenario on several markets has no v1 form; save it with save_v2".into(),
             });
         }
+        if self.amm.is_some() {
+            return Err(Error::InvalidScenario {
+                path: path.to_path_buf(),
+                reason: "a scenario with pools has no v1 form; save it with save_v2".into(),
+            });
+        }
         let contents = serde_json::to_string_pretty(self)? + "\n";
         std::fs::write(path, contents).map_err(io_error(path))
     }
 
     /// Write the scenario in the layout it has one: a v1 file on one market,
-    /// as [`Scenario::save`] writes, and a v2 file on several, which have no
-    /// v1 form.
+    /// as [`Scenario::save`] writes, and a v2 file on several or with pools,
+    /// which have no v1 form.
     pub fn save_any(&self, path: &Path) -> Result<()> {
-        if self.markets.is_empty() {
+        if self.markets.is_empty() && self.amm.is_none() {
             self.save(path)
         } else {
             self.save_v2(path)
@@ -553,7 +566,7 @@ impl Scenario {
     /// session, the largest of the spot markets' caps: they all bound the
     /// same base asset. In a lending session, the largest reserve's.
     pub fn max_position(&self) -> f64 {
-        if self.spot.is_some() || self.lending.is_some() {
+        if self.spot.is_some() || self.lending.is_some() || self.amm.is_some() {
             return self
                 .mandate
                 .universe
@@ -615,6 +628,9 @@ impl Scenario {
         }
         if let Some(lending) = &self.lending {
             return lending.bound_usd.unwrap_or(0.0);
+        }
+        if let Some(amm) = &self.amm {
+            return amm.bound_usd.unwrap_or(0.0);
         }
         self.flat_market().bound_usd(
             self.bound_on,
@@ -1417,6 +1433,7 @@ impl ShockFamily {
             oracles: None,
             lending: None,
             warps: Vec::new(),
+            amm: None,
             order: None,
             participation: None,
             net: None,
@@ -1829,6 +1846,12 @@ mod tests {
             for file in files {
                 let scenario = Scenario::load(&file.unwrap().path()).unwrap();
                 assert!(scenario.markets.is_empty());
+                // A lending session (liquidation-flash) or an amm session
+                // (backrun-sol-usdc) has no perp market to hold: its account
+                // is Kamino's, or a wallet among pools.
+                if scenario.lending.is_some() || scenario.amm.is_some() {
+                    continue;
+                }
                 let markets = scenario.market_scenarios();
                 let [market] = &*markets else {
                     panic!("{} has one market", scenario.name)
@@ -2249,6 +2272,7 @@ mod tests {
             oracles: None,
             lending: None,
             warps: Vec::new(),
+            amm: None,
             order: None,
             participation: None,
             net: None,
@@ -2332,6 +2356,7 @@ mod tests {
             oracles: None,
             lending: None,
             warps: Vec::new(),
+            amm: None,
             order: None,
             participation: None,
             net: None,

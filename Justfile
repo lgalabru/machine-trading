@@ -172,6 +172,120 @@ kamino-smoke:
     jq -e '.scenarios[0].lending.end[1].borrowed > 299' target/logs/kamino-drain.json > /dev/null
     echo "kamino-smoke: ok"
 
+# RFD 0005's liquidation-flash session (bench/checks/kamino/liquidation-flash.json,
+# on the atomic-arb snapshot): a pushed Scope price, four liquidators and a
+# keeper in the transaction layer's auction, two pools. A bot that does
+# nothing makes and breaks nothing; the probe, which pushes, flash borrows,
+# liquidates and sells in one transaction, lands some liquidations, loses
+# others to the liquidators, and keeps its v0.3.0 mandate; built to sell in
+# a second transaction, it breaks rule 11.
+liquidation-flash-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/liquidation-probe/Justfile build
+    just --justfile bots/starter/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/atomic-arb-2026-11-21 \
+        --bot "bots/$1" --logs "target/logs/liquidation-flash-$1" --report "target/logs/liquidation-flash-$1.json" \
+        bench/checks/kamino/liquidation-flash.json > /dev/null
+    }
+    grade starter
+    jq -e '.scenarios[0] | .pnl_usd == 0 and .disqualified == null
+      and ([.lending.actions[] | select(.action == "liquidate" and .error == null)] | length) >= 1' \
+      target/logs/liquidation-flash-starter.json > /dev/null
+    grade liquidation-probe
+    jq -e '.scenarios[0] | .disqualified == null and .pnl_usd > 0 and .lending.liquidations >= 1
+      and ([.tx_layer.sends[] | select(.state == "failed")] | length) >= 1
+      and (.lending.transactions | length) >= 1' \
+      target/logs/liquidation-flash-liquidation-probe.json > /dev/null
+    # The liquidation and the sale of what it seized as two transactions in
+    # one step: the wallet holds the SOL between them, and mandate
+    # v0.3.0's rule 11 breaks.
+    (cd bots/liquidation-probe && cargo build --release --lib --target wasm32-wasip2 --features split \
+      --target-dir ../../target/split -q)
+    mkdir -p target/bots/liquidation-splitter
+    cp target/split/wasm32-wasip2/release/mtx_bot_liquidation_probe.wasm target/bots/liquidation-splitter/bot.wasm
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/atomic-arb-2026-11-21 \
+      --bot target/bots/liquidation-splitter --logs target/logs/liquidation-flash-splitter \
+      --report target/logs/liquidation-flash-splitter.json bench/checks/kamino/liquidation-flash.json > /dev/null
+    jq -e '.scenarios[0].disqualified | test("held .* other than its numeraire")' \
+      target/logs/liquidation-flash-splitter.json > /dev/null
+    echo "liquidation-flash-smoke: ok"
+
+# An amm session with trigger steps (bench/checks/amm/backrun-sol-usdc.json,
+# RFD 0005): a whale's chunks end steps with their slot open, and the bot,
+# three cycle searchers and a pool searcher race to backrun them in the
+# transaction layer's auction. Doing nothing makes nothing and breaks
+# nothing; the probe backruns in the trigger's own slot, wins some and
+# loses some to the searchers, profits, and replays byte for byte; built to
+# buy back in a second transaction, it breaks rule 11.
+backrun-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bots/backrun-probe/Justfile build
+    just --justfile bots/starter/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --replay 2 --snapshot snapshots/atomic-arb-2026-11-21 \
+        --bot "bots/$1" --logs "target/logs/backrun-$1" --report "target/logs/backrun-$1.json" \
+        bench/checks/amm/backrun-sol-usdc.json > /dev/null
+    }
+    grade starter
+    jq -e '.replay.identical and (.scenarios[0] | .pnl_usd == 0 and .disqualified == null
+      and (.amm.triggers | length) >= 5
+      and ([.amm.triggers[] | select(.winner != null)] | length) >= 3)' \
+      target/logs/backrun-starter.json > /dev/null
+    grade backrun-probe
+    jq -e '.replay.identical and (.scenarios[0] | .disqualified == null and .pnl_usd > 0
+      and ([.amm.triggers[] | select(.winner == "bot" and .winner_after_slots == 0)] | length) >= 1
+      and ([.amm.triggers[] | select(.winner != null and .winner != "bot")] | length) >= 1
+      and (.amm.transactions | length) >= 1 and (.amm.fills | length) >= 2)' \
+      target/logs/backrun-backrun-probe.json > /dev/null
+    # The same cycle as two transactions in one step: the wallet holds the
+    # sale's USDC between them, and mandate v0.3.0's rule 11 breaks.
+    (cd bots/backrun-probe && cargo build --release --lib --target wasm32-wasip2 --features split \
+      --target-dir ../../target/split -q)
+    mkdir -p target/bots/backrun-splitter
+    cp target/split/wasm32-wasip2/release/mtx_bot_backrun_probe.wasm target/bots/backrun-splitter/bot.wasm
+    "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --snapshot snapshots/atomic-arb-2026-11-21 \
+      --bot target/bots/backrun-splitter --logs target/logs/backrun-splitter --report target/logs/backrun-splitter.json \
+      bench/checks/amm/backrun-sol-usdc.json > /dev/null
+    jq -e '.scenarios[0].disqualified | test("held .* other than its numeraire")' \
+      target/logs/backrun-splitter.json > /dev/null
+    echo "backrun-smoke: ok"
+
+# An amm session over ten thin pools and two lookup tables
+# (bench/checks/amm/backrun-thin-pools.json, RFD 0005 task 3): large swaps
+# on one pool at a time open cycles through the graph, and the bot, six
+# cycle searchers (two- and three-leg) and a pool searcher race to close
+# them. Doing nothing makes nothing and breaks nothing; the task's reference
+# closes a three-leg cycle in a trigger's own slot as one transaction,
+# profits, stays inside the mandate, and replays byte for byte.
+thin-pools-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    just --justfile bench/tasks/backrun-thin-pools/reference/Justfile build
+    just --justfile bots/starter/Justfile build
+    cargo build --release
+    grade() {
+      "${CARGO_TARGET_DIR:-target}/release/mtx" grade --components-only --replay 2 --snapshot snapshots/thin-pools-2026-11-21 \
+        --bot "$1" --logs "target/logs/thin-pools-$2" --report "target/logs/thin-pools-$2.json" \
+        bench/checks/amm/backrun-thin-pools.json > /dev/null
+    }
+    grade bots/starter starter
+    jq -e '.replay.identical and (.scenarios[0] | .pnl_usd == 0 and .disqualified == null
+      and (.amm.triggers | length) == 5
+      and ([.amm.triggers[] | select(.winner != null)] | length) >= 2)' \
+      target/logs/thin-pools-starter.json > /dev/null
+    grade bench/tasks/backrun-thin-pools/reference reference
+    jq -e '.replay.identical and (.scenarios[0] | .disqualified == null and .pnl_usd > 0
+      and ([.amm.triggers[] | select(.winner == "bot" and .winner_after_slots == 0)] | length) >= 1
+      and ([.amm.fills | group_by(.signature)[] | length] | max) >= 3
+      and ([.amm.transactions[] | select(.other_holdings_usd > 5)] | length) == 0)' \
+      target/logs/thin-pools-reference.json > /dev/null
+    echo "thin-pools-smoke: ok"
+
 # The actors on every equity perp of the 96-market snapshot (NVDA, TSLA,
 # SPY, QQQ, with SPCX as the control): one TABLE line per check and market.
 actors-markets:
@@ -268,6 +382,21 @@ tasks-sync:
 
 tasks-check:
     cargo run --release -q -- task check
+
+# Components built on mtx:strategy@0.2.0 still load and play. The
+# repository keeps no built components, so this builds the book maker from
+# 7538c774, the last commit on 0.2.0, in a throwaway worktree under
+# target/, and runs the host's compatibility test on it.
+compat-0-2-0:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dir="$PWD/target/compat-0-2-0"
+    rm -rf "$dir"
+    git worktree add --detach "$dir" 7538c774 > /dev/null
+    trap 'git worktree remove --force "$dir"' EXIT
+    just --justfile "$dir/bots/book-maker/Justfile" build
+    MTX_COMPAT_0_2_0_WASM="$dir/bots/book-maker/bot.wasm" \
+      cargo test -p mtx-runtime --lib a_0_2_0_component_still_plays -- --ignored
 
 # The strategy interface end to end: the probe puts one line of each kind
 # on its first sheet in a flash-crash session, and its log

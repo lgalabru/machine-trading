@@ -1,7 +1,9 @@
 //! A strategy component playing one session: the host's side of its
 //! steps. Each turn the desk reads the market, calls the strategy's `step`
 //! (`crate::host`), cuts its sheet to the mandate, checks it, and sends
-//! each order through the seat on its market (`crate::venue`).
+//! each order through the seat on its market (`crate::venue`): a line
+//! alone, or an atomic group's lines joined into one transaction
+//! ([`atomic`]), which its first line's seat signs and sends.
 //!
 //! The desk names nothing of where it runs. A grade hands it seats on a
 //! surfnet and, under the transaction layer, the pool its sends wait in
@@ -14,6 +16,8 @@ use async_trait::async_trait;
 pub use mtx_core::session::{Account, Fate, StepTrades, VenueReading, Wallet};
 use mtx_kit::{Planned, SendSource, SendState, SendStatus};
 use solana_keypair::Keypair;
+
+pub mod atomic;
 
 use crate::{
     host::{FUEL_PER_STEP, NoRawSends, Outcome, RawSend, Reads, WasmStrategy},
@@ -231,6 +235,21 @@ pub trait PerpReads: Send + Sync {
 /// Why an order after a failed one in the same step wasn't sent: the
 /// step's first failure says why the step's orders didn't go out.
 pub const EARLIER_ORDER_FAILED: &str = "an earlier order of the step failed";
+
+/// The seat among `seats` for a planned line's venue: the session's own
+/// market's (the first) for none.
+fn seat_in<'a>(seats: &'a [Box<dyn Seat>], venue: Option<&str>) -> Option<&'a dyn Seat> {
+    match venue {
+        None => seats.first(),
+        Some(id) => seats.iter().find(|s| s.market() == id),
+    }
+    .map(|seat| seat.as_ref())
+}
+
+/// The atomic group a planned order is in, if any.
+fn atomic_id(planned: &Planned) -> Option<u32> {
+    planned.tx.and_then(|tx| tx.atomic)
+}
 
 /// A component playing one session: the strategy, and the markets the
 /// host trades for it ([`Desk`]). Reads and sends as `mtx_kit::run` does
@@ -557,12 +576,23 @@ impl<R: RawDesk> WasmBot<R> {
                     continue;
                 };
                 view.position = None;
+                view.stats = reading.stats.clone();
+                // A pool of the account's (an amm session's) has prices
+                // and no lending position.
+                let pool = self
+                    .session
+                    .venues
+                    .iter()
+                    .any(|v| v.id == view.id && v.kind == mtx_kit::MarketKind::Amm);
+                if pool {
+                    (view.best_bid, view.best_ask) = (reading.best_bid, reading.best_ask);
+                    continue;
+                }
                 view.lending = Some(mtx_kit::LendingPosition {
                     supplied: reading.supplied,
                     borrowed: reading.borrowed,
                     health: reading.health,
                 });
-                view.stats = reading.stats.clone();
             }
         }
         if let Some(references) = &self.desk.references {
@@ -614,6 +644,7 @@ impl<R: RawDesk> WasmBot<R> {
                 .unwrap_or_default(),
             notes: std::mem::take(&mut self.notes),
             fees: self.desk.sends.as_ref().map(|sends| sends.fee_view()),
+            trigger: step.trigger.clone(),
         })
     }
 
@@ -665,16 +696,15 @@ impl<R: RawDesk> WasmBot<R> {
     /// The seat for a planned line's venue: the session's own market's for
     /// none.
     fn seat(&self, venue: Option<&str>) -> Option<&dyn Seat> {
-        match venue {
-            None => self.desk.seats.first(),
-            Some(id) => self.desk.seats.iter().find(|s| s.market() == id),
-        }
-        .map(|seat| seat.as_ref())
+        seat_in(&self.desk.seats, venue)
     }
 
     /// The strategy's turn at `step`: read the market, call `step`, cut the
     /// sheet to the mandate's cap and send each line to its market, in
-    /// order, stopping at the first order that fails. The step's turn data,
+    /// order, stopping at the first order that fails. An atomic group goes
+    /// as one transaction, with its first line's options; each of its lines
+    /// gets the group's status, and a failed group stops the step as a
+    /// failed line does. The step's turn data,
     /// if the scenario reports any, goes into the market, keyed by market;
     /// `wallet` is the session's reading of a measured wallet. Returns
     /// whether the strategy answered.
@@ -782,65 +812,56 @@ impl<R: RawDesk> WasmBot<R> {
         let mut tried = Vec::new();
         let mut failed = false;
         let planned_count = planned.len();
-        for planned in planned {
-            let on_own = planned.venue.as_ref().is_none_or(|venue| *venue == own);
-            let refused = match self.taking.as_mut().filter(|_| on_own && !failed) {
-                Some(guard) => guard.check(&planned.action, planned.reduce_only).err(),
-                None => None,
-            };
-            let state = if failed {
-                SendState::NotSent(EARLIER_ORDER_FAILED.into())
-            } else if let Some(reason) = refused {
-                tracing::info!(step = k, action = ?planned.action, "{reason}");
-                SendState::NotSent(reason)
-            } else if let Some(seat) = self.seat(planned.venue.as_deref()) {
-                if let Some(pool) = &self.desk.sends {
-                    pool.set_options(planned.tx);
+        let mut planned = planned.into_iter().peekable();
+        while let Some(first) = planned.next() {
+            // A line alone, or an atomic group: the planner keeps a group's
+            // lines next to each other.
+            let mut unit = vec![first];
+            if let Some(id) = atomic_id(&unit[0]) {
+                while let Some(next) = planned.next_if(|p| atomic_id(p) == Some(id)) {
+                    unit.push(next);
                 }
-                let order = tracing::info_span!(
-                    "strategy.order",
-                    k,
-                    venue = seat.market(),
-                    action = ?planned.action,
-                );
-                let sent = tracing::Instrument::instrument(seat.send(&planned), order).await;
-                if sent.sent {
-                    tried.push(planned.action.clone());
-                    if let SendState::Failed { reason, .. } = &sent.state {
-                        tracing::warn!(step = k, action = ?planned.action, error = %reason, "order failed; the step's other orders aren't sent");
-                        failed = true;
-                    }
-                }
-                sent.state
-            } else {
-                SendState::NotSent(format!(
-                    "{} isn't traded in this session",
-                    planned.venue.as_deref().unwrap_or(&own)
-                ))
-            };
-            let Planned {
-                line,
-                venue,
-                client_id,
-                action,
-                expires_slot,
-                ..
-            } = planned;
-            if let Some(trace) = trace.as_mut() {
-                trace.sent.push((action.clone(), state.clone()));
             }
-            self.sends.push(SendStatus {
-                step: k,
-                source: SendSource::Line(line as u32),
-                venue: venue.unwrap_or_else(|| own.clone()),
-                client_id,
-                order: Some(action),
-                expires_slot,
-                state,
-                slot: None,
-                fee: None,
-                tip: None,
-            });
+            let (state, reached) = if failed {
+                (SendState::NotSent(EARLIER_ORDER_FAILED.into()), false)
+            } else if unit.len() == 1 && atomic_id(&unit[0]).is_none() {
+                self.send_line(k, &unit[0], &own).await
+            } else {
+                self.send_group(k, &unit, &own).await
+            };
+            if reached {
+                tried.extend(unit.iter().map(|p| p.action.clone()));
+                if let SendState::Failed { reason, .. } = &state {
+                    tracing::warn!(step = k, lines = unit.len(), error = %reason, "order failed; the step's other orders aren't sent");
+                    failed = true;
+                }
+            }
+            // Every line of a group gets the group's status.
+            for planned in unit {
+                let Planned {
+                    line,
+                    venue,
+                    client_id,
+                    action,
+                    expires_slot,
+                    ..
+                } = planned;
+                if let Some(trace) = trace.as_mut() {
+                    trace.sent.push((action.clone(), state.clone()));
+                }
+                self.sends.push(SendStatus {
+                    step: k,
+                    source: SendSource::Line(line as u32),
+                    venue: venue.unwrap_or_else(|| own.clone()),
+                    client_id,
+                    order: Some(action),
+                    expires_slot,
+                    state: state.clone(),
+                    slot: None,
+                    fee: None,
+                    tip: None,
+                });
+            }
         }
         self.last_orders = u32::try_from(tried.len()).unwrap_or(u32::MAX);
         self.resting = mtx_kit::resting_after(self.resting.0, self.resting.1, &tried);
@@ -901,6 +922,82 @@ impl<R: RawDesk> WasmBot<R> {
         self.last_timings.send_us = micros(sending);
         self.observe(trace);
         true
+    }
+
+    /// Send one line alone through its market's seat, after the taking
+    /// check: what became of it, and whether it reached the chain.
+    async fn send_line(&mut self, k: u64, planned: &Planned, own: &str) -> (SendState, bool) {
+        let on_own = planned.venue.as_ref().is_none_or(|venue| venue == own);
+        let refused = match self.taking.as_mut().filter(|_| on_own) {
+            Some(guard) => guard.check(&planned.action, planned.reduce_only).err(),
+            None => None,
+        };
+        if let Some(reason) = refused {
+            tracing::info!(step = k, action = ?planned.action, "{reason}");
+            return (SendState::NotSent(reason), false);
+        }
+        let Some(seat) = self.seat(planned.venue.as_deref()) else {
+            let venue = planned.venue.as_deref().unwrap_or(own);
+            return (
+                SendState::NotSent(format!("{venue} isn't traded in this session")),
+                false,
+            );
+        };
+        if let Some(pool) = &self.desk.sends {
+            pool.set_options(planned.tx);
+        }
+        let order = tracing::info_span!(
+            "strategy.order",
+            k,
+            venue = seat.market(),
+            action = ?planned.action,
+        );
+        let sent = tracing::Instrument::instrument(seat.send(planned), order).await;
+        (sent.state, sent.sent)
+    }
+
+    /// Send an atomic group as one transaction ([`atomic::build`]), with its
+    /// first line's options, after every line's taking check: what became
+    /// of it, and whether it reached the chain. A group that can't be built
+    /// isn't sent.
+    async fn send_group(&mut self, k: u64, group: &[Planned], own: &str) -> (SendState, bool) {
+        assert!(!group.is_empty(), "a group has lines");
+        for planned in group {
+            let on_own = planned.venue.as_ref().is_none_or(|venue| venue == own);
+            let refused = match self.taking.as_mut().filter(|_| on_own) {
+                Some(guard) => guard.check(&planned.action, planned.reduce_only).err(),
+                None => None,
+            };
+            if let Some(reason) = refused {
+                tracing::info!(step = k, line = planned.line, "{reason}");
+                return (
+                    SendState::NotSent(format!("line {}: {reason}", planned.line)),
+                    false,
+                );
+            }
+        }
+        let applies = self.desk.sends.is_some();
+        let options = group[0].tx.filter(|_| applies);
+        let seats = &self.desk.seats;
+        let built = atomic::build(group, |venue| seat_in(seats, venue), options).await;
+        let (plan, seat) = match built {
+            Ok(built) => built,
+            Err(reason) => {
+                tracing::info!(
+                    step = k,
+                    lines = group.len(),
+                    "atomic group not sent: {reason}"
+                );
+                return (SendState::NotSent(reason), false);
+            }
+        };
+        if let Some(pool) = &self.desk.sends {
+            pool.set_options(group[0].tx);
+        }
+        let span =
+            tracing::info_span!("strategy.group", k, lines = group.len(), label = %plan.label());
+        let sent = tracing::Instrument::instrument(seat.send_plan(&plan), span).await;
+        (sent.state, sent.sent)
     }
 
     /// The orders its last turn sent to the chain.
