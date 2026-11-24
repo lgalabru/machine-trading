@@ -24,7 +24,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -37,6 +37,7 @@ use mtx_core::{
     },
     events::{Event, PauseReason, Side as EventSide, StepTimings},
     feed::Address,
+    lifecycle::{Cures, Hold, Lifecycle, StopCause},
     mandate::{InstrumentRef, Observed},
 };
 use mtx_kit::chain::RpcChainClient;
@@ -184,6 +185,18 @@ struct Stored {
     /// The component's SHA-256 when it was added: one that changed since
     /// isn't restarted.
     component_sha256: String,
+    /// Who held it paused, and why: a restart brings it back under the
+    /// same holds, so a breach or the kill switch outlives the process.
+    /// Absent from a state written before the holds: `spec.run` says then
+    /// whether the operator held it.
+    #[serde(default)]
+    holds: BTreeMap<Hold, String>,
+}
+
+/// What the desired state kept of a strategy a restart brings back.
+struct Restored {
+    component_sha256: String,
+    holds: BTreeMap<Hold, String>,
 }
 
 /// The parts of the runtime a strategy reads its market through.
@@ -468,7 +481,8 @@ struct Inner {
 
 #[derive(Debug, Clone)]
 struct Stats {
-    state: StrategyState,
+    /// Who holds it and whether it stopped: its state is derived.
+    life: Lifecycle,
     steps: u64,
     skipped: u64,
     /// The slot its next step is due at.
@@ -488,9 +502,7 @@ impl Stats {
     /// stepped or sent yet.
     fn added() -> Self {
         Self {
-            state: StrategyState::Paused {
-                why: "added".into(),
-            },
+            life: Lifecycle::added(false, now_ms()),
             steps: 0,
             skipped: 0,
             due: 0,
@@ -520,11 +532,11 @@ impl Ctx {
     /// Read `spec`'s files and accounts, and start its component: the
     /// strategy, paused unless it runs, or stopped if its component didn't
     /// start (kept, so the desired state still holds it). `restored` is
-    /// the component's hash when the desired state brings it back.
+    /// what the desired state kept of it, when a restart brings it back.
     async fn prepare(
         &self,
         spec: AddStrategy,
-        restored: Option<String>,
+        restored: Option<Restored>,
         slot: u64,
     ) -> Result<Strategy, ControlError> {
         // Before any file is read.
@@ -558,29 +570,46 @@ impl Ctx {
             stats: Arc::new(Mutex::new(Stats::added())),
             spec: spec.clone(),
         };
-        let state = match restored {
-            Some(hash) if hash != component_sha256 => Err(format!(
-                "its component changed since it was added (sha256 {hash}, now {component_sha256})"
-            )),
-            _ => self.start_bot(&spec, &strategy, slot).await,
+        let (kept_hash, kept_holds) = match restored {
+            Some(restored) => (Some(restored.component_sha256), restored.holds),
+            None => (None, BTreeMap::new()),
         };
-        match state {
+        let started = match kept_hash {
+            Some(hash) if hash != component_sha256 => Err((
+                StopCause::Changed,
+                format!(
+                    "its component changed since it was added (sha256 {hash}, now {component_sha256})"
+                ),
+            )),
+            _ => self
+                .start_bot(&spec, &strategy, slot)
+                .await
+                .map_err(|why| (StopCause::Start, why)),
+        };
+        // It comes back under the holds a restart kept. With none kept
+        // (a new add, or a state written before the holds), `run` says
+        // whether the operator holds it.
+        let now = now_ms();
+        let mut life = match kept_holds.is_empty() {
+            true => Lifecycle::added(spec.run, now),
+            false => Lifecycle::restored(kept_holds, now),
+        };
+        match started {
             Ok(bot) => {
                 strategy.inner.lock().await.bot = Some(bot);
                 let mut stats = lock(&strategy.stats);
                 stats.due = slot;
-                if spec.run {
-                    stats.state = StrategyState::Running;
-                }
+                stats.life = life;
             }
-            Err(why) => {
+            Err((cause, why)) => {
                 // Kept, stopped, so the desired state still holds it: the
                 // add is done, and the event says it can't step.
                 self.shared.events.emit(Event::Stopped {
                     strategy: spec.name.clone(),
                     why: why.clone(),
                 });
-                lock(&strategy.stats).state = StrategyState::Stopped { why };
+                life.stop(cause, why, now);
+                lock(&strategy.stats).life = life;
             }
         }
         Ok(strategy)
@@ -957,6 +986,10 @@ struct Manager {
     adding: std::collections::BTreeSet<String>,
     /// Where an `add`'s task hands back the strategy it prepared.
     prepared: (mpsc::Sender<Prepared>, Option<mpsc::Receiver<Prepared>>),
+    /// Set when a step changed a strategy's holds (the enforcer, a trap):
+    /// the desired state is written again at the next slot, so a restart
+    /// doesn't run what the enforcer paused.
+    unsaved: Arc<AtomicBool>,
 }
 
 impl Manager {
@@ -977,6 +1010,7 @@ impl Manager {
                 let (sender, receiver) = mpsc::channel(STRATEGIES_MAX);
                 (sender, Some(receiver))
             },
+            unsaved: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -1367,10 +1401,11 @@ impl Manager {
         self.held.retain(|(_, why)| why.is_some());
         for stored in waiting {
             let name = stored.spec.name.clone();
-            match self
-                .add(stored.spec.clone(), Some(stored.component_sha256.clone()))
-                .await
-            {
+            let restored = Restored {
+                component_sha256: stored.component_sha256.clone(),
+                holds: stored.holds.clone(),
+            };
+            match self.add(stored.spec.clone(), Some(restored)).await {
                 Ok(()) => tracing::info!(name, "a strategy was restored"),
                 Err(error) => {
                     tracing::warn!(name, %error, "a strategy couldn't be restored");
@@ -1408,6 +1443,11 @@ impl Manager {
                         if let Err(error) = self.persist() {
                             tracing::error!(%error, "the desired state can't be written");
                         }
+                    }
+                    if self.unsaved.swap(false, Ordering::Relaxed)
+                        && let Err(error) = self.persist()
+                    {
+                        tracing::error!(%error, "the desired state can't be written");
                     }
                     self.step(self.slot).await;
                     // After the steps are on their way: decoding the tape
@@ -1462,6 +1502,7 @@ impl Manager {
                 close_on_breach: strategy.spec.close_on_breach,
                 instrument: instrument_of(&strategy.spec.symbol),
                 shadow: strategy.spec.shadow,
+                unsaved: self.unsaved.clone(),
             };
             let span = tracing::info_span!(
                 "strategy.step",
@@ -1514,7 +1555,7 @@ impl Manager {
         let running: Vec<String> = self
             .strategies
             .iter()
-            .filter(|(_, s)| lock(&s.stats).state == StrategyState::Running)
+            .filter(|(_, s)| lock(&s.stats).life.is_running())
             .map(|(name, _)| name.clone())
             .collect();
         for name in running {
@@ -1530,7 +1571,10 @@ impl Manager {
                 reason: PauseReason::Feed,
                 why: why.clone(),
             });
-            if let Err(error) = self.pause(&name, OnPause::Cancel, why.clone()).await {
+            let held = self
+                .hold(&name, Hold::Feed, OnPause::Cancel, why.clone())
+                .await;
+            if let Err(error) = held {
                 tracing::warn!(name, %error, "a strategy couldn't be paused");
             }
         }
@@ -1546,7 +1590,7 @@ impl Manager {
         slot: u64,
     ) -> Option<tokio::sync::OwnedMutexGuard<Inner>> {
         let mut stats = lock(&strategy.stats);
-        if stats.state != StrategyState::Running || slot < stats.due {
+        if !stats.life.is_running() || slot < stats.due {
             return None;
         }
         stats.due = next_due(slot, strategy.spec.slots_per_step);
@@ -1635,16 +1679,13 @@ impl Manager {
         let done = match command {
             Command::Status | Command::Markets => Ok(()),
             Command::Pause { name, orders } => {
-                self.each(name, |m, name| m.pause_by_command(name, orders))
-                    .await
-            }
-            Command::Resume { name } => self.each(name, Self::resume).await,
-            Command::Kill => {
-                self.each(None, |m, name| {
-                    m.pause(name, OnPause::Cancel, "the kill switch".to_string())
+                self.each(name, |m, name| {
+                    m.hold(name, Hold::Operator, orders, "paused".to_string())
                 })
                 .await
             }
+            Command::Resume { name } => self.each(name, Self::resume).await,
+            Command::Kill => self.kill().await,
             Command::Mandate { name, mandate } => self.change_mandate(&name, mandate).await,
             Command::Upgrade { name, component } => self.upgrade(&name, component).await,
             Command::Add(spec) => self.add(spec, None).await,
@@ -1678,29 +1719,54 @@ impl Manager {
                 action(this, name).await
             }
             None => {
+                // Every strategy, whatever the ones before it answered:
+                // a kill that stopped at the first order it couldn't
+                // cancel would leave the rest running.
+                let mut failed = Vec::new();
                 for name in this.strategies.keys() {
-                    action(this, name).await?;
+                    if let Err(error) = action(this, name).await {
+                        failed.push((name.as_str(), error));
+                    }
                 }
-                Ok(())
+                all_done(failed)
             }
         }
     }
 
-    async fn pause_by_command(&self, name: &str, orders: OnPause) -> Done {
-        self.pause(name, orders, "paused".to_string()).await
+    /// The kill switch: every strategy is held first, at once, so none
+    /// steps again while another's orders are being cancelled; then each
+    /// one's orders are cancelled, and the ones that couldn't be are told.
+    async fn kill(&mut self) -> Done {
+        let now = now_ms();
+        for (name, strategy) in &self.strategies {
+            let mut stats = lock(&strategy.stats);
+            let changed = stats.life.hold(Hold::Kill, "the kill switch", now);
+            tell(&self.shared.events, name, &stats.life, changed);
+        }
+        self.each(None, |m, name| {
+            m.hold(
+                name,
+                Hold::Kill,
+                OnPause::Cancel,
+                "the kill switch".to_string(),
+            )
+        })
+        .await
     }
 
-    /// Stop stepping `name`, at its step boundary, and do `orders` to its
-    /// resting orders. A stopped strategy stays stopped.
-    async fn pause(&self, name: &str, orders: OnPause, why: String) -> Done {
+    /// `hold` takes `name`: it stops stepping at its step boundary, and
+    /// `orders` is done to its resting orders. A stopped strategy is held
+    /// too, under its stop: it has no order to cancel.
+    async fn hold(&self, name: &str, hold: Hold, orders: OnPause, why: String) -> Done {
         let strategy = self.get(name)?;
         let mut inner = strategy.inner.lock().await;
         {
             let mut stats = lock(&strategy.stats);
-            if matches!(stats.state, StrategyState::Stopped { .. }) {
+            let changed = stats.life.hold(hold, why, now_ms());
+            tell(&self.shared.events, name, &stats.life, changed);
+            if stats.life.is_stopped() {
                 return Ok(());
             }
-            stats.state = StrategyState::Paused { why };
         }
         let Some(bot) = inner.bot.as_mut() else {
             return Ok(());
@@ -1725,14 +1791,28 @@ impl Manager {
         }
     }
 
+    /// A person's will to run `name`: their own holds go. The enforcer's
+    /// go only if cured: the feed fresh again, the mandate not broken by
+    /// what was observed under it. Still held or stopped, it is refused
+    /// with why, and what could be lifted was.
     async fn resume(&self, name: &str) -> Done {
         let strategy = self.get(name)?;
+        // A step under way finishes first: what it observes is judged.
+        let breach = {
+            let inner = strategy.inner.lock().await;
+            strategy.spec.mandate.audit(&inner.observed)
+        };
+        let cures = Cures {
+            feed_stale: self.feed_staleness(),
+            breach: breach.map(|breach| format!("the enforcer: {breach}")),
+        };
         let mut stats = lock(&strategy.stats);
-        if let StrategyState::Paused { .. } = stats.state {
-            stats.state = StrategyState::Running;
+        let (changed, left) = stats.life.resume(&cures, now_ms());
+        tell(&self.shared.events, name, &stats.life, changed);
+        if stats.life.is_running() {
             stats.due = self.slot;
         }
-        Ok(())
+        left.map_err(|left| ControlError::new(ErrorCode::Held, left.to_string()))
     }
 
     /// Restart `name` under `mandate`, paused or running as it was.
@@ -1761,11 +1841,20 @@ impl Manager {
         strategy.spec = spec;
         strategy.cap = cap;
         strategy.max_drawdown = max_drawdown;
-        if let Some(why) = stopped {
-            lock(&strategy.stats).state = StrategyState::Stopped { why: why.clone() };
-            return Err(ControlError::new(ErrorCode::StartFailed, why));
+        let now = now_ms();
+        let mut stats = lock(&strategy.stats);
+        // A new mandate audits from here on: the enforcer's hold under
+        // the old one goes with it, started or not.
+        let lifted = stats.life.lift(Hold::Mandate, now);
+        let restarted = match &stopped {
+            Some(why) => stats.life.stop(StopCause::Start, why.clone(), now),
+            None => stats.life.started(now),
+        };
+        tell(&self.shared.events, name, &stats.life, restarted.or(lifted));
+        match stopped {
+            Some(why) => Err(ControlError::new(ErrorCode::StartFailed, why)),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// Swap `name`'s component: end it, start the new one in its place
@@ -1817,8 +1906,16 @@ impl Manager {
             strategy.spec = spec;
             strategy.component_sha256 = component_sha256;
         }
-        if let Some(why) = stopped {
-            lock(&strategy.stats).state = StrategyState::Stopped { why: why.clone() };
+        {
+            // Whichever component started is a new instance: it is no
+            // longer stopped, and whoever held it still does.
+            let now = now_ms();
+            let mut stats = lock(&strategy.stats);
+            let changed = match stopped {
+                Some(why) => stats.life.stop(StopCause::Start, why, now),
+                None => stats.life.started(now),
+            };
+            tell(&self.shared.events, name, &stats.life, changed);
         }
         match failed {
             Some(why) => Err(ControlError::new(
@@ -1831,7 +1928,7 @@ impl Manager {
 
     /// Compile, start and keep `spec`: paused unless it runs. `restored`
     /// is the component's hash when the desired state brings it back.
-    async fn add(&mut self, spec: AddStrategy, restored: Option<String>) -> Done {
+    async fn add(&mut self, spec: AddStrategy, restored: Option<Restored>) -> Done {
         self.check_add(&spec, restored.is_some())?;
         let name = spec.name.clone();
         let strategy = self.ctx().prepare(spec, restored, self.slot).await?;
@@ -1948,7 +2045,8 @@ impl Manager {
         if self.held.len() < held {
             return Ok(());
         }
-        self.pause(name, OnPause::Cancel, "removed".into()).await?;
+        self.hold(name, Hold::Operator, OnPause::Cancel, "removed".into())
+            .await?;
         let strategy = self.strategies.remove(name).expect("paused above");
         let mut inner = strategy.inner.lock().await;
         if let Some(mut bot) = inner.bot.take() {
@@ -1968,7 +2066,7 @@ impl Manager {
                 let stats = lock(&strategy.stats).clone();
                 StrategyStatus {
                     name: name.clone(),
-                    state: stats.state,
+                    state: stats.life.state(),
                     symbol: strategy.spec.symbol.clone(),
                     authority: strategy.authority.to_string(),
                     cap: strategy.cap,
@@ -1984,6 +2082,7 @@ impl Manager {
                     position: stats.position,
                     pnl: stats.pnl,
                     drawdown: stats.drawdown,
+                    since_ms: Some(stats.life.since_ms()),
                     family: strategy.spec.family.clone(),
                     component: Some(strategy.component_sha256.clone()),
                 }
@@ -2008,12 +2107,17 @@ impl Manager {
             strategies: self
                 .strategies
                 .values()
-                .map(|strategy| Stored {
-                    spec: AddStrategy {
-                        run: lock(&strategy.stats).state == StrategyState::Running,
-                        ..strategy.spec.clone()
-                    },
-                    component_sha256: strategy.component_sha256.clone(),
+                .map(|strategy| {
+                    let life = lock(&strategy.stats).life.clone();
+                    Stored {
+                        // What a runtime older than the holds reads.
+                        spec: AddStrategy {
+                            run: !life.is_held_by(Hold::Operator),
+                            ..strategy.spec.clone()
+                        },
+                        component_sha256: strategy.component_sha256.clone(),
+                        holds: life.kept(),
+                    }
                 })
                 .chain(self.held.iter().map(|(stored, _)| stored.clone()))
                 .collect(),
@@ -2046,6 +2150,8 @@ struct StepTask {
     close_on_breach: bool,
     instrument: InstrumentRef,
     shadow: bool,
+    /// Set when the step changed what a restart must bring back.
+    unsaved: Arc<AtomicBool>,
 }
 
 /// What a step came to, for its strategy's stats and the event stream.
@@ -2169,17 +2275,20 @@ impl StepTask {
             record_market(&mut stats, name, market);
         }
         if let Some(why) = &bot.stopped
-            && !matches!(stats.state, StrategyState::Stopped { .. })
+            && !stats.life.is_stopped()
         {
-            stats.state = StrategyState::Stopped { why: why.clone() };
+            let changed = stats.life.stop(StopCause::Trap, why.clone(), now_ms());
             self.events.emit(Event::Stopped {
                 strategy: name.clone(),
                 why: why.clone(),
             });
+            tell(&self.events, name, &stats.life, changed);
         }
-        let paused = match (breach, &stats.state) {
-            (Some(breach), StrategyState::Running) => {
+        let paused = match breach {
+            Some(breach) if stats.life.is_running() => {
                 self.pause_for_breach(&mut stats, breach);
+                // A restart must not run what the enforcer paused.
+                self.unsaved.store(true, Ordering::Relaxed);
                 true
             }
             _ => false,
@@ -2190,7 +2299,7 @@ impl StepTask {
             gauge.mtx_strategy_position = stats.position.unwrap_or(0.0),
             gauge.mtx_strategy_pnl_usd = stats.pnl.unwrap_or(0.0),
             gauge.mtx_strategy_drawdown_usd = stats.drawdown.unwrap_or(0.0),
-            gauge.mtx_strategy_running = u64::from(stats.state == StrategyState::Running),
+            gauge.mtx_strategy_running = u64::from(stats.life.is_running()),
             strategy = %name,
             shadow = self.shadow,
             answered = stepped.answered,
@@ -2208,7 +2317,7 @@ impl StepTask {
             position: stats.position.unwrap_or(0.0),
             pnl_usd: stats.pnl.unwrap_or(0.0),
             drawdown_usd: stats.drawdown.unwrap_or(0.0),
-            running: stats.state == StrategyState::Running,
+            running: stats.life.is_running(),
         });
         paused
     }
@@ -2216,11 +2325,7 @@ impl StepTask {
     /// The enforcer pauses a running strategy whose step breached its
     /// mandate.
     fn pause_for_breach(&self, stats: &mut Stats, breach: &mtx_core::mandate::Breach) {
-        assert_eq!(
-            stats.state,
-            StrategyState::Running,
-            "only a running strategy is paused"
-        );
+        assert!(stats.life.is_running(), "only a running strategy is paused");
         tracing::warn!(
             counter.mtx_enforcer_pauses = 1_u64,
             strategy = %self.name,
@@ -2233,9 +2338,9 @@ impl StepTask {
             reason: PauseReason::Mandate,
             why: breach.to_string(),
         });
-        stats.state = StrategyState::Paused {
-            why: format!("the enforcer: {breach}"),
-        };
+        let why = format!("the enforcer: {breach}");
+        let changed = stats.life.hold(Hold::Mandate, why, now_ms());
+        tell(&self.events, &self.name, &stats.life, changed);
     }
 }
 
@@ -2302,10 +2407,14 @@ fn held_status(stored: &Stored, why: &Option<String>) -> StrategyStatus {
     let (cap, max_drawdown) = spec_limits(spec).unwrap_or((0.0, 0.0));
     StrategyStatus {
         name: spec.name.clone(),
-        state: StrategyState::Stopped {
-            why: why
-                .clone()
-                .unwrap_or_else(|| "waiting for the node to catch up".into()),
+        state: match why {
+            Some(why) => StrategyState::Stopped {
+                cause: StopCause::Start,
+                why: why.clone(),
+            },
+            None => StrategyState::Starting {
+                why: "waiting for the node to catch up".into(),
+            },
         },
         symbol: spec.symbol.clone(),
         authority: String::new(),
@@ -2322,9 +2431,54 @@ fn held_status(stored: &Stored, why: &Option<String>) -> StrategyStatus {
         position: None,
         pnl: None,
         drawdown: None,
+        since_ms: None,
         family: spec.family.clone(),
         component: Some(stored.component_sha256.clone()),
     }
+}
+
+/// Tell the event stream of a strategy's new state, if it changed.
+fn tell(
+    events: &super::events::Events,
+    name: &str,
+    life: &Lifecycle,
+    changed: Option<StrategyState>,
+) {
+    let Some(state) = changed else {
+        return;
+    };
+    tracing::info!(
+        counter.mtx_strategy_state_changes = 1_u64,
+        strategy = name,
+        state = ?state,
+        "a strategy's state changed"
+    );
+    events.emit(Event::State {
+        strategy: name.to_string(),
+        state,
+        since_ms: life.since_ms(),
+    });
+}
+
+/// What a command done to every strategy came to: done, or the ones it
+/// failed on, each with why, under the first one's code.
+fn all_done(failed: Vec<(&str, ControlError)>) -> Done {
+    let Some((_, first)) = failed.first() else {
+        return Ok(());
+    };
+    let told: Vec<String> = failed
+        .iter()
+        .map(|(name, error)| format!("{name}: {}", error.error))
+        .collect();
+    Err(ControlError::new(first.code, told.join("; ")))
+}
+
+/// The runtime's clock, in milliseconds since the epoch: when a state
+/// changed, as a sidecar's clock would say it.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
 }
 
 /// The mandate's position cap on `symbol`'s perpetual, and its drawdown
@@ -2520,6 +2674,7 @@ mod tests {
                     family: None,
                 },
                 component_sha256: "ab".into(),
+                holds: BTreeMap::from([(Hold::Mandate, "the enforcer: drawdown".into())]),
             }],
         };
         let text = serde_json::to_string(&state).unwrap();
@@ -2527,6 +2682,19 @@ mod tests {
         assert_eq!(back.strategies.len(), 1);
         assert_eq!(back.strategies[0].spec, state.strategies[0].spec);
         assert_eq!(back.strategies[0].component_sha256, "ab");
+        // The enforcer's hold outlives the restart: it comes back paused,
+        // whatever `run` said.
+        assert_eq!(back.strategies[0].holds, state.strategies[0].holds);
+        let life = Lifecycle::restored(back.strategies[0].holds.clone(), 7);
+        assert!(life.is_held_by(Hold::Mandate) && !life.is_running());
+        // A state written before the holds has none.
+        let mut old: serde_json::Value = serde_json::from_str(&text).unwrap();
+        old["strategies"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("holds");
+        let old: DesiredState = serde_json::from_value(old).unwrap();
+        assert!(old.strategies[0].holds.is_empty());
     }
 
     fn spec(name: &str) -> AddStrategy {
@@ -2604,6 +2772,168 @@ mod tests {
         Manager::new(config, shared, None)
     }
 
+    /// A strategy with no component: what a command does to its life is
+    /// all there is to see.
+    fn idle(name: &str, run: bool) -> Strategy {
+        let keypair = Keypair::new();
+        let mut stats = Stats::added();
+        stats.life = Lifecycle::added(run, 0);
+        Strategy {
+            spec: AddStrategy { run, ..spec(name) },
+            component_sha256: "ab".into(),
+            authority: solana_signer::Signer::pubkey(&keypair),
+            keypair: Arc::new(keypair),
+            reader: None,
+            pools: None,
+            slot: Arc::default(),
+            cap: 1.0,
+            max_drawdown: 100.0,
+            inner: Arc::new(tokio::sync::Mutex::new(Inner {
+                bot: None,
+                k: 0,
+                observed: Observed::default(),
+                tape: None,
+                pool_reads: None,
+            })),
+            stats: Arc::new(Mutex::new(stats)),
+        }
+    }
+
+    fn running(names: &[(&str, bool)]) -> Manager {
+        let mut manager = manager();
+        for (name, run) in names {
+            manager.strategies.insert((*name).into(), idle(name, *run));
+        }
+        manager
+    }
+
+    fn state(manager: &Manager, name: &str) -> StrategyState {
+        lock(&manager.strategies[name].stats).life.state()
+    }
+
+    fn holds(manager: &Manager, name: &str) -> Vec<Hold> {
+        match state(manager, name) {
+            StrategyState::Paused { holds, .. } => holds,
+            other => panic!("{name} is {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_kill_switch_holds_every_strategy_and_a_resume_takes_it_back() {
+        let mut manager = running(&[("a", true), ("b", true), ("c", false)]);
+        assert_eq!(manager.kill().await, Ok(()));
+        assert_eq!(holds(&manager, "a"), [Hold::Kill]);
+        assert_eq!(holds(&manager, "b"), [Hold::Kill]);
+        // The one a person had paused is held by both.
+        assert_eq!(holds(&manager, "c"), [Hold::Operator, Hold::Kill]);
+        // One by its name, then all of them: a resume is a person's will,
+        // and takes back the kill switch and their own pause.
+        assert_eq!(manager.resume("a").await, Ok(()));
+        assert_eq!(state(&manager, "a"), StrategyState::Running);
+        assert_eq!(holds(&manager, "b"), [Hold::Kill]);
+        assert_eq!(manager.each(None, Manager::resume).await, Ok(()));
+        for name in ["a", "b", "c"] {
+            assert_eq!(state(&manager, name), StrategyState::Running, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_resume_doesn_t_talk_the_enforcer_out_of_a_breach() {
+        let mut manager = running(&[("breached", true), ("fine", true)]);
+        // The enforcer saw a drawdown past the mandate's 100, and paused it.
+        {
+            let strategy = &manager.strategies["breached"];
+            strategy.inner.lock().await.observed.max_drawdown_usd = 150.0;
+            lock(&strategy.stats)
+                .life
+                .hold(Hold::Mandate, "the enforcer: drawdown", 1);
+        }
+        manager.kill().await.unwrap();
+        let refused = manager.resume("breached").await.unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Held);
+        assert!(refused.error.contains("new mandate"), "{}", refused.error);
+        // The kill switch went; the enforcer's hold stands.
+        assert_eq!(holds(&manager, "breached"), [Hold::Mandate]);
+        // Every strategy resumed: the one that can runs, the other is told.
+        manager.kill().await.unwrap();
+        let refused = manager.each(None, Manager::resume).await.unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Held);
+        assert!(refused.error.starts_with("breached: "), "{}", refused.error);
+        assert_eq!(state(&manager, "fine"), StrategyState::Running);
+        assert_eq!(holds(&manager, "breached"), [Hold::Mandate]);
+        // What was observed no longer breaks it: it runs.
+        manager.strategies["breached"]
+            .inner
+            .lock()
+            .await
+            .observed
+            .max_drawdown_usd = 0.0;
+        assert_eq!(manager.resume("breached").await, Ok(()));
+        assert_eq!(state(&manager, "breached"), StrategyState::Running);
+    }
+
+    #[tokio::test]
+    async fn a_command_to_every_strategy_reaches_them_all_whatever_one_answers() {
+        let mut manager = running(&[("a", true), ("b", true), ("c", true)]);
+        let done = manager
+            .each(None, |m, name| async move {
+                m.hold(name, Hold::Operator, OnPause::Keep, "paused".into())
+                    .await?;
+                match name {
+                    "a" | "b" => Err(ControlError::new(
+                        ErrorCode::OrdersNotCancelled,
+                        "an order rests",
+                    )),
+                    _ => Ok(()),
+                }
+            })
+            .await;
+        let failed = done.unwrap_err();
+        assert_eq!(failed.code, ErrorCode::OrdersNotCancelled);
+        assert_eq!(failed.error, "a: an order rests; b: an order rests");
+        for name in ["a", "b", "c"] {
+            assert_eq!(holds(&manager, name), [Hold::Operator], "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn what_the_enforcer_paused_is_written_down_and_comes_back_paused() {
+        let dir = std::env::temp_dir().join(format!("mtx-holds-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut manager = running(&[("a", true), ("b", false)]);
+        manager.config.state = dir.join("strategies.json");
+        lock(&manager.strategies["a"].stats)
+            .life
+            .hold(Hold::Mandate, "the enforcer: drawdown", 1);
+        lock(&manager.strategies["a"].stats)
+            .life
+            .hold(Hold::Feed, "the feed is behind", 2);
+        manager.persist().unwrap();
+        let text = std::fs::read_to_string(&manager.config.state).unwrap();
+        let kept: DesiredState = serde_json::from_str(&text).unwrap();
+        let of = |name: &str| {
+            kept.strategies
+                .iter()
+                .find(|stored| stored.spec.name == name)
+                .unwrap()
+        };
+        // The breach is kept, with its reason; the stale feed is not: the
+        // next process judges its own.
+        assert_eq!(
+            of("a").holds,
+            BTreeMap::from([(Hold::Mandate, "the enforcer: drawdown".to_string())])
+        );
+        assert!(Lifecycle::restored(of("a").holds.clone(), 9).is_held_by(Hold::Mandate));
+        // What a runtime older than the holds reads: whether the operator
+        // holds it.
+        assert!(of("a").spec.run && !of("b").spec.run);
+        assert_eq!(
+            of("b").holds.keys().copied().collect::<Vec<_>>(),
+            [Hold::Operator]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A strategy held because it couldn't be restored still takes a place:
     /// the desired state never holds more than a restart brings back.
     #[test]
@@ -2615,6 +2945,7 @@ mod tests {
                 let stored = Stored {
                     spec: spec(&format!("held-{n}")),
                     component_sha256: "ab".into(),
+                    holds: BTreeMap::new(),
                 };
                 (stored, Some("not restored".into()))
             })
@@ -2647,6 +2978,7 @@ mod tests {
         let stored = Stored {
             spec: named("book-maker"),
             component_sha256: "ab".into(),
+            holds: BTreeMap::new(),
         };
         let status = held_status(&stored, &None);
         assert_eq!(status.family.as_deref(), Some("book-maker"));

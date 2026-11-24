@@ -28,7 +28,11 @@ use crate::control::{CommandKind, ControlError, FeedStatus, StrategyStatus};
 /// 2: times in microseconds (`at_us`), a step's [`StepTimings`], commands
 /// and refusals typed ([`CommandKind`], [`crate::control::ErrorCode`]),
 /// skipped and stopped steps, and the fates of live sends.
-pub const PROTOCOL: u32 = 2;
+///
+/// 3: a strategy's state says who holds it (`holds`) and why it stopped
+/// (`cause`), and may be `starting` (`crate::lifecycle`): an old reader
+/// doesn't know that state.
+pub const PROTOCOL: u32 = 3;
 
 /// The most bytes of one event line: a hello with a few hundred strategies.
 pub const EVENT_BYTES_MAX: usize = 1 << 20;
@@ -194,6 +198,14 @@ pub enum Event {
     /// A strategy's step came while its last was still running, and was
     /// skipped: a strategy slower than its step.
     StepSkipped { strategy: String, slot: u64 },
+    /// A strategy's state changed, whoever changed it: a command, the
+    /// kill switch, the enforcer, a trap. What it is now, and since when.
+    State {
+        strategy: String,
+        #[serde(flatten)]
+        state: crate::control::StrategyState,
+        since_ms: u64,
+    },
     /// A strategy can't step again: it trapped, ran out of fuel or time.
     Stopped { strategy: String, why: String },
     /// The enforcer paused a strategy.

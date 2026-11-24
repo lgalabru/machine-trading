@@ -16,7 +16,7 @@ use std::{
 use mtx_core::{
     Mandate,
     control::{
-        self, AddStrategy, Command, CommandKind, ErrorCode, OnPause, Reply, StrategyState,
+        self, AddStrategy, Command, CommandKind, ErrorCode, Hold, OnPause, Reply, StrategyState,
         StrategyStatus,
     },
     events::{Event, PROTOCOL},
@@ -384,12 +384,13 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
     // The kill switch pauses everything.
     let killed = ask(&socket, Command::Kill);
     for strategy in &killed {
-        assert_eq!(
-            strategy.state,
-            StrategyState::Paused {
-                why: "the kill switch".into()
-            }
-        );
+        // Whoever else holds it (b was added paused), the kill switch does
+        // too, and is the reason told.
+        assert!(matches!(
+            &strategy.state,
+            StrategyState::Paused { holds, why }
+                if holds.contains(&Hold::Kill) && why == "the kill switch"
+        ));
     }
 
     // Removed, it's gone, and stays gone after a restart.
@@ -397,7 +398,13 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
     assert_eq!(removed.len(), 1);
     unload(&rpc, &name);
     let name = load(&rpc, &config);
-    until(&socket, "only a back", |s| s.len() == 1 && s[0].name == "a").await;
+    // The kill switch outlives the restart: a comes back held by it.
+    until(&socket, "only a back, still killed", |s| {
+        s.len() == 1
+            && s[0].name == "a"
+            && matches!(&s[0].state, StrategyState::Paused { holds, .. } if holds == &[Hold::Kill])
+    })
+    .await;
     unload(&rpc, &name);
     std::fs::remove_dir_all(&dir).unwrap();
 }

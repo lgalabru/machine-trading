@@ -42,6 +42,7 @@ pub mod feed;
 pub mod fill;
 pub mod holding;
 pub mod instrument;
+pub mod lifecycle;
 pub mod mandate;
 pub mod market;
 pub mod meter;

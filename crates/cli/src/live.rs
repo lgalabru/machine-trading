@@ -245,6 +245,23 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
                 format!("{strategy}: step at {slot} skipped, the one before still ran")
             }
             Event::Stopped { strategy, why } => format!("{strategy}: stopped: {why}"),
+            Event::State {
+                strategy, state, ..
+            } => match state {
+                StrategyState::Starting { why } => format!("{strategy}: starting: {why}"),
+                StrategyState::Running => format!("{strategy}: running"),
+                StrategyState::Paused { holds, why } => {
+                    let by: Vec<String> = holds
+                        .iter()
+                        .map(|hold| format!("{hold:?}").to_lowercase())
+                        .collect();
+                    format!("{strategy}: paused by {}: {why}", by.join(", "))
+                }
+                StrategyState::Stopped { cause, why } => {
+                    let cause = format!("{cause:?}").to_lowercase();
+                    format!("{strategy}: stopped ({cause}): {why}")
+                }
+            },
             Event::Fate {
                 strategy,
                 signature,
@@ -519,8 +536,9 @@ fn table(strategies: &[StrategyStatus]) -> String {
         let (state, why) = match (&s.state, s.shadow) {
             (StrategyState::Running, false) => ("running", ""),
             (StrategyState::Running, true) => ("shadow", ""),
-            (StrategyState::Paused { why }, _) => ("paused", why.as_str()),
-            (StrategyState::Stopped { why }, _) => ("stopped", why.as_str()),
+            (StrategyState::Starting { why }, _) => ("starting", why.as_str()),
+            (StrategyState::Paused { why, .. }, _) => ("paused", why.as_str()),
+            (StrategyState::Stopped { why, .. }, _) => ("stopped", why.as_str()),
         };
         let step_ms = s.last_step_ms.map_or("-".to_string(), |ms| ms.to_string());
         out.push_str(&format!(
@@ -566,6 +584,7 @@ mod tests {
         let status = StrategyStatus {
             name: "carry".into(),
             state: StrategyState::Paused {
+                holds: vec![mtx_core::control::Hold::Kill],
                 why: "the kill switch".into(),
             },
             symbol: "SOL".into(),
@@ -583,6 +602,7 @@ mod tests {
             position: Some(0.5),
             pnl: None,
             drawdown: None,
+            since_ms: None,
             family: None,
             component: None,
         };
