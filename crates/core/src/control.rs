@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Mandate;
+use crate::{Mandate, mandate::InstrumentRef};
 
 /// What a strategy's resting orders become when it is paused.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,9 +41,12 @@ pub struct AddStrategy {
     pub mandate: Mandate,
     /// The keypair file it trades with: its own account.
     pub keypair: PathBuf,
-    /// A file holding Phoenix's `/exchange` response for its market.
+    /// A file holding Phoenix's `/exchange` response for its market. A
+    /// strategy on pools has none.
+    #[serde(default, skip_serializing_if = "is_no_path")]
     pub exchange: PathBuf,
-    /// Its market, as Phoenix names it (`SOL`).
+    /// Its market, as Phoenix names it (`SOL`). For a strategy on pools,
+    /// what it counts in.
     pub symbol: String,
     /// Slots between its steps.
     pub slots_per_step: u64,
@@ -58,6 +61,38 @@ pub struct AddStrategy {
     /// have sent is written to `<name>.shadow.jsonl` in the runtime's logs.
     #[serde(default)]
     pub shadow: bool,
+    /// The pools it trades, for a strategy whose market is pools rather
+    /// than a perp: an arbitrage across them. In a shadow run only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pools: Option<PoolsSpec>,
+}
+
+fn is_no_path(path: &std::path::Path) -> bool {
+    path.as_os_str().is_empty()
+}
+
+/// The pools a strategy trades, and what it is shown of them.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PoolsSpec {
+    /// The pools, as mandates name them: `orca:amm:<address>`,
+    /// `raydium:amm:<address>`.
+    pub venues: Vec<InstrumentRef>,
+    /// What a shadow run holds on paper, in the pools' common token (the
+    /// strategy's `symbol`): a strategy sizes its routes on what it holds,
+    /// and a shadow key holds nothing.
+    pub paper_base: f64,
+    /// A pool whose price moved this many bps since the strategy's last
+    /// step is told to it as the step's trigger, as a session tells a
+    /// large swap.
+    #[serde(default = "default_trigger_bps")]
+    pub trigger_bps: f64,
+}
+
+/// Ten: past the fee band of a pair's two 4 bp pools, under the 30 bp a
+/// 500 SOL swap opened on Raydium's SOL/USDC pool (`docs/RESEARCH.md`).
+fn default_trigger_bps() -> f64 {
+    10.0
 }
 
 /// What `mtx live` asks of the runtime.
@@ -359,6 +394,39 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_add_on_pools_names_them_and_a_perp_s_add_reads_as_ever() {
+        let add: Command = serde_json::from_str(
+            r#"{"command":"add","name":"arb","component":"/b.wasm","mandate":{"version":"v0.3.0","universe":[],"limits":{}},
+                "keypair":"/k.json","symbol":"SOL","slots_per_step":2,"shadow":true,
+                "pools":{"venues":["orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE","raydium:amm:3ucNos4NbumPLZNWztqGHNFFgkHeRMBQAVemeeomsUxv"],"paper_base":100.0}}"#,
+        )
+        .unwrap();
+        let Command::Add(spec) = &add else {
+            panic!("an add");
+        };
+        let pools = spec.pools.as_ref().expect("its pools");
+        assert_eq!(pools.venues.len(), 2);
+        assert_eq!((pools.paper_base, pools.trigger_bps), (100.0, 10.0));
+        assert!(spec.exchange.as_os_str().is_empty());
+        // Written back, it names no exchange; a perp's add names no pools.
+        let text = serde_json::to_string(&add).unwrap();
+        assert!(!text.contains("exchange") && text.contains(r#""paper_base":100.0"#));
+        let perp: Command = serde_json::from_str(
+            r#"{"command":"add","name":"mm","component":"/b.wasm","mandate":{"version":"v0.3.0","universe":[],"limits":{}},
+                "keypair":"/k.json","exchange":"/e.json","symbol":"SOL","slots_per_step":2}"#,
+        )
+        .unwrap();
+        let text = serde_json::to_string(&perp).unwrap();
+        assert!(text.contains(r#""exchange":"/e.json""#) && !text.contains("pools"));
+        // A field it doesn't know is still refused.
+        assert!(serde_json::from_str::<Command>(
+            r#"{"command":"add","name":"mm","component":"/b.wasm","mandate":{"version":"v0.3.0","universe":[],"limits":{}},
+                "keypair":"/k.json","symbol":"SOL","slots_per_step":2,"pools":{"venues":[],"paper_base":1.0,"size":3}}"#
+        )
+        .is_err());
+    }
 
     #[test]
     fn commands_read_as_mtx_live_writes_them() {

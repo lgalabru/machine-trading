@@ -188,6 +188,7 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
             run,
             close_on_breach: false,
             shadow: false,
+            pools: None,
         })
     };
 
