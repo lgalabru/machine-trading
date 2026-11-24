@@ -6,7 +6,8 @@
 
 use mtx_core::{
     control::{
-        CommandKind, ControlError, ErrorCode, FeedStatus, Reply, StrategyState, StrategyStatus,
+        CommandKind, ControlError, ErrorCode, FeedStatus, Hold, Reply, StopCause, StrategyState,
+        StrategyStatus,
     },
     events::{Event, Line, Liquidity, PROTOCOL, PaperModel, PauseReason, Side, StepTimings},
 };
@@ -16,6 +17,7 @@ fn status() -> StrategyStatus {
     StrategyStatus {
         name: "mm-sol".into(),
         state: StrategyState::Paused {
+            holds: vec![Hold::Mandate],
             why: "the enforcer: drawdown".into(),
         },
         symbol: "SOL".into(),
@@ -33,6 +35,7 @@ fn status() -> StrategyStatus {
         position: Some(0.0),
         pnl: Some(0.0),
         drawdown: Some(0.0),
+        since_ms: None,
         family: None,
         component: None,
     }
@@ -51,7 +54,7 @@ fn lines() -> Vec<(Event, &'static str)> {
                 },
                 strategies: vec![status()],
             },
-            r#"{"at_us":1,"event":"hello","protocol":2,"feed":{"slot":471945955,"behind":0,"dropped":0},"strategies":[{"name":"mm-sol","state":"paused","why":"the enforcer: drawdown","symbol":"SOL","authority":"GFKJ2dPLAQ4EYHpbVN5PZWNBnB3rk8ZtYCd5TaZ2HLUk","cap":0.1,"max_drawdown":20.0,"steps":652,"skipped":0,"shadow":true,"last_step_ms":2,"sends_landed":366,"sends_failed":0,"last_send_error":null,"last_slot":471945954,"position":0.0,"pnl":0.0,"drawdown":0.0}]}"#,
+            r#"{"at_us":1,"event":"hello","protocol":3,"feed":{"slot":471945955,"behind":0,"dropped":0},"strategies":[{"name":"mm-sol","state":"paused","holds":["mandate"],"why":"the enforcer: drawdown","symbol":"SOL","authority":"GFKJ2dPLAQ4EYHpbVN5PZWNBnB3rk8ZtYCd5TaZ2HLUk","cap":0.1,"max_drawdown":20.0,"steps":652,"skipped":0,"shadow":true,"last_step_ms":2,"sends_landed":366,"sends_failed":0,"last_send_error":null,"last_slot":471945954,"position":0.0,"pnl":0.0,"drawdown":0.0}]}"#,
         ),
         (
             Event::Slot {
@@ -144,6 +147,28 @@ fn lines() -> Vec<(Event, &'static str)> {
                 why: "trapped at step 9".into(),
             },
             r#"{"at_us":1,"event":"stopped","strategy":"mm-sol","why":"trapped at step 9"}"#,
+        ),
+        (
+            Event::State {
+                strategy: "mm-sol".into(),
+                state: StrategyState::Paused {
+                    holds: vec![Hold::Kill, Hold::Mandate],
+                    why: "the enforcer: drawdown 21 over 20".into(),
+                },
+                since_ms: 1795522394000,
+            },
+            r#"{"at_us":1,"event":"state","strategy":"mm-sol","state":"paused","holds":["kill","mandate"],"why":"the enforcer: drawdown 21 over 20","since_ms":1795522394000}"#,
+        ),
+        (
+            Event::State {
+                strategy: "mm-sol".into(),
+                state: StrategyState::Stopped {
+                    cause: StopCause::Trap,
+                    why: "trapped at step 9".into(),
+                },
+                since_ms: 1795522394000,
+            },
+            r#"{"at_us":1,"event":"state","strategy":"mm-sol","state":"stopped","cause":"trap","why":"trapped at step 9","since_ms":1795522394000}"#,
         ),
         (
             Event::Paused {

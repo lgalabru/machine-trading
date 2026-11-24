@@ -15,6 +15,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::lifecycle::{Hold, StopCause, StrategyState};
 use crate::{Mandate, mandate::InstrumentRef};
 
 /// What a strategy's resting orders become when it is paused.
@@ -215,6 +216,9 @@ pub enum ErrorCode {
     /// The strategy couldn't start: its component didn't load, its
     /// accounts couldn't be read from the node, or its `start` failed.
     StartFailed,
+    /// A `resume` left it paused: the enforcer still holds it (a mandate
+    /// still broken, a feed still stale), or it is stopped.
+    Held,
     /// Its resting orders couldn't all be cancelled.
     OrdersNotCancelled,
     /// The runtime's desired state couldn't be written: the change is in
@@ -258,21 +262,6 @@ impl From<String> for ControlError {
     }
 }
 
-/// Why a strategy isn't stepping.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum StrategyState {
-    Running,
-    /// Paused by a command, or by the enforcer (`why`).
-    Paused {
-        why: String,
-    },
-    /// It can't step again: it trapped, or didn't load.
-    Stopped {
-        why: String,
-    },
-}
-
 /// One strategy, as `mtx live status` shows it.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct StrategyStatus {
@@ -307,6 +296,10 @@ pub struct StrategyStatus {
     pub position: Option<f64>,
     pub pnl: Option<f64>,
     pub drawdown: Option<f64>,
+    /// When its state last changed, by the runtime's clock, in
+    /// milliseconds since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_ms: Option<u64>,
     /// The family it was added as a variant of, if it was named one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub family: Option<String>,

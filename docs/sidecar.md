@@ -115,6 +115,7 @@ on the same host, a sidecar reads its own delay off it) and an `event`.
 | `step` | a strategy's step ended | strategy, slot, step number, orders sent, position, PnL, drawdown, still running, and its `timings` (below) |
 | `step_skipped` | a step came while the strategy's last still ran | strategy, slot |
 | `stopped` | a strategy can't step again: it trapped, or ran out of fuel or time | strategy, why |
+| `state` | a strategy's state changed, whoever changed it (a command, the kill switch, the enforcer, a trap) | strategy, its state as `status` tells it (below), `since_ms` |
 | `fate` | what became of a transaction a live strategy sent without waiting (over the TPU) | strategy, signature, landed, slot, the chain's error, microseconds from the send |
 | `paper_fill` | a shadow strategy's order filled on paper | model (`through`, `touch`), side, price, size, maker or taker, edge at the mid, paper position |
 | `markout` | a paper fill, 3, 25 and 150 slots on | model, fill slot, horizon, bps (positive: the market went its way) |
@@ -193,11 +194,32 @@ the code, a person reads the error. A code a newer runtime adds reads as
 | `unreadable` | a file it names (component, keypair, exchange) can't be read |
 | `start_failed` | its accounts couldn't be read from the node, or its component didn't start |
 | `orders_not_cancelled` | some of its resting orders couldn't be cancelled |
+| `held` | a `resume` left it paused: the enforcer still holds it, or it is stopped. What could be lifted was |
 | `not_persisted` | done, but the desired state couldn't be written: a restart won't remember it |
 | `stopped` | the runtime's strategies stopped (the plugin is unloading) |
 | `failed` | anything else; the error says what |
 
 - A command is applied at the strategy's next step boundary.
+- A strategy's state (`docs/rfd/0006-the-strategy-lifecycle.md`) is one of
+  `starting` (kept, waiting for the node after a restart), `running`,
+  `paused` and `stopped`, with `since_ms`. A paused one says who holds it:
+  `"holds": ["operator", "kill", "feed", "mandate"]`, any of them, and
+  `why` is the gravest one's reason. A stopped one says its `cause`:
+  `start`, `changed` or `trap`.
+- `pause` and an `add` without `run` are the `operator`'s hold; `kill` is
+  the `kill` hold, on every strategy, each one held before any order is
+  cancelled. The enforcer holds for a stale `feed` and for a broken
+  `mandate`. Holds add up, and each is lifted by what cures it: `resume`
+  lifts `operator` and `kill`, lifts `feed` if the feed is fresh, and
+  lifts `mandate` only if what was observed under the mandate no longer
+  breaks it. A drawdown never un-happens, so in practice a breach is
+  lifted by `mandate` (a new one audits from there on). A `resume` that
+  leaves a strategy held is refused with `held`.
+- A command with no `name` (`pause`, `resume`, `kill`) is done to every
+  strategy, whatever one of them answers: the refusal names the ones it
+  failed on.
+- The desired state keeps the holds: after a restart a strategy comes back
+  under the same ones, except the stale feed's.
 - `add` names a component and a keypair by path on the node: a sidecar
   puts both there first. The runtime refuses a component whose SHA-256
   changed since it was added.
