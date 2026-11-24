@@ -183,6 +183,19 @@ the code, a person reads the error. A code a newer runtime adds reads as
 - `add` names a component and a keypair by path on the node: a sidecar
   puts both there first. The runtime refuses a component whose SHA-256
   changed since it was added.
+- `add` with `pools` hosts a strategy on pools rather than on a perp: the
+  bench's atomic arbitrage bots (`mtx:strategy@0.3.0`), in a shadow run
+  only (`live::pooldesk`):
+  `"pools": {"venues": ["orca:amm:<address>", "raydium:amm:<address>"], "paper_base": 100.0, "trigger_bps": 10.0}`,
+  with `symbol` what it counts in (`SOL`) and no `exchange`. Two to twelve
+  pools, one of them SOL against USDC. Each step it is shown a wallet of
+  `paper_base` on paper (a shadow key holds nothing, and a strategy sizes
+  its routes on what it holds) and each pool's prices, read from the node;
+  a pool that moved `trigger_bps` since its last step is the step's
+  trigger, with its side and no size. Its atomic groups are built, signed
+  and written to `<name>.shadow.jsonl`, and sent nowhere. Without `shadow`
+  it is refused (`invalid`): nothing here sends a group to a block builder
+  yet.
 - `upgrade` swaps a strategy's component for a new build, with no restart
   of anything else: it ends, and starts again on the new component under
   the same name, key and mandate, paused or running as it was. If the new

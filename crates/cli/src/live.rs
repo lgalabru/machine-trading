@@ -61,9 +61,21 @@ pub enum LiveCommand {
         /// The keypair file it trades with.
         #[arg(long)]
         key: PathBuf,
-        /// A file holding Phoenix's `/exchange` response.
-        #[arg(long)]
-        exchange: PathBuf,
+        /// A file holding Phoenix's `/exchange` response: a perp strategy's.
+        #[arg(long, required_unless_present = "pool")]
+        exchange: Option<PathBuf>,
+        /// A pool it trades (`orca:amm:<address>`, `raydium:amm:<address>`),
+        /// once each: a strategy on pools, in a shadow run only. `--symbol`
+        /// is then what it counts in (`SOL`).
+        #[arg(long, requires = "paper_base")]
+        pool: Vec<mtx_core::mandate::InstrumentRef>,
+        /// What a strategy on pools holds on paper, in its symbol.
+        #[arg(long, requires = "pool")]
+        paper_base: Option<f64>,
+        /// A pool that moved this many bps since its last step is its
+        /// step's trigger.
+        #[arg(long, requires = "pool", default_value_t = 10.0)]
+        trigger_bps: f64,
         /// Its market, as Phoenix names it (`SOL`).
         #[arg(long)]
         symbol: String,
@@ -427,6 +439,9 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             mandate,
             key,
             exchange,
+            pool,
+            paper_base,
+            trigger_bps,
             symbol,
             slots_per_step,
             run,
@@ -438,12 +453,20 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             component: absolute(&component)?,
             mandate: load_mandate(&mandate)?,
             keypair: absolute(&key)?,
-            exchange: absolute(&exchange)?,
+            exchange: match &exchange {
+                Some(exchange) => absolute(exchange)?,
+                None => PathBuf::new(),
+            },
             symbol,
             slots_per_step,
             run,
             close_on_breach,
             shadow,
+            pools: paper_base.map(|paper_base| mtx_core::control::PoolsSpec {
+                venues: pool,
+                paper_base,
+                trigger_bps,
+            }),
         }),
         LiveCommand::Remove { name } => Command::Remove { name },
         LiveCommand::Upgrade { name, component } => Command::Upgrade { name, component },

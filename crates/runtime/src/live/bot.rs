@@ -69,6 +69,91 @@ pub struct BotSpec<'a> {
     pub dispatch: mtx_kit::protocols::phoenix::eternal::Dispatch,
 }
 
+/// Everything a strategy on pools is started with (`live::pooldesk`).
+pub struct PoolBotSpec<'a> {
+    pub component: &'a Path,
+    /// The node its own reads go to.
+    pub rpc_url: &'a str,
+    pub keypair: &'a Keypair,
+    /// What it counts in.
+    pub symbol: &'a str,
+    pub mandate: &'a Mandate,
+    pub clock: Clock,
+    pub end_slot: u64,
+    /// What it holds on paper, and its drawdown limit.
+    pub cap: f64,
+    pub max_drawdown: f64,
+    pub pools: &'a [crate::venue::amm::Pool],
+    /// The wallet it starts with.
+    pub wallet: mtx_core::session::Wallet,
+    pub log: Box<dyn Write + Send>,
+    /// The chain its routes go through: a shadow's, which sends nothing.
+    pub sends: Arc<dyn mtx_kit::chain::ChainClient>,
+    pub observer: Option<Arc<dyn crate::desk::StepObserver>>,
+    pub references: Option<Arc<super::reference::Latest>>,
+}
+
+/// Load a pool strategy's component and call its `start`: the desk a
+/// session builds for the bench's atomic arbitrage tasks, a seat on each
+/// pool and a wallet the host measures.
+pub async fn start_pools(spec: PoolBotSpec<'_>) -> Result<WasmBot, String> {
+    use crate::venue::amm::PoolSeat;
+    let authority = solana_signer::Signer::pubkey(spec.keypair);
+    // Pooled: a send reports its signature at once, and nothing waits on
+    // a chain that will never see it.
+    let seats: Vec<Box<dyn Seat>> = spec
+        .pools
+        .iter()
+        .map(|pool| {
+            let seat = PoolSeat::new(
+                pool.clone(),
+                spec.sends.clone(),
+                spec.keypair.insecure_clone(),
+            );
+            Box::new(seat.pooled(true)) as Box<dyn Seat>
+        })
+        .collect();
+    let markets = spec
+        .pools
+        .iter()
+        .map(|pool| mtx_kit::VenueInfo {
+            id: pool.instrument.to_string(),
+            kind: pool.instrument.kind.into(),
+            address: Some(pool.address.to_string()),
+            tradable: true,
+        })
+        .collect();
+    WasmBot::<NoRawSends>::start(
+        spec.component,
+        HttpReads::boxed(spec.rpc_url),
+        spec.clock,
+        Terms {
+            end_slot: spec.end_slot,
+            mandate: spec.mandate,
+            cap: spec.cap,
+            max_drawdown: spec.max_drawdown,
+        },
+        Desk {
+            markets,
+            seats,
+            symbol: spec.symbol.to_string(),
+            venue: super::pooldesk::metadata(spec.pools),
+            authority: authority.to_string(),
+            reader: Reader::Lending { start: spec.wallet },
+            sends: None,
+            rfqs: None,
+            references: spec.references.map(|latest| {
+                Arc::new(super::reference::References(latest)) as Arc<dyn crate::desk::References>
+            }),
+        },
+        spec.log,
+        spec.observer,
+        None,
+    )
+    .await
+    .map_err(|e| e.to_string())
+}
+
 /// Load the component and call its `start`.
 pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
     let exchange_json = std::fs::read_to_string(spec.exchange_path)
