@@ -1592,6 +1592,11 @@ impl Manager {
         let Some(bot) = inner.bot.as_mut() else {
             return Ok(());
         };
+        // A strategy on pools rests no order and holds its wallet on
+        // paper: nothing to cancel, nothing to close.
+        if strategy.pools.is_some() {
+            return Ok(());
+        }
         match orders {
             OnPause::Keep => Ok(()),
             OnPause::Cancel => cancelled(bot.cancel_all().await),
@@ -1953,7 +1958,8 @@ impl StepTask {
         }
         let breach = self.mandate.audit(observed);
         let paused = self.record(bot, k, &stepped, breach.as_ref());
-        if paused {
+        // On pools there is no order to cancel and no position to close.
+        if paused && !on_pools {
             for failed in bot.cancel_all().await {
                 tracing::warn!(name = self.name, failed, "an order couldn't be cancelled");
             }
