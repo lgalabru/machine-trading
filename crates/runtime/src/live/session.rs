@@ -222,6 +222,9 @@ async fn play(
         paper_position: None,
         references: None,
         dispatch: mtx_kit::protocols::phoenix::eternal::Dispatch::Confirm,
+        // A session's chain waits for the bot: its reads go to the node
+        // as they are, however long they take.
+        reads: crate::host::HttpReads::boxed(&env.rpc_url),
     })
     .await?;
     let played = play_turns(&mut turns, &mut bot, &slot, progress, hello.steps).await;

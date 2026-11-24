@@ -59,6 +59,9 @@ pub struct ShadowChain {
     /// The newest blockhash and slot, from the plugin.
     blockhash: Arc<LatestBlockhash>,
     progress: Option<FeedProgress>,
+    /// Whether reads that list accounts by owner go to the node. Without
+    /// an account index each one reads every account (`live::bot::SCANS`).
+    scans: bool,
 }
 
 impl ShadowChain {
@@ -88,7 +91,27 @@ impl ShadowChain {
             simulated: Mutex::new(None),
             blockhash,
             progress,
+            scans: true,
         })
+    }
+
+    /// Refuse the reads that list accounts by owner, unless `scans`: for a
+    /// node with no account index, where a seat asking what its owner
+    /// holds would have the node read every account.
+    pub fn scanning(mut self, scans: bool) -> Self {
+        self.scans = scans;
+        self
+    }
+
+    /// Why a listing isn't asked of the node, if it isn't.
+    fn refuse_scan(&self, what: &str) -> Result<(), ChainError> {
+        if self.scans {
+            return Ok(());
+        }
+        Err(ChainError::Rpc(format!(
+            "{what} is refused here: this node has no account index, and would read every account \
+             to answer"
+        )))
     }
 
     async fn write_down(
@@ -214,6 +237,7 @@ impl ChainClient for ShadowChain {
         program: &Pubkey,
         filters: Vec<solana_rpc_client_api::filter::RpcFilterType>,
     ) -> Result<Vec<(Pubkey, Account)>, ChainError> {
+        self.refuse_scan("getProgramAccounts")?;
         self.rpc.get_program_accounts(program, filters).await
     }
 
@@ -222,6 +246,7 @@ impl ChainClient for ShadowChain {
         owner: &Pubkey,
         mint: &Pubkey,
     ) -> Result<Vec<(Pubkey, Account)>, ChainError> {
+        self.refuse_scan("getTokenAccountsByOwner")?;
         self.rpc.get_token_accounts_by_owner(owner, mint).await
     }
 
@@ -305,6 +330,37 @@ mod tests {
     use solana_transaction::Transaction;
 
     use super::*;
+
+    #[tokio::test]
+    async fn a_listing_is_refused_on_a_node_without_an_index() {
+        let dir = std::env::temp_dir().join(format!("mtx-shadow-scan-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Nothing listens there: a listing that was sent would fail on that.
+        let chain = ShadowChain::new(
+            RpcChainClient::new("http://127.0.0.1:1"),
+            &dir.join("scan.shadow.jsonl"),
+            "test",
+        )
+        .unwrap()
+        .scanning(false);
+        let (owner, mint) = (Pubkey::new_unique(), Pubkey::new_unique());
+        let refused = chain
+            .get_token_accounts_by_owner(&owner, &mint)
+            .await
+            .unwrap_err();
+        assert!(
+            refused.to_string().contains("no account index"),
+            "{refused}"
+        );
+        let refused = chain
+            .get_program_accounts(&owner, Vec::new())
+            .await
+            .unwrap_err();
+        assert!(
+            refused.to_string().contains("no account index"),
+            "{refused}"
+        );
+    }
 
     #[tokio::test]
     async fn a_shadow_send_is_written_down_and_goes_nowhere() {
