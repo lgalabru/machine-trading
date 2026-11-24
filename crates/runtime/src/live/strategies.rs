@@ -1872,6 +1872,17 @@ impl Manager {
         }
         spec.mandate.validate().map_err(invalid)?;
         spec_limits(spec).map_err(invalid)?;
+        if let Some(family) = &spec.family {
+            let is_label = !family.is_empty()
+                && family.len() <= mtx_core::control::FAMILY_BYTES_MAX
+                && !family.chars().any(char::is_control);
+            if !is_label {
+                return Err(invalid(format!(
+                    "a family's name is 1 to {} bytes of text",
+                    mtx_core::control::FAMILY_BYTES_MAX
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -1973,6 +1984,8 @@ impl Manager {
                     position: stats.position,
                     pnl: stats.pnl,
                     drawdown: stats.drawdown,
+                    family: strategy.spec.family.clone(),
+                    component: Some(strategy.component_sha256.clone()),
                 }
             })
             .chain(
@@ -2309,6 +2322,8 @@ fn held_status(stored: &Stored, why: &Option<String>) -> StrategyStatus {
         position: None,
         pnl: None,
         drawdown: None,
+        family: spec.family.clone(),
+        component: Some(stored.component_sha256.clone()),
     }
 }
 
@@ -2502,6 +2517,7 @@ mod tests {
                     close_on_breach: false,
                     shadow: false,
                     pools: None,
+                    family: None,
                 },
                 component_sha256: "ab".into(),
             }],
@@ -2526,6 +2542,7 @@ mod tests {
             close_on_breach: false,
             shadow: false,
             pools: None,
+            family: None,
         }
     }
 
@@ -2609,6 +2626,31 @@ mod tests {
         // A held name is taken, unless it is the one being restored.
         let taken = manager.check_add(&spec("held-0"), false).unwrap_err();
         assert_eq!(taken.code, ErrorCode::Exists);
+    }
+
+    /// A family is a label a page shows: text, and short. A held strategy
+    /// tells it back, with the code it would run.
+    #[test]
+    fn a_family_is_a_short_label_the_status_gives_back() {
+        let manager = manager();
+        let named = |family: &str| AddStrategy {
+            family: Some(family.into()),
+            ..spec("new")
+        };
+        assert_eq!(manager.check_add(&named("book-maker"), false), Ok(()));
+        let longest = "f".repeat(mtx_core::control::FAMILY_BYTES_MAX);
+        assert_eq!(manager.check_add(&named(&longest), false), Ok(()));
+        for bad in ["", "two\nlines", &format!("{longest}f")] {
+            let refused = manager.check_add(&named(bad), false).unwrap_err();
+            assert_eq!(refused.code, ErrorCode::Invalid, "{bad:?}");
+        }
+        let stored = Stored {
+            spec: named("book-maker"),
+            component_sha256: "ab".into(),
+        };
+        let status = held_status(&stored, &None);
+        assert_eq!(status.family.as_deref(), Some("book-maker"));
+        assert_eq!(status.component.as_deref(), Some("ab"));
     }
 
     #[test]
