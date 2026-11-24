@@ -49,6 +49,11 @@ pub const RESERVES_MAX: usize = 128;
 /// of an address and two numbers are under a MiB.
 pub const LISTED_BYTES_MAX: u64 = 8 << 20;
 
+/// Slots after which a reserve's price is told again though it didn't
+/// change: a minute, so a sidecar that connects has every price within
+/// one, where an obligation takes [`LendingConfig::every_slots`].
+pub const RESERVE_EVERY_SLOTS: u64 = 150;
+
 /// The fewest slots in which every obligation is told again: telling all
 /// of them every few slots would be thousands of events a second.
 pub const EVERY_SLOTS_MIN: u64 = 150;
@@ -134,8 +139,8 @@ impl LendingConfig {
 struct Read {
     reserve: Reserve,
     written_slot: u64,
-    /// The price last told, if any was.
-    told_price: Option<f64>,
+    /// The price last told and the slot it was told in, if any was.
+    told: Option<(f64, u64)>,
 }
 
 /// The watched obligations and their reserves.
@@ -294,25 +299,27 @@ impl Lending {
         told: &mut Told,
     ) {
         for (address, read) in &mut self.reserves {
-            let Some(written_slot) = written(address).filter(|w| *w <= slot) else {
-                continue;
-            };
-            if written_slot <= read.written_slot {
-                continue;
+            let newly_written = written(address).filter(|w| *w <= slot && *w > read.written_slot);
+            if let Some(written_slot) = newly_written
+                && let Some(reserve) = accounts.data(&address.to_bytes()).and_then(Reserve::decode)
+            {
+                read.written_slot = written_slot;
+                read.reserve = reserve;
             }
-            let Some(reserve) = accounts.data(&address.to_bytes()).and_then(Reserve::decode) else {
-                continue;
-            };
-            read.written_slot = written_slot;
-            read.reserve = reserve;
-            if read.told_price != Some(read.reserve.price) {
-                read.told_price = Some(read.reserve.price);
+            // Told when its price changed, and again every so often: a
+            // sidecar that connects late has no price of a reserve that
+            // sits still (a stablecoin's) until then.
+            let is_due = read.told.is_none_or(|(price, told_slot)| {
+                price != read.reserve.price || slot >= told_slot.saturating_add(RESERVE_EVERY_SLOTS)
+            });
+            if is_due {
+                read.told = Some((read.reserve.price, slot));
                 told.events.push(reserve_event(
                     &self.market,
                     address,
                     &read.reserve,
                     slot,
-                    written_slot,
+                    read.written_slot,
                 ));
             }
         }
@@ -335,9 +342,8 @@ impl Lending {
             address,
             Read {
                 reserve,
-                // One before its write: the next look tells its price.
-                written_slot: written_slot.saturating_sub(1),
-                told_price: None,
+                written_slot,
+                told: None,
             },
         );
         Ok(())
@@ -572,6 +578,14 @@ mod tests {
         assert_eq!((borrows[0].units, borrows[0].value_usd), (1_000.0, 1_000.0));
         // Nothing changed: nothing is told, but the round-robin's share.
         let quiet = told(&mut lending, &cache, 7);
+        // A minute on, both prices are told again, unchanged.
+        let again = told(&mut lending, &cache, 6 + RESERVE_EVERY_SLOTS);
+        let prices = again
+            .events
+            .iter()
+            .filter(|e| matches!(e, Event::Reserve { .. }))
+            .count();
+        assert_eq!(prices, 2);
         assert_eq!(
             quiet.events.len(),
             1,
