@@ -100,6 +100,11 @@ pub struct ControlConfig {
     /// write changes it (`live::pools`): none by default.
     #[serde(default)]
     pub pools: Option<super::pools::PoolsConfig>,
+    /// Lending obligations watched without touching them, each told as an
+    /// `obligation` and its reserves' prices as `reserve`
+    /// (`live::lending`): none by default.
+    #[serde(default)]
+    pub lending: Option<super::lending::LendingConfig>,
 }
 
 /// Four: a step is a fraction of a millisecond of one core, and four let
@@ -259,6 +264,7 @@ pub fn spawn(config: ControlConfig, inputs: Inputs) -> Result<std::thread::JoinH
                 manager.restore().await;
                 manager.start_watching().await;
                 manager.start_pools().await;
+                manager.start_lending().await;
                 manager.serve(slots, received).await;
             });
             // The commands' receiver is gone with the manager: the
@@ -924,6 +930,8 @@ struct Manager {
     watching: Option<super::watching::Watching>,
     /// The pools watched without trading them (`control.pools`).
     pools: Option<super::pools::Pools>,
+    /// The lending obligations watched (`control.lending`).
+    lending: Option<super::lending::Lending>,
     /// Strategies being added, off the loop: their names are taken.
     adding: std::collections::BTreeSet<String>,
     /// Where an `add`'s task hands back the strategy it prepared.
@@ -942,6 +950,7 @@ impl Manager {
             tapes: BTreeMap::new(),
             watching: None,
             pools: None,
+            lending: None,
             adding: std::collections::BTreeSet::new(),
             prepared: {
                 let (sender, receiver) = mpsc::channel(STRATEGIES_MAX);
@@ -1053,6 +1062,88 @@ impl Manager {
         }
         tracing::info!(pools = watched.len(), "watching pools");
         self.pools = Some(super::pools::Pools::new(watched, &config));
+    }
+
+    /// Start watching `control.lending`'s obligations: their accounts into
+    /// the feed and the cache, then the reserves they name. A file that
+    /// can't be read watches none, and says so.
+    async fn start_lending(&mut self) {
+        let Some(config) = self.config.lending.clone() else {
+            return;
+        };
+        let listed = config
+            .market()
+            .and_then(|market| Ok((market, config.listed()?)));
+        let (market, obligations) = match listed {
+            Ok(listed) => listed,
+            Err(error) => {
+                tracing::error!(%error, "the watched obligations can't be listed; none is watched");
+                return;
+            }
+        };
+        let mut lending = super::lending::Lending::new(market, obligations, config.every_slots);
+        if let Err(error) = self.ctx().backfill_addresses(&lending.addresses()).await {
+            tracing::error!(%error, "the watched obligations weren't read; none is watched");
+            return;
+        }
+        let reserves = lending.reserves_named(&*lock(&self.shared.cache));
+        let addresses: Vec<Address> = reserves.iter().map(Pubkey::to_bytes).collect();
+        if let Err(error) = self.ctx().backfill_addresses(&addresses).await {
+            tracing::error!(%error, "the obligations' reserves weren't read; none is watched");
+            return;
+        }
+        for reserve in &reserves {
+            lending.ask(*reserve);
+        }
+        tracing::info!(
+            obligations = lending.len(),
+            reserves = reserves.len(),
+            "watching lending obligations"
+        );
+        self.lending = Some(lending);
+    }
+
+    /// Tell the reserves whose price changed and the obligations a write
+    /// changed or that are due again: only when someone listens. A reserve
+    /// an obligation newly names is read from the node by a task, and the
+    /// obligation told once it is in.
+    fn emit_lending(&mut self, slot: u64) {
+        if !self.shared.events.has_listeners() {
+            return;
+        }
+        let Some(lending) = self.lending.as_mut() else {
+            return;
+        };
+        let started = std::time::Instant::now();
+        let told = {
+            let cache = lock(&self.shared.cache);
+            lending.tell(slot, &|address| cache.slot(&address.to_bytes()), &*cache)
+        };
+        let asked: Vec<Address> = told
+            .missing
+            .iter()
+            .filter(|reserve| lending.ask(**reserve))
+            .map(Pubkey::to_bytes)
+            .collect();
+        if !told.events.is_empty() {
+            tracing::info!(
+                histogram.mtx_lending_tell_us =
+                    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                counter.mtx_lending_events = told.events.len() as u64,
+                "lending accounts were told"
+            );
+        }
+        for event in told.events {
+            self.shared.events.emit(event);
+        }
+        if !asked.is_empty() {
+            let ctx = self.ctx();
+            tokio::spawn(async move {
+                if let Err(error) = ctx.backfill_addresses(&asked).await {
+                    tracing::warn!(%error, "a reserve an obligation names wasn't read");
+                }
+            });
+        }
     }
 
     /// Read every watched pool a write changed, or that is due again, each
@@ -1304,6 +1395,7 @@ impl Manager {
                     self.emit_trades();
                     self.emit_quotes(self.slot);
                     self.emit_pools(self.slot);
+                    self.emit_lending(self.slot);
                 }
                 request = commands.recv() => {
                     let Some((command, reply)) = request else {

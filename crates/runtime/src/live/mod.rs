@@ -20,6 +20,7 @@ pub mod bot;
 pub mod events;
 pub mod feed;
 pub mod journal;
+pub mod lending;
 pub mod perp;
 pub mod pooldesk;
 pub mod pools;

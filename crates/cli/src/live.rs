@@ -289,6 +289,22 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
                 sells.len(),
                 buys.len()
             ),
+            Event::Obligation {
+                address,
+                debt_usd,
+                limit_usd,
+                written_slot,
+                ..
+            } => format!(
+                "obligation {address}: ${debt_usd:.0} of debt against a limit of \
+                 ${limit_usd:.0}, written in slot {written_slot}"
+            ),
+            Event::Reserve {
+                address,
+                mint,
+                price,
+                ..
+            } => format!("reserve {address} of {mint}: ${price}"),
         };
         println!("{text}");
     }

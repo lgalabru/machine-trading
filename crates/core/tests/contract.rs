@@ -207,6 +207,38 @@ fn lines() -> Vec<(Event, &'static str)> {
             r#"{"at_us":1,"event":"pool","venue":"orca","address":"Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE","slot":472500002,"written_slot":472500001,"base":"So11111111111111111111111111111111111111112","quote":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","mid":70.25,"fee_bps":4.0,"liquidity":1500000000000000.0,"sells":[{"bps":5.0,"amount_in":120.5,"amount_out":8459.75}],"buys":[],"read_us":310}"#,
         ),
         (
+            Event::Obligation {
+                venue: "kamino".into(),
+                address: "ob1".into(),
+                market: "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF".into(),
+                slot: 472500002,
+                written_slot: 472500001,
+                refreshed_slot: 472499000,
+                debt_usd: 1000.5,
+                limit_usd: 1100.25,
+                deposits: vec![mtx_core::events::LendingLeg {
+                    mint: "So11111111111111111111111111111111111111112".into(),
+                    units: 20.5,
+                    value_usd: 1476.0,
+                }],
+                borrows: vec![],
+            },
+            r#"{"at_us":1,"event":"obligation","venue":"kamino","address":"ob1","market":"7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF","slot":472500002,"written_slot":472500001,"refreshed_slot":472499000,"debt_usd":1000.5,"limit_usd":1100.25,"deposits":[{"mint":"So11111111111111111111111111111111111111112","units":20.5,"value_usd":1476.0}],"borrows":[]}"#,
+        ),
+        (
+            Event::Reserve {
+                venue: "kamino".into(),
+                address: "d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q".into(),
+                market: "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF".into(),
+                mint: "So11111111111111111111111111111111111111112".into(),
+                slot: 472500002,
+                written_slot: 472500002,
+                price: 72.25,
+                liquidation_bonus_bps_min: 100.0,
+            },
+            r#"{"at_us":1,"event":"reserve","venue":"kamino","address":"d4A2prbA2whesmvHaL88BH6Ewn5N4bTSU2Ze8P6Bc4Q","market":"7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF","mint":"So11111111111111111111111111111111111111112","slot":472500002,"written_slot":472500002,"price":72.25,"liquidation_bonus_bps_min":100.0}"#,
+        ),
+        (
             Event::Lagged { dropped: 12 },
             r#"{"at_us":1,"event":"lagged","dropped":12}"#,
         ),
