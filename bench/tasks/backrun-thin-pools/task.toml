@@ -67,7 +67,7 @@ allowed_hosts = ["crates.io", "index.crates.io", "static.crates.io"]
 [verifier.environment]
 # The verifier's image, built by `just image` from tests/: the runtime
 # image with this task's tests in it. The rest as [environment].
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-backrun-thin-pools-verifier"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-backrun-thin-pools-verifier@sha256:40249d36e45c744d5aa14f1cce23b5ba6be9add91ddf74e94333b4b017039029"
 network_mode = "public"
 build_timeout_sec = 1800.0
 cpus = 4
@@ -78,7 +78,7 @@ os = "linux"
 # Built by `just image` from environment/ (pinned by `just release`):
 # Harbor builds nothing when a trial starts. Building the tasks' images
 # there, at once, has put one task's files into another's image.
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-backrun-thin-pools"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-backrun-thin-pools@sha256:dd1d6c35948200df7a68205f51a836927f1618ca5f03c58bb32bc33ea956fb8f"
 # Agents need package registries and their model API. The chain they trade
 # on is a local, offline sandbox either way.
 network_mode = "public"

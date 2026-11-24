@@ -67,7 +67,7 @@ allowed_hosts = ["crates.io", "index.crates.io", "static.crates.io"]
 [verifier.environment]
 # The verifier's image, built by `just image` from tests/: the runtime
 # image with this task's tests in it. The rest as [environment].
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-liquidation-flash-verifier"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-liquidation-flash-verifier@sha256:9c8e010c5c25c60d1dfb49fae9ac380d6d8c32c6c3328e282d010991c4cb4ae9"
 network_mode = "public"
 build_timeout_sec = 1800.0
 cpus = 4
@@ -78,7 +78,7 @@ os = "linux"
 # Built by `just image` from environment/ (pinned by `just release`):
 # Harbor builds nothing when a trial starts. Building the tasks' images
 # there, at once, has put one task's files into another's image.
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-liquidation-flash"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-liquidation-flash@sha256:d2a7bfc115b466410b98c3f733ed4f95bb7ef326365f001208933418ad9ca293"
 # Agents need package registries and their model API. The chain they trade
 # on is a local, offline sandbox either way.
 network_mode = "public"

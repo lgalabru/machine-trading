@@ -55,7 +55,7 @@ user = "agent"
 [verifier.environment]
 # The verifier's image, built by `just image` from tests/: the runtime
 # image with this task's tests in it. The rest as [environment].
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-flash-crash-spcx-verifier"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-flash-crash-spcx-verifier@sha256:5c1aa3317bd95362434c1fa3eb06fe1c7105afdc805ea45d8c7a1636c84dbca0"
 network_mode = "public"
 build_timeout_sec = 1800.0
 cpus = 4
@@ -66,7 +66,7 @@ os = "linux"
 # Built by `just image` from environment/ (pinned by `just release`):
 # Harbor builds nothing when a trial starts. Building the tasks' images
 # there, at once, has put one task's files into another's image.
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-flash-crash-spcx"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-flash-crash-spcx@sha256:a5893c730abf181cee8e0aa8b8bd275a858c843020f71c51f46195e18a928586"
 # Agents need package registries and their model API. The chain they trade
 # on is a local, offline sandbox either way.
 network_mode = "public"
