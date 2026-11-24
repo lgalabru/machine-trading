@@ -424,7 +424,10 @@ struct Strategy {
     component_sha256: String,
     authority: Pubkey,
     keypair: Arc<Keypair>,
-    reader: PerpReader,
+    /// How its perp market is read. `None` for a strategy on pools.
+    reader: Option<PerpReader>,
+    /// The pools it trades, read once, for a strategy on pools.
+    pools: Option<Arc<Vec<crate::venue::amm::Pool>>>,
     /// The slot its market is read at: its step's.
     slot: Arc<AtomicU64>,
     cap: f64,
@@ -447,6 +450,9 @@ struct Inner {
     /// the exchange file couldn't be read for them: it steps on, blind to
     /// the tape.
     tape: Option<super::journal::TapeReader>,
+    /// A strategy on pools: its pools, read each step for its paper
+    /// wallet and its trigger.
+    pool_reads: Option<super::pooldesk::PoolReads>,
 }
 
 #[derive(Debug, Clone)]
@@ -510,46 +516,33 @@ impl Ctx {
         restored: Option<String>,
         slot: u64,
     ) -> Result<Strategy, ControlError> {
-        let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol).map_err(invalid)?;
+        // Before any file is read.
+        spec_limits(&spec).map_err(invalid)?;
         let component =
             std::fs::read(&spec.component).map_err(|e| unreadable(&spec.component, e))?;
         let component_sha256 = format!("{:x}", Sha256::digest(&component));
         let keypair = super::read_keypair(&spec.keypair)
             .map_err(|e| ControlError::new(ErrorCode::Unreadable, e))?;
         let authority = solana_signer::Signer::pubkey(&keypair);
-        let exchange =
-            std::fs::read_to_string(&spec.exchange).map_err(|e| unreadable(&spec.exchange, e))?;
-        let exchange =
-            serde_json::from_str(&exchange).map_err(|e| unreadable(&spec.exchange, e))?;
-        let reader = PerpReader::new(exchange, &spec.symbol, &authority).map_err(invalid)?;
-        // A shadow run's key may have no account on the venue: flat, since
-        // it sends nothing.
-        let reader = match spec.shadow {
-            true => reader.flat_without_account(),
-            false => reader,
+        let market = match &spec.pools {
+            Some(pools) => self.prepare_pools(&spec, pools).await?,
+            None => self.prepare_perp(&spec, &authority).await?,
         };
-        self.backfill(&reader)
-            .await
-            .map_err(|e| ControlError::new(ErrorCode::StartFailed, e))?;
         let strategy = Strategy {
             component_sha256: component_sha256.clone(),
             authority,
             keypair: Arc::new(keypair),
-            reader,
+            reader: market.reader,
+            pools: market.pools,
             slot: Arc::new(AtomicU64::new(slot)),
-            cap,
-            max_drawdown,
+            cap: market.cap,
+            max_drawdown: market.max_drawdown,
             inner: Arc::new(tokio::sync::Mutex::new(Inner {
                 bot: None,
                 k: 0,
                 observed: Observed::default(),
-                tape: match self.tape_reader(&spec) {
-                    Ok(reader) => Some(reader),
-                    Err(error) => {
-                        tracing::warn!(strategy = spec.name, %error, "its market's tape can't be read; it steps without it");
-                        None
-                    }
-                },
+                tape: market.tape,
+                pool_reads: market.pool_reads,
             })),
             stats: Arc::new(Mutex::new(Stats::added())),
             spec: spec.clone(),
@@ -582,6 +575,141 @@ impl Ctx {
         Ok(strategy)
     }
 
+    /// A perp strategy's market: its limits under the mandate, its reader
+    /// with its accounts watched and read, and its tape.
+    async fn prepare_perp(
+        &self,
+        spec: &AddStrategy,
+        authority: &Pubkey,
+    ) -> Result<PreparedMarket, ControlError> {
+        let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol).map_err(invalid)?;
+        let exchange =
+            std::fs::read_to_string(&spec.exchange).map_err(|e| unreadable(&spec.exchange, e))?;
+        let exchange =
+            serde_json::from_str(&exchange).map_err(|e| unreadable(&spec.exchange, e))?;
+        let reader = PerpReader::new(exchange, &spec.symbol, authority).map_err(invalid)?;
+        // A shadow run's key may have no account on the venue: flat, since
+        // it sends nothing.
+        let reader = match spec.shadow {
+            true => reader.flat_without_account(),
+            false => reader,
+        };
+        self.backfill(&reader)
+            .await
+            .map_err(|e| ControlError::new(ErrorCode::StartFailed, e))?;
+        let tape = match self.tape_reader(spec) {
+            Ok(reader) => Some(reader),
+            Err(error) => {
+                tracing::warn!(strategy = spec.name, %error, "its market's tape can't be read; it steps without it");
+                None
+            }
+        };
+        Ok(PreparedMarket {
+            cap,
+            max_drawdown,
+            reader: Some(reader),
+            pools: None,
+            tape,
+            pool_reads: None,
+        })
+    }
+
+    /// A pool strategy's market: its pools, read once from the node, and
+    /// what reads them each step. It holds `paper_base` on paper.
+    async fn prepare_pools(
+        &self,
+        spec: &AddStrategy,
+        pools_spec: &mtx_core::control::PoolsSpec,
+    ) -> Result<PreparedMarket, ControlError> {
+        let chain: Arc<dyn mtx_kit::chain::ChainClient> = Arc::new(RpcChainClient::with_timeout(
+            &self.config.rpc_url,
+            BACKFILL_TIMEOUT,
+        ));
+        let pools = super::pooldesk::pools(&*chain, &pools_spec.venues)
+            .await
+            .map_err(|e| ControlError::new(ErrorCode::StartFailed, e))?;
+        let pools = Arc::new(pools);
+        let (cap, max_drawdown) = spec_limits(spec).map_err(invalid)?;
+        Ok(PreparedMarket {
+            cap,
+            max_drawdown,
+            reader: None,
+            pools: Some(pools.clone()),
+            tape: None,
+            pool_reads: Some(super::pooldesk::PoolReads::new(
+                pools,
+                chain,
+                pools_spec.clone(),
+            )),
+        })
+    }
+
+    /// Start a pool strategy's component: a seat on each pool through the
+    /// shadow chain, and the paper wallet at the pools' prices now.
+    async fn start_pool_bot(
+        &self,
+        spec: &AddStrategy,
+        strategy: &Strategy,
+        pools: &[crate::venue::amm::Pool],
+        log: std::fs::File,
+        clock: Clock,
+        end_slot: u64,
+    ) -> Result<WasmBot, String> {
+        let pools_spec = spec
+            .pools
+            .as_ref()
+            .expect("a pool strategy has its pools' spec");
+        let sends = self
+            .sends(spec)?
+            .ok_or("a strategy on pools sends through a shadow chain")?;
+        // The wallet it starts with, from a reading of its own: the
+        // strategy's lock may be held by whoever starts it.
+        let chain: Arc<dyn mtx_kit::chain::ChainClient> = Arc::new(RpcChainClient::with_timeout(
+            &self.config.rpc_url,
+            BACKFILL_TIMEOUT,
+        ));
+        let shared = strategy
+            .pools
+            .clone()
+            .expect("a pool strategy has its pools");
+        let mut reads = super::pooldesk::PoolReads::new(shared, chain, pools_spec.clone());
+        let (wallet, _) = reads.step(strategy.slot.load(Ordering::Acquire)).await?;
+        assert_eq!(
+            wallet.base, pools_spec.paper_base,
+            "the paper wallet is the spec's"
+        );
+        bot::start_pools(bot::PoolBotSpec {
+            component: &spec.component,
+            rpc_url: &self.config.rpc_url,
+            keypair: &strategy.keypair,
+            symbol: &spec.symbol,
+            mandate: &spec.mandate,
+            clock,
+            end_slot,
+            cap: strategy.cap,
+            max_drawdown: strategy.max_drawdown,
+            pools,
+            wallet,
+            log: Box::new(log),
+            sends,
+            references: (!self.config.references.is_empty())
+                .then(|| self.shared.references.clone()),
+            // Its steps are journaled; a pool has no book to fill on
+            // paper.
+            observer: Some(Arc::new(
+                super::journal::Journal::open(
+                    &self.config.logs,
+                    &spec.name,
+                    false,
+                    None,
+                    self.shared.events.clone(),
+                )?
+                .behind()?,
+            )),
+        })
+        .await
+    }
+
     async fn start_bot(
         &self,
         spec: &AddStrategy,
@@ -603,6 +731,24 @@ impl Ctx {
             Some(_) => end_slot.saturating_sub(start_slot) / spec.slots_per_step,
             None => NO_TERM_STEPS,
         };
+        if let Some(pools) = &strategy.pools {
+            let clock = Clock {
+                seed: mtx_core::turns::scenario_seed(&spec.name),
+                steps,
+                slots_per_step: spec.slots_per_step,
+                start_slot,
+                vars: Vec::new(),
+                reports: mtx_kit::Reports::default(),
+                step_deadline: Some(Duration::from_millis(self.config.step_deadline_ms)),
+            };
+            return self
+                .start_pool_bot(spec, strategy, pools, log, clock, end_slot)
+                .await;
+        }
+        let reader = strategy
+            .reader
+            .clone()
+            .ok_or("a perp strategy reads its market")?;
         // A shadow reads its strict paper book's position as its own.
         let paper_position = spec
             .shadow
@@ -630,7 +776,7 @@ impl Ctx {
             end_slot,
             cap: strategy.cap,
             max_drawdown: strategy.max_drawdown,
-            reader: strategy.reader.clone(),
+            reader,
             cache: self.shared.cache.clone(),
             slot: strategy.slot.clone(),
             readings: self.shared.readings.clone(),
@@ -738,6 +884,17 @@ impl Ctx {
         lock(&self.shared.cache).merge(found);
         Ok(())
     }
+}
+
+/// What a strategy trades on, as its kind prepares it: a perp's reader
+/// and tape, or a pool strategy's pools.
+struct PreparedMarket {
+    cap: f64,
+    max_drawdown: f64,
+    reader: Option<PerpReader>,
+    pools: Option<Arc<Vec<crate::venue::amm::Pool>>>,
+    tape: Option<super::journal::TapeReader>,
+    pool_reads: Option<super::pooldesk::PoolReads>,
 }
 
 /// An `add` prepared off the strategies' loop, and where its answer goes.
@@ -1435,6 +1592,11 @@ impl Manager {
         let Some(bot) = inner.bot.as_mut() else {
             return Ok(());
         };
+        // A strategy on pools rests no order and holds its wallet on
+        // paper: nothing to cancel, nothing to close.
+        if strategy.pools.is_some() {
+            return Ok(());
+        }
         match orders {
             OnPause::Keep => Ok(()),
             OnPause::Cancel => cancelled(bot.cancel_all().await),
@@ -1463,12 +1625,11 @@ impl Manager {
     /// Restart `name` under `mandate`, paused or running as it was.
     async fn change_mandate(&mut self, name: &str, mandate: Mandate) -> Done {
         mandate.validate().map_err(invalid)?;
-        let (cap, max_drawdown) =
-            limits(&mandate, &self.get(name)?.spec.symbol).map_err(invalid)?;
         let start_slot = self.slot;
         let strategy = self.get(name)?;
         let mut spec = strategy.spec.clone();
         spec.mandate = mandate;
+        let (cap, max_drawdown) = spec_limits(&spec).map_err(invalid)?;
         let mut inner = strategy.inner.lock().await;
         if let Some(mut bot) = inner.bot.take() {
             bot.end().await;
@@ -1597,7 +1758,7 @@ impl Manager {
             ));
         }
         spec.mandate.validate().map_err(invalid)?;
-        limits(&spec.mandate, &spec.symbol).map_err(invalid)?;
+        spec_limits(spec).map_err(invalid)?;
         Ok(())
     }
 
@@ -1774,19 +1935,31 @@ impl StepTask {
     /// mandate on what it left: a breach pauses it, cancels its orders,
     /// and closes its position if its spec says so.
     async fn run(self, mut inner: tokio::sync::OwnedMutexGuard<Inner>) {
-        let inner = &mut *inner;
-        let Some(bot) = inner.bot.as_mut() else {
+        let Inner {
+            bot,
+            k,
+            observed,
+            tape,
+            pool_reads,
+        } = &mut *inner;
+        let Some(bot) = bot.as_mut() else {
             return;
         };
-        let k = inner.k;
-        let stepped = self.turn(bot, inner.tape.as_mut(), k).await;
-        inner.k += 1;
-        if let Some(market) = &stepped.market {
-            observe(&mut inner.observed, &self.instrument, market);
+        let on_pools = pool_reads.is_some();
+        let stepped = self.turn(bot, tape.as_mut(), pool_reads.as_mut(), *k).await;
+        let k = {
+            *k += 1;
+            *k - 1
+        };
+        // A pool strategy holds a paper wallet that never moves and rests
+        // no order: nothing of it for the enforcer to see on a perp.
+        if let (Some(market), false) = (&stepped.market, on_pools) {
+            observe(observed, &self.instrument, market);
         }
-        let breach = self.mandate.audit(&inner.observed);
+        let breach = self.mandate.audit(observed);
         let paused = self.record(bot, k, &stepped, breach.as_ref());
-        if paused {
+        // On pools there is no order to cancel and no position to close.
+        if paused && !on_pools {
             for failed in bot.cancel_all().await {
                 tracing::warn!(name = self.name, failed, "an order couldn't be cancelled");
             }
@@ -1804,6 +1977,7 @@ impl StepTask {
         &self,
         bot: &mut WasmBot,
         tape: Option<&mut super::journal::TapeReader>,
+        pool_reads: Option<&mut super::pooldesk::PoolReads>,
         k: u64,
     ) -> Stepped {
         let settling = std::time::Instant::now();
@@ -1822,7 +1996,21 @@ impl StepTask {
             step.tape =
                 super::journal::step_tape(&tape.trades(&self.name), &self.instrument.to_string());
         }
-        let answered = bot.turn(&step, None).await;
+        // A pool strategy's wallet and trigger; without a reading of its
+        // pools it skips the step, as a session without its wallet does.
+        let mut wallet = None;
+        if let Some(reads) = pool_reads {
+            match reads.step(self.slot).await {
+                Ok((read, trigger)) => {
+                    wallet = Some(read);
+                    step.trigger = trigger;
+                }
+                Err(error) => {
+                    tracing::warn!(name = self.name, slot = self.slot, %error, "its pools couldn't be read")
+                }
+            }
+        }
+        let answered = bot.turn(&step, wallet.as_ref()).await;
         let ended = std::time::Instant::now();
         let took_ms = u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let timings = step_timings(self.clock, self.woke, settle_us, bot.last_timings(), ended);
@@ -1985,7 +2173,7 @@ fn held_status(stored: &Stored, why: &Option<String>) -> StrategyStatus {
     // A held strategy's mandate passed its add's check once; one that no
     // longer reads (a mandate format that changed since) shows no limits,
     // and it is held all the same, never run.
-    let (cap, max_drawdown) = limits(&spec.mandate, &spec.symbol).unwrap_or((0.0, 0.0));
+    let (cap, max_drawdown) = spec_limits(spec).unwrap_or((0.0, 0.0));
     StrategyStatus {
         name: spec.name.clone(),
         state: StrategyState::Stopped {
@@ -2021,6 +2209,30 @@ fn limits(mandate: &Mandate, symbol: &str) -> Result<(f64, f64), String> {
     Ok((
         allowance.max_position,
         mandate.limits.max_drawdown_usd.unwrap_or(f64::INFINITY),
+    ))
+}
+
+/// A strategy's position cap and drawdown limit under its mandate, or why
+/// it can't be hosted. A perp strategy's are its market's allowance; a
+/// strategy on pools holds its paper wallet, in a shadow run only.
+fn spec_limits(spec: &AddStrategy) -> Result<(f64, f64), String> {
+    let Some(pools) = &spec.pools else {
+        return limits(&spec.mandate, &spec.symbol);
+    };
+    if !spec.shadow {
+        return Err(
+            "a strategy on pools runs in shadow only: the runtime has no way to send an atomic \
+             group to a block builder yet"
+                .into(),
+        );
+    }
+    super::pooldesk::validate(pools)?;
+    Ok((
+        pools.paper_base,
+        spec.mandate
+            .limits
+            .max_drawdown_usd
+            .unwrap_or(f64::INFINITY),
     ))
 }
 
@@ -2176,6 +2388,7 @@ mod tests {
                     run: true,
                     close_on_breach: false,
                     shadow: false,
+                    pools: None,
                 },
                 component_sha256: "ab".into(),
             }],
@@ -2199,7 +2412,45 @@ mod tests {
             run: true,
             close_on_breach: false,
             shadow: false,
+            pools: None,
         }
+    }
+
+    /// `spec` on two pools, holding 50 on paper.
+    fn on_pools(mut spec: AddStrategy, shadow: bool) -> AddStrategy {
+        let pool =
+            |address: &str| -> InstrumentRef { format!("orca:amm:{address}").parse().unwrap() };
+        spec.shadow = shadow;
+        spec.pools = Some(mtx_core::control::PoolsSpec {
+            venues: vec![
+                pool("Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"),
+                pool("Hp53XEtt4S8SvPCXarsLSdGfZBuUr5mMmZmX2DRNXQKp"),
+            ],
+            paper_base: 50.0,
+            trigger_bps: 10.0,
+        });
+        spec
+    }
+
+    #[test]
+    fn a_strategy_on_pools_holds_its_paper_wallet_and_only_in_shadow() {
+        // A perp's limits are its market's allowance, as ever.
+        assert_eq!(spec_limits(&spec("a")), Ok((1.0, 100.0)));
+        // On pools: the paper wallet and the mandate's drawdown, whatever
+        // the mandate says of the perp.
+        assert_eq!(spec_limits(&on_pools(spec("a"), true)), Ok((50.0, 100.0)));
+        let refused = spec_limits(&on_pools(spec("a"), false)).unwrap_err();
+        assert!(refused.contains("shadow only"), "{refused}");
+        let mut one_pool = on_pools(spec("a"), true);
+        one_pool.pools.as_mut().unwrap().venues.truncate(1);
+        assert!(spec_limits(&one_pool).is_err());
+        // The add's check refuses it the same, before anything is read.
+        let manager = manager();
+        assert_eq!(manager.check_add(&on_pools(spec("a"), true), false), Ok(()));
+        let refused = manager
+            .check_add(&on_pools(spec("a"), false), false)
+            .unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Invalid);
     }
 
     fn manager() -> Manager {
