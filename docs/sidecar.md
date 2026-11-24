@@ -71,6 +71,16 @@ Beside them, what the runtime's speed depends on:
   quoted with the kit's exact quotes and told as a `pool`. A rung is the
   exact swap that moves the price by that many bps; a side's ladder ends
   where the pool can't fill a rung. The quotes use the host's clock.
+- `lending` (none): lending obligations watched without touching them,
+  for a sidecar that looks for liquidations (`live::lending`):
+  `{"market": "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF", "obligations": "/home/sol/mtx/obligations.json", "obligations_max": 2048, "every_slots": 1500}`.
+  The file names the obligations; `ops/agave/scan-obligations.py` writes
+  it from one scan of the node (minutes on a node with no account index),
+  the least healthy first. Each joins the cache with the reserves it
+  names. After the steps, a reserve whose price changed is told as a
+  `reserve`, and an obligation a write changed, or whose turn it is (all
+  of them once in `every_slots`, at least 150), as an `obligation`.
+  4,096 obligations and 128 reserves at most.
 - `tpu.preflight` (false): a live strategy over the TPU sends without
   waiting for its order to land (its `fate` comes on the event stream),
   and without the node's simulation first unless this is on: a round trip
@@ -107,6 +117,8 @@ on the same host, a sidecar reads its own delay off it) and an `event`.
 | `command` | a command that changes something was done or refused | the command (an enum), and the refusal (`code`, `error`) if it was |
 | `lagged` | this connection fell behind and lost events | how many: read `status` again |
 | `quote` | a watched market was read (`control.watch`) | symbol, slot, best bid and ask (null on an empty side), mark |
+| `obligation` | a watched obligation was written, or it is its turn (`control.lending`) | venue, address, market, slot, the slot of the write read, the slot the program last refreshed it in, its debt at the borrow factors and its liquidation limit in dollars, and its deposits and borrows (mint, whole tokens, value at that refresh) |
+| `reserve` | a watched obligation's reserve changed price | venue, address, market, mint, slot, the slot of the write read, dollars a whole token, the collateral's least liquidation bonus in bps |
 | `pool` | a watched pool was read (`control.pools`): a write changed it, or it is due again | venue, address, slot, the slot of the write read, both mints, mid, fee in bps, liquidity, a ladder of exact swaps each way (bps moved, whole tokens in and out), microseconds the read took |
 
 **It never slows the runtime.** An event is serialized once, only when

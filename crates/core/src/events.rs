@@ -253,6 +253,53 @@ pub enum Event {
         /// How long the read and its quotes took, in microseconds.
         read_us: u64,
     },
+    /// A lending obligation the runtime watches without touching it
+    /// (`control.lending`), told when a write changes it and every so
+    /// often besides: what it holds and owes, and where the program last
+    /// put its debt against its liquidation limit. A sidecar revalues it
+    /// at the prices of the moment, the oracle's or one upstream of it.
+    Obligation {
+        /// The lending program, as venues name it: `kamino`.
+        venue: String,
+        address: String,
+        market: String,
+        /// The slot the runtime read it in, the slot of the write it read,
+        /// and the slot the program last refreshed its values in.
+        slot: u64,
+        written_slot: u64,
+        refreshed_slot: u64,
+        /// Its debt at each asset's borrow factor, and the debt past which
+        /// it is liquidated, in dollars, as of `refreshed_slot`.
+        debt_usd: f64,
+        limit_usd: f64,
+        deposits: Vec<LendingLeg>,
+        borrows: Vec<LendingLeg>,
+    },
+    /// A reserve of a watched obligation, told when its price changes: the
+    /// price the program reads from its oracle, and what a liquidation of
+    /// its collateral pays.
+    Reserve {
+        venue: String,
+        address: String,
+        market: String,
+        mint: String,
+        slot: u64,
+        written_slot: u64,
+        /// Dollars a whole token, as of the reserve's last refresh.
+        price: f64,
+        /// The least bonus a liquidator of this collateral is paid, in bps.
+        liquidation_bonus_bps_min: f64,
+    },
+}
+
+/// One asset an obligation deposited or borrowed: whole tokens (a
+/// deposit's collateral at the reserve's exchange rate, a debt with its
+/// interest) and their value when the obligation was last refreshed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LendingLeg {
+    pub mint: String,
+    pub units: f64,
+    pub value_usd: f64,
 }
 
 /// One exact swap through a pool as it stood: the swap that moves its
