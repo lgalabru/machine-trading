@@ -33,6 +33,8 @@ fn status() -> StrategyStatus {
         position: Some(0.0),
         pnl: Some(0.0),
         drawdown: Some(0.0),
+        family: None,
+        component: None,
     }
 }
 
@@ -267,6 +269,26 @@ fn an_event_this_build_does_not_know_is_an_error_a_reader_can_skip() {
 }
 
 /// The upgrade command, as a sidecar writes it.
+/// A strategy's family and component are told when they are known, and
+/// absent otherwise: an old reader sees the status it always saw.
+#[test]
+fn a_status_tells_its_family_and_component_only_when_it_has_them() {
+    let plain = serde_json::to_value(status()).unwrap();
+    assert!(plain.get("family").is_none() && plain.get("component").is_none());
+    let named = StrategyStatus {
+        family: Some("book-maker".into()),
+        component: Some("ab12".into()),
+        ..status()
+    };
+    let line = serde_json::to_value(&named).unwrap();
+    assert_eq!(line["family"], "book-maker");
+    assert_eq!(line["component"], "ab12");
+    let back: StrategyStatus = serde_json::from_value(line).unwrap();
+    assert_eq!(back, named);
+    let old: StrategyStatus = serde_json::from_value(plain).unwrap();
+    assert_eq!(old, status());
+}
+
 #[test]
 fn an_upgrade_is_the_line_the_contract_says() {
     use mtx_core::control::Command;

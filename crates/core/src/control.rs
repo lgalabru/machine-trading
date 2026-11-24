@@ -65,7 +65,15 @@ pub struct AddStrategy {
     /// than a perp: an arbitrage across them. In a shadow run only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pools: Option<PoolsSpec>,
+    /// The family of strategies it is a variant of (`book-maker`), as
+    /// whoever adds it names it: what a sidecar groups strategies by. The
+    /// runtime only carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
 }
+
+/// The most bytes of a family's name: a label a page shows.
+pub const FAMILY_BYTES_MAX: usize = 64;
 
 fn is_no_path(path: &std::path::Path) -> bool {
     path.as_os_str().is_empty()
@@ -299,6 +307,13 @@ pub struct StrategyStatus {
     pub position: Option<f64>,
     pub pnl: Option<f64>,
     pub drawdown: Option<f64>,
+    /// The family it was added as a variant of, if it was named one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Its component's SHA-256, in hex: two strategies with the same one
+    /// run the same code, whatever they are called.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
 }
 
 /// The feed the runtime reads the chain from, as `mtx live status` shows

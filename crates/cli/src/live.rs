@@ -76,6 +76,10 @@ pub enum LiveCommand {
         /// step's trigger.
         #[arg(long, requires = "pool", default_value_t = 10.0)]
         trigger_bps: f64,
+        /// The family of strategies it is a variant of (`book-maker`): what
+        /// a sidecar groups strategies by.
+        #[arg(long)]
+        family: Option<String>,
         /// Its market, as Phoenix names it (`SOL`).
         #[arg(long)]
         symbol: String,
@@ -458,6 +462,7 @@ fn to_request(command: LiveCommand) -> Result<Command> {
             pool,
             paper_base,
             trigger_bps,
+            family,
             symbol,
             slots_per_step,
             run,
@@ -483,6 +488,7 @@ fn to_request(command: LiveCommand) -> Result<Command> {
                 paper_base,
                 trigger_bps,
             }),
+            family,
         }),
         LiveCommand::Remove { name } => Command::Remove { name },
         LiveCommand::Upgrade { name, component } => Command::Upgrade { name, component },
@@ -577,6 +583,8 @@ mod tests {
             position: Some(0.5),
             pnl: None,
             drawdown: None,
+            family: None,
+            component: None,
         };
         let table = table(&[status]);
         assert!(table.contains("paused"), "{table}");

@@ -214,6 +214,11 @@ the code, a person reads the error. A code a newer runtime adds reads as
   and written to `<name>.shadow.jsonl`, and sent nowhere. Without `shadow`
   it is refused (`invalid`): nothing here sends a group to a block builder
   yet.
+- `add` may name the `family` the strategy is a variant of (`book-maker`,
+  64 bytes of text at most). The runtime only carries it: `status` gives
+  it back with each strategy, beside `component`, its component's SHA-256.
+  A sidecar groups the runtime's strategies into families by either: the
+  name where it was given, the code where it wasn't.
 - `upgrade` swaps a strategy's component for a new build, with no restart
   of anything else: it ends, and starts again on the new component under
   the same name, key and mandate, paused or running as it was. If the new
