@@ -212,7 +212,29 @@ class Hermes(HarborHermes):
             "external_dirs": [],
             "project_discovery": False,
         }
+        enable_claude_prompt_caching(config)
         return yaml.dump(config, default_flow_style=False)
+
+
+def enable_claude_prompt_caching(config: dict[str, Any]) -> None:
+    """Ask Hermes to mark Claude's prompt cache on a custom route.
+
+    Hermes adds Anthropic `cache_control` markers on an OpenAI-wire route only
+    when it recognises the host (OpenRouter, Nous Portal); behind the key
+    proxy it sees a bench address, sends none, and every turn bills the whole
+    conversation as fresh input. In 0.14.0's first hours Claude Opus, Sonnet
+    and Fable 5.1 read 0.7-1.15M uncached tokens a trial through Nous, where
+    0.12.0 (Anthropic's own wire, which Hermes always caches) read ~2M from
+    the cache. The per-model `prompt_caching` capability turns the markers on
+    for the route; it changes what a call costs, not what the model sees.
+    """
+    for provider in config.get("custom_providers") or []:
+        model = provider.get("model")
+        if not isinstance(model, str) or "claude" not in model.lower():
+            continue
+        models = provider.setdefault("models", {})
+        assert isinstance(models, dict), "custom_providers[].models is a mapping"
+        models.setdefault(model, {})["prompt_caching"] = True
 
     async def _inventory(self, environment: BaseEnvironment, phase: str) -> str:
         result = await self.exec_as_agent(
