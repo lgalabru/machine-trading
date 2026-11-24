@@ -113,7 +113,9 @@ jobs:
   rust:
     needs: ci-image
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # A run with no build cache takes about 80 minutes, then saves a 6 GB
+    # cache: at 90 the save was cut off, so the next run was as cold.
+    timeout-minutes: 150
     container:
       image: ${{ needs.ci-image.outputs.image }}
       # The runner's own disk, so the first step can clear it.
