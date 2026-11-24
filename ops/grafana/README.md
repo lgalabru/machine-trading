@@ -104,6 +104,8 @@ histograms become `_bucket`, `_sum` and `_count`.
 | `mtx_pool_desk_triggers` | counter | | steps a pool strategy was told a trigger |
 | `mtx_lending_tell_us` | histogram | | a slot's look at the watched obligations and reserves, when it told any |
 | `mtx_lending_events` | counter | | `obligation` and `reserve` events told |
+| `mtx_strategy_reads_refused` | counter | method | a strategy's read refused: it would scan the node's accounts |
+| `mtx_strategy_reads_late` | counter | method | a strategy's read the node didn't answer within the step's deadline |
 | `mtx_pool_read_failures` | counter | pool | watched pools that couldn't be assembled, or whose accounts weren't found |
 | `mtx_journal_dropped` | counter | strategy | step journal lines dropped because the journal's thread fell behind |
 | `mtx_enforcer_pauses` | counter | strategy, reason | `mandate` (a breach) or `feed` (stale) |

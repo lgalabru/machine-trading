@@ -31,6 +31,83 @@ use crate::{
     },
 };
 
+/// The reads that make a node list accounts by their owner. Without an
+/// account index it reads every account for each one: on mtx-alpha, 55
+/// minutes (2026-11-24, a strategy's `getTokenAccountsByOwner`).
+pub const SCANS: [&str; 2] = ["getProgramAccounts", "getTokenAccountsByOwner"];
+
+/// A strategy's read may take this long where its step has no deadline:
+/// a slot, past which what it read is stale.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+
+/// A hosted strategy's own reads of the node (its `rpc` import), on a
+/// chain that doesn't wait for it:
+///
+/// - each ends within the step's deadline, answered or not. A step's
+///   deadline can't interrupt a read the host is making for it, so a read
+///   the node never answers held the step for as long: an hour, once.
+/// - a read that lists accounts by owner ([`SCANS`]) is refused unless
+///   the node is said to have an index for it (`control.rpc_scans`):
+///   giving up on it wouldn't stop the node from scanning.
+pub struct LiveReads {
+    inner: HttpReads,
+    timeout: std::time::Duration,
+    scans: bool,
+}
+
+impl LiveReads {
+    /// Reads of the node at `url`, each within `deadline` (a slot without
+    /// one), with `scans` allowed or not.
+    pub fn boxed(
+        url: &str,
+        deadline: Option<std::time::Duration>,
+        scans: bool,
+    ) -> Box<dyn crate::host::Reads> {
+        let timeout = deadline.unwrap_or(READ_TIMEOUT);
+        assert!(!timeout.is_zero(), "a read takes some time");
+        Box::new(Self {
+            inner: HttpReads::new(url),
+            timeout,
+            scans,
+        })
+    }
+}
+
+#[async_trait]
+impl crate::host::Reads for LiveReads {
+    async fn rpc(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        if !self.scans && SCANS.contains(&method) {
+            tracing::warn!(
+                counter.mtx_strategy_reads_refused = 1_u64,
+                method,
+                "a strategy's read would scan the node's accounts; refused"
+            );
+            return Err(format!(
+                "{method} is refused here: this node has no account index, and would read every \
+                 account to answer"
+            ));
+        }
+        match tokio::time::timeout(self.timeout, self.inner.rpc(method, params)).await {
+            Ok(answer) => answer,
+            Err(_) => {
+                tracing::warn!(
+                    counter.mtx_strategy_reads_late = 1_u64,
+                    method,
+                    "a strategy's read wasn't answered in time"
+                );
+                Err(format!(
+                    "{method} wasn't answered within {} ms",
+                    self.timeout.as_millis()
+                ))
+            }
+        }
+    }
+}
+
 /// Everything a hosted strategy is started with.
 pub struct BotSpec<'a> {
     pub component: &'a Path,
@@ -67,6 +144,9 @@ pub struct BotSpec<'a> {
     /// `sends`, a live strategy fires and forgets: a step can't wait on
     /// each of its orders.
     pub dispatch: mtx_kit::protocols::phoenix::eternal::Dispatch,
+    /// What answers its own reads of the node: [`LiveReads`] on a chain
+    /// that doesn't wait for it, the node itself in a session.
+    pub reads: Box<dyn crate::host::Reads>,
 }
 
 /// Everything a strategy on pools is started with (`live::pooldesk`).
@@ -91,6 +171,9 @@ pub struct PoolBotSpec<'a> {
     pub sends: Arc<dyn mtx_kit::chain::ChainClient>,
     pub observer: Option<Arc<dyn crate::desk::StepObserver>>,
     pub references: Option<Arc<super::reference::Latest>>,
+    /// What answers its own reads of the node: [`LiveReads`] on a chain
+    /// that doesn't wait for it, the node itself in a session.
+    pub reads: Box<dyn crate::host::Reads>,
 }
 
 /// Load a pool strategy's component and call its `start`: the desk a
@@ -125,7 +208,7 @@ pub async fn start_pools(spec: PoolBotSpec<'_>) -> Result<WasmBot, String> {
         .collect();
     WasmBot::<NoRawSends>::start(
         spec.component,
-        HttpReads::boxed(spec.rpc_url),
+        spec.reads,
         spec.clock,
         Terms {
             end_slot: spec.end_slot,
@@ -213,7 +296,7 @@ pub async fn start(spec: BotSpec<'_>) -> Result<WasmBot, String> {
     );
     WasmBot::<NoRawSends>::start(
         spec.component,
-        HttpReads::boxed(spec.rpc_url),
+        spec.reads,
         spec.clock,
         Terms {
             end_slot: spec.end_slot,
@@ -373,5 +456,60 @@ impl PerpReads for CacheReads {
             size: reading.position,
             entry_usd: reading.entry_usd,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_read_that_would_scan_the_node_is_refused_before_it_is_sent() {
+        // Nothing listens there: a refusal that reached the node would say
+        // so instead.
+        let mut reads = LiveReads::boxed(
+            "http://127.0.0.1:9",
+            Some(Duration::from_millis(200)),
+            false,
+        );
+        for method in SCANS {
+            let refused = reads.rpc(method, serde_json::json!([])).await.unwrap_err();
+            assert!(refused.contains("no account index"), "{refused}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_read_the_node_never_answers_ends_at_the_deadline() {
+        // A listener that accepts and says nothing, as a node deep in a
+        // scan does.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let held = std::thread::spawn(move || {
+            let accepted = listener.accept();
+            std::thread::sleep(Duration::from_millis(600));
+            drop(accepted);
+        });
+        let started = std::time::Instant::now();
+        let mut reads = LiveReads::boxed(&url, Some(Duration::from_millis(100)), true);
+        let late = reads
+            .rpc("getSlot", serde_json::json!([]))
+            .await
+            .unwrap_err();
+        assert!(late.contains("within 100 ms"), "{late}");
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "{:?}",
+            started.elapsed()
+        );
+        // With scans allowed, a listing is sent like any read, and ends
+        // the same way.
+        let late = reads
+            .rpc(SCANS[0], serde_json::json!([]))
+            .await
+            .unwrap_err();
+        assert!(late.contains("within 100 ms"), "{late}");
+        held.join().unwrap();
     }
 }

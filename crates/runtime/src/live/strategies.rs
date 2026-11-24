@@ -100,6 +100,11 @@ pub struct ControlConfig {
     /// write changes it (`live::pools`): none by default.
     #[serde(default)]
     pub pools: Option<super::pools::PoolsConfig>,
+    /// Whether the node has an account index, so that a strategy's own
+    /// reads may list accounts by owner (`live::bot::SCANS`). Without one
+    /// each such read makes the node read every account: refused.
+    #[serde(default)]
+    pub rpc_scans: bool,
     /// Lending obligations watched without touching them, each told as an
     /// `obligation` and its reserves' prices as `reserve`
     /// (`live::lending`): none by default.
@@ -698,6 +703,7 @@ impl Ctx {
             wallet,
             log: Box::new(log),
             sends,
+            reads: self.reads(),
             references: (!self.config.references.is_empty())
                 .then(|| self.shared.references.clone()),
             // Its steps are journaled; a pool has no book to fill on
@@ -792,6 +798,7 @@ impl Ctx {
             references: (!self.config.references.is_empty())
                 .then(|| self.shared.references.clone()),
             dispatch: self.dispatch(spec),
+            reads: self.reads(),
             observer: Some(Arc::new(
                 super::journal::Journal::open(
                     &self.config.logs,
@@ -805,6 +812,17 @@ impl Ctx {
             )),
         })
         .await
+    }
+
+    /// What answers a strategy's own reads of the node: within its step's
+    /// deadline, and never one that would scan the node's accounts unless
+    /// the configuration says it has an index.
+    fn reads(&self) -> Box<dyn crate::host::Reads> {
+        bot::LiveReads::boxed(
+            &self.config.rpc_url,
+            Some(Duration::from_millis(self.config.step_deadline_ms)),
+            self.config.rpc_scans,
+        )
     }
 
     /// Where a strategy's journal reads its market's trades.
@@ -854,13 +872,16 @@ impl Ctx {
         let rpc = || RpcChainClient::new(self.config.rpc_url.clone());
         if spec.shadow {
             let journal = self.config.logs.join(format!("{}.shadow.jsonl", spec.name));
-            return Ok(Some(Arc::new(super::shadow::ShadowChain::live(
-                rpc(),
-                &journal,
-                &spec.name,
-                self.shared.blockhash.clone(),
-                Some(self.shared.progress.clone()),
-            )?)));
+            return Ok(Some(Arc::new(
+                super::shadow::ShadowChain::live(
+                    rpc(),
+                    &journal,
+                    &spec.name,
+                    self.shared.blockhash.clone(),
+                    Some(self.shared.progress.clone()),
+                )?
+                .scanning(self.config.rpc_scans),
+            )));
         }
         Ok(self.tpu.as_ref().map(|tpu| {
             Arc::new(super::tpu::TpuChainClient::new(

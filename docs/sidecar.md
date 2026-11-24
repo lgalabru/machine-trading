@@ -71,6 +71,12 @@ Beside them, what the runtime's speed depends on:
   quoted with the kit's exact quotes and told as a `pool`. A rung is the
   exact swap that moves the price by that many bps; a side's ladder ends
   where the pool can't fill a rung. The quotes use the host's clock.
+- `rpc_scans` (false): whether the node has an account index. Without
+  one, a strategy's own read that lists accounts by owner
+  (`getProgramAccounts`, `getTokenAccountsByOwner`) makes the node read
+  every account, an hour on mtx-alpha: such a read is refused, and the
+  strategy is told why. Every other read of a strategy's ends within its
+  step's deadline, answered or not.
 - `lending` (none): lending obligations watched without touching them,
   for a sidecar that looks for liquidations (`live::lending`):
   `{"market": "7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF", "obligations": "/home/sol/mtx/obligations.json", "obligations_max": 2048, "every_slots": 1500}`.
