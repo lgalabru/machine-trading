@@ -278,7 +278,11 @@ function tocHtml(toc) {
   const items = toc
     .map((t) => {
       const number = t.number ? `<span class="number">${t.number}</span> ` : "";
-      return `<li class="depth-${t.depth}"><a href="#${t.id}">${number}${t.html.replace(/<\/?a[^>]*>/g, "")}</a></li>`;
+      // The title is one element: on a wide page the link is a flex row
+      // (number, title), and a title with code in it must not be split
+      // into a column a piece.
+      const title = t.html.replace(/<\/?a[^>]*>/g, "");
+      return `<li class="depth-${t.depth}"><a href="#${t.id}">${number}<span class="title">${title}</span></a></li>`;
     })
     .join("");
   return `<nav class="toc"><h2 id="toc">Table of Contents</h2><ul>${items}</ul></nav>`;
