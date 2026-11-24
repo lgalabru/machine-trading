@@ -98,8 +98,11 @@ def parse(body: bytes) -> dict:
     return payload
 
 
-def apply(api: str, payload: dict, model: str, openrouter: bool) -> bytes:
-    """The body to forward for a model call on `api` to `model`, or BodyRefused."""
+def apply(api: str, payload: dict, model: str, openrouter: bool, max_tokens: int | None = None) -> bytes:
+    """The body to forward for a model call on `api` to `model`, or BodyRefused.
+    `max_tokens` (a route's, from models.toml) is the output ceiling a chat
+    call gets when it names none: an x402 provider quotes, and caps, a call
+    that names none at its own default."""
     if payload.get("model") != model:
         raise BodyRefused("the body's model isn't this route's")
     for name in list(payload):
@@ -129,6 +132,8 @@ def apply(api: str, payload: dict, model: str, openrouter: bool) -> bytes:
             raise BodyRefused("background responses aren't allowed")
         payload.pop("background", None)
         payload["store"] = False
+    if max_tokens and api == "chat" and "max_tokens" not in payload and "max_completion_tokens" not in payload:
+        payload["max_tokens"] = max_tokens
     if openrouter and payload.get("reasoning_effort") and "reasoning" not in payload:
         payload["reasoning"] = {"effort": payload.pop("reasoning_effort")}
     return json.dumps(payload, allow_nan=False).encode()

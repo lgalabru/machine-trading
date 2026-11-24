@@ -659,6 +659,12 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     for model in {{models}}; do
       case "$model" in native:*) ;; *) hermes_models+=("${model#hermes:}") ;; esac
     done
+    # What the x402 routes pay, the preflight's calls included, counts against
+    # one MTX_X402_BUDGET_USD: the preflight and the key proxy share a ledger,
+    # kept in the batch as x402-ledger.json.
+    MTX_X402_LEDGER="$(mktemp)"
+    rm -f "$MTX_X402_LEDGER"
+    export MTX_X402_LEDGER
     if [ "${#hermes_models[@]}" -gt 0 ]; then
       python3 -I bench/harness/models.py preflight "${hermes_models[@]}"
     fi
@@ -670,6 +676,8 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     dataset="solana-foundation/machine-trading${version:+@$version}"
     batch="jobs/bench/$(date +%Y%m%d-%H%M%S)-x{{limit}}"
     mkdir -p "$batch"
+    [ ! -e "$MTX_X402_LEDGER" ] || mv "$MTX_X402_LEDGER" "$batch/x402-ledger.json"
+    MTX_X402_LEDGER="$PWD/$batch/x402-ledger.json"
     # One secret per batch: every trial is graded on the same hidden set,
     # drawn inside its verifier. Kept (owner-only) so a void trial can be
     # re-run on the same set: MTX_EVAL_SEED="$(cat <batch>/.seed)" just bench ...
@@ -696,9 +704,10 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
       python3 -I bench/harness/models.py stamp-unguarded "$batch"
     fi
     # What the providers say when the account, not the model, is out: a
-    # quota, a credit balance or a usage cap. Rate limits are retried by the
+    # quota, a credit balance or a usage cap (an x402 route's: the wallet's
+    # USDC, or the batch's MTX_X402_BUDGET_USD, as the key proxy words them). Rate limits are retried by the
     # harnesses and don't stop a batch.
-    refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached|credits exhausted|no credits remaining'
+    refused='Quota exceeded|insufficient_quota|exceeded your current quota|credit balance is too low|billing_hard_limit_reached|usage limit reached|credits exhausted|no credits remaining|x402 wallet is out of USDC|x402 budget spent'
     # A guarded task limits its agent's network to an allowlist: the bench adds
     # the key proxy's address to it (native harnesses don't run guarded tasks:
     # see native-guard above). A task on the public network ignores the flag.

@@ -4,7 +4,8 @@ one's key and name before a batch spends anything.
     python3 -I models.py args <name> <proxy url>  Harbor's flags for a model, one per line
     python3 -I models.py key <name>...             the variables holding their keys
     python3 -I models.py route <name>              the model's route on the key proxy
-    python3 -I models.py preflight <name>...       one 1-token request per model
+    python3 -I models.py preflight <name>...       one 1-token request per model (paid, on an x402 route)
+    python3 -I models.py wallet <name>             the address an x402 route pays from
     python3 -I models.py keys                      every variable that may hold a key
     python3 -I models.py token <name>              the model's token on the key proxy
     python3 -I models.py scan <dir>                files under <dir> holding a key, in any form
@@ -19,10 +20,15 @@ reaches every model through key_proxy.py, with its route's token
 (MTX_PROXY_TOKEN when Harbor runs it) in place of a key: an HMAC of the
 route's name under the batch's secret (MTX_PROXY_SECRET), so a token opens
 one route only. Keys are read from the environment and never printed.
+
+A model with `pay = "x402-solana"` has no API key: its variable holds a
+Solana wallet's secret, and each call is paid for in USDC over x402
+(x402_solana.py), at most `max_usd` a call (DEFAULT_MAX_USD unless set).
 """
 
 import base64
 import hashlib
+import http.client
 import hmac
 import json
 import os
@@ -34,8 +40,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+import x402_solana  # noqa: E402
+
 REGISTRY = Path(os.environ.get("MTX_MODELS") or Path(__file__).with_name("models.toml"))
 APIS = ("openai", "anthropic", "chat")
+PAYS = ("x402-solana",)
+# What an x402 route may pay for one call, in USD, unless its table says.
+DEFAULT_MAX_USD = 5.0
 DEFAULTS = {
     "openai": {"api": "openai", "upstream": "https://api.openai.com/v1", "key": "OPENAI_API_KEY"},
     "anthropic": {"api": "anthropic", "upstream": "https://api.anthropic.com", "key": "ANTHROPIC_API_KEY"},
@@ -50,6 +62,21 @@ def entry(name: str) -> dict:
         missing = {"api", "upstream", "model", "key"} - found.keys()
         if missing or found["api"] not in APIS:
             sys.exit(f"{name}: models.toml needs api ({', '.join(APIS)}), upstream, model and key")
+        if "pay" in found:
+            if found["pay"] not in PAYS:
+                sys.exit(f"{name}: pay is one of {', '.join(PAYS)}")
+            if found["api"] != "chat":
+                sys.exit(f"{name}: an x402 route takes chat completions (api = \"chat\")")
+            network = x402_solana.network_id(found.get("network", "solana"))
+            if not any(n == network for n, _ in x402_solana.ASSETS):
+                sys.exit(f"{name}: network is solana or solana-devnet")
+            cap = found.get("max_usd", DEFAULT_MAX_USD)
+            if isinstance(cap, bool) or not isinstance(cap, (int, float)) or not cap > 0:
+                sys.exit(f"{name}: max_usd is a positive number of US dollars")
+        if "max_tokens" in found:
+            tokens = found["max_tokens"]
+            if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 1 or found["api"] != "chat":
+                sys.exit(f"{name}: max_tokens is a positive integer, for a chat route")
     else:
         provider, _, model = (name if "/" in name else f"anthropic/{name}").partition("/")
         if provider not in DEFAULTS:
@@ -88,14 +115,67 @@ def request_for(found: dict, key: str) -> urllib.request.Request:
     )
 
 
+def paid_preflight(name: str, found: dict, key: str, ledger: "x402_solana.Ledger") -> bool:
+    """One paid call of at most 64 tokens on an x402 route: the wallet's secret reads, the
+    model is known, the quote is payable and the wallet can pay it."""
+    try:
+        wallet = x402_solana.Wallet(key)
+    except ValueError as e:
+        print(f"FAIL {name}: {found['key']}: {e}")
+        return False
+    request = request_for(found, "")
+    url = urllib.parse.urlsplit(request.full_url)
+    headers = {k: v for k, v in request.header_items() if k.lower() != "authorization"}
+    headers["User-Agent"] = "mtx-bench-preflight/1"
+    connection_class = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
+
+    def send(extra):
+        connection = connection_class(url.netloc, timeout=60)
+        connection.request("POST", url.path, body=request.data, headers={**headers, **extra})
+        return connection, connection.getresponse()
+
+    cap = float(found.get("max_usd", DEFAULT_MAX_USD))
+    network = x402_solana.network_id(found.get("network", "solana"))
+    try:
+        connection, response, paid = x402_solana.pay(send, wallet, network, cap, ledger)
+        try:
+            data = response.read()
+        finally:
+            connection.close()
+    except x402_solana.PaymentRefused as e:
+        print(f"FAIL {name}: {found['model']}: {e.reason}")
+        return False
+    except (OSError, http.client.HTTPException) as e:
+        print(f"FAIL {name}: {found['model']}: {type(e).__name__}: {str(e)[:200]}")
+        return False
+    if response.status != 200:
+        detail = data.decode(errors="replace")[:300]
+        print(f"FAIL {name}: {found['model']}: HTTP {response.status}: {detail}")
+        return False
+    print(f"ok   {name}: {found['model']} at {found['upstream']}, paid ${paid:.6f} from {wallet.address}")
+    return True
+
+
 def preflight(names: list[str]) -> int:
     failed = 0
+    ledger = None
     for name in names:
         found = entry(name)
         key = os.environ.get(found["key"], "")
         if not key:
             print(f"FAIL {name}: {found['key']} is not set")
             failed += 1
+            continue
+        if found.get("pay"):
+            if ledger is None:
+                try:
+                    # The batch's budget, shared with its key proxy through MTX_X402_LEDGER.
+                    ledger = x402_solana.Ledger.from_env()
+                except ValueError as e:
+                    print(f"FAIL {name}: {e}")
+                    failed += 1
+                    continue
+            failed += not paid_preflight(name, found, key, ledger)
             continue
         try:
             with urllib.request.urlopen(request_for(found, key), timeout=60) as response:
@@ -294,7 +374,7 @@ def fetch_scan(batch: Path) -> dict[str, list[str]]:
 
 
 def main():
-    commands = {"args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2, "native-guard": 3, "stamp-unguarded": 2, "fetch-scan": 2}
+    commands = {"wallet": 2, "args": 3, "key": 2, "route": 2, "preflight": 2, "keys": 1, "scan": 2, "token": 2, "native-guard": 3, "stamp-unguarded": 2, "fetch-scan": 2}
     if len(sys.argv) < 2 or sys.argv[1] not in commands or len(sys.argv) < 1 + commands[sys.argv[1]]:
         sys.exit(__doc__)
     command, names = sys.argv[1], sys.argv[2:]
@@ -304,6 +384,14 @@ def main():
         print("\n".join(dict.fromkeys(entry(n)["key"] for n in names)))
     elif command == "route":
         print(entry(names[0])["route"])
+    elif command == "wallet":
+        found = entry(names[0])
+        if not found.get("pay"):
+            sys.exit(f"{names[0]} isn't an x402 route")
+        try:
+            print(x402_solana.Wallet(os.environ.get(found["key"], "")).address)
+        except ValueError as e:
+            sys.exit(f"{found['key']}: {e}")
     elif command == "keys":
         print("\n".join(key_names()))
     elif command == "token":

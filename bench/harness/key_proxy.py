@@ -35,6 +35,13 @@ status, reason, route) to stderr.
 For a model with `reasoning = "openrouter"`, an OpenAI-style
 `reasoning_effort` becomes OpenRouter's `reasoning: {effort}`: Hermes sends
 OpenRouter its own form only when it talks to openrouter.ai directly.
+
+A model with `pay = "x402-solana"` (BlockRun's Solana gateway) has no key:
+its variable holds a Solana wallet's secret, and the proxy pays for each
+call in USDC over x402 (x402_solana.py), signing the provider's quote when
+it is within the route's `max_usd` a call and the batch's budget
+(MTX_X402_BUDGET_USD, if set). Each payment is logged (route, USD, the
+batch's running total), never the secret.
 """
 
 import argparse
@@ -54,7 +61,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import body_policy  # noqa: E402
 import limits  # noqa: E402
-from models import entry, key_forms, route_token  # noqa: E402
+import x402_solana  # noqa: E402
+from models import DEFAULT_MAX_USD, entry, key_forms, route_token  # noqa: E402
 
 # Each API's one model-call path, under the route.
 CALL_PATHS = {"openai": "/responses", "anthropic": "/v1/messages", "chat": "/chat/completions"}
@@ -94,12 +102,20 @@ HEAD_DEADLINE = 10
 CLIENT_TIMEOUT = 120
 UPSTREAM_TIMEOUT = 600
 # Response headers that name the account behind the key, kept from the agent.
-ACCOUNT_HEADERS = {"openai-organization", "openai-project", "anthropic-organization-id", "set-cookie"}
+ACCOUNT_HEADERS = {
+    "openai-organization", "openai-project", "anthropic-organization-id", "set-cookie",
+    # x402: the settlement's receipt names the paying wallet.
+    "payment-response", "x-payment-response", "x-payment-receipt",
+}
+# What every x402 route's payments may add up to in a batch, in USD
+# (MTX_X402_BUDGET_USD), counted from what the batch's preflight already paid
+# (MTX_X402_LEDGER); unset, only each route's cap a call bounds them.
+LEDGER = x402_solana.Ledger()
 
 class Refused(Exception):
-    def __init__(self, status, reason, route="-"):
+    def __init__(self, status, reason, route="-", retry=True):
         super().__init__(reason)
-        self.status, self.reason, self.route = status, reason, route
+        self.status, self.reason, self.route, self.retry = status, reason, route, retry
 
 
 class Server(ThreadingHTTPServer):
@@ -211,6 +227,8 @@ class Proxy(BaseHTTPRequestHandler):
         data = json.dumps({"error": {"message": refused.reason, "type": "proxy_error"}}).encode()
         self.send_response(refused.status)
         self.send_header("Content-Type", "application/json")
+        if not getattr(refused, "retry", True):
+            self.send_header("x-should-retry", "false")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -245,7 +263,7 @@ class Proxy(BaseHTTPRequestHandler):
             raise Refused(400, f"the body can't be read: {type(e).__name__}", name) from None
         try:
             # Re-serialised: what the provider gets is what was checked.
-            body = body_policy.apply(route["api"], payload, route["model"], route["openrouter"])
+            body = body_policy.apply(route["api"], payload, route["model"], route["openrouter"], route["max_tokens"])
         except body_policy.BodyRefused as e:
             raise Refused(403, str(e), name) from None
         except (TypeError, ValueError, RecursionError, AttributeError) as e:
@@ -271,18 +289,43 @@ class Proxy(BaseHTTPRequestHandler):
         headers["User-Agent"] = "mtx-bench-key-proxy/1"
         headers["Content-Length"] = str(len(body))
         key = route["key"]
-        if route["api"] == "anthropic":
+        if route["wallet"]:
+            pass  # paid for per call, below: no key on the request
+        elif route["api"] == "anthropic":
             headers["x-api-key"] = key
         else:
             headers["Authorization"] = f"Bearer {key}"
         upstream = route["url"]
         connection_class = http.client.HTTPSConnection if upstream.scheme == "https" else http.client.HTTPConnection
-        connection = connection_class(upstream.netloc, timeout=UPSTREAM_TIMEOUT)
+        connection = None
+
+        def send(extra):
+            nonlocal connection
+            connection = connection_class(upstream.netloc, timeout=UPSTREAM_TIMEOUT)
+            path = upstream.path.rstrip("/") + CALL_PATHS[route["api"]]
+            connection.request("POST", path, body=body, headers={**headers, **extra})
+            return connection, connection.getresponse()
+
         started = False
         side = "upstream"
+        paid = 0.0
         try:
-            connection.request("POST", upstream.path.rstrip("/") + CALL_PATHS[route["api"]], body=body, headers=headers)
-            response = connection.getresponse()
+            if route["wallet"]:
+                try:
+                    connection, response, paid = x402_solana.pay(
+                        send, route["wallet"], route["network"], route["max_usd"], LEDGER
+                    )
+                except x402_solana.PaymentRefused as refused:
+                    self.refuse(Refused(refused.status, refused.reason, name, refused.retry))
+                    return
+                if paid:
+                    print(
+                        f"paid route={name} usd={paid:.6f} status={response.status} "
+                        f"batch_usd={LEDGER.spent:.6f} batch_calls={LEDGER.calls}",
+                        file=sys.stderr, flush=True,
+                    )
+            else:
+                connection, response = send({})
             if response.status >= 400:
                 data = response.read()
                 for form in route["forms"]:
@@ -290,6 +333,9 @@ class Proxy(BaseHTTPRequestHandler):
                 side = "client"
                 self.send_response(response.status, response.reason)
                 self.send_header("Content-Type", response.getheader("Content-Type", "application/json"))
+                if response.getheader("x-should-retry") == "false":
+                    # Failed after a payment that may have settled: a retry would pay again.
+                    self.send_header("x-should-retry", "false")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
@@ -319,10 +365,15 @@ class Proxy(BaseHTTPRequestHandler):
                 # broken stream rather than a second status inside it.
                 print(f"upstream broke mid-answer route={name}: {type(e).__name__}", file=sys.stderr, flush=True)
                 self.close_connection = True
+            elif paid:
+                # Paid, and the answer failed before it began: a retry would pay again.
+                self.refuse(Refused(424, f"a paid call failed in transit ({type(e).__name__}); it may have been "
+                                         "charged, so it isn't retried", name, retry=False))
             else:
                 self.refuse(Refused(502, f"upstream: {type(e).__name__}", name))
         finally:
-            connection.close()
+            if connection is not None:
+                connection.close()
 
     def do_GET(self):
         self.head_in()
@@ -341,6 +392,12 @@ def routes_for(names):
         key = os.environ.get(found["key"], "")
         if not key:
             sys.exit(f"{found['key']} is not set, for {name}")
+        wallet = None
+        if found.get("pay") == "x402-solana":
+            try:
+                wallet = x402_solana.Wallet(key)
+            except ValueError as e:
+                sys.exit(f"{found['key']}, for {name}: {e}")
         routes[found["route"]] = {
             "url": urllib.parse.urlsplit(found["upstream"]),
             "key": key,
@@ -349,6 +406,10 @@ def routes_for(names):
             "model": found["model"],
             "token": route_token(found["route"]),
             "openrouter": found.get("reasoning") == "openrouter",
+            "max_tokens": found.get("max_tokens"),
+            "wallet": wallet,
+            "network": x402_solana.network_id(found.get("network", "solana")),
+            "max_usd": float(found.get("max_usd", DEFAULT_MAX_USD)),
         }
     return routes
 
@@ -367,8 +428,21 @@ def main():
     Proxy.timeout = float(os.environ.get("MTX_PROXY_HEAD_TIMEOUT", HEAD_TIMEOUT))
     Proxy.head_deadline = float(os.environ.get("MTX_PROXY_HEAD_DEADLINE", HEAD_DEADLINE))
     Proxy.client_timeout = float(os.environ.get("MTX_PROXY_CLIENT_TIMEOUT", CLIENT_TIMEOUT))
+    global LEDGER
+    try:
+        LEDGER = x402_solana.Ledger.from_env()
+    except ValueError as e:
+        sys.exit(str(e))
     server = Server((args.host, args.port), Proxy)
     server.routes = routes_for(args.models)
+    for name, route in server.routes.items():
+        if route["wallet"]:
+            limit = f"${LEDGER.budget:.2f} for the batch" if LEDGER.budget is not None else "no batch budget"
+            print(
+                f"route={name} pays over x402 on {route['network']} from {route['wallet'].address}: "
+                f"at most ${route['max_usd']:.2f} a call, {limit}",
+                file=sys.stderr, flush=True,
+            )
     print(f"http://{args.host}:{server.server_address[1]}", flush=True)
     server.serve_forever()
 

@@ -154,7 +154,9 @@ git add bench/results/0.11.0 && git commit && git push  # the push publishes the
      Inkling, any OpenAI-compatible host) are entries in
      `bench/harness/models.toml`; see `bench/harness/README.md`.
    - **Keys:** each model's, from `.env` or `~/.machine-trading.env`:
-     `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or the one models.toml names.
+     `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or the one models.toml names
+     (for BlockRun's `blockrun-*` models, paid per call in USDC over x402 on
+     Solana, `SOLANA_WALLET_KEY`: a wallet's secret, not an API key).
      Hermes's trials never hold a key: a proxy on the bench machine's
      docker bridge (`bench/harness/key_proxy.py`) holds them, and each
      model's trials get a token that opens only that model's model call.
