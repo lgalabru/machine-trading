@@ -7,24 +7,26 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
 - **0.15.0** (draft). Every task's market measured from mainnet
   ([RFD 0007](../../docs/rfd/0007-tasks-measured-against-mainnet.md)), on
   luthor's Phoenix tape `phoenix-tape.20261125.fc443f1e`.
-  - **`market-making-spcx`: takers measured, a little informed, scored by
-    v2.** Its takers sent 0.8 to 1.8 orders a second that knew nothing,
-    with informed orders only ahead of jumps; SPCX's real takers sent 0.33
-    orders a minute in regular hours, and the average Phoenix taker is a
-    little informed. The family is now built from a market profile
-    (`market-making-measured`): the actor library's noise and informed
-    takers at SPCX's measured sizes (median $1,000, log-sd 1.3) and 35
-    times its measured pace (stated: a session would otherwise hold one
-    order), informed in the share that gives SPCX's one-minute markout
-    (+1.35 bp); an arbitrageur that takes quotes a move left stale against
-    Phoenix's index (3.5 to 5 bp edge, 1 to 2 slots), where luthor's paper
-    makers lose on mainnet; the grader's reactive maker at SPCX's measured
-    one-tick touch, thin, with Phoenix's makers 3 to 8 bp behind it. The
-    price walks at the calibration's 1.55 bp a second; a sixth of the
-    sessions jump (far more than Phoenix: stated), a third trend, half are
-    calm. The same market on ANT's measured flow is
-    `market-making-measured-ant`, a one-line change of profile. Scored by
-    v2 with an informed bot told which wallets are the informed takers.
+  - **`market-making-spcx` is now `market-making-ant`: the market with
+    real flow, measured, scored by v2.** Its takers sent 0.8 to 1.8
+    orders a second that knew nothing, with informed orders only ahead of
+    jumps; SPCX's real takers sent 0.33 orders a minute in regular hours,
+    and the average Phoenix taker is a little informed. The task moves to
+    Phoenix's ANT (Anthropic), on a new snapshot
+    (`phoenix-ant-2026-11-25`, cap 35 ANT), and its family is built from
+    ANT's measured profile (`market-making-ant`): the actor library's
+    noise and informed takers at ANT's pace (11.6 orders a minute) and
+    sizes (median $100, log-sd 1.5), informed (they see a minute ahead and
+    trade past a 7 bp move, right 85% of the time) in the share that gives
+    ANT's one-minute markout (+4.4 bp); an arbitrageur that takes quotes a
+    move left stale against Phoenix's index (3.5 to 5 bp edge, 1 to 2
+    slots), where luthor's paper makers lose on mainnet; the grader's
+    reactive maker at ANT's measured touch (2.7 bp over 106 minutes of
+    quotes). The price walks at SPCX's calibrated 1.55 bp a second (ANT has
+    no calibration yet: stated); a sixth of the sessions jump (far more
+    than Phoenix: stated), a third trend, half are calm. Scored by v2 with
+    an informed bot told which wallets are the informed takers. SPCX's
+    profile stays drawable (`market-making-measured-spcx`, its flow x35).
     Rewards fall and don't compare with 0.14.0's: those measured a game.
 - **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
   mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
