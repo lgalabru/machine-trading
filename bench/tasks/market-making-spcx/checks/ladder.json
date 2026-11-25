@@ -1,5 +1,5 @@
 {
-  "family": "market-making",
+  "family": "market-making-measured",
   "count": 72,
   "min_rule_odds": 0.85,
   "rungs": [
@@ -20,9 +20,9 @@
       "dir": "bench/tasks/market-making-spcx/reference"
     },
     {
-      "name": "flow-oracle",
-      "dir": "bench/tasks/market-making-spcx/checks/rungs/flow-oracle",
-      "tell_regime": true
+      "name": "informed",
+      "dir": "bench/tasks/market-making-spcx/checks/bots/informed",
+      "tell_latent": true
     },
     {
       "name": "market-making-opus",
@@ -53,9 +53,13 @@
       "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-astra-blocks-0.12"
     }
   ],
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
+  },
   "gates": {
     "informed": [
-      "flow-oracle"
+      "informed"
     ],
     "non_reading": [
       "nop",
@@ -65,7 +69,8 @@
   },
   "rules": [
     "naive-quoter < reference",
-    "skew-quoter < reference < flow-oracle < hindsight"
+    "skew-quoter < reference",
+    "reference < informed"
   ],
   "exploits": {
     "bots": [
@@ -78,9 +83,9 @@
       "market-making-astra-blocks-0.12"
     ],
     "max_profitable": 0.9,
-    "below": "flow-oracle"
+    "below": "informed"
   },
   "probes": {
-    "exempt": "market making is excluded: its redesign has its own probes"
+    "exempt": "the perp probe bots (bench/checks/probes) take positions with market orders, which this mandate refuses (taking: reduce_only), so they would never trade and prove nothing; a maker's probes (a quoter that leans on a coin, a levered quoter) are not written yet. The task's rungs (naive-quoter, skew-quoter) and frozen exploit bots stand in"
   }
 }

@@ -20,6 +20,70 @@ each version learned.
   tape, quoting around Phoenix's mark (which a maker's own quotes pull), and
   quoting so wide nothing fills.
 
+## The market, measured (0.15.0)
+
+From 0.15.0 the family (`market-making-measured`, `crates/grader/src/making/measured.rs`)
+is built from a **market profile**: a real market's taker flow in US
+regular hours, measured on luthor's Phoenix tape (`phoenix-tape.20261125.fc443f1e`:
+543,438 rows, 3.06 days from 2026-11-21 to 2026-11-25, every market;
+`calibration/fitter/tape/study.py`). The profile is a constructor
+argument (`MeasuredFamily::new(MarketProfile, flow_mult)`): the task draws
+SPCX's; `market-making-measured-ant` draws ANT's on the same book, a
+one-line change if the task moves (RFD 0007's open question).
+
+| Number | SPCX | ANT | Source |
+| --- | --- | --- | --- |
+| Non-pinger orders a minute, regular hours | 0.33 | 11.6 | tape, `markets.<m>.flow.regular` |
+| Median order, log-sd, p90 | $1,000, 1.315, $3,483 | $100, 1.522, $1,001 | same |
+| Same side next | 0.47 | 0.56 | same (reported, not fitted) |
+| Takers' 60 s markout, order-weighted | +1.35 bp (469 orders; the $1k-10k bucket's 95% interval is -3.1 to 4.1) | +4.43 bp (25,187 orders; $10k+ +13.7) | tape, `markets.<m>.markouts` |
+| What takers paid against the mid | not measurable (pinger mids: -2.1 bp at $1k-10k) | 2.1 to 3.3 bp, 6.3 at $10k+ | same |
+| Worst fill from the mid, p90 ($100-10k) | 15.5 to 17.4 bp | 11.4 to 16.5 bp | tape, `markets.<m>.impact` |
+| Touch half-spread | 0.4 bp (one tick, 125.64 by 125.65) | 2.7 bp | luthor `quotes`, 1 minute of top-of-book reads, 2026-11-25 ~01:40 UTC |
+| Volatility | 1.55 bp a second, session log-sd 0.54 | (SPCX's) | `calibration/market/spcx.20261112.d1f48be2.toml`, `fair_value` |
+| Jumps of 1.5%+ | none in 3 days | 4 | tape: 93 on 110 markets in 16 distinct hours; median 2.0%, p90 4.17% |
+| Fees | maker 0.5 bp, taker 3.5 bp | | snapshot `exchange.json`, calibration `venues.phoenix_perp` |
+
+How the family turns them into a session:
+
+- **Takers** are the actor library's: eight noise wallets and four
+  informed wallets (`actors.noise`, `actors.informed`), `scale` filled by
+  the generator from the profile: the rate, and the median order in SPCX at
+  the snapshot's $143.05. Informed wallets see the path 240 slots (60 s)
+  ahead and are right 85% of the time (a wrong view lasts its minute);
+  their share of the flow is fitted so the average taker's one-minute
+  markout is the profile's: `share = markout / ((2 * 0.85 - 1) * 0.8 *
+  12 bp)`, 0.2 for SPCX and 0.656 for ANT. A simulation of the library's
+  rules on calm sessions gives 1.19 bp (SPCX, target 1.35) and 4.01 bp (ANT,
+  target 4.43) (`simulated_markouts_match_the_profile`). Informed orders
+  are 1.5 times larger, so big orders are the more informed, as on ANT.
+  Takers reach the profile's p90 worst fill through the price.
+- **The arbitrageur** (`actors.arbitrageur`) looks after each step's move,
+  before the bot: it takes any quote more than its edge from Phoenix's
+  index, 3.5 to 5 bp (the taker fee and a little more), latency 1 to 2
+  slots. luthor's paper makers lost -1 to -3 bp a fill on mainnet to
+  exchanges leading Phoenix by 1 to 2 slots: this is that channel.
+- **The competitor** is reactive (`competition.reactive`). SPCX's touch was
+  one tick: the grader's maker quotes one to two ticks (0.7 to 1.4 bp),
+  0.5 to 2 SPCX, with the snapshot's makers widened to 3 to 8 bp behind it
+  (`makers_bps`: SPCX's worst fills, median 0.5 bp and p90 15.5 bp, say
+  thin size at a tight touch with depth behind). ANT's 2.7 bp touch: the
+  grader's maker at 0.75 to 1.3 times it, 2 to 5 SPCX, the makers there too.
+- **Quoting obligations** are reported, never scored: both sides within 10
+  bp, at a tenth of a median order, half the steps.
+
+### Stated departures
+
+| Departure | Measured | In the task | Why |
+| --- | --- | --- | --- |
+| Flow multiplier | SPCX 0.33 orders a minute | x35: 11.7 a minute | a 2-3.3 minute session would hold one order; x35 is ANT's pace. Longer sessions instead would multiply the verifier's hour |
+| Jumps | 0.0115 per market-hour (93 / 110 markets / 73 h), clustered; none on SPCX | one jump in 12 of 72 sessions | stepping back must be tested; a sixth, not 0.13's half |
+| Trends | not measured | 24 of 72 sessions drift 0.002-0.006% a step | inventory risk with informed flow leaning through it |
+| Touch | 0.4 bp, half of a one-tick spread | 0.7-1.4 bp, one or two ticks from the level | the level sits on a tick; one minute of quotes |
+| Informedness | a mix, unobserved (the tape has no taker addresses) | noise plus informed wallets at hit rate 0.85 | fits the average; a mix is what makes "who is informed" knowable |
+| Library clock | the library counts 0.4 s a slot (`library::SLOT_SECONDS`) | rates handed over x0.625 | the bench's clock is 0.25 s a slot |
+| Not modelled | transaction-layer races, price impact | none | impact is refused with a competitor and perp actors don't send through the transaction layer: new engine work |
+
 ## The central decision
 
 Where to quote, and when to step back, against flow that is mostly noise

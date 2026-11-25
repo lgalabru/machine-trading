@@ -1,9 +1,10 @@
 #!/bin/bash
 # Grade /app/bot on a hidden set drawn now, from the batch's secret
 # (MTX_EVAL_SEED, passed by Harbor from the host; the task never holds it).
-# The grader runs the reference on the same sessions first, starts an
-# offline surfnet per session, runs the bot as mtx-bot behind an RPC guard,
-# and writes the reward.
+# The grader runs the reference and the informed bot on the same sessions
+# first, starts an offline surfnet per session, runs the bot as a strategy
+# component, and writes the reward: scoring v2, 0 for doing nothing, 0.5 for
+# the reference, 1 for the informed bot.
 set -euo pipefail
 
 # Hidden from the bot, readable by the bot's own user.
@@ -33,16 +34,22 @@ fi
 # no files and no network: it can't reach another session, so the bot's
 # sessions run several at a time, each on its own surfnet, and the report
 # is the one they'd give one at a time. Up to four, as many as the
-# container's memory holds with every strategy at its 1 GiB cap: two in the
-# verifier's 6 GB. The reference is trusted: its sessions run four at a
-# time, before the bot's.
+# verifier's 4 CPUs keep busy. The anchors are trusted: their sessions run
+# four at a time, before the bot's.
+# The informed bot, v2's 1, runs on the same sessions after the reference,
+# told each session's latent state (which wallets are the informed takers
+# and the arbitrageur, the informed share, horizon and hit rate, the flow's
+# pace, the arbitrageur's latency and edge; never the path, a jump or an
+# order); the bot is told nothing.
 mtx grade \
-  --draw market-making \
+  --informed /opt/mtx/anchors/market-making-informed \
+  --draw market-making-measured \
   --count 72 \
   --reference /opt/mtx/anchors/market-making \
   --anchor-jobs 4 \
   --jobs 4 \
-  --stop-on-disqualify \
+  --scoring v2-headline \
+  --v2-sessions \
   --components-only \
   --snapshot "$MTX_SNAPSHOT" \
   --bot /app/bot \
