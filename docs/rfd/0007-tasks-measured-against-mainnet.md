@@ -273,3 +273,73 @@ What each task becomes, to be settled as the work goes:
   as it watches, and holds while the funding left pays for getting in
   and the index's risk. Over 72 fresh sessions: 0.625 of the informed
   bot, Sharpe 0.79 (was 0.20).
+- 2026-11-25: the atomic tasks against mtx-alpha's scouts (Claude). luthor
+  runs two scouts on our validator, on paper. Both read the chain a slot
+  late: a write is read one slot after it lands (p50 and p99 1 slot; a
+  pool is read and quoted in 0.67 ms at the median).
+  - **The arbitrage scout** watches `backrun-thin-pools`' ten pools, both
+    SOL/USDC pools among them. From 2026-11-23 21:47 to 2026-11-25 06:10
+    UTC (about 32 hours, 540,000 slots at 0.215 s; the node's watches
+    were down from 06:10 to 22:47), 14 cycles paid 0.001 SOL or more
+    after fees, in 13 slots (`arb.jsonl`):
+
+    | Cycles | Gaps | At their open | Behind a move of | Still open a slot on |
+    | --- | --- | --- | --- | --- |
+    | SOL, USDC, SOL | 7 | 0.002 to 0.05 SOL on 22 to 141 SOL; one 0.61 SOL on 377 | 10 to 20 bp; 48.5 bp, a sale into Raydium | 2, 0.39 SOL on paper |
+    | through GEOD | 7 | 0.002 to 0.04 SOL on 1 to 5 SOL | 42 to 287 bp | 4, 0.012 SOL |
+    | through JTO | 0 | closest: 52 bp short of paying | | |
+
+    Every gap was gone within three slots. The scout can't see a gap
+    opened and closed inside one block, which is where the research's
+    backruns land (23 of 26 SOL/USDC, 77 of 106 cycles), so these counts
+    are what the in-block race left, not the triggers. One thing it does
+    show: a backrun through a cycle leaves it at about 0 bp, and the JTO
+    cycles never came within 52 bp of paying at any slot's end, so no JTO
+    trigger was closed through these pools in those 32 hours (one closed
+    against another venue wouldn't show). The task's reference, in
+    shadow on the same pools since 2026-11-24 03:29, put orders on its
+    sheet in two steps (2026-11-24 14:40 and 17:04).
+  - **The liquidation scout** follows the 1,965 main-market obligations
+    that had $1,000 of debt or more and stood within 25% of their limit at
+    a scan on 2026-11-24 ($210M of debt), with SOL read upstream at the
+    Orca SOL/USDC pool. From 2026-11-24 04:55 to 2026-11-25 06:10 UTC (25
+    hours) SOL drifted from 71.8 to 68.8, -4.2%, no hour over 2%. Of the
+    43 times an obligation went under water (`liq.jsonl`), 40 were two
+    obligations ($2,750 and $17,539 of debt) flickering across 1, on
+    which the scout prices no repay: nobody liquidated them. The other
+    three were two obligations a liquidator could take. One would repay
+    $2,363 and keep $11.82: under water upstream (0.99999) while Scope
+    read 1.0017, it was liquidated by someone else within two slots. The
+    other would repay $88 and keep $0.44: under water upstream only
+    (Scope 1.0067), twice, it recovered after 87 slots and after 2.
+    Seventeen more have stood under water at Scope since the first look
+    (stuck, not followed); 25 sit within 5% of their limit upstream, one
+    within 1%. The sketch's "25 recovering by themselves" counted these
+    episodes: of the two obligations anyone could liquidate, one
+    recovered.
+
+  Against the week-long study and the tasks:
+
+  | Task | Scouts, about a calm day | Research, a week with an 11% fall | A task session |
+  | --- | --- | --- | --- |
+  | `backrun-sol-usdc` | one chunk-sized gap in 32 hours (0.61 SOL behind 48.5 bp), six of 0.002 to 0.05 SOL | 21 backruns on the pair (0.10 to 4.97 SOL, gaps of 32 to 138 bp); in a burst, 20 gaps in 17 minutes | 88% of sessions inside a burst: a chunk every 30 to 200 slots, gaps of about 30 to 60 bp, cycles of 0.33 to 1.93 SOL |
+  | `backrun-thin-pools` | seven gaps through GEOD (at most 0.04 SOL), none through JTO, in 32 hours | 106 multi-token cycles over all of Solana's pools (50.9 SOL); triggers moved their pool a median 545 bp | about three triggers in 400 to 800 slots, 55% on the JTO pools, moves of median 545 bp cut where the best cycle reaches about 2 SOL |
+  | `liquidation-flash` | two liquidatable in 25 hours (repaying $2,363 and $88): one taken by a rival within two slots, one recovered | 5,290 on the main market in nine days; 2,521 (every market) on the day SOL fell 11%, under 60 on calm days; above $1k, 93% in the update's slot | 4 to 14 borrowers, every one within 0.01% to 4% of its limit, legs of 0.2% to 4.5% over 30 to 150 slots: 11 liquidations a session on its eight practice sessions (reference and rivals, 0 to 36) |
+
+  Per event, what each task draws agrees with the scouts where they can
+  see: a chunk opens what the research's chunks opened, every gap is
+  gone within three slots, and the one contested liquidation went within
+  two. Those numbers come from the week's study, and stay. The tasks
+  depart in rate: each session is an event window (a burst, a run of
+  triggers, a drawdown) that mainnet holds for minutes a week. And
+  `backrun-thin-pools`' triggers are the week's largest over all of
+  Solana's pools, put on ten pools where the scouts saw nothing over
+  0.04 SOL through a thin pool and no JTO cycle at all. None of the
+  three is recalibrated: one calm day, a scout blind to backruns inside a
+  block, and two obligations a liquidator could take don't measure a
+  trigger rate or a size distribution, and fitting the families to them
+  would be this RFD's second risk. Each task states its departure in its
+  instruction with these values beside it. What would measure them: a
+  tape of the ten pools' transactions, as luthor keeps Phoenix's (who
+  closed each gap, inside the block or not, and what each trigger moved),
+  and the liquidation scout through a drawdown day.
