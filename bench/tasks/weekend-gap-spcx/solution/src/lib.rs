@@ -153,7 +153,10 @@ impl Weekend {
             .read(venue, &self.symbol, &late)?
             .iter()
             .sum();
-        log(&format!("{} late positioners, net {net:+.2} SPCX", late.len()));
+        log(&format!(
+            "{} late positioners, net {net:+.2} SPCX",
+            late.len()
+        ));
         Ok(if net.abs() < FLOW_MIN {
             0.0
         } else {

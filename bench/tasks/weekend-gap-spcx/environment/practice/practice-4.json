@@ -67,7 +67,7 @@
   "description": "SPCX practice session",
   "duration_slots": 709,
   "informed_max_drawdown_usd": 7.7,
-  "informed_pnl_usd": 8.33,
+  "informed_pnl_usd": 27.81,
   "mandate": {
     "limits": {
       "max_drawdown_usd": 1000.0
@@ -611,7 +611,7 @@
       "slot": 701
     }
   ],
-  "reference_max_drawdown_usd": 5.6,
-  "reference_pnl_usd": 25.13,
+  "reference_max_drawdown_usd": 7.7,
+  "reference_pnl_usd": 23.76,
   "symbol": "SPCX"
 }
