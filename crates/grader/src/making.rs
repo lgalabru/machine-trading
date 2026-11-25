@@ -22,6 +22,8 @@
 //! Takers care about price: each order carries its own limit, so a maker
 //! quoting wider than a taker will pay doesn't fill it at all.
 
+pub mod measured;
+
 use mtx_core::Side;
 use mtx_kit::protocols::fills::MarketFill;
 use serde::{Deserialize, Serialize};
