@@ -170,6 +170,9 @@ loss-weighted: 0.41, inside the strength band (0.2 to 0.7).
   $10,000) through a 3% gap is $300 of the $1,000 limit.
 - A session where more than a tenth of the library's actions fail isn't
   scored (infrastructure).
+- Practice anchor PnL is one draw of the actors: a calibration without a
+  secret draws fresh session keys (`SessionKeys::random`), and with them
+  the library actors' draws, so it won't reproduce between calibrations.
 
 ## Failure modes, priced
 
