@@ -14,3 +14,4 @@ and never reuse a number. Decisions themselves live in [`../adr/`](../adr/).
 | [0004](0004-strategies-on-mainnet.md) | Strategies on mainnet, run by a geyser plugin | Discussion |
 | [0005](0005-atomic-arbitrage-tasks.md) | Atomic arbitrage tasks: liquidations with flash loans, backruns, LST cycles | Discussion |
 | [0006](0006-the-strategy-lifecycle.md) | The strategy lifecycle: holds, not a state someone sets | Discussion |
+| [0007](0007-tasks-measured-against-mainnet.md) | 0.15, tasks measured against mainnet | Discussion |
