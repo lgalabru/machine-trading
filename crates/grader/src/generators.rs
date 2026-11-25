@@ -103,6 +103,24 @@ pub const GENERATORS: &[Generator] = &[
         params: || format!("{:?}", ShockFamily::spcx()),
     },
     Generator {
+        name: "flash-crash-mainnet",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                ShockFamily::mainnet().draw_set(prefix, count, seed),
+                false,
+                mainnet_shock_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                ShockFamily::mainnet().draw_set("hidden", count, seed),
+                tell,
+                mainnet_shock_latent,
+            )
+        },
+        params: || format!("{:?}", ShockFamily::mainnet()),
+    },
+    Generator {
         name: "market-making",
         practice_drawn: |prefix, count, seed| {
             making_drawn(&MakingFamily::spcx(), prefix, count, seed, false)
@@ -330,6 +348,11 @@ pub enum Knowable {
 /// as it starts.
 pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("*", crate::latent::ROSTER, Knowable::Identity),
+    ("flash-crash-mainnet", "horizon_slots", Knowable::Process),
+    ("flash-crash-mainnet", "hit_rate", Knowable::Process),
+    ("flash-crash-mainnet", "quiet_odds", Knowable::Process),
+    ("flash-crash-mainnet", "aftermath_odds", Knowable::Process),
+    ("flash-crash-mainnet", "impact", Knowable::Process),
     ("funding-carry", "informed_share", Knowable::Process),
     ("funding-carry", "lag_slots", Knowable::Process),
     ("funding-carry", "hold_slots", Knowable::Process),
@@ -467,6 +490,53 @@ pub fn latent_text_in(family: &str, text: &str) -> Vec<String> {
 /// one draw that makes it, so all of it is the session's future.
 fn shock_latent(_: &Shape) -> Value {
     json!({})
+}
+
+#[cfg(feature = "generators")]
+/// Who trades on information, and the process every session is drawn
+/// from: the informed takers' wallets (resolved as the session starts),
+/// how far ahead they see and how often they are right, the share of quiet
+/// sessions and the aftermath's odds, and the impact's persistence. Never
+/// the session's own draws: whether it is quiet, the shock's direction,
+/// legs, size, timing or aftermath. Every session tells the same process;
+/// only the wallets differ.
+fn mainnet_shock_latent(_: &Shape) -> Value {
+    let family = ShockFamily::mainnet();
+    let informed = family
+        .actors
+        .as_ref()
+        .and_then(|actors| actors.informed.first())
+        .expect("the mainnet family seats informed takers");
+    let impact = family
+        .impact
+        .as_ref()
+        .expect("the mainnet family has impact");
+    let latent = crate::latent::Latent::new()
+        .roster(&["informed"])
+        .and_then(|l| l.process("horizon_slots", informed.horizon_slots))
+        .and_then(|l| l.process("hit_rate", informed.hit_rate))
+        .and_then(|l| l.process("quiet_odds", family.quiet_odds))
+        .and_then(|l| {
+            l.process(
+                "aftermath_odds",
+                json!({
+                    "revert": family.revert_odds,
+                    "stall": family.stall_odds,
+                    "extend": 1.0 - family.revert_odds - family.stall_odds,
+                }),
+            )
+        })
+        .and_then(|l| {
+            l.process(
+                "impact",
+                json!({
+                    "permanent_share": impact.permanent_share,
+                    "half_life_slots": impact.half_life_slots,
+                }),
+            )
+        })
+        .expect("the mainnet family's latent fields are sound");
+    serde_json::from_str(&latent.to_json()).expect("a latent is JSON")
 }
 
 #[cfg(feature = "generators")]
@@ -721,6 +791,42 @@ mod tests {
         );
         for name in ["market-making", "market-making-v2"] {
             assert!(latent(name).iter().all(|l| l == "{}"), "{name}");
+        }
+    }
+
+    /// The mainnet shock family tells its informed bot who trades on
+    /// information and the process, the same in every session, and nothing
+    /// of the session's own draw: not whether it is quiet, nor the shock's
+    /// direction, legs, size or aftermath.
+    #[cfg(feature = "generators")]
+    #[test]
+    fn the_mainnet_shock_latent_is_the_process_and_the_informed_wallets() {
+        let hidden = (generator("flash-crash-mainnet").unwrap().hidden)(24, 5, false).unwrap();
+        let first: Value = serde_json::from_str(&hidden.latent[0]).unwrap();
+        assert!(hidden.latent.iter().all(|l| *l == hidden.latent[0]));
+        assert_eq!(first["roster"], json!(["informed"]));
+        assert_eq!(first["horizon_slots"], 40);
+        assert_eq!(first["quiet_odds"], 0.25);
+        for drawn in [
+            "quiet",
+            "direction",
+            "aftermath",
+            "legs",
+            "extreme_pct",
+            "end_pct",
+        ] {
+            assert!(first.get(drawn).is_none(), "{drawn} is the session's draw");
+        }
+        let classified: Vec<&str> = LATENT_FIELDS
+            .iter()
+            .filter(|(family, ..)| *family == "flash-crash-mainnet")
+            .map(|(_, field, _)| *field)
+            .collect();
+        for field in first.as_object().unwrap().keys() {
+            assert!(
+                field == crate::latent::ROSTER || classified.contains(&field.as_str()),
+                "{field}"
+            );
         }
     }
 
