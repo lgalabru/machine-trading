@@ -340,6 +340,17 @@ impl Pools {
             rungs_bps: config.rungs_bps.clone(),
         }
     }
+
+    /// Watch one more pool, one that couldn't be read at the start
+    /// (`super::retry`). Past [`POOLS_MAX`] it is refused, and said so.
+    pub fn add(&mut self, pool: Watched) {
+        if self.watched.len() >= POOLS_MAX {
+            tracing::warn!("past the watched pools' limit; not watched");
+            return;
+        }
+        self.watched.push(pool);
+        assert!(self.watched.len() <= POOLS_MAX);
+    }
 }
 
 #[cfg(test)]
