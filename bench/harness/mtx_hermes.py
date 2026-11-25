@@ -38,6 +38,7 @@ bench/harness on PYTHONPATH).
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, override
@@ -49,6 +50,7 @@ from harbor.models.agent.context import AgentContext
 
 sys.path.insert(0, str(Path(__file__).parent))
 from limits import DELEGATION_CHILDREN, ONESHOT_CHILDREN  # noqa: E402
+import usage_log  # noqa: E402
 
 # Harbor's adapter writes its config, runs and exports sessions here.
 HERMES_HOME = "/tmp/hermes"
@@ -213,7 +215,43 @@ class Hermes(HarborHermes):
             "project_discovery": False,
         }
         enable_claude_prompt_caching(config)
+        name_the_trial(config, self.trial_name())
         return yaml.dump(config, default_flow_style=False)
+
+    def trial_name(self) -> str | None:
+        """Harbor's name for this trial (`flash-crash-spcx__cq8nbXG`): its
+        agent logs live in `<job>/<trial>/agent`."""
+        name = Path(self.logs_dir).parent.name
+        return name if usage_log.TRIAL.fullmatch(name) else None
+
+
+def apply_proxy_usage(context: AgentContext, logs_dir: Path, trial: str | None, usage_path: str | None) -> bool:
+    """Set the trial's tokens and cost from the key proxy's usage log, and
+    keep the totals beside its logs (`agent/usage.json`). False when the log
+    has none of its calls."""
+    if not usage_path or trial is None:
+        return False
+    total = usage_log.totals(Path(usage_path), trial)
+    if total is None:
+        return False
+    context.n_input_tokens = total["input_tokens"]
+    context.n_cache_tokens = total["cached_tokens"]
+    context.n_output_tokens = total["output_tokens"]
+    context.cost_usd = total["cost_usd"]
+    (logs_dir / "usage.json").write_text(json.dumps(total, indent=2) + "\n")
+    return True
+
+
+def name_the_trial(config: dict[str, Any], trial: str | None) -> None:
+    """Point the custom route at `<proxy>/<route>/t/<trial>`, so the key
+    proxy logs each call's usage under the trial that made it."""
+    if trial is None:
+        return
+    assert usage_log.TRIAL.fullmatch(trial), trial
+    for provider in config.get("custom_providers") or []:
+        base_url = provider.get("base_url")
+        if isinstance(base_url, str) and "/t/" not in base_url:
+            provider["base_url"] = base_url.rstrip("/") + "/t/" + trial
 
 
 def enable_claude_prompt_caching(config: dict[str, Any]) -> None:
@@ -277,6 +315,11 @@ def enable_claude_prompt_caching(config: dict[str, Any]) -> None:
     @override
     def populate_context_post_run(self, context: AgentContext) -> None:
         super().populate_context_post_run(context)
+        # What the key proxy saw this trial's calls cost (sub-agents and
+        # every model included), over what Hermes's session reports: the
+        # session misses sub-agents, and some routes report no tokens.
+        if apply_proxy_usage(context, Path(self.logs_dir), self.trial_name(), os.environ.get("MTX_PROXY_USAGE")):
+            return
         if context.n_input_tokens:
             return
         session_path = self.logs_dir / "hermes-session.jsonl"

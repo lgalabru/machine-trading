@@ -788,6 +788,11 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
     if [ "${#hermes_models[@]}" -gt 0 ]; then
       MTX_PROXY_SECRET="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
       export MTX_PROXY_SECRET
+      # Each call's usage and cost, by trial (bench/harness/usage_log.py):
+      # the proxy writes it, the Hermes adapter adds its trial's up into
+      # result.json's cost, which the reports read.
+      MTX_PROXY_USAGE="$PWD/$batch/usage.jsonl"
+      export MTX_PROXY_USAGE
       bridge="$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)"
       [ -n "$bridge" ] || { echo "no docker0 address for the key proxy"; exit 1; }
       python3 -I bench/harness/key_proxy.py --host "$bridge" --port 0 \

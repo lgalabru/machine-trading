@@ -25,6 +25,11 @@ head within HEAD_DEADLINE seconds or stalls for CLIENT_TIMEOUT seconds,
 logs a provider silent for UPSTREAM_TIMEOUT seconds, and keeps headers
 naming the account (organisation, project, cookies) out of answers.
 
+A trial may name itself in the path, `/<route>/t/<trial>/...` (the bench's
+Hermes adapter does): with `MTX_PROXY_USAGE` set, each answered call's
+usage and cost go to that file as one JSON line, under the trial
+(usage_log.py), so a report can say what each trial's strategy cost.
+
 Routes come from models.toml, for the models named on the command line.
 The batch's secret is read from MTX_PROXY_SECRET; the address it listens
 on is printed once it is up. Refused requests are logged (method, path,
@@ -54,6 +59,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import body_policy  # noqa: E402
 import limits  # noqa: E402
+import usage_log  # noqa: E402
 from models import entry, key_forms, route_token  # noqa: E402
 
 # Each API's one model-call path, under the route.
@@ -114,6 +120,8 @@ class Server(ThreadingHTTPServer):
         self.per_client: dict[str, int] = {}
         self.over_cap: dict[str, int] = {}
         self.over_cap_logged = 0.0
+        # Replaced in main() when MTX_PROXY_USAGE names a file.
+        self.usage = usage_log.UsageLog(None)
 
     def process_request(self, request, client_address):
         address = client_address[0]
@@ -223,6 +231,12 @@ class Proxy(BaseHTTPRequestHandler):
         route = self.server.routes.get(name)
         if route is None:
             raise Refused(404, "no such route")
+        # `t/<trial>/` before the call path names the trial, for the usage log.
+        trial = None
+        if rest.startswith("t/"):
+            trial, _, rest = rest[2:].partition("/")
+            if not usage_log.TRIAL.fullmatch(trial):
+                raise Refused(404, "not a trial name", name)
         bearer = self.headers.get("Authorization", "")
         offered = bearer[7:] if bearer.startswith("Bearer ") else self.headers.get("x-api-key", "")
         if not hmac.compare_digest(offered.encode(), route["token"].encode()):
@@ -250,12 +264,12 @@ class Proxy(BaseHTTPRequestHandler):
             raise Refused(403, str(e), name) from None
         except (TypeError, ValueError, RecursionError, AttributeError) as e:
             raise Refused(403, f"the body doesn't fit a model call: {type(e).__name__}", name) from None
-        return name, route, body
+        return name, trial, route, body
 
     def do_POST(self):
         self.head_in()
         try:
-            name, route, body = self.checked()
+            name, trial, route, body = self.checked()
         except Refused as refused:
             self.refuse(refused)
             return
@@ -301,14 +315,19 @@ class Proxy(BaseHTTPRequestHandler):
                     self.send_header(k, v)
             self.end_headers()
             started = True
+            capture = usage_log.Capture()
             while True:
                 side = "upstream"
                 chunk = response.read1(65536)
                 if not chunk:
                     break
+                capture.add(chunk)
                 side = "client"
                 self.wfile.write(chunk)
                 self.wfile.flush()
+            # Logged once the whole answer has been relayed: a call cut
+            # short reports no usage (its cost shows on the account only).
+            self.server.usage.write(name, trial, capture.data())
         except (OSError, http.client.HTTPException) as e:
             if isinstance(e, TimeoutError) and side == "upstream":
                 print(f"upstream silent for {UPSTREAM_TIMEOUT} s route={name}", file=sys.stderr, flush=True)
@@ -369,6 +388,7 @@ def main():
     Proxy.client_timeout = float(os.environ.get("MTX_PROXY_CLIENT_TIMEOUT", CLIENT_TIMEOUT))
     server = Server((args.host, args.port), Proxy)
     server.routes = routes_for(args.models)
+    server.usage = usage_log.UsageLog(os.environ.get("MTX_PROXY_USAGE"))
     print(f"http://{args.host}:{server.server_address[1]}", flush=True)
     server.serve_forever()
 

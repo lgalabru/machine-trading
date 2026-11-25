@@ -118,6 +118,23 @@ env -u OPENROUTER_API_KEY -u MTX_PROXY_SECRET PYTHONPATH=bench/harness harbor ru
 The adapter refuses to run without the proxy (`--base-url` and
 `--api-key-name MTX_PROXY_TOKEN`).
 
+## What a batch cost
+
+The key proxy reads each model call's usage out of its answer and appends
+one line per call to `<batch>/usage.jsonl` (`usage_log.py`): the route, the
+trial (the Hermes adapter points each trial at `<proxy>/<route>/t/<trial>`),
+tokens, and the price when the provider reports one. Nous's inference API and
+OpenRouter put it in `usage.cost`; Anthropic's and OpenAI's own APIs report
+tokens only. After each trial the adapter adds its lines up into
+`result.json`'s `agent_result.cost_usd` and tokens (sub-agents included),
+and keeps them in `agent/usage.json`. `bench/report.py` shows the mean cost
+per run by model and task, and each model's total; the review page shows a
+model's cost per run and sorts by it. A model with any run missing a price
+shows no cost rather than a part.
+
+Tested by `python3 -I bench/harness/test_usage_log.py` (a fake provider
+behind a real proxy).
+
 ## The harness check
 
 ```sh
