@@ -1080,11 +1080,14 @@ impl Manager {
             every_slots = config.every_slots,
             "watching markets"
         );
-        self.watching = Some(super::watching::Watching::new(
-            markets,
-            infos,
-            config.every_slots,
-        ));
+        let watching =
+            super::watching::Watching::new(markets, infos, config.every_slots, &config.touch);
+        for symbol in &config.touch {
+            if !watching.touches(symbol) {
+                tracing::warn!(symbol, "a market to read every slot isn't watched");
+            }
+        }
+        self.watching = Some(watching);
     }
 
     /// Start watching `control.pools`' pools: each read once from the node
@@ -1290,6 +1293,28 @@ impl Manager {
         let Some(watching) = self.watching.as_mut() else {
             return;
         };
+        for touched in watching.touched() {
+            let changed = {
+                let cache = lock(&self.shared.cache);
+                touched.changed(|reader| reader.read_touch(&*cache, slot))
+            };
+            match changed {
+                Ok(Some(touch)) => self.shared.events.emit(Event::Touch {
+                    symbol: touched.symbol.clone(),
+                    slot,
+                    index: touch.index,
+                    mark: touch.mark,
+                    best_bid: touch.bid.map(|(price, _)| price),
+                    best_bid_size: touch.bid.map(|(_, size)| size),
+                    best_ask: touch.ask.map(|(price, _)| price),
+                    best_ask_size: touch.ask.map(|(_, size)| size),
+                }),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(symbol = touched.symbol, %error, "a touched market wasn't read")
+                }
+            }
+        }
         for (symbol, reader) in watching.due() {
             let reading = {
                 let cache = lock(&self.shared.cache);

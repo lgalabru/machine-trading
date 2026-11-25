@@ -17,7 +17,7 @@ use mtx_kit::{
     phoenix_rise::types::exchange::{ExchangeMarketConfig, ExchangeResponse},
     venue::{
         PerpBookAccounts, PhoenixVenue, key, perp_index, perp_position, perp_prices,
-        perp_top_and_position, ticks_to_usd,
+        perp_top_and_position, perp_top_levels, ticks_to_usd,
     },
 };
 use serde::Serialize;
@@ -158,12 +158,14 @@ impl PerpReader {
         addresses
     }
 
-    /// The market and the account as the cache holds them, at `slot` (a
-    /// spline region's life is counted in slots). An account the feed
-    /// hasn't seen is an error: a reading must never be a guess. The trader
-    /// account is read only while the trader isn't active in the market,
-    /// and one that doesn't exist yet reads as missing, not as flat.
-    pub fn read(&self, cache: &impl Accounts, slot: u64) -> Result<PerpReading, String> {
+    /// The market's accounts as the cache holds them, handed to `read`
+    /// with the perp asset map. An account the feed hasn't seen is an
+    /// error: a reading must never be a guess.
+    fn with_book<T>(
+        &self,
+        cache: &impl Accounts,
+        read: impl FnOnce(&PerpBookAccounts<'_>) -> Result<T, String>,
+    ) -> Result<T, String> {
         let seen = |address: &Address, what: &str| {
             cache
                 .data(address)
@@ -175,27 +177,37 @@ impl PerpReader {
                 .map(|address| seen(address, what))
                 .collect()
         };
-        let asset_map = seen(&self.asset_map, "perp asset map")?;
         let global_trader_index = seen_all(&self.global_trader_index, "global trader index")?;
         let active_trader_buffer = seen_all(&self.active_trader_buffer, "active trader buffer")?;
         let book = PerpBookAccounts {
-            perp_asset_map: asset_map,
+            perp_asset_map: seen(&self.asset_map, "perp asset map")?,
             orderbook: seen(&self.orderbook, "orderbook")?,
             spline_collection: seen(&self.spline_collection, "spline collection")?,
             global_trader_index: &global_trader_index,
             active_trader_buffer: &active_trader_buffer,
         };
-        let prices =
-            perp_prices(&self.market, asset_map).map_err(|e| format!("the perp asset map: {e}"))?;
-        let index =
-            perp_index(&self.market, asset_map, slot).map_err(|e| format!("the index: {e}"))?;
-        let (top, live) = perp_top_and_position(
-            &self.venue,
-            &self.market.symbol,
-            &book,
-            &key_of(&self.trader),
-            slot,
-        )?;
+        read(&book)
+    }
+
+    /// The market and the account as the cache holds them, at `slot` (a
+    /// spline region's life is counted in slots). The trader account is
+    /// read only while the trader isn't active in the market, and one that
+    /// doesn't exist yet reads as missing, not as flat.
+    pub fn read(&self, cache: &impl Accounts, slot: u64) -> Result<PerpReading, String> {
+        let (prices, index, top, live) = self.with_book(cache, |book| {
+            let prices = perp_prices(&self.market, book.perp_asset_map)
+                .map_err(|e| format!("the perp asset map: {e}"))?;
+            let index = perp_index(&self.market, book.perp_asset_map, slot)
+                .map_err(|e| format!("the index: {e}"))?;
+            let (top, live) = perp_top_and_position(
+                &self.venue,
+                &self.market.symbol,
+                book,
+                &key_of(&self.trader),
+                slot,
+            )?;
+            Ok((prices, index, top, live))
+        })?;
         let position = match (live, cache.data(&self.trader)) {
             (Some(position), _) => position,
             (None, Some(account)) => perp_position(&self.market, account)
@@ -219,6 +231,43 @@ impl PerpReader {
             entry_usd: position.entry_usd,
         })
     }
+
+    /// The market's index and touch at `slot`: Hawkeye's index, the mark,
+    /// and the best bid and ask with the base units resting at each. No
+    /// trader account: what a watch of how the book follows the index reads.
+    pub fn read_touch(&self, cache: &impl Accounts, slot: u64) -> Result<Touch, String> {
+        let (prices, index, levels) = self.with_book(cache, |book| {
+            let prices = perp_prices(&self.market, book.perp_asset_map)
+                .map_err(|e| format!("the perp asset map: {e}"))?;
+            let index = perp_index(&self.market, book.perp_asset_map, slot)
+                .map_err(|e| format!("the index: {e}"))?;
+            let levels = perp_top_levels(&self.venue, &self.market.symbol, book, slot)?;
+            Ok((prices, index, levels))
+        })?;
+        let level = |(ticks, lots): (u64, u64)| {
+            let lots = i64::try_from(lots).unwrap_or(i64::MAX);
+            (
+                ticks_to_usd(&self.market, ticks),
+                mtx_kit::venue::lots_to_base_units(&self.market, lots),
+            )
+        };
+        Ok(Touch {
+            index,
+            mark: prices.mark,
+            bid: levels.bid.map(level),
+            ask: levels.ask.map(level),
+        })
+    }
+}
+
+/// A market's index and touch ([`PerpReader::read_touch`]), in USD and base
+/// units: `(price, size)` a side.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct Touch {
+    pub index: f64,
+    pub mark: f64,
+    pub bid: Option<(f64, f64)>,
+    pub ask: Option<(f64, f64)>,
 }
 
 fn key_of(address: &Address) -> Pubkey {
