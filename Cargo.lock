@@ -5628,10 +5628,14 @@ dependencies = [
 name = "mtx-bot-weekend"
 version = "0.1.0"
 dependencies = [
- "borsh 1.8.1",
- "bs58",
  "mtx-kit",
- "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-weekend-gap-spcx-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
 ]
 
 [[package]]
