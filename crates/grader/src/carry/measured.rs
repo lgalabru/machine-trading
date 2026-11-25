@@ -206,11 +206,16 @@ pub struct MeasuredCarryFamily {
     pub arbitrageur_edge_bps: (f64, f64),
     pub arbitrageur_size_mult: f64,
     pub arbitrageur_inventory_mult: f64,
-    /// Price impact: the share that stays and the fading part's half-life
-    /// (the calibration's `book.impact` defaults, 0.5 and 30 s: unmeasured),
-    /// the most it moves the book (the tape's p90 worst fill of $10k+,
-    /// 20.32 bp) and the size it reads the book at (the tape's median
-    /// order, $512, in SOL).
+    /// Price impact. None of it stays: on the tape, the mid's move after a
+    /// $100-1k order (the bulk of the flow) is +1.29 bp its way a minute on
+    /// and +0.28 bp five minutes on (95% interval -0.63 to 1.13), against
+    /// 1.78 bp paid, so what is left after five minutes can't be told from
+    /// nothing, and what the informed know is in the index's path already
+    /// (they trade on where it goes). The fading part halves in a minute
+    /// (the markouts peak at 60 s and are gone by 300 s; the calibration's
+    /// `book.impact` defaults, 0.5 permanent and 30 s, are unmeasured). It
+    /// moves the book at most the tape's p90 worst fill of $10k+ (20.32
+    /// bp), and reads the book at the tape's median order ($512, in SOL).
     pub impact_permanent_share: f64,
     pub impact_half_life_slots: f64,
     pub impact_max_bps: f64,
@@ -304,8 +309,8 @@ impl MeasuredCarryFamily {
             arbitrageur_edge_bps: (3.5, 5.0),
             arbitrageur_size_mult: 1.0,
             arbitrageur_inventory_mult: 40.0,
-            impact_permanent_share: 0.5,
-            impact_half_life_slots: 30.0 / SLOT_SECONDS,
+            impact_permanent_share: 0.0,
+            impact_half_life_slots: 60.0 / SLOT_SECONDS,
             impact_max_bps: 20.32,
             impact_probe_sol: round2(511.98 / SNAPSHOT_MARK_USD),
             pinger_gap_slots: (4, 10),
@@ -837,9 +842,17 @@ mod tests {
         }
         assert!((sum / n - MARKOUT_60S_BPS).abs() < 0.001, "{}", sum / n);
         assert_eq!(sol["impact"]["10000-inf"]["p90_bps"], 20.32);
+        // What is left of a $100-1k order's move five minutes on can't be
+        // told from nothing: the impact fades whole.
+        let small = &sol["markouts"]["100-1000"]["markout_bps"];
+        assert_eq!(small["300s"]["mean"], 0.275);
+        assert!(small["300s"]["low"].as_f64().unwrap() < 0.0);
+        assert!(small["60s"]["mean"].as_f64().unwrap() > small["300s"]["mean"].as_f64().unwrap());
         let family = MeasuredCarryFamily::sol();
         assert_eq!(family.taker_limit_bps, 20.32);
         assert_eq!(family.impact_max_bps, 20.32);
+        assert_eq!(family.impact_permanent_share, 0.0);
+        assert_eq!(family.impact_half_life_slots, 240.0);
         // The pinger: under $5 a print, and about 30 times its measured pace
         // (5,134 prints in the tape's 4,408 minutes).
         assert!(family.pinger_size_sol * SNAPSHOT_MARK_USD < 5.0);
