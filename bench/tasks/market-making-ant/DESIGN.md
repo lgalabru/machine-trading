@@ -119,36 +119,61 @@ flow.
   more (two wallets agreeing) with a reduce-only market order.
 - Neither knows a path, a jump or when anyone trades.
 
+## Detectability
+
+Measured on this branch, never on the ANT snapshot: every grade here ran
+before the task moved to ANT, on SPCX's book, and the strength band has
+not been measured on the task as it ships. Sessions of 24 (12 calm, 8
+trend, 4 jump), reference and informed bot on the same sessions, PnL in
+USD:
+
+| Set | Reference (sum, Sharpe a session) | Informed (sum, Sharpe) |
+| --- | --- | --- |
+| SPCX profile, informed takers without an edge (seed e) | +10.71, 0.23 | +9.23, 0.21 |
+| SPCX profile, 7 bp edge (seed f) | -21.26, -0.26 | -5.25, -0.09 |
+| ANT profile on SPCX's book, informed takers without an edge (seed e) | -31.25, -0.97 | -10.98, -0.54 |
+
+Jump sessions decide the sums (a 3% jump through 3 to 4 units of
+inventory costs $10 to $20, against a calm session's dollar or two). On
+ANT's flow the reference loses in every regime, as luthor's paper makers
+do on mainnet; the informed bot loses less. The band (reference at 0.2 to
+0.7 of the informed bot, per-session Sharpe 0.25) is not met: see the open
+questions in the branch's report.
+
 ## Fairness
 
 - Every correct path runs through standard RPC and `mtx-kit`: the
   reference does.
-- The instruction states the bound (spread plus hindsight), the valuation at
-  the scenario's oracle (`Trader::oracle_usd` reads it), and the flow's
-  ranges and odds.
+- The instruction states scoring v2 (its rules written by `mtx task sync`),
+  the valuation at the scenario's oracle (`Trader::oracle_usd` reads it),
+  every measured number with its source, and every departure.
+- The informed bot reads only what anyone reading the chain could, once
+  told whose wallets to watch: the informed takers' trader accounts.
 - **Penalty twins:** as in flash-crash: at the cap passes, over it zeroes; a
   send outside the turn is refused, not a violation. A take that would open,
   add to or flip the position is refused before it is sent and the bot is
   told: no penalty. Only a taker fill the grader couldn't refuse beforehand
   is a breach.
-- A session where more than a tenth of the takers' orders fail is voided,
-  not scored: the bot didn't see the flow its scenario describes.
+- A session where more than a tenth of the library actors' actions fail
+  fails the grade as infrastructure: the bot didn't see the flow its
+  scenario describes.
 
 ## Failure modes, priced
 
 | Failure mode | How it's charged |
 | --- | --- |
-| run over by informed flow | the jump × the inventory it took |
-| warehouses inventory in a trend | the drift × the inventory |
-| quotes outside the takers' limits | no fills |
-| breach | zero for the whole grade |
+| run over by informed flow | the minute's move × the inventory it took |
+| a quote left stale by a move | the arbitrageur takes it at the stale price |
+| warehouses inventory in a trend or a jump | the move × the inventory |
+| breach | v2's per-session floor and the breach-rate penalty |
 
 ## Predictions
 
-Simple quoting roughly breaks even against the grader's maker; the
-reference earns a little. Frontier models: most near zero, the best a few
-times the reference. The frozen 0.7.0 exploit bots stay profitable but lose
-sessions.
+On the measured market a maker earns little: Phoenix's ANT takers get back
+about what they paid within a minute, and luthor's paper makers lost on
+mainnet. Doing nothing scores 0 and a careless quoter scores below it; the
+reference loses a little or earns a little; frontier models land near the
+reference. Rewards fall from 0.14.0's and don't compare with them.
 
 ## Generations
 
@@ -159,3 +184,4 @@ sessions.
 | 0.8.0 → 0.9.0 | on 0.8.0's flow a naive quoter beat the reference on fresh sets; the reference took its own unwinding for bursts | a lockstep world (the grader's maker no longer races the bot: grades replay); informed flow that bites; 72 hidden sessions drawn per batch from a secret; the reference graded alongside; `skill`; the ladder, with a flow oracle as the exploit bots' ceiling; a reference that counts only fills that grow its inventory |
 | 0.10.0 | informed orders still ran 2–4× noise sizes and limits, so each stood out as it traded: Opus took the cap with every burst (14–20×), Fable too but chased fake-outs (1.3–12×) | 0.11.0: informed orders drawn exactly like noise (size, limit, account), only their side and timing differ; fake-outs drawn exactly like bursts, 0–2 a session; renamed `market-making-spcx`; the 0.10.0 bots join the exploit checks |
 | 0.12.0 | every Astra bot lost on its quotes ($77 to $351 over 72 sessions) and made $1,794 to $2,615 buying 16 to 19 SPCX ahead of each jump, on bursts read from the trade ring, from `getBlock`, or from the takers' own accounts: 16–25× the reference. Within the rules, and not market making | 0.13.0: the mandate allows taking only to reduce ([ADR 0003](../../../docs/adr/0003-free-strategies-bounded-by-the-mandate.md)); a reference that never takes and stops quoting the side a burst hit; a flow oracle that leans with a quote; three Astra bots join the exploit checks |
+| 0.14.0 | — | 0.15.0: renamed `market-making-ant`, on Phoenix's ANT; takers from the actor library at ANT's measured pace, sizes and informedness (RFD 0007); an arbitrageur; the reactive competitor at the measured touch; jumps in a sixth of the sessions; scoring v2 with an informed bot told the informed wallets; the flow oracle and two SPCX-only Astra exploit bots leave the ladder |
