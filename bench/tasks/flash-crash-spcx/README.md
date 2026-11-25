@@ -1,76 +1,89 @@
 # solana-foundation/flash-crash-spcx
 
-The agent's bot trades Phoenix's SPCX (SpaceX) perpetual through flash
-crashes and squeezes.
+The agent's bot trades Phoenix's SPCX (SpaceX) perpetual through crashes
+and squeezes at the odds mainnet's own tape measured, beside other takers,
+some of them informed, with its own trades moving the price.
 
 | | |
 | --- | --- |
-| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29 |
-| Sessions | 72 hidden per grade, stratified by direction and aftermath; 6 practice. Each session is 80–180 s of market time. |
+| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29; the family measured from mainnet's Phoenix tape (`phoenix-tape.20261125.fc443f1e`) |
+| Sessions | 72 hidden per grade (18 quiet; the shocks stratified by direction and aftermath); 6 practice. Each session is 80–180 s of market time. |
 | Mandate | 70 SPCX position cap (about 1× collateral); $1,000 loss limit (10% of collateral) |
-| Bound | Hindsight: the full cap held the right way through every move, at no cost |
-| Reference | Reward ~0.04. It rides each move while it runs, and fades it once it stops. |
+| Bound | None: scored by v2 alone |
+| Reference | v2's 0.5. It rides a confirmed move at the full cap, with a trailing stop and a drawdown halt. |
+| Anchors | Scoring v2: 0.5 the reference; 1 the informed bot, told the informed takers' wallets, which holds the way their recent flow points |
 
 How every task is scored, and how risk is enforced, is in the
 [dataset README](../README.md#how-a-bot-is-judged).
 
 ## The skill
 
-A good bot reads which way a shock is going and takes the other side of the
-forced flow. It sizes and exits so that the shocks that don't revert can't
-take it past its loss limit.
+A good bot tells a shock from the wobble and the small moves, rides the
+shocks that keep going and cuts the ones that turn, sits out the sessions
+where nothing happens, and pays for every move it trades. A better one
+reads the takers on chain and learns which of them know.
 
-- **Wins:** fading shocks that have stopped, sized to survive the ones that
-  keep going.
-- **Loses:** blind bets at the open, which win half the shocks and lose the
-  other half; blind dip-buying, which is wrong whenever the shock is a
-  squeeze; and full size on every shock, which breaches the loss limit on
-  the ones that don't revert.
+- **Wins:** a threshold above the small moves; the move's way, at a size
+  the loss limit survives; a stop that grows with the move; holding what
+  keeps going; reading which wallets take ahead of the moves.
+- **Loses:** fading every shock (45% keep going); trading every wobble
+  (a quarter of the sessions are quiet, and every round trip pays fees and
+  impact); no stop; blind bets at the open.
 
 ## The market
 
-- **Shocks:** SPCX crashes or squeezes, 50/50, in one to three legs of
-  0.6–8%. Most legs land at once (a big one in parts of unequal, random
-  sizes on consecutive steps). Fizzles that give most or all of their move back are
-  mixed in.
-- **Aftermath:** most shocks revert (~65%), some stall (~20%), and some keep
-  going (~15%).
-- **No tells:** the path's shape gives nothing away that a trader wouldn't
-  see. Moves ramp in uneven steps, legs are drawn independently, pauses and
-  holds share one range, a session ends a random while after its last move,
-  and the mark wobbles in between.
+- **Shocks** in three of four sessions: SPCX crashes or squeezes, 50/50,
+  in one to three legs of 1.5–9.5% (Pareto: median about 2%). Then it
+  extends (~45%), reverts (~31%) or stalls (~24%): mainnet's jumps fifteen
+  minutes on.
+- **Quiet sessions** (a quarter): only the wobble and small moves.
+- **Small moves** of 0.5–1.5%, which mostly don't give their move back.
+- **Takers:** noise at SPCX's own pace, informed traders who see about ten
+  seconds ahead, chasers who take the way the price moved; around a move,
+  the flow mainnet's jumps carried.
+- **Impact:** the book stays where trades leave it, half for good, the rest
+  halving every 30 s; a 70-SPCX take walks it about 5 bp.
+- **Stated departures** from mainnet, in the instruction: shocks far more
+  common, the aftermath inside the session, direction 50/50, and the flow
+  around a move measured on all markets (SPCX had no jump).
 
 ## Scoring
 
-The bound is per session: the hindsight bound above. Nothing else is
-specific to this task.
+Scoring v2 only: 0 doing nothing, 0.5 the reference, 1 the informed bot,
+on the same sessions, losses counted 1.5 times. The account is valued at
+the scenario's price, not where trades pushed the book.
 
 ## Baselines
 
-| Agent | Reward | What it shows |
-| --- | --- | --- |
-| oracle (the reference bot) | ~0.04 | The task is solvable, and the reference is calibrated |
-| nop (the starter bot) | 0.0 | Doing nothing earns nothing |
-| cheater | 0.0 | Cheatcodes through the proxy disqualify; `/tests` is unreadable; writing the reward file counts as tampering; ignoring SIGTERM doesn't extend a session |
-| sneaky | 0.0 | The surfnet's own port answers nothing without its secret path |
+On one fresh 72-session hidden set (2026-11-24, a local secret): the
+reference made $11,156 ($9,571 weighted as v2 weighs losses, Sharpe 0.46,
+no breach) and the informed bot $31,522 ($30,898 weighted, Sharpe 0.90):
+the reference is 0.31 of the informed bot, inside the strength band. On
+the 6 practice sessions, −$32.85 and $2,545.21. The full ladder hasn't run
+on 0.15.0's family yet.
 
-`just ladder flash-crash-spcx` grades the ladder (`checks/`) on fresh
-hidden sets. Blind bets, a dip-buyer and momentum must score below the
-reference, a regime oracle above it, and the frozen exploit bots within
-their limits.
+| Rung | What it is | Expected |
+| --- | --- | --- |
+| `nop` | the starter | 0 |
+| `blind-long`, `blind-short` | the full cap from the open | under the reference |
+| `dip-buyer` | the cap long once SPCX is 3% down, held | under the reference |
+| `momentum` | the cap the move's way once SPCX is 4% from the open, held | under the reference |
+| `reference` | rides a confirmed move with a trailing stop | 0.5 |
+| `informed` | told the informed takers' wallets | 1 |
+| exploit bots | 0.10.0 and 0.12.0's frozen flash-crash bots | below the informed bot, profitable in at most 75% of sessions |
+| probes | coin flips, martingale, limit-hugger, stop-lotto, levered references, breacher, honest blends | in their v2 bands |
 
 ## Realism limits
 
-- **Static replay.** The scenario moves Phoenix's oracle and re-crosses the
-  book along a scripted path. Makers don't react to the bot, and its orders
-  don't move the scripted price.
+- **One snapshot's book.** Depth and fees are mainnet's on 2026-10-29;
+  luthor records no book, so the impact's persistence is the calibration's
+  default.
 - **No latency race.** The world waits for the bot every step, so thinking
-  faster gains nothing within a step. That's the price of grades that
-  replay.
-- **No MEV or competing takers.** Nobody front-runs or sandwiches the bot.
-- **No funding.** Sessions last under two minutes, so perp funding isn't
-  simulated.
-- **One market, one snapshot.** Depth and fees are mainnet's on 2026-10-29.
+  faster gains nothing within a step.
+- **Who the takers are.** The tape doesn't name the taker; the informed
+  traders, chasers and noise are the actor library's, sized and paced
+  from the tape.
+- **No funding.** Sessions last under three minutes.
 
 ## More
 
