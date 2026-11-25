@@ -23,18 +23,6 @@
       "name": "informed",
       "dir": "bench/tasks/weekend-gap-spcx/checks/bots/informed",
       "tell_latent": true
-    },
-    {
-      "name": "weekend-gap-sol-1",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-1"
-    },
-    {
-      "name": "weekend-gap-sol-2",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-2"
-    },
-    {
-      "name": "weekend-gap-sol-3",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-3"
     }
   ],
   "anchors": {
@@ -55,11 +43,7 @@
     "reference < informed"
   ],
   "exploits": {
-    "bots": [
-      "weekend-gap-sol-1",
-      "weekend-gap-sol-2",
-      "weekend-gap-sol-3"
-    ],
+    "bots": [],
     "max_profitable": 0.9,
     "below": "informed"
   },
