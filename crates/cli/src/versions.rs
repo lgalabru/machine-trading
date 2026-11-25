@@ -634,10 +634,7 @@ pub(crate) mod tests {
             let a = fingerprint(&root, task, &disk(&root)).unwrap();
             // Another family under the same folder: only the generator differs.
             let b = with(&root, task, "task.toml", &|t| {
-                t.replace(
-                    "generator = \"flash-crash-mainnet\"",
-                    "generator = \"weekend-gap\"",
-                )
+                t.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\"")
             });
             assert_ne!(a, b);
             std::fs::remove_dir_all(&root).unwrap();
