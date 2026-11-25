@@ -15,10 +15,12 @@
 //! informed are hitting while it holds less than that. Everything
 //! else is the reference's: quotes one tick inside the competing makers,
 //! skewed against inventory, leaning with the drift, backing off one-sided
-//! fills, never taking.
+//! fills and one-sided runs on the tape, never taking.
 //!
 //! It knows who is informed and how they trade, never the path, a jump, or
 //! when anyone will trade: what it reads is what they already did.
+
+mod tape;
 
 use std::collections::VecDeque;
 
@@ -44,16 +46,14 @@ const REQUOTE_SLOTS: u64 = 12;
 /// what the informed see coming, a minute's mean absolute move (12 bp a
 /// minute at the calibration's 1.55 bp a second, times 0.8) times the
 /// share of it still ahead on average.
-const LEAN_BPS: f64 = 4.0;
-/// The signal past which it sheds inventory held against it: more than one
-/// wallet's fresh view (one alone is at most `2 h - 1`, 0.7).
-const FLATTEN_SIGNAL: f64 = 0.8;
-/// The least position worth a market order to shed, in base units.
-const MIN_SIZE: f64 = 0.05;
+const LEAN_BPS: f64 = 6.0;
 /// The share of the cap a full signal holds the informed way.
 const TARGET_SHARE: f64 = 0.5;
 /// The signal past which the side the informed hit is pulled.
-const PULL_SIGNAL: f64 = 0.3;
+const PULL_SIGNAL: f64 = 0.1;
+/// The tape's window and one-sided threshold: the reference's.
+const FLOW_WINDOW_SLOTS: u64 = 40;
+const FLOW_PULL_UNITS: f64 = 4.0;
 /// The most informed wallets a session seats (the family seats four).
 const WALLETS_MAX: usize = 16;
 
@@ -72,8 +72,11 @@ pub struct Informed {
     requotes: u64,
     /// The oracle's recent average, and the slot it was last updated at.
     average: Option<(u64, f64)>,
-    /// Which sides the informed signal pulled at the last requote.
+    /// Which sides the informed signal and the tape pulled at the last
+    /// requote.
     pulled: (bool, bool),
+    /// The market's recent trades, read off the chain, as the reference.
+    tape: tape::Tape,
 }
 
 impl Strategy for Informed {
@@ -84,6 +87,8 @@ impl Strategy for Informed {
             .var("MTX_REGIME")
             .ok_or("the informed bot runs told the session's latent state (MTX_REGIME)")?;
         self.flow = Flow::from_regime(regime, session)?;
+        let venue = PhoenixVenue::from_json(&session.venue)?;
+        self.tape = tape::Tape::new(&venue, &session.symbol, FLOW_WINDOW_SLOTS)?;
         log(&format!(
             "one tick inside the competitor: {:.3} bps; quoting a cap of {}",
             self.half_spread_bps, self.cap
@@ -113,19 +118,7 @@ impl Strategy for Informed {
         }
         let toxic = slot < self.toxic_until;
         let signal = self.flow.read(slot);
-        // Two informed wallets or more agreeing against what it holds: the
-        // move they see is coming, and it sheds the inventory now, with a
-        // market order (taking to reduce is allowed), rather than wait for
-        // its quotes to unwind it.
-        if signal.abs() >= FLATTEN_SIGNAL && held * signal < 0.0 && held.abs() >= MIN_SIZE {
-            log(&format!(
-                "slot {slot}: informed signal {signal:+.2} against {held:+.3}; flattening"
-            ));
-            orders.cancel_all();
-            orders.target_position(0.0);
-            self.quoted = None;
-            return Ok(());
-        }
+        let flow = self.tape.read(slot);
 
         let mean = match self.average {
             Some((at, mean)) => {
@@ -145,8 +138,9 @@ impl Strategy for Informed {
             mark * (1.0 + (drift_bps + lean_bps - SKEW_BPS_PER_UNIT * (held - target)) / 10_000.0);
         // The side the informed are hitting stays out of their way, unless
         // it sheds what the bot holds.
-        let informed_buying = signal >= PULL_SIGNAL && held <= target;
-        let informed_selling = signal <= -PULL_SIGNAL && held >= target;
+        let informed_buying = (signal >= PULL_SIGNAL || flow >= FLOW_PULL_UNITS) && held <= target;
+        let informed_selling =
+            (signal <= -PULL_SIGNAL || flow <= -FLOW_PULL_UNITS) && held >= target;
         let half = self.half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);

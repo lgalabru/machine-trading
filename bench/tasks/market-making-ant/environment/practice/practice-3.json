@@ -518,7 +518,7 @@
     "noise": [
       {
         "wallets": 8,
-        "flow_mult": 0.584,
+        "flow_mult": 0.583,
         "size_mult": 1.0,
         "limit_bps": 16.54
       }
@@ -530,7 +530,7 @@
         "edge_bps": 7.0,
         "hit_rate": 0.85,
         "view_noise_bps": 0.0,
-        "intensity_mult": 0.831,
+        "intensity_mult": 0.84,
         "size_mult": 1.5,
         "limit_bps": 16.54
       }

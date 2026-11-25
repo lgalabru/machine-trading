@@ -83,7 +83,7 @@ How the family turns them into a session:
 
 | Departure | Measured | In the task | Why |
 | --- | --- | --- | --- |
-| Jumps | 0.0115 per market-hour (93 / 110 markets / 73 h), clustered; ANT 4 in 3 days | one jump in 12 of 72 sessions | stepping back must be tested; a sixth, not 0.14's half |
+| Jumps | 0.0115 per market-hour (93 / 110 markets / 73 h), clustered; ANT 4 in 3 days | one jump in 4 of 72 sessions (about 70x the tape's rate) | a small stress share, not 0.14's half |
 | Trends | not measured | 24 of 72 sessions drift 0.002-0.006% a step | inventory risk with informed flow leaning through it |
 | Volatility | no ANT calibration | SPCX's 1.55 bp a second | the calibration pipeline has no ANT file yet |
 | Informedness | unobserved per taker (the tape has no addresses) | noise plus informed wallets (hit rate 0.85, 7 bp edge) | fits the average and the size gradient's sign; a mix is what makes "who is informed" knowable |
@@ -102,10 +102,12 @@ flow.
 
 ## Anchors
 
-- **Reference** (`reference/`, unchanged from 0.14.0): one tick inside the
-  competing makers around the oracle, a linear skew against inventory, a
-  lean with the drift, and a pause on the side one-sided fills hit. Never
-  takes.
+- **Reference** (`reference/`): one tick inside the competing makers
+  around the oracle, a linear skew against inventory, a lean with the
+  drift, and a pause on a side after one-sided fills of its own or a
+  one-sided run on the tape (net taker volume over 40 slots past 4 ANT,
+  read from Phoenix's trade list in the market account, `reference/src/tape.rs`).
+  Never takes.
 - **Informed bot** (`checks/bots/informed/`): the reference, told the
   latent state (`MTX_REGIME`: the informed and arbitrageur wallets, the
   informed share, horizon, edge and hit rate, the flow's pace, the
@@ -113,32 +115,51 @@ flow.
   trader accounts (one `getMultipleAccounts`) and takes each position change
   as a trade; a trade's side, weighted by what is left of its 240-slot
   horizon and by `2 h - 1`, sums into a signal in [-1, 1]. It leans its
-  reservation price by 4 bp a unit of signal, skews toward holding half the
-  cap the signal's way (built with quotes), pulls the side the informed hit
-  past a signal of 0.3, and sheds inventory held against a signal of 0.8 or
-  more (two wallets agreeing) with a reduce-only market order.
+  reservation price 6 bp a unit of signal, skews toward holding half the
+  cap the signal's way (built with quotes), and pulls the side the informed
+  hit past a signal of 0.1. Of four variants on 48 sessions (target 0,
+  0.5, 0.75 of the cap; lean 0 to 8 bp; a larger quote when quiet; a
+  market-order flatten against two agreeing wallets) this was the best.
 - Neither knows a path, a jump or when anyone trades.
 
 ## Detectability
 
-Measured on this branch, never on the ANT snapshot: every grade here ran
-before the task moved to ANT, on SPCX's book, and the strength band has
-not been measured on the task as it ships. Sessions of 24 (12 calm, 8
-trend, 4 jump), reference and informed bot on the same sessions, PnL in
-USD:
+Measured on mtx-bench-2 (Linux) on the ANT snapshot, with fills named by
+counterparty (the report's `making_fills` now name a library wallet's kind).
+`mtx grade --draw market-making-ant`, two sets of 24 sessions (13 calm, 9
+trend, 2 jump each), PnL in USD:
 
-| Set | Reference (sum, Sharpe a session) | Informed (sum, Sharpe) |
-| --- | --- | --- |
-| SPCX profile, informed takers without an edge (seed e) | +10.71, 0.23 | +9.23, 0.21 |
-| SPCX profile, 7 bp edge (seed f) | -21.26, -0.26 | -5.25, -0.09 |
-| ANT profile on SPCX's book, informed takers without an edge (seed e) | -31.25, -0.97 | -10.98, -0.54 |
+| Bot | Set 1 | Set 2 | Sharpe a session |
+| --- | --- | --- | --- |
+| nop | 0 | 0 | |
+| naive quoter (an earlier 24, jumps at a sixth) | -25.20 | | -0.64 |
+| skew quoter (same) | -13.21 | | -0.40 |
+| reference (tape-reading) | -7.80 | -10.49 | -0.34, -0.32 |
+| informed (shipped) | +2.35 | -0.70 | 0.21, -0.14 |
+| informed, no lean or target, 3x size when quiet | -7.80 | -3.09 | -0.53, -0.58 |
 
-Jump sessions decide the sums (a 3% jump through 3 to 4 units of
-inventory costs $10 to $20, against a calm session's dollar or two). On
-ANT's flow the reference loses in every regime, as luthor's paper makers
-do on mainnet; the informed bot loses less. The band (reference at 0.2 to
-0.7 of the informed bot, per-session Sharpe 0.25) is not met: see the open
-questions in the branch's report.
+Where the reference's PnL goes, set 1 (by fill counterparty; spread is the
+fill against the fair price, markout the fair price's move over 60 s
+after the fill, in the bot's favour):
+
+| Source | Calm (13) | Trend (9) | Jump (2) | All |
+| --- | --- | --- | --- | --- |
+| spread from noise takers | +1.11 | +0.50 | +0.24 | +1.85 |
+| spread from informed takers | +0.86 | +0.98 | +0.23 | +2.07 |
+| 60 s markout of informed fills | -4.10 | -3.84 | -11.25 | -19.19 |
+| fees | -1.48 | -0.92 | -0.22 | -2.61 |
+| inventory through jumps | 0 | 0 | -3.80 | -3.80 |
+| inventory through the walk | -0.11 | +0.74 | +0.32 | +0.95 |
+| PnL | -1.80 | -0.65 | -5.35 | -7.80 |
+
+The arbitrageur's fills cost the reference about $1 of spread over 24
+sessions (an earlier set: -1.25); the walk and the noise takers' markout
+are near 0. The loss is the informed takers, as measured: a maker inside a
+2.0 to 3.5 bp competitor captures about 1.1 bp a fill before a 0.5 bp maker
+fee, and an informed fill loses about 10 bp over the minute. Breaking even
+takes avoiding about nine informed fills in ten; the first fill of each
+informed wallet's view can't be avoided even by the informed bot. The band
+(reference at 0.2 to 0.7 of the informed bot, Sharpe 0.25) is not met.
 
 ## Fairness
 
@@ -184,4 +205,4 @@ reference. Rewards fall from 0.14.0's and don't compare with them.
 | 0.8.0 → 0.9.0 | on 0.8.0's flow a naive quoter beat the reference on fresh sets; the reference took its own unwinding for bursts | a lockstep world (the grader's maker no longer races the bot: grades replay); informed flow that bites; 72 hidden sessions drawn per batch from a secret; the reference graded alongside; `skill`; the ladder, with a flow oracle as the exploit bots' ceiling; a reference that counts only fills that grow its inventory |
 | 0.10.0 | informed orders still ran 2–4× noise sizes and limits, so each stood out as it traded: Opus took the cap with every burst (14–20×), Fable too but chased fake-outs (1.3–12×) | 0.11.0: informed orders drawn exactly like noise (size, limit, account), only their side and timing differ; fake-outs drawn exactly like bursts, 0–2 a session; renamed `market-making-spcx`; the 0.10.0 bots join the exploit checks |
 | 0.12.0 | every Astra bot lost on its quotes ($77 to $351 over 72 sessions) and made $1,794 to $2,615 buying 16 to 19 SPCX ahead of each jump, on bursts read from the trade ring, from `getBlock`, or from the takers' own accounts: 16–25× the reference. Within the rules, and not market making | 0.13.0: the mandate allows taking only to reduce ([ADR 0003](../../../docs/adr/0003-free-strategies-bounded-by-the-mandate.md)); a reference that never takes and stops quoting the side a burst hit; a flow oracle that leans with a quote; three Astra bots join the exploit checks |
-| 0.14.0 | — | 0.15.0: renamed `market-making-ant`, on Phoenix's ANT; takers from the actor library at ANT's measured pace, sizes and informedness (RFD 0007); an arbitrageur; the reactive competitor at the measured touch; jumps in a sixth of the sessions; scoring v2 with an informed bot told the informed wallets; the flow oracle and two SPCX-only Astra exploit bots leave the ladder |
+| 0.14.0 | — | 0.15.0: renamed `market-making-ant`, on Phoenix's ANT; takers from the actor library at ANT's measured pace, sizes and informedness (RFD 0007); an arbitrageur; the reactive competitor at the measured touch; jumps in 4 of 72 sessions; scoring v2 with an informed bot told the informed wallets; the flow oracle and two SPCX-only Astra exploit bots leave the ladder |
