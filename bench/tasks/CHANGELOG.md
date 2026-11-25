@@ -7,31 +7,34 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
 - **0.15.0** (draft). Every task's market measured from mainnet
   ([RFD 0007](../../docs/rfd/0007-tasks-measured-against-mainnet.md)), on
   luthor's Phoenix tape `phoenix-tape.20261125.fc443f1e`.
-  - **`market-making-spcx` is now `market-making-ant`: the market with
-    real flow, measured, scored by v2.** Its takers sent 0.8 to 1.8
-    orders a second that knew nothing, with informed orders only ahead of
-    jumps; SPCX's real takers sent 0.33 orders a minute in regular hours,
-    and the average Phoenix taker is a little informed. The task moves to
-    Phoenix's ANT (Anthropic), on a new snapshot
-    (`phoenix-ant-2026-11-25`, cap 35 ANT), and its family is built from
-    ANT's measured profile (`market-making-ant`): the actor library's
-    noise and informed takers at ANT's pace (11.6 orders a minute) and
-    sizes (median $100, log-sd 1.5), and three kinds of taker fitted to
-    ANT's measured 10 s and 60 s markouts (+2.1, +4.4 bp): noise, index
-    chasers that take the index's lead over Phoenix's makers (the book
-    follows the index 1 to 2 s late: a modelled, public mechanism), and a
-    smaller private-horizon informed share; the price walks at ANT's
-    measured 4.45 bp a second; an arbitrageur that takes quotes a
-    move left stale against Phoenix's index (3.5 to 5 bp edge, 1 to 2
-    slots), where luthor's paper makers lose on mainnet; the grader's
-    reactive maker at ANT's measured touch (2.7 bp over 106 minutes of
-    quotes).  ANT has no calibration file: the walk is
-    SPCX's scaled to ANT's measured volatility (stated); 4 of 72 sessions jump (about 70 times
-    Phoenix's rate: stated), 28 trend, 40 are calm. The reference also reads
-    the tape (Phoenix's trade list) and steps off a side a one-sided run hits. Scored by v2 with
-    an informed bot told which wallets are the informed takers. SPCX's
-    profile stays drawable (`market-making-measured-spcx`, its flow x35).
-    Rewards fall and don't compare with 0.14.0's: those measured a game.
+  - **`market-making-spcx` is now `market-making-cbrs`: a thin, wide book
+    where mainnet makers earn, measured, scored by v2.** Its takers sent
+    0.8 to 1.8 orders a second that knew nothing, with informed orders
+    only ahead of jumps. On Phoenix, makers on liquid books lose (luthor's
+    paper makers: -1 to -3 bp a fill) and earn on thin, wide ones: on CBRS
+    (Cerebras) luthor's paper maker made +7 bp a fill after fees. The task
+    moves to CBRS, on a new snapshot (`phoenix-cbrs-2026-11-25`, cap 33
+    CBRS). Its family is built from CBRS's measured profile
+    (`market-making-cbrs`, tape study `phoenix-tape.20261125.3cb49758`):
+    the actor library's noise takers at CBRS's sizes (median $298) and 30
+    times its pace (0.185 orders a minute: stated), in sessions twice as
+    long (4 to 6.7 minutes), and the pinger's $3 print a minute; the
+    grader's reactive maker, post-only, at the measured 13.9 bp touch; an
+    arbitrageur that takes quotes a move left stale against Phoenix's
+    index (1 to 2 slots); Phoenix's makers following the index 1 to 2 s
+    late; the price at CBRS's measured 3.44 bp a second (SPCX's calibrated
+    walk scaled, stated). 4 of 72 sessions jump (about 70 times Phoenix's
+    rate: stated), 28 trend, 40 are calm. Scored by v2 against the
+    reference and an informed bot told the process. The family's other
+    pieces stay drawable for comparison: ANT's profile
+    (`market-making-measured-ant`, with index chasers and informed takers
+    fitted to ANT's 10 s and 60 s markouts, where no maker earned) and
+    SPCX's (`market-making-measured-spcx`). Rewards don't compare with
+    0.14.0's: those measured a game.
+  - **The actor library** gains `index_chasers` (takers on the index's
+    lead over the book) and an arbitrageur that can look after the bot's
+    turn (`after_turn`); the reactive competitor rests post-only; fills
+    against library wallets name their kind in the report.
 - **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
   mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
   unchanged: their anchor digests did not move.
