@@ -160,7 +160,9 @@ jobs:
         run: cargo test -p mtx-grader --features generators --test informed_boundary
       - name: Bench harness
         # `just bench` refuses a native harness on a guarded task.
-        run: python3 -I bench/harness/test_native_guard.py
+        run: |
+          python3 -I bench/harness/test_native_guard.py
+          python3 -I bench/harness/test_usage_log.py
       - name: mtx-kit, every feature
         # The workspace builds mtx-kit with the features its users ask for;
         # the rest (adapters no bot uses yet, test-util) only build here.
