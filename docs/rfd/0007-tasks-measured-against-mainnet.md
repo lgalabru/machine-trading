@@ -197,3 +197,22 @@ What each task becomes, to be settled as the work goes:
   `MakingFamily` first), built from the tape study, and leaves the old
   generators and their pins alone. Flash-crash and market-making are
   being built on branches of `release/0.15.0`.
+
+- 2026-11-25: one market a task, where its edge is (Ludo, astra). SPCX
+  trades one real taker order every three minutes in regular hours, so
+  each perp task moves to the market where the tape shows what it
+  teaches, and every one of them is a market luthor records:
+
+  | Task | Market | Why |
+  | --- | --- | --- |
+  | `market-making-ant` | ANT | 11.6 real orders a minute in regular hours, informed takers |
+  | `flash-crash-nvda` | NVDA | 9 of the 93 jumps, 2026-11-23's leader, a calibration with two states |
+  | `funding-carry-sol` | SOL | trades through the weekend (2.6 orders a minute), led by the exchanges |
+  | `weekend-gap-spcx` | SPCX | a closed-hours equity with a fitted open gap; its own weekend flow is nearly nil |
+
+  ANT is the listed equity perp (Phoenix asset 110), not the isolated
+  pre-IPO `ANTHROPIC`, and is newer than `phoenix-perps-2026-11-13`: it
+  takes a new snapshot. The old task directories stay as they are, so
+  0.14's pins don't move. luthor keeps every market's quotes from
+  2026-11-25 (luthor #17): top-of-book half-spreads over the first 106
+  minutes were SPCX 0.4 bp, SOL 0.73, NVDA 2.1, ANT 2.7.
