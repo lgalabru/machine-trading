@@ -151,11 +151,13 @@ pays for them only in the valuation.
   1.2% displacement from a 30-step calm mean, or a single 1.9% step,
   starts a ride at the full cap; it stops out once the mark gives back
   1.5% or 30% of the move from its extreme, whichever is more; it halts
-  past a $600 drawdown. Tuned on 600 draws of the family with a simulator
-  of the path (0.985 correlated with graded PnL on 72 sessions), checked on
-  600 others: $138 a session, Sharpe 0.42, profitable in half, deepest
-  drawdown $784. 0.14.0's reference (ride, then fade) makes −$18 a session
-  on the same draws.
+  past a $600 drawdown. Tuned on 600 draws of the family on SPCX with a
+  simulator of the path (0.985 correlated with graded PnL on 72 sessions),
+  then checked on 1,200 draws of the NVDA family (62 NVDA, 8 bp a side):
+  $130 and $137 a session, Sharpe 0.40 and 0.42, profitable in half,
+  deepest drawdown $787. flash-crash-spcx's 0.14.0 reference (ride, then
+  fade) makes −$35 and −$47 a session on the same draws, `momentum` $58 to
+  $61, the dip-buyer −$42 to −$56 (these three at a 70-NVDA cap).
 - **The informed bot (1)** is told the informed takers' wallets
   (`roster: ["informed"]`, resolved to their authorities as the session
   starts) and the process (`horizon_slots`, `hit_rate`, `quiet_odds`,
@@ -201,30 +203,48 @@ exploit bots (0.10.0 and 0.12.0 faders) should lose money on these odds.
 
 ## Calibration
 
-- **One hidden set** (2026-11-24, a local secret, 72 sessions, the
-  verifier's flags, on a Mac: `mtx grade --informed … --draw
-  flash-crash-nvda --count 72 --scoring v2-headline --v2-sessions`):
+**The strength band fails on NVDA as built: the reference is about 0.15
+of the informed bot.** Measured on a Mac under heavy shared load, where
+about half of the grades died to surfnet port races (an infrastructure
+fault, not the task's: see `crates/grader/src/snapshot.rs`, "picks its
+ports by binding and releasing them").
 
-  | Anchor | PnL | weighted as v2 (losses ×1.5) | Sharpe | profitable | worst | deepest drawdown |
-  | --- | --- | --- | --- | --- | --- | --- |
-  | reference | $11,156 | $9,571 | 0.46 | 49% (16 flat) | −$654 | $658 |
-  | informed | $31,522 | $30,898 | 0.90 | 78% | −$614 | |
+| Set | reference PnL | weighted | Sharpe | informed PnL | weighted | Sharpe | ratio (band 0.2–0.7) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| hidden draw, 72 (local secret, the verifier's flags) | $6,534 | $4,757 | 0.28 | 30 of 72 graded before the run died: $11,394 | $11,217 | 0.92 | 0.15 on those 30 |
+| six 12-session practice draws (seeds 501–506, `mtx calibrate --practice --v2-sessions`, both anchors) | $6,343 | $4,881 | 0.33 | $33,706 | $33,487 | 1.09 | 0.146 |
 
-  The reference is 0.31 of the informed bot, weighted (band 0.2–0.7), with
-  a per-session Sharpe of 0.46 (at least 0.25), never floored; graded as
-  the bot it scores 0.50. No breach.
-- **The reference on 72 practice-seed draws** (seed 101, graded one session
-  at a time): $8,527, Sharpe 0.39; 0.14.0's reference (ride, then fade) on
-  the same 72: $2,849, Sharpe 0.17, and −$18 a session on 600 simulated
-  draws.
-- **Practice** (seed 20261124, 6 sessions): reference −$32.85, informed
-  $2,545.21. Three of the six are reversions the reference rides and stops
-  out of; it is the draw, not the set's design (the reference's hidden-set
-  mean is $155).
-- **Not run here:** the full ladder (`just ladder`, four sets), the probe
-  bands, `mtx gates` without `--fast`, and the anchor digest (Linux).
-- **Anchor hashes:** recorded by `mtx task sync --anchors` in
-  `tests/anchor.digest` on Linux.
+The reference makes $88 to $91 a session where the path simulator says
+$130 to $137: on NVDA the chasers' ten orders after a move and the
+reference's own $10k entry walk the book before and as it rides, which
+the simulator doesn't price. The informed bot, reading about ten informed
+orders before every move, makes $468 a session (88% profitable).
+
+On SPCX's numbers (the first build of 0.15.0, before the move to NVDA)
+the same anchors gave reference $11,156 ($9,571 weighted, Sharpe 0.46) and
+informed $31,522 ($30,898): 0.31, in the band. The difference is NVDA's
+flow: its jumps carried $20,500 in their minute against $8,569 pooled,
+so the informed bot sees about ten informed orders a move, not four.
+
+Not changed yet, by the band's rule (change the reference or the market,
+never the band); the levers, in the order we'd try them:
+
+1. **The reference reads the tape** as an expert does: net taker flow over
+   the last horizon, every wallet together (the "careful blind" of
+   `docs/actors.md`), entering ahead of a move when it leans one way. It
+   can't tell informed from chasers, so it should land between today's
+   reference and the informed bot.
+2. **The informed share of a move's flow**, half today (a default, not
+   measured): a quarter informed and three quarters chasers keeps NVDA's
+   measured total and weakens the informed bot's signal.
+3. **The informed takers' horizon** (10 s, a default): the tape's NVDA
+   takers are right by 8 to 12 bp a minute on, not by a whole jump.
+
+- **Practice** (seed 20261124, 6 sessions): reference −$311.87, informed
+  $3,317.95.
+- **Not run here:** the full ladder, the probe bands, `mtx gates` (fast or
+  full: the fast ladder's builds and 12-session sets didn't finish under
+  the machine's load), and the anchor digest (Linux).
 
 ## Generations
 
@@ -239,4 +259,4 @@ exploit bots (0.10.0 and 0.12.0 faders) should lose money on these odds.
 | 0.8.0 | — | legs 0.6–8% log-uniform, 70% gaps, fizzles, duration drawn first; 36 hidden sessions; exploit checks |
 | 0.8.0 → 0.9.0 | frozen exploit bots made 3–6× the reference on fresh sets; the old reference (two fading tranches) made $525–$759 on 36 sessions, too little to rank the ladder's rungs reliably | a lockstep world; hidden sets drawn per batch from a secret; the reference graded alongside; `skill`; the ladder with a regime oracle; a new reference that rides each move and fades it once it stops ($647–$2,777 on the same sets) |
 | 0.10.0 | faded fizzles that always came all the way back, and rode moves cut into equal steps: 2.3–3.1×, profitable in up to 86% of sessions | 0.11.0: at-once moves past ~3.8% land in parts of unequal random sizes; fizzles give back 40–100% (fading them, near riskless, was most of the edge); renamed `flash-crash-spcx`; the 0.10.0 bots join the exploit checks |
-| 0.15.0 | 0.12.0–0.14.0's flash-crash bots made $15k–27k over 72 sessions faded on the bench; on mainnet the same families lost (RFD 0007) | the market measured from mainnet's Phoenix tape (`phoenix-tape.20261125.fc443f1e`): aftermath revert 31% / stall 24% / extend 45%, Pareto legs, small moves that mostly don't give back, a quarter of the sessions quiet, SPCX's takers (noise, informed, chasers) and price impact; scoring v2 with an informed bot told the informed takers' wallets; a reference that rides confirmed moves with a trailing stop; the regime oracle dropped |
+| 0.15.0 | 0.12.0–0.14.0's flash-crash bots made $15k–27k over 72 sessions faded on the bench; on mainnet the same families lost (RFD 0007) | the market measured from mainnet's Phoenix tape (`phoenix-tape.20261125.fc443f1e`): aftermath revert 31% / stall 24% / extend 45%, Pareto legs, small moves that mostly don't give back, a quarter of the sessions quiet, SPCX's takers (noise, informed, chasers) and price impact; scoring v2 with an informed bot told the informed takers' wallets; a reference that rides confirmed moves with a trailing stop; the regime oracle dropped; moved to NVDA as flash-crash-nvda (flash-crash-spcx stays 0.14.0) |
