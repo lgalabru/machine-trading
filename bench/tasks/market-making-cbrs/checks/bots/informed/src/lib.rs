@@ -38,22 +38,31 @@ const DRIFT_SLOTS: f64 = 80.0;
 const DRIFT_MAX_BPS: f64 = 5.0;
 const QUOTE_SIZE: f64 = 1.0;
 /// Its quote size once its fills have shown they aren't run over: after
-/// `MARKOUT_FILLS` fills whose 10 s markout (`MARKOUT_SLOTS`) averages no
-/// worse than `MARKOUT_FLOOR_BPS`.
+/// `MARKOUT_FILLS` fills whose 10 s markout (`MARKOUT_SLOTS`) gives back
+/// no more than half the half-spread it quotes at.
 const LEARNED_QUOTE_SIZE: f64 = 2.0;
 const MARKOUT_FILLS: u32 = 10;
 const MARKOUT_SLOTS: u64 = 40;
-const MARKOUT_FLOOR_BPS: f64 = -2.0;
+const MARKOUT_GIVEBACK: f64 = 0.5;
+
+/// Whether its fills have shown they aren't run over: their markout takes
+/// back no more than `MARKOUT_GIVEBACK` of the half-spread it quotes at.
+fn fills_hold_up(markouts: &markouts::Markouts, half_spread_bps: f64) -> bool {
+    markouts
+        .mean_bps(MARKOUT_FILLS)
+        .is_some_and(|mean| mean >= -MARKOUT_GIVEBACK * half_spread_bps)
+}
 
 /// Its quote size, from what its fills have earned so far.
-fn learned_size(markouts: &markouts::Markouts) -> f64 {
-    match markouts.mean_bps(MARKOUT_FILLS) {
-        Some(mean) if mean >= MARKOUT_FLOOR_BPS => LEARNED_QUOTE_SIZE,
-        _ => QUOTE_SIZE,
+fn learned_size(markouts: &markouts::Markouts, half_spread_bps: f64) -> f64 {
+    if fills_hold_up(markouts, half_spread_bps) {
+        LEARNED_QUOTE_SIZE
+    } else {
+        QUOTE_SIZE
     }
 }
 /// Its quote size when every taker is noise, base units.
-const UNINFORMED_QUOTE_SIZE: f64 = 3.0;
+const UNINFORMED_QUOTE_SIZE: f64 = 4.0;
 const INVENTORY_LIMIT: f64 = 0.25;
 const TOXIC_UNITS: f64 = 1.5;
 const TOXIC_WINDOW_SLOTS: u64 = 8;
@@ -171,12 +180,21 @@ impl Strategy for Informed {
             mark * (1.0 + (drift_bps + lean_bps - SKEW_BPS_PER_UNIT * (held - target)) / 10_000.0);
         // The side the informed are hitting stays out of their way, unless
         // it sheds what the bot holds.
-        let informed_buying = (signal >= PULL_SIGNAL || flow >= pull) && held <= target;
-        let informed_selling = (signal <= -PULL_SIGNAL || flow <= -pull) && held >= target;
+        // A run on the tape is dodged as the reference does, only while its
+        // fills are run over, and never where it knows every taker is noise.
+        let toxic_tape =
+            !self.flow.uninformed && !fills_hold_up(&self.markouts, self.half_spread_bps);
+        let informed_buying =
+            (signal >= PULL_SIGNAL || (toxic_tape && flow >= pull)) && held <= target;
+        let informed_selling =
+            (signal <= -PULL_SIGNAL || (toxic_tape && flow <= -pull)) && held >= target;
         let half = self.half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
-        let size = self.flow.quote_size().max(learned_size(&self.markouts));
+        let size = self
+            .flow
+            .quote_size()
+            .max(learned_size(&self.markouts, self.half_spread_bps));
         let (bid_size, ask_size) = (size.min(cap - held), size.min(cap + held));
         let pulled = (informed_buying, informed_selling);
         let moved = self.pulled != pulled

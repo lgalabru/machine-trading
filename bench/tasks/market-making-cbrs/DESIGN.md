@@ -101,20 +101,20 @@ behind when the index moves.
 
 - **Reference** (`reference/`): one tick inside the competing makers
   around the oracle (the index), a linear skew against inventory, a lean
-  with the drift; it steps off a side after one-sided fills of its own or a
-  one-sided run on the tape (net taker volume over 40 slots past three
-  typical trades, weighted by volume, from Phoenix's trade list in the
-  market account, `reference/src/tape.rs`), and it marks out its own fills
-  10 s on (`reference/src/markouts.rs`): after 10 fills whose markout
-  averages no worse than -2 bp it shows 2 units instead of 1. Never takes.
+  with the drift, a pause on a side after one-sided fills of its own. It
+  marks out its own fills 10 s on (`reference/src/markouts.rs`): once 10
+  of them give back no more than half the half-spread it quotes at, it
+  shows 2 units instead of 1; until then, or if they stop holding up, it
+  also steps off a side a one-sided run hits on the tape (net taker volume
+  over 40 slots past three typical trades, from Phoenix's trade list,
+  `reference/src/tape.rs`). Never takes.
 - **Informed bot** (`checks/bots/informed/`): the reference, told the
   latent state (`MTX_REGIME`: the informed and index-chasing shares and
   wallets, if any, the informed process, the book's lead over the index, the
   arbitrageur's latency and edge). On CBRS both shares are 0: it knows from
-  the first step that every taker is noise, and shows 3 units. Where there
-  are informed wallets (ANT's profile) it reads their trader accounts and
-  leans with them. Of 2, 3 and 5 units on 48 sessions, 3 kept the reference
-  in the band with the best Sharpe.
+  the first step that every taker is noise, shows 4 units and never dodges
+  the tape. Where there are informed wallets (ANT's profile) it reads their
+  trader accounts and leans with them.
 - Neither knows a path, a jump or when anyone trades.
 
 ## Detectability
@@ -126,19 +126,28 @@ each), PnL in USD, Sharpe a session:
 | Bot | Set 1 | Set 2 | 48 sessions |
 | --- | --- | --- | --- |
 | nop | 0 | 0 | 0 |
-| naive quoter | +72.75 (0.76) | NAIVE2 | |
-| skew quoter | +56.70 (1.14) | SKEW2 | |
-| reference | +64.34 (1.16) | +41.68 (0.95) | +106.02 |
-| informed | +76.64 (1.19) | +80.81 (2.13) | +157.45 |
+| naive quoter | +72.75 (0.76) | +31.31 (0.36) | +104.06 |
+| skew quoter | +56.70 (1.14) | +42.46 (1.43) | +99.16 |
+| reference | +61.63 (1.52) | +43.89 (0.97) | +105.52 |
+| informed | +90.31 (1.01) | +93.25 (2.71) | +183.56 |
 
-The reference's PnL is 0.67 of the informed bot's. Where it comes from
-(reference, set 1): the spread from noise takers +53.12 over 482 CBRS
-filled, the arbitrageur -3 to -4 of spread, fees -2, the rest inventory
-(the two jump sessions +15). The informed bot fills twice the volume (994
-CBRS) at about the same spread a unit. The naive quoter's set 1 lead over
-the reference is inventory through the walk and the jumps (+29 of its
-+73), not spread (+48 against the reference's +53): luck the ladder's
-bootstrap must weigh.
+The reference's PnL is 0.57 of the informed bot's, with a Sharpe of 1.0 to
+1.5 a session. Where it comes from (reference, set 1): the spread from
+noise takers +54.84 over 502 CBRS filled, the arbitrageur's picks -3 to -4,
+fees -2, the rest inventory (the two jump sessions +8.9). The informed bot
+fills 2.6 times the volume (1,291 CBRS) at about the same spread a unit.
+The reference barely leads the naive and skewed quoters over 48 sessions
+(+105.52 against +104.06 and +99.16): on a book of takers who know nothing,
+any quote inside the competitor earns, and the naive quoter's lead on set 1
+is inventory through the walk and the jumps (+29 of its +73). Its own-fill
+learner (2 units after 10 fills that hold up) rarely acts: a session fills
+it 10 to 24 times. The ladder's order rules `naive-quoter < reference` and
+`skew-quoter < reference` will not hold with the bootstrap's confidence.
+
+Practice is drawn with seed 17 and calibrated with both anchors (`mtx
+calibrate --practice market-making-cbrs --practice-seed 17`, reference
++12.75, informed +18.66 over the six). Seed 15's six had the reference
+ahead (+17.93 against +12.71), which v2 refuses to scale.
 
 ## Fairness
 
