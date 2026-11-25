@@ -216,3 +216,27 @@ What each task becomes, to be settled as the work goes:
   0.14's pins don't move. luthor keeps every market's quotes from
   2026-11-25 (luthor #17): top-of-book half-spreads over the first 106
   minutes were SPCX 0.4 bp, SOL 0.73, NVDA 2.1, ANT 2.7.
+
+- 2026-11-25: on ANT's real flow, no maker earns (astra, with the
+  market-making agent). With every number at its measured value, over 48
+  graded sessions on Linux the informed bot made +$2 and -$1 a set, and
+  the reference lost $8 to $10. The loss is the informed takers: their
+  60 s markout (4.4 bp) is larger than what they pay to cross (2.7 bp),
+  so a maker breaks even only by dodging nine informed fills in ten.
+  That is what luthor's paper makers see on liquid books. A task has to
+  rank skill, so the owner chose one departure: informed takers trade
+  on the index's recent move, which leads Phoenix's book, rather than
+  on a private view of the future, and reading the index is the skill.
+  It fits the tape only because ANT moves about three times as much as
+  SPCX: per-second volatility from the tape's mid, 60 s returns, US
+  regular hours, is ANT 4.45 bp, NVDA 2.98, SOL 1.60 and SPCX 1.55
+  (SPCX's calibration says 1.55, which checks the method).
+- 2026-11-25: grading moved to Linux. Two surfnets at once kill each
+  other on macOS, and the gates need Linux. Every 0.15 grade runs on
+  mtx-bench-2 in `rust:1.97.1-bookworm` containers. `weekend-gap-spcx`
+  is merged; its 6-set ladder puts the reference at 0.199 of the
+  informed bot, loss-weighted, with a Sharpe of 0.21, both just under
+  the band, so its reference is being strengthened.
+  `flash-crash-nvda`'s reference reads net taker flow off the book's
+  drift from the index and lands at 0.57 to 0.63 of the informed bot
+  over three hidden draws (Sharpe 0.72 to 0.85).
