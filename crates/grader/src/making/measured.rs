@@ -251,9 +251,16 @@ pub struct MeasuredFamily {
     /// a median of 2.0% and a p90 of 4.17% ([`STUDY`], `jumps.events`).
     pub jump_pct: (f64, f64),
     pub jump_margin: u64,
-    /// The share of the flow that is informed, the slots they see ahead
-    /// (60 s: the profile's longest markout), and how often they're right.
+    /// The share of the orders that is informed (fitted, see
+    /// [`MeasuredFamily::fit_informed`]), the pace an informed wallet trades
+    /// at while it trades (the share over the time it does, in multiples of
+    /// the flow's), the move it must see before it trades (twice Phoenix's
+    /// 3.5 bp taker fee: an informed trader takes when the move pays the
+    /// fee in and out), the slots it sees ahead (60 s: the profile's
+    /// longest markout), and how often it's right.
     pub informed_share: f64,
+    pub informed_intensity: f64,
+    pub informed_edge_bps: f64,
     pub informed_horizon_slots: u64,
     pub informed_hit_rate: f64,
     /// Informed orders are larger than noise by this: the profile's big
@@ -289,13 +296,12 @@ impl MeasuredFamily {
     /// whose own flow fills a session).
     pub fn new(profile: MarketProfile, flow_mult: f64) -> Self {
         assert!(flow_mult >= 1.0 && flow_mult.is_finite());
-        let informed_share = informed_share_for(&profile);
         let touch = profile.touch_half_spread_bps.max(TICK_BPS);
         // A touch of a tick or so (SPCX) can't be undercut: its depth is
         // thin, and the snapshot's makers stand behind it, as SPCX's worst
         // fills say (median 0.5 bp, p90 15.5 bp).
         let thin = touch < 2.0 * TICK_BPS;
-        Self {
+        let mut family = Self {
             flow_mult,
             calm_odds: 0.5,
             trend_odds: 1.0 / 3.0,
@@ -305,7 +311,9 @@ impl MeasuredFamily {
             trend_drift_pct: (0.002, 0.006),
             jump_pct: (1.5, 4.2),
             jump_margin: 60,
-            informed_share,
+            informed_share: 0.0,
+            informed_intensity: 0.0,
+            informed_edge_bps: INFORMED_EDGE_BPS,
             informed_horizon_slots: 240,
             informed_hit_rate: 0.85,
             informed_size_mult: 1.5,
@@ -326,7 +334,56 @@ impl MeasuredFamily {
             max_position: 20.0,
             max_drawdown_usd: 250.0,
             profile,
+        };
+        let (share, active) = family.fit_informed();
+        family.informed_share = share;
+        family.informed_intensity = round3(share / active);
+        family
+    }
+
+    /// The informed share of orders that gives the profile's average
+    /// one-minute markout, and the share of the time an informed wallet
+    /// trades: on calm paths of this family (the tape's SPCX had no jump),
+    /// an informed order's markout is `(2 h - 1)` times the move it saw
+    /// ahead, and it trades only while that move is past its edge. Noise's
+    /// markout is 0. Clamped to [0.05, 0.9] so neither kind vanishes.
+    fn fit_informed(&self) -> (f64, f64) {
+        let (mut seen_bps, mut active, mut slots) = (0.0, 0u64, 0u64);
+        let mut drawn = 0u64;
+        let mut seed = FIT_SEED;
+        while drawn < FIT_SESSIONS {
+            seed += 1;
+            assert!(
+                seed < FIT_SEED + 100 * FIT_SESSIONS,
+                "calm sessions are drawn"
+            );
+            if self.regime(seed) != MeasuredRegime::Calm {
+                continue;
+            }
+            drawn += 1;
+            let mut rng = SplitMix64(seed);
+            let _ = rng.next_f64(); // The regime's draw, as `sample` takes it.
+            let duration = rng.range_u64(self.duration);
+            let path = self.path(&mut rng, MeasuredRegime::Calm, duration);
+            for slot in (0..duration).step_by(2) {
+                let ahead =
+                    super::level_at(&path, (slot + self.informed_horizon_slots).min(duration))
+                        - super::level_at(&path, slot);
+                let ahead_bps = (ahead * 100.0).abs();
+                slots += 1;
+                if ahead_bps > self.informed_edge_bps {
+                    active += 1;
+                    seen_bps += ahead_bps;
+                }
+            }
         }
+        assert!(
+            active > 0 && slots > 0,
+            "an informed wallet sees a move past its edge"
+        );
+        let markout = (2.0 * self.informed_hit_rate - 1.0) * seen_bps / active as f64;
+        let share = (self.profile.markout_60s_bps() / markout).clamp(0.05, 0.9);
+        (round3(share), active as f64 / slots as f64)
     }
 
     /// SPCX's measured market, its flow times [`SPCX_FLOW_MULT`].
@@ -369,6 +426,7 @@ impl MeasuredFamily {
             informed_share: self.informed_share,
             informed_horizon_slots: self.informed_horizon_slots,
             informed_hit_rate: self.informed_hit_rate,
+            informed_edge_bps: self.informed_edge_bps,
             orders_per_minute: round3(self.orders_per_minute()),
             arbitrageur_latency_slots: rng.range_u64(self.arbitrageur_latency_slots),
             arbitrageur_edge_bps: round2(rng.range_f64(self.arbitrageur_edge_bps)),
@@ -423,10 +481,10 @@ impl MeasuredFamily {
             informed: vec![Informed {
                 wallets: self.informed_wallets,
                 horizon_slots: self.informed_horizon_slots,
-                edge_bps: 0.0,
+                edge_bps: self.informed_edge_bps,
                 hit_rate: self.informed_hit_rate,
                 view_noise_bps: 0.0,
-                intensity_mult: round3(self.informed_share),
+                intensity_mult: self.informed_intensity,
                 size_mult: self.informed_size_mult,
                 limit_bps: self.taker_limit_bps,
                 active: None,
@@ -588,6 +646,14 @@ impl MeasuredFamily {
 /// hold one.
 pub const SPCX_FLOW_MULT: f64 = 35.0;
 
+/// The move an informed wallet must see before it trades, bp: Phoenix's
+/// 3.5 bp taker fee (`venues.phoenix_perp.taker_fee`) in and out.
+pub const INFORMED_EDGE_BPS: f64 = 7.0;
+
+/// The calm sessions the informed share is fitted on, and their seeds.
+const FIT_SESSIONS: u64 = 200;
+const FIT_SEED: u64 = 0x6d6d_6669_7400;
+
 /// What a session was drawn as: its kind, and the process its flow comes
 /// from (the latent state's process facts).
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
@@ -597,6 +663,7 @@ pub struct MeasuredShape {
     pub informed_share: f64,
     pub informed_horizon_slots: u64,
     pub informed_hit_rate: f64,
+    pub informed_edge_bps: f64,
     pub orders_per_minute: f64,
     pub arbitrageur_latency_slots: u64,
     pub arbitrageur_edge_bps: f64,
@@ -614,6 +681,7 @@ impl MeasuredShape {
             "informed_share": self.informed_share,
             "informed_horizon_slots": self.informed_horizon_slots,
             "informed_hit_rate": self.informed_hit_rate,
+            "informed_edge_bps": self.informed_edge_bps,
             "orders_per_minute": self.orders_per_minute,
             "arbitrageur_latency_slots": self.arbitrageur_latency_slots,
             "arbitrageur_edge_bps": self.arbitrageur_edge_bps,
@@ -638,17 +706,6 @@ fn regime_of(draw: f64, calm_odds: f64, trend_odds: f64) -> MeasuredRegime {
     } else {
         MeasuredRegime::Jump
     }
-}
-
-/// The informed share of orders that gives the profile's average one-minute
-/// markout: an informed order's markout is `(2 h - 1)` times the walk's mean
-/// absolute minute move (`E|N(0, s)| = 0.8 s`, at the calibration's 1.55 bp
-/// a second: 12 bp a minute), noise's is 0. Fitted, then checked by
-/// simulation ([`tests`]); clamped to [0.05, 0.9] so neither kind vanishes.
-fn informed_share_for(profile: &MarketProfile) -> f64 {
-    let minute_sd_bps = 1.55 * 60f64.sqrt();
-    let informed_markout = (2.0 * 0.85 - 1.0) * 0.8 * minute_sd_bps;
-    round3((profile.markout_60s_bps() / informed_markout).clamp(0.05, 0.9))
 }
 
 /// Simulated markouts, for the profile checks: draws `sessions` sessions'
@@ -690,7 +747,10 @@ pub fn simulate_markouts(
                 if slot >= view.0 {
                     *view = (slot + horizon, rng.next_f64() >= family.informed_hit_rate);
                 }
-                let mean = 2.0 * per_slot * family.informed_share / wallets as f64;
+                if (ahead * 100.0).abs() <= family.informed_edge_bps {
+                    continue;
+                }
+                let mean = 2.0 * per_slot * family.informed_intensity / wallets as f64;
                 for _ in 0..arrivals(&mut rng, mean) {
                     let right = if ahead > 0.0 { 1.0 } else { -1.0 };
                     let side = if view.1 { -right } else { right };
@@ -760,8 +820,11 @@ mod tests {
             "{per_session_minute}"
         );
         let noise = actors.noise[0].flow_mult;
-        let informed = actors.informed[0].intensity_mult;
-        assert!((noise + informed - 1.0).abs() < 1e-9);
+        assert!((noise + ant.informed_share - 1.0).abs() < 1e-9);
+        // Informed wallets trade only while they see a move past their
+        // edge, faster then, so their count share is the fitted one.
+        assert_eq!(actors.informed[0].edge_bps, INFORMED_EDGE_BPS);
+        assert!(actors.informed[0].intensity_mult > ant.informed_share);
         assert!((actors.scale.trade_size - 99.61 / SNAPSHOT_MARK_USD).abs() < 1e-3);
         assert_eq!(shape.orders_per_minute, 11.644);
     }
@@ -847,13 +910,16 @@ mod tests {
     #[test]
     fn simulated_markouts_match_the_profile() {
         for family in [MeasuredFamily::spcx(), MeasuredFamily::ant()] {
-            let orders: Vec<(f64, f64)> = simulate_markouts(&family, 400, 17)
+            let orders: Vec<(f64, f64)> = simulate_markouts(&family, 2_000, 17)
                 .into_iter()
                 .filter(|o| o.0 == MeasuredRegime::Calm)
                 .map(|o| (o.1, o.2))
                 .collect();
             let all = mean(orders.iter().map(|o| o.1));
-            eprintln!("{}: calm {all:.2}", family.profile.market);
+            eprintln!(
+                "{}: calm {all:.2} bp, informed share {}, intensity {}",
+                family.profile.market, family.informed_share, family.informed_intensity
+            );
             let target = family.profile.markout_60s_bps();
             assert!(
                 (all - target).abs() < 0.6 + 0.25 * target,
@@ -862,7 +928,7 @@ mod tests {
             );
             let median = family.profile.order_usd_median;
             let small = mean(orders.iter().filter(|o| o.0 < median).map(|o| o.1));
-            let big = mean(orders.iter().filter(|o| o.0 >= 10.0 * median).map(|o| o.1));
+            let big = mean(orders.iter().filter(|o| o.0 >= 2.0 * median).map(|o| o.1));
             assert!(
                 big > small,
                 "{}: big {big:.2}, small {small:.2}",

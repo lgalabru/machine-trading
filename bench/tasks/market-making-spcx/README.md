@@ -1,98 +1,77 @@
 # solana-foundation/market-making-spcx
 
 The agent's bot makes markets in Phoenix's SPCX (SpaceX) perpetual, against
-Phoenix's own makers and grader-run taker flow.
+a competing maker, an arbitrageur, and takers whose pace, sizes and
+informedness are measured from Phoenix on mainnet.
 
 | | |
 | --- | --- |
-| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29 |
-| Sessions | 72 hidden per grade (18 calm, 36 with jumps, 18 trending); 6 practice |
-| Mandate | 20 SPCX position cap (about 0.3× collateral); $250 loss limit |
-| Bound | Spread bound plus hindsight bound (see [Scoring](#scoring)) |
-| Reference | Reward ~0.01. It quotes a tick inside the competitor, skews against inventory, and after one-sided fills stops quoting the side they hit for a while. It never takes. |
+| Market | Phoenix SPCX perp, mainnet snapshot of 2026-10-29; flow from the tape `phoenix-tape.20261125.fc443f1e` |
+| Sessions | 72 hidden per grade (36 calm, 24 trending, 12 with a jump); 6 practice |
+| Mandate | 20 SPCX position cap (about 0.3× collateral); $250 loss limit; takes only to reduce |
+| Score | Scoring v2: 0 doing nothing, 0.5 the reference, 1 the informed bot |
+| Reference | It quotes a tick inside the competing makers, skews against inventory, and after one-sided fills stops quoting the side they hit for a while. It never takes. |
 
 How every task is scored, and how risk is enforced, is in the
 [dataset README](../README.md#how-a-bot-is-judged).
 
 ## The skill
 
-A good bot earns the spread from uninformed takers while reading its own
-fills. It skews against its inventory, and widens or steps back when the
-flow turns one-sided, so the informed orders ahead of a jump don't run it
-over.
+A good bot earns the spread where the flow pays for it and keeps out of the
+way where it doesn't. Takers are a little informed on average (a minute
+on, the price has moved about 1.3 bp their way, as on Phoenix), the touch
+is one tick wide, and an arbitrageur takes any quote a move left stale.
 
-- **Wins:** tight quotes when the flow is two-sided, a lean against
-  inventory, and stepping back from bursts.
-- **Loses:** tight symmetric quotes, which fill the most and lose it all to
-  jumps and trends; and quotes too wide or too sparse, which fill nothing.
+- **Wins:** quotes placed where the big orders walk to, a lean against
+  inventory, requoting before a move leaves a quote behind, stepping back
+  from one-sided flow.
+- **Loses:** quoting at the touch for a tick (the maker fee is 0.5 bp),
+  quotes left behind by a move, warehousing inventory through trends and
+  jumps.
 
 ## The market
 
-- **The competitor** is Phoenix's own mainnet makers on SPCX. At setup their
-  liquidity is pushed out to a half-spread drawn per session (8–30 bp).
-  They keep their depth curve and re-center on every price move. At equal
-  prices, the bot's resting orders fill first. A grader-run maker undercuts
-  better quotes by a tick, down to a floor, and eases back out.
-- **The price** walks every few slots. A quarter of the sessions stay calm,
-  half have one to three jumps of 1.5–4% either way, and a quarter trend.
-- **The flow** is grader-run takers sending ordinary Phoenix market orders
-  from a shared pool of eight accounts. It mixes noise on both sides,
-  informed bursts ahead of about 85% of jumps, leaning flow in a trend, and
-  fake-out bursts with no jump after them. Every order draws its size,
-  limit and account the same way, informed or not, so telling them apart
-  takes reading the flow, not the generator.
-- **Turn order:** the takers' orders due each step trade against the quotes
-  the bot left, then the step's move lands, then the grader's maker
-  requotes, then the bot takes its turn.
+- **The book:** the grader's reactive maker at one to two ticks, 0.5 to 2
+  SPCX; Phoenix's own makers widened to 3 to 8 bp behind it, with their
+  mainnet depth. SPCX's real touch was one tick wide (luthor, one minute of
+  quotes, 2026-11-25).
+- **The price** walks at SPCX's calibrated 1.55 bp a second. Half the
+  sessions are calm, a third trend, a sixth have one jump of 1.5 to 4.2%.
+- **The takers** are the actor library's: eight noise wallets and four
+  informed ones that see a minute ahead and are right 85% of the time, at
+  SPCX's measured sizes (median $1,000) and 35 times its measured pace
+  (0.33 orders a minute in regular hours: a session would hold one order).
+- **The arbitrageur** takes, after each move and before the bot's turn,
+  any quote more than 3.5 to 5 bp from Phoenix's index.
+- **Turn order:** takers, the move, the grader's maker, the arbitrageur,
+  the bot.
+
+Every number and every departure from the measured market is in
+[DESIGN.md](DESIGN.md#the-market-measured-0150).
 
 ## Scoring
 
-- **Bound:** a session's bound is its spread bound plus its hindsight bound.
-  The spread bound is every taker order filled at the competitor's
-  half-spread, with nothing lost to informed flow, inventory or fees. The
-  hindsight bound is the 20 SPCX cap held the right way through every move.
-  A maker earns from both, so a bound on the spread alone is one a bot
-  could pass, as 0.7.0's was.
-- **Valuation:** the account is valued at the scenario's oracle price, not
-  Phoenix's mark. A maker's own best quote pulls the mark, so valuing at the
-  mark would pay a bot for pushing it. The SDK's `Trader::oracle_usd` reads
-  the same oracle.
-- **Void sessions:** a session where more than a tenth of the takers' orders
-  fail voids the grade. The bot didn't see the flow its scenario describes.
+Scoring v2 (see the [dataset README](../README.md#how-a-bot-is-judged)).
+The informed bot is the reference told which wallets are the informed
+takers: it leans with what they trade and pulls the side they hit. The
+account is valued at the scenario's oracle price, not Phoenix's mark.
 
 ## Baselines
 
-| Agent | Reward | What it shows |
-| --- | --- | --- |
-| oracle (the reference maker) | ~0.01 | The task is solvable, and the reference is calibrated |
-| nop (the starter bot) | 0.0 | Doing nothing earns nothing |
-| cheater | 0.0 | Cheatcodes through the proxy disqualify; `/tests` is unreadable; writing the reward file counts as tampering; ignoring SIGTERM doesn't extend a session |
-| sneaky | 0.0 | The surfnet's own port answers nothing without its secret path |
-
-`just ladder market-making-spcx` grades the ladder (`checks/`) on
-fresh hidden sets. Naive and skewed quoters must score below the reference,
-and the reference below a flow oracle that is told which taker orders are
-informed. The frozen exploit bots must score below the flow oracle.
-
-These numbers are from before 0.13.0, when a bot could take to open, and
-are to be re-run. On two fresh 72-session ladder sets the reference made $279 and $151, the
-naive quoter lost $11 and $41, and the flow oracle made 14–30× the
-reference. Agents separate in that headroom: reading the tape beyond their
-own fills, sizing the lean, and telling bursts from noise.
+See DESIGN.md's Detectability for the ladder measured on this release.
+`just ladder market-making-spcx` grades it (`checks/`): naive and skewed
+quoters below the reference, the reference below the informed bot, the
+frozen exploit bots below the informed bot.
 
 ## Realism limits
 
-- **Scripted flow.** The takers' orders are fixed in advance. Their slots,
-  sizes and limits don't react to the bot's quotes, and the informed flow
-  knows the next jump rather than inferring it.
-- **A simple competitor.** The mainnet makers re-center on each move and
-  otherwise stand still. The grader's maker reacts, but simply: it doesn't
-  read the tape or manage risk beyond a linear inventory skew.
-- **No transaction fees.** The account is valued in USDC, and the SOL a bot
-  spends on requotes isn't charged against it.
-- **No funding.** Sessions last a few minutes, so perp funding isn't
-  simulated.
-- **One market, one snapshot.** Depth and fees are mainnet's on 2026-10-29.
+- **Flow multiplier:** 35 times SPCX's measured pace (stated).
+- **Jumps** are far more common than on Phoenix (stated).
+- **No transaction layer, no price impact:** the actors don't race the bot
+  for block space, and the takers' fills don't move the price.
+- **The book** beyond the touch is the snapshot's makers' curve; luthor
+  records no depth yet.
+- **No funding, no transaction fees.**
 
 ## More
 

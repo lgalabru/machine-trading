@@ -4,6 +4,28 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **0.15.0** (draft). Every task's market measured from mainnet
+  ([RFD 0007](../../docs/rfd/0007-tasks-measured-against-mainnet.md)), on
+  luthor's Phoenix tape `phoenix-tape.20261125.fc443f1e`.
+  - **`market-making-spcx`: takers measured, a little informed, scored by
+    v2.** Its takers sent 0.8 to 1.8 orders a second that knew nothing,
+    with informed orders only ahead of jumps; SPCX's real takers sent 0.33
+    orders a minute in regular hours, and the average Phoenix taker is a
+    little informed. The family is now built from a market profile
+    (`market-making-measured`): the actor library's noise and informed
+    takers at SPCX's measured sizes (median $1,000, log-sd 1.3) and 35
+    times its measured pace (stated: a session would otherwise hold one
+    order), informed in the share that gives SPCX's one-minute markout
+    (+1.35 bp); an arbitrageur that takes quotes a move left stale against
+    Phoenix's index (3.5 to 5 bp edge, 1 to 2 slots), where luthor's paper
+    makers lose on mainnet; the grader's reactive maker at SPCX's measured
+    one-tick touch, thin, with Phoenix's makers 3 to 8 bp behind it. The
+    price walks at the calibration's 1.55 bp a second; a sixth of the
+    sessions jump (far more than Phoenix: stated), a third trend, half are
+    calm. The same market on ANT's measured flow is
+    `market-making-measured-ant`, a one-line change of profile. Scored by
+    v2 with an informed bot told which wallets are the informed takers.
+    Rewards fall and don't compare with 0.14.0's: those measured a game.
 - **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
   mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
   unchanged: their anchor digests did not move.

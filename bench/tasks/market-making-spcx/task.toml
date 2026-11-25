@@ -4,8 +4,8 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/market-making-spcx"
-version = "0.14.0"
-description = "Write a bot that makes markets in Phoenix SPCX (SpaceX) perps against competing makers and informed taker flow, on an offline copy of Solana mainnet."
+version = "0.15.0"
+description = "Write a bot that makes markets in Phoenix SPCX (SpaceX) perps against a competing maker, an arbitrageur and taker flow measured from mainnet, a little informed, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "market-making", "surfpool", "rust"]
 
 [[task.authors]]
@@ -20,21 +20,26 @@ snapshot = "phoenix-spcx-2026-10-29"
 
 [metadata.mtx]
 # What the repository's lists are written from (`mtx task sync`).
-generator = "market-making"
+generator = "market-making-measured"
+anchor = "market-making"
+# Its sessions have library actors, and the informed bot reads its latent
+# state as a strategy component: the image builds both anchors' bot.wasm.
+component_anchors = true
 emoji = "⚖️"
 market = "Phoenix SPCX perp"
-summary = "earns the SPCX spread from noise, and steps back before informed flow"
-skill = "earns the spread from noise and steps back before informed flow"
+summary = "earns what it can of the SPCX spread from takers measured on mainnet, a little informed, against a competing maker and an arbitrageur that picks off stale quotes"
+skill = "earns the spread where the flow pays for it, and stays out of the way of informed flow and stale quotes"
 # Lines only the answers hold, for `just leak-audit`.
 leak_needles = ["one tick inside the competitor", "backs off after one-sided fills"]
+headline = "v2"
 
 [verifier]
-# Seventy-two hidden sessions drawn from the batch's secret, plus the
-# reference on the same sessions first: four of its sessions at a time,
-# and of the bot's as many as the memory holds (two in 6 GB). The
-# world moves only between the bot's turns, so a session takes as long as
-# the bot thinks: a minute or two for most bots, about four at worst. A
-# disqualified bot stops at its first breach.
+# Seventy-two hidden sessions drawn from the batch's secret, graded with
+# the reference and then the informed bot on the same sessions first, four
+# sessions at a time each, then the bot's, four at a time. The world moves
+# only between the bot's turns, so a session takes as long as the bot
+# thinks: about half a minute for the anchors, a few minutes at worst.
+# Every session is graded, a breached one too (scoring v2).
 timeout_sec = 14400.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and

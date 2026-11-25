@@ -8,9 +8,11 @@
 //! last look as what that wallet just traded. A wallet that bought holds
 //! its view (the price is going up) for its horizon, so the bot keeps each
 //! wallet's last side and when it traded, and sums them into a signal in
-//! [-1, 1], weighted by how often a view is right (`2 h - 1`). With it, it
-//! leans its reservation price the informed way, and stops quoting the side
-//! the informed are hitting unless that side sheds its inventory. Everything
+//! [-1, 1], each weighted by what is left of its horizon and by how often a
+//! view is right (`2 h - 1`). With it, it leans its reservation price the
+//! informed way, skews toward holding up to half the cap that way (built
+//! with its quotes: it takes only to reduce), and stops quoting the side the
+//! informed are hitting while it holds less than that. Everything
 //! else is the reference's: quotes one tick inside the competing makers,
 //! skewed against inventory, leaning with the drift, backing off one-sided
 //! fills, never taking.
@@ -43,8 +45,15 @@ const REQUOTE_SLOTS: u64 = 12;
 /// minute at the calibration's 1.55 bp a second, times 0.8) times the
 /// share of it still ahead on average.
 const LEAN_BPS: f64 = 4.0;
+/// The signal past which it sheds inventory held against it: more than one
+/// wallet's fresh view (one alone is at most `2 h - 1`, 0.7).
+const FLATTEN_SIGNAL: f64 = 0.8;
+/// The least position worth a market order to shed, SPCX.
+const MIN_SIZE: f64 = 0.05;
+/// The share of the cap a full signal holds the informed way.
+const TARGET_SHARE: f64 = 0.5;
 /// The signal past which the side the informed hit is pulled.
-const PULL_SIGNAL: f64 = 0.2;
+const PULL_SIGNAL: f64 = 0.3;
 /// The most informed wallets a session seats (the family seats four).
 const WALLETS_MAX: usize = 16;
 
@@ -104,6 +113,19 @@ impl Strategy for Informed {
         }
         let toxic = slot < self.toxic_until;
         let signal = self.flow.read(slot);
+        // Two informed wallets or more agreeing against what it holds: the
+        // move they see is coming, and it sheds the inventory now, with a
+        // market order (taking to reduce is allowed), rather than wait for
+        // its quotes to unwind it.
+        if signal.abs() >= FLATTEN_SIGNAL && held * signal < 0.0 && held.abs() >= MIN_SIZE {
+            log(&format!(
+                "slot {slot}: informed signal {signal:+.2} against {held:+.3}; flattening"
+            ));
+            orders.cancel_all();
+            orders.target_position(0.0);
+            self.quoted = None;
+            return Ok(());
+        }
 
         let mean = match self.average {
             Some((at, mean)) => {
@@ -115,23 +137,27 @@ impl Strategy for Informed {
         self.average = Some((slot, mean));
         let drift_bps =
             (DRIFT_WEIGHT * (mark / mean - 1.0) * 10_000.0).clamp(-DRIFT_MAX_BPS, DRIFT_MAX_BPS);
+        // It builds a position the informed way with its quotes (it may
+        // take only to reduce): the skew pulls toward the target, not zero.
+        let target = TARGET_SHARE * cap * signal;
         let lean_bps = LEAN_BPS * signal;
         let reservation =
-            mark * (1.0 + (drift_bps + lean_bps - SKEW_BPS_PER_UNIT * held) / 10_000.0);
+            mark * (1.0 + (drift_bps + lean_bps - SKEW_BPS_PER_UNIT * (held - target)) / 10_000.0);
         // The side the informed are hitting stays out of their way, unless
         // it sheds what the bot holds.
-        let informed_buying = signal >= PULL_SIGNAL && held >= 0.0;
-        let informed_selling = signal <= -PULL_SIGNAL && held <= 0.0;
+        let informed_buying = signal >= PULL_SIGNAL && held <= target;
+        let informed_selling = signal <= -PULL_SIGNAL && held >= target;
         let half = self.half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
         let (bid_size, ask_size) = (QUOTE_SIZE.min(cap - held), QUOTE_SIZE.min(cap + held));
         let pulled = (informed_buying, informed_selling);
-        let moved = self.pulled != pulled || self.quoted.is_none_or(|(at, b, a)| {
-            slot >= at + REQUOTE_SLOTS
-                || ((bid - b) / mark).abs() * 10_000.0 >= REQUOTE_BPS
-                || ((ask - a) / mark).abs() * 10_000.0 >= REQUOTE_BPS
-        });
+        let moved = self.pulled != pulled
+            || self.quoted.is_none_or(|(at, b, a)| {
+                slot >= at + REQUOTE_SLOTS
+                    || ((bid - b) / mark).abs() * 10_000.0 >= REQUOTE_BPS
+                    || ((ask - a) / mark).abs() * 10_000.0 >= REQUOTE_BPS
+            });
         if !moved {
             return Ok(());
         }
@@ -142,7 +168,7 @@ impl Strategy for Informed {
                 Side::Bid,
                 bid,
                 bid_size,
-                held < INVENTORY_LIMIT * cap
+                held < target + INVENTORY_LIMIT * cap
                     && !(toxic && self.toxic_side > 0.0)
                     && !informed_selling,
             ),
@@ -150,7 +176,7 @@ impl Strategy for Informed {
                 Side::Ask,
                 ask,
                 ask_size,
-                held > -INVENTORY_LIMIT * cap
+                held > target - INVENTORY_LIMIT * cap
                     && !(toxic && self.toxic_side < 0.0)
                     && !informed_buying,
             ),
@@ -216,7 +242,9 @@ impl Flow {
             })
             .collect::<Result<Vec<_>, String>>()?;
         let n = accounts.len();
-        log(&format!("{n} informed wallets, horizon {horizon_slots}, hit rate {hit_rate}"));
+        log(&format!(
+            "{n} informed wallets, horizon {horizon_slots}, hit rate {hit_rate}"
+        ));
         Ok(Self {
             accounts,
             positions: vec![None; n],
@@ -228,9 +256,10 @@ impl Flow {
         })
     }
 
-    /// The informed signal at `slot`, in [-1, 1]: each wallet's last side
-    /// while its view may still hold, summed, over the wallets, times how
-    /// often a view is right. A read that fails leaves the last state.
+    /// The informed signal at `slot`, in [-1, 1]: each wallet's last side,
+    /// weighted by the share of its horizon still ahead, summed, times how
+    /// much better than a coin a view is (`2 h - 1`), clamped. A read that
+    /// fails leaves the last state.
     fn read(&mut self, slot: u64) -> f64 {
         let addresses: Vec<&str> = self.accounts.iter().map(String::as_str).collect();
         if let Ok(datas) = mtx_kit::rpc_accounts(&addresses) {
@@ -242,27 +271,39 @@ impl Flow {
                     && (position - before).abs() > 0.5 / self.lot_scale
                 {
                     self.last[i] = Some(((position - before).signum(), slot));
+                    log(&format!(
+                        "slot {slot}: informed wallet {i} traded {:+.3}",
+                        position - before
+                    ));
                 }
                 self.positions[i] = Some(position);
             }
         }
-        let n = self.accounts.len() as f64;
+        // A trade at `at` says where the price is going by `at + horizon`:
+        // what is left of that, by the share of the horizon still ahead.
+        let horizon = self.horizon_slots as f64;
         let sum: f64 = self
             .last
             .iter()
             .flatten()
             .filter(|(_, at)| at + self.horizon_slots > slot)
-            .map(|(side, _)| side)
+            .map(|(side, at)| side * (at + self.horizon_slots - slot) as f64 / horizon)
             .sum();
-        let signal = self.confidence * sum / n;
-        assert!(signal.abs() <= 1.0 + 1e-9);
+        // Each wallet's view is its own evidence: two agreeing say more than
+        // one, and a wallet that hasn't traded lately says nothing.
+        let signal = (self.confidence * sum).clamp(-1.0, 1.0);
+        if self.positions.iter().all(Option::is_none) {
+            log(&format!("slot {slot}: no informed wallet's position read"));
+        }
+        assert!(signal.abs() <= 1.0);
         signal
     }
 
     /// A trader account's position in the market, in base units.
     fn position(&self, data: &[u8]) -> Option<f64> {
         let trader =
-            mtx_kit::venue::phoenix_rise::accounts::owned::Trader::try_from_account_bytes(data).ok()?;
+            mtx_kit::venue::phoenix_rise::accounts::owned::Trader::try_from_account_bytes(data)
+                .ok()?;
         Some(
             trader
                 .positions
