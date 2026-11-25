@@ -1,5 +1,15 @@
 # Design record: market-making-cbrs
 
+> **Parked for 0.16.** The owner took market making out of 0.15
+> (`market-making-spcx` stays 0.14.0). It comes back in 0.16 as
+> `market-making-ant` once the arbitrageur's speed against ANT is measured:
+> the 1-2 slot latency used here was borrowed from SOL, and on ANT's
+> measured flow no maker earned with it. This branch keeps the work (the
+> measured family, the profiles, `index_chasers`, the `after_turn`
+> arbitrageur, the post-only competitor, the CBRS and ANT snapshots) and
+> the numbers below.
+
+
 Written to `skills/trading-task-design/references/design-record.md`. The
 README says what the task is; this says why it's built this way, and what
 each version learned.
