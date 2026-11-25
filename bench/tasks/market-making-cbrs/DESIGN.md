@@ -144,10 +144,22 @@ learner (2 units after 10 fills that hold up) rarely acts: a session fills
 it 10 to 24 times. The ladder's order rules `naive-quoter < reference` and
 `skew-quoter < reference` will not hold with the bootstrap's confidence.
 
-Practice is drawn with seed 17 and calibrated with both anchors (`mtx
-calibrate --practice market-making-cbrs --practice-seed 17`, reference
-+12.75, informed +18.66 over the six). Seed 15's six had the reference
-ahead (+17.93 against +12.71), which v2 refuses to scale.
+Practice is drawn by the date rule the other 0.14 and 0.15 tasks follow
+(the snapshot's date: seed 20261125) and calibrated with both anchors
+(`mtx calibrate --practice market-making-cbrs --practice-seed 20261125`):
+reference +10.62, informed +23.31 over the six (0.46). Seed history: seed
+15 (an arbitrary first pick) had the reference ahead (+17.93 against
++12.71), which v2 refuses to scale; seed 17 was then picked for its
+outcome, which practice must not be, and is withdrawn.
+
+Tried and withdrawn: anchors that follow the touch (each side steps a tick
+inside any rival, down to a 3 bp floor; the informed bot told the
+competitor's floor and starting a tick inside it), with a 10 CBRS cap and
+the robust 2.05 bp a second. The war for the touch took the spread with it:
+over 48 sessions the reference made +6.20 (Sharpe 0.25, 0.04) and the
+informed bot lost 65.60, the spread earned falling to about 3 bp a unit.
+On CBRS's book the edge is the width; a maker that races the competitor to
+its floor gives it away.
 
 ## Fairness
 
