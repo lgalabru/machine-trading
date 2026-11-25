@@ -1214,7 +1214,7 @@ pub enum Aftermath {
 ///   The path is cut where the session ends, so the end slot dates nothing:
 ///   a session may end mid-shock.
 /// - Between moves the mark wobbles, so quiet stretches aren't flat lines.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ShockFamily {
     pub symbol: String,
     /// Range of the session's length, in slots. Drawn before the path.
@@ -1287,6 +1287,60 @@ pub struct ShockFamily {
     /// Price impact every scenario in the family carries: the book stays
     /// where trades leave it. `None`: the book re-centres on the path.
     pub impact: Option<crate::impact::Impact>,
+}
+
+/// The family's parameters as text, part of a task's fingerprint
+/// (`Generator::params`). Written by hand so that a family that uses none of
+/// the levers 0.15.0 added (quiet sessions, Pareto legs, extensions by
+/// share, a small-move mix, takers, impact) prints exactly as the derived
+/// text did before them: flash-crash-spcx's fingerprint doesn't move.
+impl std::fmt::Debug for ShockFamily {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = f.debug_struct("ShockFamily");
+        out.field("symbol", &self.symbol)
+            .field("duration", &self.duration)
+            .field("shock_slot", &self.shock_slot)
+            .field("leg_pct", &self.leg_pct);
+        if let Some(alpha) = &self.leg_alpha {
+            out.field("leg_alpha", alpha);
+        }
+        out.field("gap_odds", &self.gap_odds)
+            .field("extra_leg_odds", &self.extra_leg_odds)
+            .field("max_legs", &self.max_legs)
+            .field("pause_slots", &self.pause_slots);
+        if self.quiet_odds != 0.0 {
+            out.field("quiet_odds", &self.quiet_odds);
+        }
+        out.field("crash_odds", &self.crash_odds)
+            .field("revert_odds", &self.revert_odds)
+            .field("stall_odds", &self.stall_odds)
+            .field("revert_recovery", &self.revert_recovery)
+            .field("stall_recovery", &self.stall_recovery)
+            .field("extend_pct", &self.extend_pct);
+        if let Some(share) = &self.extend_share {
+            out.field("extend_share", share);
+        }
+        out.field("max_step_pct", &self.max_step_pct)
+            .field("step_gap", &self.step_gap)
+            .field("fizzle_odds", &self.fizzle_odds)
+            .field("fizzle_pct", &self.fizzle_pct)
+            .field("fizzle_hold", &self.fizzle_hold);
+        match &self.fizzle_giveback {
+            Giveback::Range(low, high) => out.field("fizzle_giveback", &(*low, *high)),
+            mix => out.field("fizzle_giveback", mix),
+        };
+        out.field("noise_pct", &self.noise_pct)
+            .field("noise_gap", &self.noise_gap)
+            .field("max_position", &self.max_position)
+            .field("max_drawdown_usd", &self.max_drawdown_usd);
+        if let Some(actors) = &self.actors {
+            out.field("actors", actors);
+        }
+        if let Some(impact) = &self.impact {
+            out.field("impact", impact);
+        }
+        out.finish()
+    }
 }
 
 /// How much of its move a fizzle gives back, as a share of it: 1 is all
@@ -1432,26 +1486,27 @@ impl ShockFamily {
         }
     }
 
-    /// SPCX as mainnet's Phoenix tape measured it (RFD 0007): the study
+    /// NVDA as mainnet's Phoenix tape measured it (RFD 0007): the study
     /// `phoenix-tape.20261125.fc443f1e` (`calibration/tape/`, written by
     /// `calibration/fitter/tape/study.py`), 3.06 days of every Phoenix
-    /// market from 2026-11-21 23:45 to 2026-11-25 01:12 UTC. Every number
-    /// that sets what a bot can earn cites it, or is a stated default.
+    /// market from 2026-11-21 23:45 to 2026-11-25 01:12 UTC, and NVDA's
+    /// market calibration (`calibration/market/nvda.20261113.903d1120.toml`).
+    /// NVDA is where the shocks were: 9 of the tape's 93 jumps, among them
+    /// 2026-11-23's leader. Every number that sets what a bot can earn cites
+    /// one of them, or is a stated default.
     ///
     /// Stated departures, in the task's instruction and `DESIGN.md` too:
     /// - a quarter of the sessions are quiet, and the rest each carry a
     ///   shock: mainnet's 93 jumps came in 16 distinct hours of 3 days, far
     ///   rarer than one in a few minutes;
     /// - the tape's aftermath odds are measured 15 minutes on, and play here
-    ///   within a session of 80 to 180 seconds;
+    ///   within a session of 80 to 180 seconds; they are all 93 jumps' (all
+    ///   markets): NVDA's 9 alone are too few;
     /// - direction stays 50/50: 57 of the 93 jumps went up, on one bullish
-    ///   news day (2026-11-23);
-    /// - the takers around a move trade at the flow mainnet's jumps carried
-    ///   in their minute (across all markets: SPCX had no jump), not at
-    ///   SPCX's own pace, which would be about one order a session.
-    pub fn mainnet() -> Self {
+    ///   news day (2026-11-23).
+    pub fn nvda() -> Self {
         Self {
-            symbol: "SPCX".into(),
+            symbol: "NVDA".into(),
             duration: (320, 720),
             shock_slot: (40, 200),
             // Jumps (a 1-minute move of 1.5% or more, with $2,000 of flow):
@@ -1500,12 +1555,18 @@ impl ShockFamily {
                 stall: (-0.45, 0.45),
                 extend: (-1.0, -0.5),
             },
-            noise_pct: 0.12,
+            // NVDA's calibration: 0.83 bp a second in regular hours, 1.34
+            // times that in its stressed state, the one shocks come in. A
+            // wobble tick, about 2 s apart, moves at most 0.03% (sd 1.7 bp).
+            noise_pct: 0.03,
             noise_gap: (4, 12),
-            max_position: 70.0,
+            // About 1x the 10,000 USDC of collateral at the snapshot's $160
+            // ($9,920), as SPCX's 70 were at its $143: the largest leg (9.5%)
+            // against a full position stays inside the $1,000 limit.
+            max_position: 62.0,
             max_drawdown_usd: 1_000.0,
-            actors: Some(mainnet_takers()),
-            impact: Some(mainnet_impact()),
+            actors: Some(nvda_takers()),
+            impact: Some(nvda_impact()),
         }
     }
 
@@ -1846,9 +1907,9 @@ impl ShockFamily {
     }
 }
 
-/// SPCX's mark at the snapshot (`phoenix-spcx-2026-10-29`), which turns
-/// the tape's dollar sizes into SPCX.
-const SPCX_MARK_USD: f64 = 143.11;
+/// NVDA's mark when a session starts on `phoenix-perps-2026-11-13`, which
+/// turns the tape's dollar sizes into NVDA.
+const NVDA_MARK_USD: f64 = 160.0;
 
 /// The actor library counts 0.4 s a slot (mainnet's); this family's clock
 /// is 250 ms a slot. A measured rate a minute is written this many times
@@ -1860,32 +1921,33 @@ const LIBRARY_RATE_PER_MEASURED: f64 = 0.25 / crate::actors::library::SLOT_SECON
 /// NVDA's leader on 2026-11-23 (4 to 88 s; luthor RFD 0003). A default.
 const MOVE_WINDOW_SLOTS: u64 = 40;
 
-/// SPCX's takers, from the tape (`phoenix-tape.20261125.fc443f1e`,
-/// `markets.SPCX.flow.regular`): 0.33 orders a minute in regular hours,
-/// median $1,000 (7 SPCX), log-sd 1.3, pinger orders under $5 left out.
+/// NVDA's takers, from the tape (`phoenix-tape.20261125.fc443f1e`,
+/// `markets.NVDA.flow.regular`): 0.99 orders a minute in regular hours
+/// ($290k an hour), median $1,000 (6.25 NVDA), p90 $9,900, log-sd 2.05,
+/// pinger orders under $5 left out (off hours: 0.29 a minute).
 ///
-/// - **Noise** at that pace: about one order a session.
+/// - **Noise** at that pace: about two orders a session.
 /// - **Informed** takers who see the path a horizon ahead and trade its
-///   way, right 85% of the time (the library's default). On liquid
-///   markets the tape's takers are informed (60 s markouts +1 to +12 bp,
-///   about what they paid); SPCX has too few orders to say.
+///   way, right 85% of the time (the library's default). NVDA's takers are
+///   the most informed the tape measured: they pay about 8.6 bp to cross
+///   and the mid moves 8 to 12 bp their way within 60 s.
 /// - **Chasers** who take the way the price just moved: they compete with
 ///   a rider for the move, and push the book before it gets there.
 ///
-/// Around a move the informed and the chasers each trade half the flow a
-/// jump's minute carried on mainnet: a median $8,569 over the 93 jumps
-/// (`jumps.events[].usd`), so about 4.3 orders of $1,000 each, in their
-/// ten-second window. That is a stated multiplier on SPCX's own pace: at
-/// 0.33 a minute a move would see no order at all.
-fn mainnet_takers() -> crate::actors::Library {
+/// Around a move the informed and the chasers each trade half the flow
+/// NVDA's jumps carried in their minute: a median $20,500 over its 9
+/// jumps (`jumps.events[].usd`), about 10 orders of $1,000 each, in their
+/// ten-second window: about 25 times NVDA's own pace while they trade.
+fn nvda_takers() -> crate::actors::Library {
     use crate::actors::library::{Chaser, Informed, Library, Noise, Scale};
-    let measured_per_minute = 0.3333;
+    let measured_per_minute = 0.991;
+    let median_usd = 1_000.1;
     let scale = Scale {
         trades_per_minute: measured_per_minute * LIBRARY_RATE_PER_MEASURED,
-        trade_size: 1_000.5 / SPCX_MARK_USD,
-        trade_size_sigma: 1.3,
+        trade_size: median_usd / NVDA_MARK_USD,
+        trade_size_sigma: 2.05,
     };
-    let orders_per_move = 8_569.0 / 1_000.5 / 2.0;
+    let orders_per_move = 20_500.0 / median_usd / 2.0;
     let window_rate = orders_per_move / (scale.per_slot() * MOVE_WINDOW_SLOTS as f64);
     assert!(
         window_rate > 1.0,
@@ -1903,8 +1965,8 @@ fn mainnet_takers() -> crate::actors::Library {
         informed: vec![Informed {
             wallets: 3,
             horizon_slots: MOVE_WINDOW_SLOTS,
-            // Under the smallest small move (0.5%), over the wobble (about
-            // 0.25%): they trade every move, never the noise.
+            // Under the smallest small move (0.5%), well over the wobble:
+            // they trade every move, never the noise.
             edge_bps: 40.0,
             hit_rate: 0.85,
             view_noise_bps: 10.0,
@@ -1916,8 +1978,8 @@ fn mainnet_takers() -> crate::actors::Library {
         chasers: vec![Chaser {
             wallets: 3,
             lookback_slots: MOVE_WINDOW_SLOTS,
-            // A move the size of the smallest jump's two thirds: they chase
-            // what looks like a shock, and the larger small moves.
+            // Two thirds of the smallest jump: they chase what looks like a
+            // shock, and the larger small moves.
             trigger_bps: 100.0,
             intensity_mult: window_rate,
             size_mult: 1.0,
@@ -1928,24 +1990,25 @@ fn mainnet_takers() -> crate::actors::Library {
     }
 }
 
-/// Price impact on SPCX: the book stays where trades leave it.
+/// Price impact on NVDA: the book stays where trades leave it.
 ///
-/// - `probe`: 7 SPCX, the tape's median order ($1,000).
+/// - `probe`: 6.25 NVDA, the tape's median order ($1,000).
 /// - `max_bps`: 50, about the worst-fill p90 of NVDA's $10,000-and-over
-///   orders (51.5 bp; SPCX had one such order). SPCX's $1,000 to $10,000
-///   orders' worst fill: median -0.9 bp, p90 15.5 bp
-///   (`markets.SPCX.impact`). A 70-SPCX take (the cap, $10,000) walks the
-///   snapshot's book about 5.5 bp.
+///   orders (`markets.NVDA.impact`: 51.5 bp; the 0.15.0 brief's run of the
+///   study, 34 bp). NVDA's $1,000 to $10,000 orders' worst fill: median 6.9
+///   bp, p90 31.9 bp in the file (the brief: 2.5 and 24). A 70-NVDA take
+///   ($11,200, about the cap) walked the snapshot's book 12 to 15 bp on a
+///   graded session.
 /// - `permanent_share` and `half_life_slots`: not measured (luthor keeps
-///   no book); the SPCX calibration's defaults (`spcx.20261112.d1f48be2`,
+///   no book); the NVDA calibration's defaults (`nvda.20261113.903d1120`,
 ///   `book.impact`: half permanent, the rest halving every 30 s, 120 slots
 ///   at 250 ms).
-fn mainnet_impact() -> crate::impact::Impact {
+fn nvda_impact() -> crate::impact::Impact {
     crate::impact::Impact {
         permanent_share: 0.5,
         half_life_slots: 120.0,
         max_bps: 50.0,
-        probe: 7.0,
+        probe: 1_000.1 / NVDA_MARK_USD,
         resistance: Vec::new(),
     }
 }
@@ -2255,10 +2318,14 @@ mod tests {
                     panic!("{} has one market", scenario.name)
                 };
                 assert_eq!(market.symbol, scenario.symbol);
-                assert_eq!(
-                    market.valuation(scenario.prices_the_close()),
-                    scenario.valuation()
-                );
+                // Impact plays one market only, and values its account at
+                // the book level, over the market's own `mark`.
+                let valuation = market.valuation(scenario.prices_the_close());
+                if scenario.impact.is_some() && valuation == "mark" {
+                    assert_eq!(scenario.valuation(), "book");
+                } else {
+                    assert_eq!(valuation, scenario.valuation());
+                }
                 let start = 187.25;
                 let bound = scenario.bound_usd(start, 3);
                 assert_eq!(
@@ -2457,12 +2524,12 @@ mod tests {
         assert!(part_counts.iter().filter(|(t, _)| *t == -8).count() > 1);
     }
 
-    /// The mainnet family's hidden sets carry each cell (quiet, or a
+    /// The NVDA family's hidden sets carry each cell (quiet, or a
     /// direction and an aftermath) in proportion to its odds, by largest
     /// remainder: within one session of the exact share, whatever the seed.
     #[test]
-    fn a_mainnet_set_holds_each_cell_at_its_odds() {
-        let family = ShockFamily::mainnet();
+    fn an_nvda_set_holds_each_cell_at_its_odds() {
+        let family = ShockFamily::nvda();
         let odds = family.cell_odds();
         assert_eq!(odds.len(), 7, "quiet and six shocks");
         assert_eq!(odds[0], (Cell::Quiet, 0.25));
@@ -2509,8 +2576,8 @@ mod tests {
     /// at the tape's odds: a quarter quiet, and of the shocks 31% revert,
     /// 24% stall and 45% extend.
     #[test]
-    fn mainnet_draws_land_at_the_tapes_odds() {
-        let family = ShockFamily::mainnet();
+    fn nvda_draws_land_at_the_tapes_odds() {
+        let family = ShockFamily::nvda();
         let cells: Vec<Cell> = (0..8_000).map(|seed| family.cell(seed)).collect();
         let share = |f: &dyn Fn(&Cell) -> bool| {
             cells.iter().filter(|c| f(c)).count() as f64 / cells.len() as f64
@@ -2536,8 +2603,8 @@ mod tests {
     /// most) and the wobble. Every other session has one, its first leg a
     /// jump by the tape's measure.
     #[test]
-    fn mainnet_quiet_sessions_have_no_shock() {
-        let family = ShockFamily::mainnet();
+    fn nvda_quiet_sessions_have_no_shock() {
+        let family = ShockFamily::nvda();
         let reach =
             family.fizzle_pct.1 * (1.0 - family.fizzle_giveback.least()) + 2.0 * family.noise_pct;
         assert!(reach < 2.0 * family.leg_pct.0 + 0.5);
@@ -2569,8 +2636,8 @@ mod tests {
     /// (median 2.0%, p90 4.2%, within 1.5 to 9.5%), and an extension goes
     /// on by half the shock or more, as the tape counts one.
     #[test]
-    fn mainnet_legs_and_extensions_are_the_tapes() {
-        let family = ShockFamily::mainnet();
+    fn nvda_legs_and_extensions_are_the_tapes() {
+        let family = ShockFamily::nvda();
         let mut rng = SplitMix64(5);
         let mut legs: Vec<f64> = (0..20_000)
             .map(|_| rng.pareto_f64(family.leg_pct, family.leg_alpha.unwrap()))
@@ -2594,15 +2661,18 @@ mod tests {
         }
     }
 
-    /// Every mainnet scenario carries price impact and the takers, and is a
+    /// Every NVDA scenario carries price impact and the takers, and is a
     /// scenario the grader loads: impact plays a plain path (no making, no
     /// oracles of its own, no refill, no transaction layer, one market).
     #[test]
-    fn mainnet_scenarios_carry_impact_and_takers_and_load() {
-        let family = ShockFamily::mainnet();
+    fn nvda_scenarios_carry_impact_and_takers_and_load() {
+        let family = ShockFamily::nvda();
         for (scenario, _) in family.draw_set("i", 12, 4) {
             let impact = scenario.impact.as_ref().expect("impact is on");
-            assert_eq!(impact.probe, 7.0, "the tape's median order, $1,000");
+            assert!(
+                (impact.probe - 6.25).abs() < 0.01,
+                "the tape's median order, $1,000"
+            );
             assert!(impact.max_bps <= crate::impact::MAX_IMPACT_BPS);
             impact.validate().unwrap();
             let actors = scenario.actors.as_ref().expect("the takers trade");
@@ -2612,17 +2682,32 @@ mod tests {
                 actors.refill.is_none(),
                 "impact's fading part is the refill"
             );
-            // SPCX's measured pace: 0.33 orders a minute of 250 ms slots.
+            // NVDA's measured pace: 0.99 orders a minute of 250 ms slots.
             let per_minute = actors.scale.per_slot() * 240.0;
-            assert!((per_minute - 0.3333).abs() < 1e-3, "{per_minute}");
+            assert!((per_minute - 0.991).abs() < 1e-3, "{per_minute}");
+            assert_eq!(scenario.symbol, "NVDA");
             scenario.validate().unwrap();
             let text = serde_json::to_string(&scenario).unwrap();
             let back: Scenario = serde_json::from_str(&text).unwrap();
             assert_eq!(back, scenario);
         }
-        // The old family is untouched: no takers, no impact, no quiet draw.
+        // The old family is untouched: no takers, no impact, no quiet draw,
+        // and its parameters print as they did (flash-crash-spcx's
+        // fingerprint holds them).
         let (old, shape) = ShockFamily::spcx().draw("o", 1);
         assert!(old.actors.is_none() && old.impact.is_none() && !shape.quiet);
+        let text = format!("{:?}", ShockFamily::spcx());
+        assert!(text.starts_with("ShockFamily { symbol: \"SPCX\", duration: (320, 720),"));
+        assert!(text.contains("fizzle_giveback: (0.4, 1.0), noise_pct: 0.12,"));
+        for added in [
+            "quiet_odds",
+            "leg_alpha",
+            "extend_share",
+            "actors",
+            "impact",
+        ] {
+            assert!(!text.contains(added), "{added}");
+        }
     }
 
     /// Quiet stretches carry fizzles: a move away that comes most or all of

@@ -1,60 +1,58 @@
-//! Reference: ride a confirmed move, with a trailing stop.
+//! Reference: ride each move while it runs, then fade it once it stops.
 //!
-//! On mainnet's Phoenix tape (`phoenix-tape.20261125.fc443f1e`) a jump of
-//! 1.5% or more went on by half of itself again or more 45% of the time,
-//! fifteen minutes on, and gave half of itself back 31% of the time; most
-//! small moves (0.5 to 1.5%) didn't give theirs back either. The family
-//! plays those odds, so a shock is more often a move to ride than one to
-//! fade. The reference reads one thing, the mark each step, against a
-//! running mean of the calm before:
+//! The family's shocks come in legs, among fizzles that give their move
+//! back; most moves land at once, the rest ramp in uneven steps, and once a
+//! shock has held, most of the time it reverts. The reference reads one
+//! thing, the mark each step, against a running mean of the calm before:
 //!
-//! - **Calm.** A displacement of 1.2% from the calm mean, or a single step
-//!   of 1.9%, is a move: above the wobble and most small moves.
-//! - **Riding.** The full cap the move's way, held while it holds. Once the
-//!   mark gives back 1.5% or 30% of the move from its extreme, whichever is
-//!   more, it closes and is calm again: a reversion costs it the stop, an
-//!   extension pays it, a stall leaves it about where it was.
+//! - **Calm.** A displacement of 1.14% from the calm mean, or a single step
+//!   of 1.36%, starts a move.
+//! - **Moving.** The full cap with the move while it makes new extremes. Three
+//!   steps without one, or a retrace of 1.41% from the extreme, and the move
+//!   has stopped.
+//! - **Holding.** It fades what the move did: 76% of the cap against it, held
+//!   until the mark has given back all but 11% of the move. A new extreme by
+//!   another 1.14% is another leg: back to riding it. Moves under 1.03% aren't
+//!   worth fading.
 //!
-//! It never carries a session past a $600 drawdown: past that it closes and
-//! stops. It holds to the session's end, which says nothing of the path.
+//! It never carries a session past a $519 drawdown: past that it closes and
+//! stops. Each step it moves the position toward its target by up to 35
+//! shares, in market orders of 10 (one order that crosses much of the book
+//! doesn't fit a transaction's compute budget).
 //!
-//! Tuned offline on 600 draws of the family and checked on 600 others: $139
-//! a session, a per-session Sharpe of 0.43, profitable in half of them,
-//! deepest drawdown $580. It doesn't know a shock is coming, and enters
-//! after the first leg has landed: the informed bot, told who trades on
-//! information, is in before it.
+//! Tuned offline on 400 draws from the 0.9.0 family and checked on 200
+//! others ($66 a session, profitable in 64%, no drawdown breach). It doesn't
+//! know a fizzle from a leg, a stall from a reversion, or how far a shock
+//! will go: the ladder's regime oracle, told those, makes several times more.
 //!
 //! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
 //! solution), and a process (`src/main.rs`), the anchor hidden sets are
 //! scored against.
 
-pub mod rider;
-
 use std::collections::VecDeque;
 
 use mtx_kit::prelude::*;
-use rider::{Account, toward};
 
-/// A displacement from the calm mean, in percent of the start, that starts
-/// a move.
-const ENTER_PCT: f64 = 1.2;
-/// A single step's move, in percent of the start, that starts one.
-const STEP_PCT: f64 = 1.9;
-/// The stop: the least retrace from the extreme, in percent of the start,
-/// and the share of the move's size it grows to.
-const STOP_PCT: f64 = 1.5;
-const STOP_SHARE: f64 = 0.3;
-/// Past this drawdown, in USD, it closes and stops: 60% of the mandate's
-/// $1,000, so the stop's slippage through a gap can't take it past.
-const HALT_DRAWDOWN_USD: f64 = 600.0;
-/// Steps the calm mean averages over: a minute's half.
+const ENTER_PCT: f64 = 1.14;
+const STEP_PCT: f64 = 1.36;
+const END_STEPS: u32 = 3;
+const RETRACE_PCT: f64 = 1.41;
+const RIDE: f64 = 1.0;
+const FADE: f64 = 0.76;
+const GIVE_BACK: f64 = 0.11;
+const MIN_FADE_PCT: f64 = 1.03;
+const HALT_DRAWDOWN_USD: f64 = 519.0;
+/// Steps the calm mean averages over.
 const CALM_STEPS: usize = 30;
+const SLICE: f64 = 10.0;
+const MAX_STEP_TRADE: f64 = 35.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 enum State {
     #[default]
     Calm,
-    Riding,
+    Moving,
+    Holding,
 }
 
 /// The strategy.
@@ -64,81 +62,107 @@ pub struct Reference {
     start_mark: f64,
     calm: VecDeque<f64>,
     state: State,
-    /// The calm mean the move started from, its extreme, both in percent
-    /// of the start, and its direction (+1 up, -1 down).
-    origin_pct: f64,
-    extreme_pct: f64,
-    direction: f64,
-    last_pct: Option<f64>,
-    account: Account,
+    origin: f64,
+    extreme: f64,
+    dir: f64,
+    quiet: u32,
+    last: Option<f64>,
+    value: f64,
+    peak_value: f64,
+    last_mark: f64,
+    halted: bool,
 }
 
 impl Strategy for Reference {
     fn start(&mut self, session: &Session) -> BotResult {
-        assert!(session.cap > 0.0 && session.start_mark > 0.0);
         self.cap = session.cap;
         self.start_mark = session.start_mark;
+        self.last_mark = session.start_mark;
         Ok(())
     }
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         let (mark, held) = (market.mark, market.position.size);
-        let halted = self.account.step(mark, held, HALT_DRAWDOWN_USD);
-        let level_pct = (mark / self.start_mark - 1.0) * 100.0;
-        let step_pct = self.last_pct.map_or(0.0, |last| level_pct - last);
-        self.last_pct = Some(level_pct);
+        let level = (mark / self.start_mark - 1.0) * 100.0;
+        let jump = self.last.map_or(0.0, |l| level - l);
+        self.last = Some(level);
+        self.value += held * (mark - self.last_mark);
+        self.last_mark = mark;
+        self.peak_value = self.peak_value.max(self.value);
+        if !self.halted && self.peak_value - self.value > HALT_DRAWDOWN_USD {
+            mtx_kit::log("drawdown past the halt; closing and stopping");
+            self.halted = true;
+        }
 
+        let cap = self.cap;
+        let mut target = 0.0;
         if self.state == State::Calm {
-            self.watch(level_pct, step_pct);
+            self.calm.push_back(level);
+            while self.calm.len() > CALM_STEPS {
+                self.calm.pop_front();
+            }
+            let mean = self.calm.iter().sum::<f64>() / self.calm.len() as f64;
+            let displacement = level - mean;
+            if displacement.abs() >= ENTER_PCT || jump.abs() >= STEP_PCT {
+                self.dir = if displacement.abs() >= ENTER_PCT {
+                    displacement.signum()
+                } else {
+                    jump.signum()
+                };
+                self.state = State::Moving;
+                (self.origin, self.extreme, self.quiet) = (mean, level, 0);
+            }
         }
-        if self.state == State::Riding {
-            self.ride(level_pct);
+        if self.state == State::Moving {
+            if self.dir * (level - self.extreme) > 0.0 {
+                (self.extreme, self.quiet) = (level, 0);
+            } else {
+                self.quiet += 1;
+            }
+            if self.dir * (self.extreme - level) >= RETRACE_PCT || self.quiet >= END_STEPS {
+                self.state = State::Holding;
+            }
+            target = RIDE * self.dir * cap;
         }
-        let target = match (halted, self.state) {
-            (true, _) | (false, State::Calm) => 0.0,
-            (false, State::Riding) => self.direction * self.cap,
-        };
-        assert!(target.abs() <= self.cap);
+        if self.state == State::Holding {
+            let size = (self.extreme - self.origin).abs();
+            if self.dir * (level - self.extreme) >= ENTER_PCT {
+                (self.state, self.extreme, self.quiet) = (State::Moving, level, 0);
+                target = RIDE * self.dir * cap;
+            } else if self.dir * (level - self.origin) <= GIVE_BACK * size || size < MIN_FADE_PCT {
+                self.state = State::Calm;
+                self.calm.clear();
+                self.calm.push_back(level);
+                target = 0.0;
+            } else {
+                target = -FADE * self.dir * cap;
+            }
+        }
+        if self.halted {
+            target = 0.0;
+        }
         toward(orders, held, target, mark);
         Ok(())
     }
 }
 
-impl Reference {
-    /// Calm: keep the mean, and start riding a move past it.
-    fn watch(&mut self, level_pct: f64, step_pct: f64) {
-        self.calm.push_back(level_pct);
-        while self.calm.len() > CALM_STEPS {
-            self.calm.pop_front();
-        }
-        let mean = self.calm.iter().sum::<f64>() / self.calm.len() as f64;
-        let displacement = level_pct - mean;
-        let direction = if displacement.abs() >= ENTER_PCT {
-            displacement.signum()
-        } else if step_pct.abs() >= STEP_PCT {
-            step_pct.signum()
+/// Market orders moving the position from `held` toward `target`, by up to
+/// [`MAX_STEP_TRADE`] this step, in slices of [`SLICE`].
+fn toward(orders: &mut Orders, held: f64, target: f64, mark: f64) {
+    let mut missing = (target - held).clamp(-MAX_STEP_TRADE, MAX_STEP_TRADE);
+    while missing.abs() >= 1.0 {
+        let size = missing.abs().floor().min(SLICE);
+        if missing > 0.0 {
+            orders.buy(size, round_cents(mark * 1.02));
         } else {
-            return;
-        };
-        self.state = State::Riding;
-        (self.origin_pct, self.extreme_pct, self.direction) = (mean, level_pct, direction);
+            orders.sell(size, round_cents(mark * 0.98));
+        }
+        missing -= size.copysign(missing);
     }
+}
 
-    /// Riding: follow the extreme, and stop out on a retrace from it.
-    fn ride(&mut self, level_pct: f64) {
-        assert!(self.direction == 1.0 || self.direction == -1.0);
-        if self.direction * (level_pct - self.extreme_pct) > 0.0 {
-            self.extreme_pct = level_pct;
-        }
-        let size = (self.extreme_pct - self.origin_pct).abs();
-        let retrace = self.direction * (self.extreme_pct - level_pct);
-        assert!(retrace >= 0.0, "the extreme is the furthest the move went");
-        if retrace >= STOP_PCT.max(STOP_SHARE * size) {
-            self.state = State::Calm;
-            self.calm.clear();
-            self.calm.push_back(level_pct);
-        }
-    }
+fn round_cents(usd: f64) -> f64 {
+    (usd * 100.0).round() / 100.0
 }
 
 #[cfg(target_arch = "wasm32")]

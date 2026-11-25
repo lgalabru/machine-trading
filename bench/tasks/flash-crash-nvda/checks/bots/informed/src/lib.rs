@@ -1,4 +1,4 @@
-//! The flash-crash-spcx informed bot, scoring v2's 1: told the session's
+//! The flash-crash-nvda informed bot, scoring v2's 1: told the session's
 //! latent state as `MTX_REGIME`, which names the informed takers' wallets
 //! (`wallets.informed`, their signing keys) and the process every session
 //! is drawn from (how far ahead they see, how often they are right).
@@ -38,8 +38,8 @@ const WALLETS_MAX: usize = 8;
 /// The most accounts a trader index or active trader buffer spans, as the
 /// runtime bounds them.
 const ARENA_ACCOUNTS_MAX: usize = 16;
-/// A position change smaller than this, in SPCX, is no trade: under
-/// Phoenix's lot (0.001 SPCX).
+/// A position change smaller than this, in NVDA, is no trade: it is
+/// half of NVDA's lot on Phoenix (0.001 NVDA).
 const FLOW_MIN: f64 = 0.0005;
 
 /// One informed taker: its trader account, its position at the last read,
