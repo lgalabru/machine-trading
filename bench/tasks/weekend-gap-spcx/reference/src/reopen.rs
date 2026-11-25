@@ -1,9 +1,15 @@
 //! What the reference and the informed bot share: when they take their
 //! position into the reopen, how they size it from the gap they expect, and
-//! how they trade toward it. The informed bot includes this file
-//! (`#[path]`), so the two differ only in what they expect.
+//! how they trade toward it, how a vote on the reopen's direction moves
+//! the gap they expect, and how they read a Phoenix account's position.
+//! The informed bot includes this file (`#[path]`), so the two differ only
+//! in whose trades they read and how far they trust them.
 
-use mtx_kit::{log, prelude::*};
+use mtx_kit::{
+    Pubkey, log,
+    prelude::*,
+    venue::{PhoenixVenue, perp_position, perp_position_live},
+};
 
 /// How much of the weekend's move the reopen keeps, and the spread of the
 /// open around that, in percent: the instruction's numbers, from 21
@@ -147,6 +153,137 @@ pub fn trade_toward(orders: &mut Orders, position: f64, target: f64, mid: f64) {
     }
 }
 
+/// The gap it expects, in percent: the reopen's process for the prior
+/// (normal, around `(keep - 1) × weekend`, give or take `sd_pct`), the
+/// votes' odds for whether it opens up or down (each vote right with
+/// `hit_rate`; `votes` is their sum, +1 up, -1 down), and the mean of the
+/// prior on that side.
+pub fn expected_gap_given_votes(
+    weekend_pct: f64,
+    keep: f64,
+    sd_pct: f64,
+    votes: f64,
+    hit_rate: f64,
+) -> f64 {
+    assert!(sd_pct > 0.0 && (0.5..1.0).contains(&hit_rate));
+    assert!(votes.abs() <= VOTES_MAX);
+    let mean = (keep - 1.0) * weekend_pct;
+    let z = mean / sd_pct;
+    let up = normal_cdf(z).clamp(1e-9, 1.0 - 1e-9);
+    let density = normal_pdf(z);
+    let mean_up = mean + sd_pct * density / up;
+    let mean_down = mean - sd_pct * density / (1.0 - up);
+    let odds = (hit_rate / (1.0 - hit_rate)).ln();
+    let logit = (up / (1.0 - up)).ln() + votes * odds;
+    let posterior_up = 1.0 / (1.0 + (-logit).exp());
+    let expected = posterior_up * mean_up + (1.0 - posterior_up) * mean_down;
+    assert!(expected.is_finite());
+    expected
+}
+
+/// The most votes a bot sums: one a watched account.
+pub const VOTES_MAX: f64 = ACCOUNTS_MAX as f64;
+/// The most accounts it watches.
+pub const ACCOUNTS_MAX: usize = 16;
+/// The most accounts a trader index or active trader buffer spans, as the
+/// runtime bounds them.
+const ARENA_ACCOUNTS_MAX: usize = 16;
+
+fn normal_pdf(z: f64) -> f64 {
+    (-0.5 * z * z).exp() / (2.0 * std::f64::consts::PI).sqrt()
+}
+
+/// The standard normal's distribution function, through Abramowitz and
+/// Stegun's 7.1.26 for the error function (error under 1.5e-7).
+pub fn normal_cdf(z: f64) -> f64 {
+    let x = z.abs() / std::f64::consts::SQRT_2;
+    let t = 1.0 / (1.0 + 0.327_591_1 * x);
+    let poly = t
+        * (0.254_829_592
+            + t * (-0.284_496_736
+                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    let erf = 1.0 - poly * (-x * x).exp();
+    if z >= 0.0 {
+        0.5 * (1.0 + erf)
+    } else {
+        0.5 * (1.0 - erf)
+    }
+}
+
+/// Reads Phoenix positions of the accounts it is given, by their signing
+/// keys, as anyone can: their trader accounts and the market's arenas.
+#[derive(Debug, Default)]
+pub struct Positions {
+    trader_index: Vec<String>,
+    trader_buffer: Vec<String>,
+}
+
+impl Positions {
+    pub fn new(venue: &PhoenixVenue) -> Result<Self, String> {
+        let keys = &venue.exchange().keys;
+        if keys.global_trader_index.len() > ARENA_ACCOUNTS_MAX
+            || keys.active_trader_buffer.len() > ARENA_ACCOUNTS_MAX
+        {
+            return Err("the trader arenas span more accounts than the bot reads".into());
+        }
+        Ok(Self {
+            trader_index: keys.global_trader_index.clone(),
+            trader_buffer: keys.active_trader_buffer.clone(),
+        })
+    }
+
+    /// Each authority's position on `symbol`, in base units (0 for an
+    /// account not onboarded yet).
+    pub fn read(
+        &self,
+        venue: &PhoenixVenue,
+        symbol: &str,
+        authorities: &[Pubkey],
+    ) -> Result<Vec<f64>, String> {
+        assert!(authorities.len() <= ACCOUNTS_MAX);
+        let market = venue.market(symbol)?;
+        let traders: Vec<String> = authorities
+            .iter()
+            .map(|a| venue.trader_account(a).to_string())
+            .collect();
+        let addresses: Vec<&str> = traders
+            .iter()
+            .chain(&self.trader_index)
+            .chain(&self.trader_buffer)
+            .map(String::as_str)
+            .collect();
+        let accounts = mtx_kit::rpc_accounts(&addresses)?;
+        assert_eq!(accounts.len(), addresses.len());
+        let (own, arenas) = accounts.split_at(traders.len());
+        let (index, buffer) = arenas.split_at(self.trader_index.len());
+        let index: Vec<&[u8]> = arenas_of(index)?;
+        let buffer: Vec<&[u8]> = arenas_of(buffer)?;
+        let mut positions = Vec::with_capacity(traders.len());
+        for (authority, account) in authorities.iter().zip(own) {
+            let trader = venue.trader_account(authority);
+            let live = perp_position_live(market, &trader, &index, &buffer)?;
+            positions.push(match (live, account) {
+                (Some(position), _) => position.size,
+                (None, Some(data)) => perp_position(market, data)?.size,
+                (None, None) => 0.0,
+            });
+        }
+        assert_eq!(positions.len(), authorities.len());
+        Ok(positions)
+    }
+}
+
+/// Each arena account's data: every one must exist.
+fn arenas_of(accounts: &[Option<Vec<u8>>]) -> Result<Vec<&[u8]>, String> {
+    accounts
+        .iter()
+        .map(|a| {
+            a.as_deref()
+                .ok_or_else(|| "a trader arena account is missing".to_string())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,6 +295,30 @@ mod tests {
         assert_eq!(position_for(0.05, 70.0), 0.0);
         assert_eq!(position_for(-0.5, 70.0), -70.0);
         assert!((position_for(0.125, 70.0) - 35.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn without_votes_the_expected_gap_is_the_prior_and_votes_move_it() {
+        for weekend in [-2.0, -0.5, 0.3, 1.0, 2.5] {
+            let expected = expected_gap_given_votes(weekend, 0.78, 0.5, 0.0, 0.8);
+            assert!(
+                (expected - expected_gap_pct(weekend)).abs() < 1e-6,
+                "{weekend}"
+            );
+        }
+        let prior = expected_gap_given_votes(1.0, 0.78, 0.5, 0.0, 0.8);
+        assert!(expected_gap_given_votes(1.0, 0.78, 0.5, 2.0, 0.8) > 0.0);
+        assert!(expected_gap_given_votes(1.0, 0.78, 0.5, -1.0, 0.8) < prior);
+        let trusted = expected_gap_given_votes(1.0, 0.78, 0.5, 1.0, 0.8);
+        let doubted = expected_gap_given_votes(1.0, 0.78, 0.5, 1.0, 0.65);
+        assert!(prior < doubted && doubted < trusted);
+    }
+
+    #[test]
+    fn the_normal_distribution_is_right_to_a_few_decimals() {
+        assert!((normal_cdf(0.0) - 0.5).abs() < 1e-7);
+        assert!((normal_cdf(1.96) - 0.975).abs() < 1e-4);
+        assert!((normal_cdf(-1.0) - 0.158_655).abs() < 1e-5);
     }
 
     #[test]
