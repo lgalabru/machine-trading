@@ -1,0 +1,356 @@
+{
+ "all": {
+  "cap": {
+   "at_cap_share": 0.0,
+   "cap_pct": 0.23247392815758977,
+   "max_abs_share_of_cap": 0.0446
+  },
+  "interval_gap_seconds_median": 3600,
+  "intervals": 2162,
+  "persistence": {
+   "acf": {
+    "1": 0.897,
+    "12": 0.56,
+    "2": 0.818,
+    "24": 0.389,
+    "3": 0.762,
+    "6": 0.645
+   },
+   "half_life_intervals": 6.37,
+   "sign_run_mean_intervals": 23.45,
+   "sign_run_p90_intervals": 52
+  },
+  "premium_bps": {
+   "abs_max": 8.286,
+   "abs_median": 1.367,
+   "abs_p90": 2.749,
+   "mean": 1.434,
+   "positive_share": 0.924,
+   "quantiles": {
+    "0.01": -1.868,
+    "0.1": 0.302,
+    "0.25": 0.965,
+    "0.5": 1.314,
+    "0.75": 2.081,
+    "0.9": 2.745,
+    "0.99": 3.639
+   },
+   "sd": 1.072
+  },
+  "rate_pct": {
+   "mean": 0.001792,
+   "quantiles": {
+    "0.01": -0.002335,
+    "0.1": 0.000378,
+    "0.25": 0.001206,
+    "0.5": 0.001643,
+    "0.75": 0.002601,
+    "0.9": 0.003431,
+    "0.99": 0.004549
+   },
+   "sd": 0.00134
+  }
+ },
+ "code_sha256": "a0d93802aab1a068f2bd6b0c36e690cd27f29c58cc64ad7dab699c54700aad8c",
+ "id": "phoenix-funding.sol.20261125.248a28ea",
+ "inputs": [
+  {
+   "bytes": 4419,
+   "sha256": "fd27e5d4f36eac0752259860a97c9811d74c0614e317252abb4f07bdc51aed78",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1787788800000&endTime=1788048000000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "90452ca1088e344250b99924c9f446b2cef6ecd82092744c7b1a0de6c6b5ff93",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1788048000000&endTime=1788307200000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "02c48d981cf4e72d20bfbcb4cda086d48e38323bca1ce842dac4959383439a00",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1788307200000&endTime=1788566400000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "2df23a13c3b9edec35fd04ddaed9cbafad19fbf237495f5b1466125fd8d36a52",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1788566400000&endTime=1788825600000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "2230dda58e47fc7ae5a391f24536e292e293ded896e670e666df04eb63a00917",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1788825600000&endTime=1789084800000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "c97a5f69a766d1f5c4975ff067c049f05843ee0f505a91006a1822f1065f8a38",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1789084800000&endTime=1789344000000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "c5451f073d774488e3e0539759174a13b1aabb853e4f453c6cd036ba0ee750d6",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1789344000000&endTime=1789603200000&limit=1000"
+  },
+  {
+   "bytes": 4359,
+   "sha256": "39da259ad494fefb9c1298c148d70f54d8cbe6152c158c86a41a872c63d998de",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1789603200000&endTime=1789862400000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "191a8f594b681f9488ec2b4fecc14e4f2bde05c4eb36f43101896f9ac7acf1d5",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1789862400000&endTime=1790121600000&limit=1000"
+  },
+  {
+   "bytes": 4359,
+   "sha256": "8ce06cc8c243eca127806fe17af948ace067d10275ec648e922168fe0d74c73e",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1790121600000&endTime=1790380800000&limit=1000"
+  },
+  {
+   "bytes": 4431,
+   "sha256": "94e774c89e186ae765c79a6bd3e59698a704c3e288e277cf5a5fa5459e10d7fc",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1790380800000&endTime=1790640000000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "dc3cfdaea6151de71969d37477e28ed2ce4a9ef99410ee642c73a453262aaab0",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1790640000000&endTime=1790899200000&limit=1000"
+  },
+  {
+   "bytes": 4432,
+   "sha256": "0cec505ca8fac9f4bf9fd900eacec39c620d89e688d186ee8846bfac774bc062",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1790899200000&endTime=1791158400000&limit=1000"
+  },
+  {
+   "bytes": 4422,
+   "sha256": "3400a20a0e592841538327b39a2143092c7a3e315ada2d8996ca1b48afbb867c",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1791158400000&endTime=1791417600000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "ee81342052887521387deb9de839a803c697a4a062e48eda7a85eb806149d615",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1791417600000&endTime=1791676800000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "24c472352aaab649c4f20ae51371c38a536705c076e623f3b61fc7bd2b7a3487",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1791676800000&endTime=1791936000000&limit=1000"
+  },
+  {
+   "bytes": 4421,
+   "sha256": "261e57d2de9cbe6c8037e9b1ec948c2a695908fdb4a9153139e8bf3c4746442e",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1791936000000&endTime=1792195200000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "1035cdff38c217a8bbf5d210abb83ec64bad4b9a4cf41db0f3188e5f1a63ce8a",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1792195200000&endTime=1792454400000&limit=1000"
+  },
+  {
+   "bytes": 4423,
+   "sha256": "db96c953aff2bb9165699727951be31570b459292698a7acf92ce2a69ca69be6",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1792454400000&endTime=1792713600000&limit=1000"
+  },
+  {
+   "bytes": 4381,
+   "sha256": "eec80c1d9f2cdfa8d4a39b3cf4ae7cfcd54ae22dd7c25542a7ddfe5efa95a718",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1792713600000&endTime=1792972800000&limit=1000"
+  },
+  {
+   "bytes": 4420,
+   "sha256": "4d9f30458eb580b0363b38189f51a1516fdb106d392d837909429c236ec8655f",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1792972800000&endTime=1793232000000&limit=1000"
+  },
+  {
+   "bytes": 4425,
+   "sha256": "5ac345cc656ea7504599c5a63c84e61dcda228be3ec21be3245378781bc4ba83",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1793232000000&endTime=1793491200000&limit=1000"
+  },
+  {
+   "bytes": 4421,
+   "sha256": "32b474354215ce2ea6466050a070f5aef80808a0e67b821ffb46a6dd8b48925b",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1793491200000&endTime=1793750400000&limit=1000"
+  },
+  {
+   "bytes": 4420,
+   "sha256": "54a1e967b5da7a951b3ec475febb659676ff76f4d0a7b7999055c576b300a447",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1793750400000&endTime=1794009600000&limit=1000"
+  },
+  {
+   "bytes": 4419,
+   "sha256": "58858a65f4bf698a07e2fbe5e2e899eab48eb4b837c558093902cc4992559a82",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1794009600000&endTime=1794268800000&limit=1000"
+  },
+  {
+   "bytes": 4363,
+   "sha256": "6cc1947819e6975f8993055e663d7fb79835be3b15a0505175f93bcee1d03538",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1794268800000&endTime=1794528000000&limit=1000"
+  },
+  {
+   "bytes": 4376,
+   "sha256": "9a6d3ae777fca03fb00a544085a2ada8f071ae0e7a8aa9198712cba1bb45a0be",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1794528000000&endTime=1794787200000&limit=1000"
+  },
+  {
+   "bytes": 4423,
+   "sha256": "6ea9ba6b163854b6737e7c818a6ae5afd77b4c2240e31b2951c026cf52b98621",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1794787200000&endTime=1795046400000&limit=1000"
+  },
+  {
+   "bytes": 4442,
+   "sha256": "772752eb555512d54268cfa49b42f8c87c7091635215fbdb4b373b2208246a42",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1795046400000&endTime=1795305600000&limit=1000"
+  },
+  {
+   "bytes": 4442,
+   "sha256": "fb181f6b3b47c8c781f7df96add974af03419d481b08fc6b548b0fd90d36021d",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1795305600000&endTime=1795564800000&limit=1000"
+  },
+  {
+   "bytes": 159,
+   "sha256": "310a4a0cf20dbf23b1ab8c72d7c45f74bbaf9508f3fd35cb166b46f5b0a9b1cf",
+   "url": "https://perp-api.phoenix.trade/v1/funding/SOL/rates?startTime=1795564800000&endTime=1795569120000&limit=1000"
+  },
+  {
+   "bytes": 234299,
+   "sha256": "6f7d26a44314d8f6a0fc6d68e7e8240edc357d174a89fe09e5e4d9c0541cd502",
+   "url": "https://perp-api.phoenix.trade/exchange"
+  }
+ ],
+ "inputs_digest": "a5b80ac76a9f90256c495aa6b9bf5c37b63e924fb5b403cfb38d48b0833d26e1",
+ "market": {
+  "interval_seconds": 3600,
+  "max_rate_per_interval_pct": 0.232474,
+  "period_seconds": 28800,
+  "source": "https://perp-api.phoenix.trade/exchange, as fetched (the cap moves with the market's settings)"
+ },
+ "rules": {
+  "half_life": "log 0.5 / log acf(1), in intervals",
+  "premium": "the interval's mean (mark - index) / index, in bp: the rate times period / interval",
+  "rate": "fundingRatePercentage: one interval's funding, percent of the price, paid by longs when positive"
+ },
+ "study": "phoenix-funding",
+ "symbol": "SOL",
+ "tape_window": {
+  "cap": {
+   "at_cap_share": 0.0,
+   "cap_pct": 0.23247392815758977,
+   "max_abs_share_of_cap": 0.015
+  },
+  "interval_gap_seconds_median": 3600,
+  "intervals": 74,
+  "persistence": {
+   "acf": {
+    "1": 0.876,
+    "12": -0.042,
+    "2": 0.719,
+    "24": -0.241,
+    "3": 0.58,
+    "6": 0.226
+   },
+   "half_life_intervals": 5.26,
+   "sign_run_mean_intervals": 7.78,
+   "sign_run_p90_intervals": 32
+  },
+  "premium_bps": {
+   "abs_max": 2.786,
+   "abs_median": 0.912,
+   "abs_p90": 1.314,
+   "mean": 0.138,
+   "positive_share": 0.635,
+   "quantiles": {
+    "0.01": -2.786,
+    "0.1": -1.314,
+    "0.25": -0.578,
+    "0.5": 0.459,
+    "0.75": 1.0,
+    "0.9": 1.022,
+    "0.99": 1.103
+   },
+   "sd": 0.975
+  },
+  "rate_pct": {
+   "mean": 0.000173,
+   "quantiles": {
+    "0.01": -0.003483,
+    "0.1": -0.001643,
+    "0.25": -0.000722,
+    "0.5": 0.000574,
+    "0.75": 0.00125,
+    "0.9": 0.001278,
+    "0.99": 0.001379
+   },
+   "sd": 0.001219
+  }
+ },
+ "version": 1,
+ "window": {
+  "first_interval": 1787788800,
+  "from_ms": 1787788800000,
+  "last_interval": 1795568400,
+  "to_ms": 1795569120000
+ },
+ "windows": [
+  {
+   "hours": 24,
+   "mean_bps": {
+    "mean": 1.434,
+    "negative_share": 0.033,
+    "quantiles": {
+     "0.01": -0.915,
+     "0.1": 0.438,
+     "0.25": 0.934,
+     "0.5": 1.372,
+     "0.75": 2.064,
+     "0.9": 2.571,
+     "0.99": 4.412
+    },
+    "sd": 0.87
+   },
+   "windows": 90,
+   "within_acf_1": 0.661,
+   "within_half_life_intervals": 1.67,
+   "within_sd_bps": 0.625
+  },
+  {
+   "hours": 72,
+   "mean_bps": {
+    "mean": 1.434,
+    "negative_share": 0.0,
+    "quantiles": {
+     "0.01": 0.128,
+     "0.1": 0.519,
+     "0.25": 0.885,
+     "0.5": 1.365,
+     "0.75": 1.921,
+     "0.9": 2.567,
+     "0.99": 3.2
+    },
+    "sd": 0.77
+   },
+   "windows": 30,
+   "within_acf_1": 0.778,
+   "within_half_life_intervals": 2.76,
+   "within_sd_bps": 0.745
+  },
+  {
+   "hours": 120,
+   "mean_bps": {
+    "mean": 1.434,
+    "negative_share": 0.056,
+    "quantiles": {
+     "0.01": -0.044,
+     "0.1": 0.614,
+     "0.25": 0.93,
+     "0.5": 1.616,
+     "0.75": 1.903,
+     "0.9": 2.193,
+     "0.99": 2.805
+    },
+    "sd": 0.665
+   },
+   "windows": 18,
+   "within_acf_1": 0.827,
+   "within_half_life_intervals": 3.64,
+   "within_sd_bps": 0.841
+  }
+ ]
+}
