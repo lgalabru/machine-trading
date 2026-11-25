@@ -333,3 +333,19 @@ it; one that never composes a working group scores 0.
   and a set is stratified on them (4 or 5 of 72), as a handful of quiet
   sessions still decided `min-tip < reference` on some fresh sets
   ("Calibration", "Statistical power: quiet sessions").
+- **0.15.0** (2026-11-25): unchanged but for its instruction (RFD 0007,
+  2026-11-25). luthor's arbitrage scout watches these ten pools on
+  mtx-alpha. From 2026-11-23 21:47 to 2026-11-25 06:10 UTC it saw 14 cycles
+  pay 0.001 SOL or more: seven through SOL/USDC (one of 0.61 SOL, the others
+  0.002 to 0.05), seven through GEOD (0.002 to 0.04 SOL behind moves of 42
+  to 287 bp) and none through JTO, whose cycles never came within 52 bp of
+  paying; every one was gone within three slots. The family's triggers
+  (median 545 bp, 55% of them on the JTO pools, cycles up to about 2 SOL)
+  are the week's largest over all of Solana's pools, so the task is richer
+  than these pools in rate and in size. Not recalibrated: the scout reads
+  a write a slot after it lands and can't see a gap opened and closed
+  inside one block, where 77 of the research's 106 cycles landed, so its
+  gaps are what the race left, not the triggers, and 14 of them in one
+  calm day fit no move distribution or pool mix. The instruction states
+  the departure beside these numbers; a tape of the pools' transactions
+  would measure the triggers. Rewards compare with 0.14.0's.

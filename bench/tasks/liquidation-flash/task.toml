@@ -4,7 +4,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/liquidation-flash"
-version = "0.14.0"
+version = "0.15.0"
 description = "Write a bot that liquidates unhealthy Kamino obligations (SOL collateral, USDC debt) on the main market with a flash loan, pushing Scope's price and selling the seized SOL through Orca's or Raydium's SOL/USDC pool in the same transaction, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "kamino", "lending", "liquidation", "flash-loan", "atomic-arbitrage", "jito", "surfpool", "rust"]
 

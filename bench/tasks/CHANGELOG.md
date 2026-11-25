@@ -42,6 +42,20 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     fades the take-back by its size; an informed bot, told the informed
     wallets, is v2's 1. The rungs fitted to the old family are gone, and
     rewards don't compare with 0.14.0's.
+  - **The three atomic tasks: unchanged, their departures stated.**
+    `backrun-sol-usdc`, `backrun-thin-pools` and `liquidation-flash` were
+    checked against luthor's scouts on our own validator (RFD 0007,
+    2026-11-25). Per event they agree where the scouts can see: the one
+    chunk-sized gap on the SOL/USDC pair in 32 hours paid 0.61 SOL behind a
+    48.5 bp move, every gap on the ten pools was gone within three slots,
+    and the one contested liquidation (repaying $2,363) went to a rival
+    within two. Where they depart is rate, and for `backrun-thin-pools` the
+    size of its triggers: each session is a burst, a run of triggers or a
+    drawdown, where the scouts' calm day held seven gaps through GEOD (at
+    most 0.04 SOL), none through JTO, and two obligations a liquidator
+    could take. The scouts can't see a gap closed inside its block, and one
+    day fits nothing, so the families, references and informed bots stay;
+    each instruction now states its departure beside the measured values.
 - **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
   mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
   unchanged: their anchor digests did not move.
