@@ -36,18 +36,56 @@ use crate::{
 /// The tape study every profile number comes from.
 pub const STUDY: &str = "phoenix-tape.20261125.fc443f1e";
 
-/// Luthor's top-of-book reads, the touch's half-spread: one minute of
-/// quotes, 12 to 13 reads a market, on mtx-alpha around 2026-11-25 01:40 UTC
-/// (`history.sqlite`, table `quotes`). One minute, so a guide, not a fit.
-pub const QUOTES: &str = "luthor quotes, 1 minute, 2026-11-25 01:40 UTC";
+/// Luthor's top-of-book reads of the touch's half-spread, on mtx-alpha
+/// (`history.sqlite`, table `quotes`), from 2026-11-25 ~01:40 UTC: ANT
+/// averaged 2.7 bp over 106 minutes (least 0.6, most 12); SPCX 0.4 bp (one
+/// tick: 125.64 by 125.65) in the first minute. A guide, not a fit.
+pub const QUOTES: &str = "luthor quotes, 106 minutes from 2026-11-25 01:40 UTC";
 
 /// The quoting obligation's band, bp: twice the calibration's default book
 /// half-spread (`book.half_spread_bps`, 5 bp).
 pub const OBLIGATION_HALF_SPREAD_BPS: f64 = 10.0;
 
-/// The snapshot's SPCX mark (`snapshots/phoenix-spcx-2026-10-29/manifest.json`):
-/// what a profile's dollar sizes are turned into SPCX at.
-pub const SNAPSHOT_MARK_USD: f64 = 143.05;
+/// The market a session trades: a snapshot's perp, its mark (what a
+/// profile's dollar sizes are turned into base units at), its tick, and the
+/// mandate's cap in its base units.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SnapshotMarket {
+    pub symbol: &'static str,
+    pub mark_usd: f64,
+    pub tick_usd: f64,
+    pub max_position: f64,
+}
+
+impl SnapshotMarket {
+    /// Phoenix's ANT (`snapshots/phoenix-ant-2026-11-25`): $79.99, a $0.01
+    /// tick (1.25 bp), and a cap of 35 ANT, about $2,800, the 0.3x of
+    /// collateral SPCX's 20 was.
+    pub fn ant() -> Self {
+        Self {
+            symbol: "ANT",
+            mark_usd: 79.99,
+            tick_usd: 0.01,
+            max_position: 35.0,
+        }
+    }
+
+    /// Phoenix's SPCX (`snapshots/phoenix-spcx-2026-10-29`): $143.05, a
+    /// $0.01 tick, a cap of 20 SPCX.
+    pub fn spcx() -> Self {
+        Self {
+            symbol: "SPCX",
+            mark_usd: 143.05,
+            tick_usd: 0.01,
+            max_position: 20.0,
+        }
+    }
+
+    /// One tick in bp of the mark: no quote rests closer to the level.
+    pub fn tick_bps(&self) -> f64 {
+        self.tick_usd / self.mark_usd * 10_000.0
+    }
+}
 
 /// The bench's clock (`scenario::SLOT_SECONDS`) over the actor library's
 /// (`actors::library::SLOT_SECONDS`, mainnet's 0.4 s): the library turns a
@@ -207,9 +245,9 @@ impl MarketProfile {
             / orders
     }
 
-    /// The median order in SPCX at the snapshot's mark.
-    pub fn order_size_spcx(&self) -> f64 {
-        self.order_usd_median / SNAPSHOT_MARK_USD
+    /// The median order in base units at `market`'s mark.
+    pub fn order_size(&self, market: &SnapshotMarket) -> f64 {
+        self.order_usd_median / market.mark_usd
     }
 }
 
@@ -229,6 +267,7 @@ pub enum MeasuredRegime {
 #[derive(Debug, Clone)]
 pub struct MeasuredFamily {
     pub profile: MarketProfile,
+    pub market: SnapshotMarket,
     /// Stated departure: the measured rate times this. SPCX trades one
     /// order every three minutes in regular hours; a session of two to three
     /// minutes would hold none.
@@ -287,20 +326,17 @@ pub struct MeasuredFamily {
     pub max_drawdown_usd: f64,
 }
 
-/// The SPCX snapshot's tick, $0.01, in bp of its mark: no quote rests
-/// closer to the level than one tick.
-pub const TICK_BPS: f64 = 0.01 / SNAPSHOT_MARK_USD * 10_000.0;
-
 impl MeasuredFamily {
     /// The family on `profile`'s flow, times `flow_mult` (1 for a market
-    /// whose own flow fills a session).
-    pub fn new(profile: MarketProfile, flow_mult: f64) -> Self {
+    /// whose own flow fills a session), traded on `market`.
+    pub fn new(profile: MarketProfile, flow_mult: f64, market: SnapshotMarket) -> Self {
         assert!(flow_mult >= 1.0 && flow_mult.is_finite());
-        let touch = profile.touch_half_spread_bps.max(TICK_BPS);
+        let tick_bps = market.tick_bps();
+        let touch = profile.touch_half_spread_bps.max(tick_bps);
         // A touch of a tick or so (SPCX) can't be undercut: its depth is
         // thin, and the snapshot's makers stand behind it, as SPCX's worst
         // fills say (median 0.5 bp, p90 15.5 bp).
-        let thin = touch < 2.0 * TICK_BPS;
+        let thin = touch < 2.0 * tick_bps;
         let mut family = Self {
             flow_mult,
             calm_odds: 0.5,
@@ -323,7 +359,7 @@ impl MeasuredFamily {
             arbitrageur_latency_slots: (1, 2),
             arbitrageur_edge_bps: (3.5, 5.0),
             competitor_bps: if thin {
-                (TICK_BPS, 2.0 * TICK_BPS)
+                (tick_bps, 2.0 * tick_bps)
             } else {
                 (0.75 * touch, 1.3 * touch)
             },
@@ -331,8 +367,9 @@ impl MeasuredFamily {
             competitor_size: if thin { (0.5, 2.0) } else { (2.0, 5.0) },
             react_slots: (2, 8),
             makers_bps: if thin { Some((3.0, 8.0)) } else { None },
-            max_position: 20.0,
+            max_position: market.max_position,
             max_drawdown_usd: 250.0,
+            market,
             profile,
         };
         let (share, active) = family.fit_informed();
@@ -386,14 +423,21 @@ impl MeasuredFamily {
         (round3(share), active as f64 / slots as f64)
     }
 
-    /// SPCX's measured market, its flow times [`SPCX_FLOW_MULT`].
-    pub fn spcx() -> Self {
-        Self::new(MarketProfile::spcx(), SPCX_FLOW_MULT)
+    /// ANT's measured market on Phoenix's ANT, at its own pace: the task's
+    /// (`market-making-ant`).
+    pub fn ant() -> Self {
+        Self::new(MarketProfile::ant(), 1.0, SnapshotMarket::ant())
     }
 
-    /// ANT's measured market on SPCX's book, at its own pace.
-    pub fn ant() -> Self {
-        Self::new(MarketProfile::ant(), 1.0)
+    /// SPCX's measured market on Phoenix's SPCX, its flow times
+    /// [`SPCX_FLOW_MULT`]: the profile the task was drawn on before the
+    /// owner moved it to ANT, kept to compare them.
+    pub fn spcx() -> Self {
+        Self::new(
+            MarketProfile::spcx(),
+            SPCX_FLOW_MULT,
+            SnapshotMarket::spcx(),
+        )
     }
 
     /// Orders a session minute: the profile's times the multiplier.
@@ -441,13 +485,13 @@ impl MeasuredFamily {
             obligations: Some(Obligations {
                 presence: 0.5,
                 max_half_spread_bps: OBLIGATION_HALF_SPREAD_BPS.max(3.0 * competitor_bps),
-                min_size: round2((0.1 * self.profile.order_size_spcx()).max(0.05)),
+                min_size: round2((0.1 * self.profile.order_size(&self.market)).max(0.05)),
             }),
             makers_bps,
         };
         let description = format!(
             "{} on {}'s measured flow ({STUDY}), {:.1} orders a minute; {}",
-            "SPCX",
+            self.market.symbol,
             self.profile.market,
             self.orders_per_minute(),
             match regime {
@@ -468,7 +512,7 @@ impl MeasuredFamily {
         Library {
             scale: Scale {
                 trades_per_minute: round3(rate),
-                trade_size: round3(self.profile.order_size_spcx()),
+                trade_size: round3(self.profile.order_size(&self.market)),
                 trade_size_sigma: self.profile.order_usd_log_sd,
             },
             noise: vec![Noise {
@@ -588,8 +632,12 @@ impl MeasuredFamily {
         making: Making,
         shape: &MeasuredShape,
     ) -> Scenario {
-        let mut mandate =
-            mtx_core::Mandate::perp(VENUE, "SPCX", self.max_position, self.max_drawdown_usd);
+        let mut mandate = mtx_core::Mandate::perp(
+            VENUE,
+            self.market.symbol,
+            self.max_position,
+            self.max_drawdown_usd,
+        );
         assert_eq!(
             mandate.universe.len(),
             1,
@@ -601,7 +649,7 @@ impl MeasuredFamily {
         Scenario {
             name: name.to_string(),
             description,
-            symbol: "SPCX".into(),
+            symbol: self.market.symbol.into(),
             duration_slots: duration,
             mandate,
             path,
@@ -825,7 +873,7 @@ mod tests {
         // edge, faster then, so their count share is the fitted one.
         assert_eq!(actors.informed[0].edge_bps, INFORMED_EDGE_BPS);
         assert!(actors.informed[0].intensity_mult > ant.informed_share);
-        assert!((actors.scale.trade_size - 99.61 / SNAPSHOT_MARK_USD).abs() < 1e-3);
+        assert!((actors.scale.trade_size - 99.61 / 79.99).abs() < 1e-3);
         assert_eq!(shape.orders_per_minute, 11.644);
     }
 
@@ -870,6 +918,8 @@ mod tests {
             assert!(m.competition.size <= 2.0);
             assert!(m.makers_bps.unwrap() >= 3.0);
             let (s, _) = MeasuredFamily::ant().sample("s", seed);
+            assert_eq!(s.symbol, "ANT");
+            assert_eq!(s.mandate.universe[0].max_position, 35.0);
             let m = s.making.unwrap();
             assert!(
                 m.competitor_bps >= 2.0 && m.competitor_bps <= 3.52,

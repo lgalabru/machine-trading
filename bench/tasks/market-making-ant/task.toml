@@ -3,10 +3,10 @@ schema_version = "1.4"
 artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
-name = "solana-foundation/market-making-spcx"
+name = "solana-foundation/market-making-ant"
 version = "0.15.0"
-description = "Write a bot that makes markets in Phoenix SPCX (SpaceX) perps against a competing maker, an arbitrageur and taker flow measured from mainnet, a little informed, on an offline copy of Solana mainnet."
-keywords = ["solana", "trading", "phoenix", "perpetuals", "market-making", "surfpool", "rust"]
+description = "Write a bot that makes markets in Phoenix's ANT (Anthropic) perp against a competing maker, an arbitrageur and taker flow measured from mainnet, a little informed, on an offline copy of Solana mainnet."
+keywords = ["solana", "trading", "phoenix", "perpetuals", "market-making", "anthropic", "surfpool", "rust"]
 
 [[task.authors]]
 name = "Ludo Galabru"
@@ -16,18 +16,17 @@ email = "ludo.galabru@solana.org"
 difficulty = "hard"
 category = "trading"
 # Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
-snapshot = "phoenix-spcx-2026-10-29"
+snapshot = "phoenix-ant-2026-11-25"
 
 [metadata.mtx]
 # What the repository's lists are written from (`mtx task sync`).
-generator = "market-making-measured"
-anchor = "market-making"
+generator = "market-making-ant"
 # Its sessions have library actors, and the informed bot reads its latent
 # state as a strategy component: the image builds both anchors' bot.wasm.
 component_anchors = true
 emoji = "⚖️"
-market = "Phoenix SPCX perp"
-summary = "earns what it can of the SPCX spread from takers measured on mainnet, a little informed, against a competing maker and an arbitrageur that picks off stale quotes"
+market = "Phoenix ANT perp"
+summary = "earns what it can of the ANT spread from takers measured on mainnet, a little informed, against a competing maker and an arbitrageur that picks off stale quotes"
 skill = "earns the spread where the flow pays for it, and stays out of the way of informed flow and stale quotes"
 # Lines only the answers hold, for `just leak-audit`.
 leak_needles = ["one tick inside the competitor", "backs off after one-sided fills"]

@@ -121,7 +121,7 @@ pub const GENERATORS: &[Generator] = &[
         params: || format!("{:?}", MakingFamily::v2()),
     },
     Generator {
-        name: "market-making-measured",
+        name: "market-making-measured-spcx",
         practice_drawn: |prefix, count, seed| {
             measured_drawn(&MeasuredFamily::spcx(), prefix, count, seed, false)
         },
@@ -130,10 +130,9 @@ pub const GENERATORS: &[Generator] = &[
         },
         params: || format!("{:?}", MeasuredFamily::spcx()),
     },
-    // The same market on ANT's measured flow: the profile the task may move
-    // to (RFD 0007's open question), drawn so the ladder can compare them.
+    // The task's: ANT's measured flow on Phoenix's ANT (market-making-ant).
     Generator {
-        name: "market-making-measured-ant",
+        name: "market-making-ant",
         practice_drawn: |prefix, count, seed| {
             measured_drawn(&MeasuredFamily::ant(), prefix, count, seed, false)
         },
@@ -420,72 +419,56 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("backrun-thin-pools", "pool_searchers", Knowable::Identity),
     ("backrun-thin-pools", "flow_scale", Knowable::Process),
     (
-        "market-making-measured",
+        "market-making-measured-spcx",
         "informed_share",
         Knowable::Process,
     ),
     (
-        "market-making-measured",
+        "market-making-measured-spcx",
         "informed_horizon_slots",
         Knowable::Process,
     ),
     (
-        "market-making-measured",
+        "market-making-measured-spcx",
         "informed_hit_rate",
         Knowable::Process,
     ),
     (
-        "market-making-measured",
+        "market-making-measured-spcx",
         "informed_edge_bps",
         Knowable::Process,
     ),
     (
-        "market-making-measured",
+        "market-making-measured-spcx",
         "orders_per_minute",
         Knowable::Process,
     ),
     (
-        "market-making-measured",
+        "market-making-measured-spcx",
         "arbitrageur_latency_slots",
         Knowable::Process,
     ),
     (
-        "market-making-measured",
+        "market-making-measured-spcx",
         "arbitrageur_edge_bps",
         Knowable::Process,
     ),
+    ("market-making-ant", "informed_share", Knowable::Process),
     (
-        "market-making-measured-ant",
-        "informed_share",
-        Knowable::Process,
-    ),
-    (
-        "market-making-measured-ant",
+        "market-making-ant",
         "informed_horizon_slots",
         Knowable::Process,
     ),
+    ("market-making-ant", "informed_hit_rate", Knowable::Process),
+    ("market-making-ant", "informed_edge_bps", Knowable::Process),
+    ("market-making-ant", "orders_per_minute", Knowable::Process),
     (
-        "market-making-measured-ant",
-        "informed_hit_rate",
-        Knowable::Process,
-    ),
-    (
-        "market-making-measured-ant",
-        "informed_edge_bps",
-        Knowable::Process,
-    ),
-    (
-        "market-making-measured-ant",
-        "orders_per_minute",
-        Knowable::Process,
-    ),
-    (
-        "market-making-measured-ant",
+        "market-making-ant",
         "arbitrageur_latency_slots",
         Knowable::Process,
     ),
     (
-        "market-making-measured-ant",
+        "market-making-ant",
         "arbitrageur_edge_bps",
         Knowable::Process,
     ),

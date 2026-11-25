@@ -3289,7 +3289,7 @@ mod tests {
         let root = authoring::repo_root();
         for task in [
             "flash-crash-spcx",
-            "market-making-spcx",
+            "market-making-ant",
             "funding-carry-spcx",
             "weekend-gap-spcx",
         ] {

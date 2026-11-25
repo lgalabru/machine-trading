@@ -48,7 +48,7 @@ const LEAN_BPS: f64 = 4.0;
 /// The signal past which it sheds inventory held against it: more than one
 /// wallet's fresh view (one alone is at most `2 h - 1`, 0.7).
 const FLATTEN_SIGNAL: f64 = 0.8;
-/// The least position worth a market order to shed, SPCX.
+/// The least position worth a market order to shed, in base units.
 const MIN_SIZE: f64 = 0.05;
 /// The share of the cap a full signal holds the informed way.
 const TARGET_SHARE: f64 = 0.5;
