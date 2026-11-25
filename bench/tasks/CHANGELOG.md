@@ -23,8 +23,9 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     slots), where luthor's paper makers lose on mainnet; the grader's
     reactive maker at ANT's measured touch (2.7 bp over 106 minutes of
     quotes). The price walks at SPCX's calibrated 1.55 bp a second (ANT has
-    no calibration yet: stated); a sixth of the sessions jump (far more
-    than Phoenix: stated), a third trend, half are calm. Scored by v2 with
+    no calibration yet: stated); 4 of 72 sessions jump (about 70 times
+    Phoenix's rate: stated), 28 trend, 40 are calm. The reference also reads
+    the tape (Phoenix's trade list) and steps off a side a one-sided run hits. Scored by v2 with
     an informed bot told which wallets are the informed takers. SPCX's
     profile stays drawable (`market-making-measured-spcx`, its flow x35).
     Rewards fall and don't compare with 0.14.0's: those measured a game.

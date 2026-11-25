@@ -1,5 +1,7 @@
 //! Reference: quote one tick inside the competing makers, skew against
-//! inventory, and step out of the flow's way when it turns toxic.
+//! inventory, and step out of the flow's way when it turns toxic: after
+//! one-sided fills of its own, or a one-sided run of the market's takers on
+//! the tape (Phoenix's trade list, `tape.rs`).
 //!
 //! The competitors' half-spread is read once, from their spline account; the
 //! quotes sit that far less one tick either side of a reservation price:
@@ -31,6 +33,8 @@
 //! solution), and a process (`src/main.rs`), the anchor hidden sets are
 //! scored against.
 
+pub mod tape;
+
 use std::collections::VecDeque;
 
 use mtx_kit::{
@@ -51,6 +55,11 @@ const TOXIC_WINDOW_SLOTS: u64 = 8;
 const TOXIC_SLOTS: u64 = 24;
 const REQUOTE_BPS: f64 = 1.5;
 const REQUOTE_SLOTS: u64 = 12;
+/// The tape's window, slots (10 s), and the net taker volume in it, base
+/// units, past which the flow is one-sided: about three of ANT's median
+/// orders ($100, 1.25 ANT) more one way than the other.
+const FLOW_WINDOW_SLOTS: u64 = 40;
+const FLOW_PULL_UNITS: f64 = 4.0;
 
 /// The strategy.
 #[derive(Default)]
@@ -66,12 +75,18 @@ pub struct Maker {
     requotes: u64,
     /// The oracle's recent average, and the slot it was last updated at.
     average: Option<(u64, f64)>,
+    /// The market's recent trades, read off the chain, and which sides a
+    /// one-sided run pulled at the last requote.
+    tape: tape::Tape,
+    runs: (bool, bool),
 }
 
 impl Strategy for Maker {
     fn start(&mut self, session: &Session) -> BotResult {
         self.cap = session.mandate.universe[0].max_position;
         self.half_spread_bps = competitor_half_spread_bps(session)?;
+        let venue = PhoenixVenue::from_json(&session.venue)?;
+        self.tape = tape::Tape::new(&venue, &session.symbol, FLOW_WINDOW_SLOTS)?;
         log(&format!(
             "one tick inside the competitor: {:.3} bps; quoting a cap of {}",
             self.half_spread_bps, self.cap
@@ -100,6 +115,13 @@ impl Strategy for Maker {
             self.toxic_side = (held - held_then).signum();
         }
         let toxic = slot < self.toxic_until;
+        // One-sided taker flow on the tape: on Phoenix's ANT the next order
+        // is on the same side 56% of the time and a fifth come within a
+        // second of the last, and the informed trade in runs. The side the
+        // run is hitting steps out of its way, unless it sheds inventory.
+        let flow = self.tape.read(slot);
+        let buyers_run = flow >= FLOW_PULL_UNITS && held <= 0.0;
+        let sellers_run = flow <= -FLOW_PULL_UNITS && held >= 0.0;
 
         let mean = match self.average {
             Some((at, mean)) => {
@@ -116,11 +138,13 @@ impl Strategy for Maker {
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
         let (bid_size, ask_size) = (QUOTE_SIZE.min(cap - held), QUOTE_SIZE.min(cap + held));
-        let moved = self.quoted.is_none_or(|(at, b, a)| {
-            slot >= at + REQUOTE_SLOTS
-                || ((bid - b) / mark).abs() * 10_000.0 >= REQUOTE_BPS
-                || ((ask - a) / mark).abs() * 10_000.0 >= REQUOTE_BPS
-        });
+        let runs = (buyers_run, sellers_run);
+        let moved = self.runs != runs
+            || self.quoted.is_none_or(|(at, b, a)| {
+                slot >= at + REQUOTE_SLOTS
+                    || ((bid - b) / mark).abs() * 10_000.0 >= REQUOTE_BPS
+                    || ((ask - a) / mark).abs() * 10_000.0 >= REQUOTE_BPS
+            });
         if !moved {
             return Ok(());
         }
@@ -131,13 +155,13 @@ impl Strategy for Maker {
                 Side::Bid,
                 bid,
                 bid_size,
-                held < INVENTORY_LIMIT * cap && !(toxic && self.toxic_side > 0.0),
+                held < INVENTORY_LIMIT * cap && !(toxic && self.toxic_side > 0.0) && !sellers_run,
             ),
             (
                 Side::Ask,
                 ask,
                 ask_size,
-                held > -INVENTORY_LIMIT * cap && !(toxic && self.toxic_side < 0.0),
+                held > -INVENTORY_LIMIT * cap && !(toxic && self.toxic_side < 0.0) && !buyers_run,
             ),
         ];
         if self.requotes % 2 == 1 {
@@ -153,6 +177,7 @@ impl Strategy for Maker {
             }
         }
         self.quoted = Some((slot, bid, ask));
+        self.runs = runs;
         Ok(())
     }
 }

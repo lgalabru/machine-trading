@@ -339,8 +339,11 @@ impl MeasuredFamily {
         let thin = touch < 2.0 * tick_bps;
         let mut family = Self {
             flow_mult,
-            calm_odds: 0.5,
-            trend_odds: 1.0 / 3.0,
+            // Jumps at most 4 of 72 sessions: a stated stress share, about
+            // 70 times the tape's rate (0.0115 per market-hour), not 0.14's
+            // half or the first 0.15 draft's sixth.
+            calm_odds: 0.55,
+            trend_odds: 0.39,
             duration: (480, 800),
             step_vol_pct: (0.011, 0.034),
             step_gap: (3, 9),
@@ -544,7 +547,7 @@ impl MeasuredFamily {
     }
 
     /// `count` sessions named `<prefix>-<n>`, each kind in proportion to its
-    /// odds (calm and trend rounded, the jumps the rest: 36, 24, 12 of 72),
+    /// odds (calm and trend rounded, the jumps the rest: 40, 28, 4 of 72),
     /// shuffled. Seeds derive from `seed`.
     pub fn sample_set(
         &self,
@@ -562,8 +565,8 @@ impl MeasuredFamily {
         ];
         let mut drawn = Vec::with_capacity(count);
         let mut draw = 0u64;
-        // A kind's odds are at least a sixth, so a set fills in a few times
-        // its count of draws.
+        // A jump session is drawn once in about 17, so a set fills well
+        // within a thousand times its count of draws.
         while drawn.len() < count {
             draw += 1;
             assert!(draw < 1_000 * (count as u64 + 1), "the strata fill");
@@ -931,13 +934,13 @@ mod tests {
     }
 
     #[test]
-    fn sets_are_stratified_36_24_12() {
+    fn sets_are_stratified_40_28_4() {
         for family in [MeasuredFamily::spcx(), MeasuredFamily::ant()] {
             let set = family.sample_set("hidden", 72, 9);
             let count = |r| set.iter().filter(|(_, s)| s.regime == r).count();
-            assert_eq!(count(MeasuredRegime::Calm), 36);
-            assert_eq!(count(MeasuredRegime::Trend), 24);
-            assert_eq!(count(MeasuredRegime::Jump), 12);
+            assert_eq!(count(MeasuredRegime::Calm), 40);
+            assert_eq!(count(MeasuredRegime::Trend), 28);
+            assert_eq!(count(MeasuredRegime::Jump), 4);
             let jumps = set
                 .iter()
                 .filter(|(_, s)| s.regime == MeasuredRegime::Jump)
