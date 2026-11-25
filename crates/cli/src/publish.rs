@@ -42,7 +42,12 @@ use crate::{
 const MAX_FILE_BYTES: u64 = 1 << 20;
 /// What a trial's verifier left that a release keeps as is (besides
 /// `sessions/`); its text logs are gzipped instead.
-const VERIFIER_FILES: &[&str] = &["report.json", "reward.json"];
+const VERIFIER_FILES: &[&str] = &["reward.json"];
+/// A session's entries in a report larger than this, in serialized bytes,
+/// are left out of a report too large to publish whole (`copy_report`): the
+/// transaction layer's and the pools' step-by-step detail, tens of KB a
+/// session, that the session detail files hold anyway.
+const REPORT_DETAIL_BYTES: usize = 2 << 10;
 /// How much of a bot's session log a release keeps: its start and its end,
 /// where a bot says what it is and how it failed.
 pub(crate) const LOG_HEAD_BYTES: usize = 8 << 10;
@@ -633,6 +638,11 @@ fn copy_release(
         for file in ["result.json", "config.json", "exception.txt"] {
             copy_file(&trial.join(file), &dest.join(file), &mut skipped)?;
         }
+        copy_report(
+            &trial.join("verifier/report.json"),
+            &dest.join("verifier/report.json"),
+            &mut skipped,
+        )?;
         for file in VERIFIER_FILES {
             copy_file(
                 &trial.join("verifier").join(file),
@@ -739,6 +749,78 @@ fn copy_release(
         serde_json::to_string_pretty(&release)? + "\n",
     )?;
     Ok(release)
+}
+
+/// Copy the verifier's report. One over MAX_FILE_BYTES is published slim
+/// rather than not at all: every session keeps its scores (PnL, reference,
+/// bound, disqualification, mandate), and entries over REPORT_DETAIL_BYTES
+/// are dropped and named in `slimmed`. 0.14.0's atomic-arb reports (144
+/// sessions with the transaction layer's and pools' detail) ran to 15-18 MB,
+/// and leaving them out left the release with no scores for those tasks.
+fn copy_report(from: &Path, to: &Path, skipped: &mut Vec<String>) -> Result<()> {
+    let Ok(meta) = std::fs::symlink_metadata(from) else {
+        return Ok(());
+    };
+    if !meta.is_file() {
+        return Ok(());
+    }
+    if meta.len() <= MAX_FILE_BYTES {
+        return copy_file(from, to, skipped);
+    }
+    let text = std::fs::read_to_string(from).with_context(|| from.display().to_string())?;
+    let Ok(mut report) = serde_json::from_str::<Value>(&text) else {
+        skipped.push(format!(
+            "{} ({} bytes, not JSON)",
+            from.display(),
+            meta.len()
+        ));
+        return Ok(());
+    };
+    let dropped = slim_report(&mut report);
+    let data = serde_json::to_vec(&report)?;
+    if data.len() as u64 > MAX_FILE_BYTES {
+        skipped.push(format!(
+            "{} ({} bytes, {} slim)",
+            from.display(),
+            meta.len(),
+            data.len()
+        ));
+        return Ok(());
+    }
+    if let Some(dir) = to.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(to, data).with_context(|| to.display().to_string())?;
+    // Kept whole when compacting alone was enough; else the detail went.
+    debug_assert!(
+        dropped.iter().all(|k| k != "pnl_usd"),
+        "a session's score is never dropped"
+    );
+    Ok(())
+}
+
+/// Drop every session's entries over REPORT_DETAIL_BYTES from a report, and
+/// name them in its `slimmed`; the keys dropped, sorted.
+fn slim_report(report: &mut Value) -> Vec<String> {
+    let mut dropped = std::collections::BTreeSet::new();
+    if let Some(sessions) = report.get_mut("scenarios").and_then(Value::as_array_mut) {
+        for session in sessions.iter_mut().filter_map(Value::as_object_mut) {
+            let heavy: Vec<String> = session
+                .iter()
+                .filter(|(_, v)| serde_json::to_vec(v).map_or(0, |b| b.len()) > REPORT_DETAIL_BYTES)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in heavy {
+                session.remove(&key);
+                dropped.insert(key);
+            }
+        }
+    }
+    let dropped: Vec<String> = dropped.into_iter().collect();
+    if let Some(object) = report.as_object_mut() {
+        object.insert("slimmed".into(), json!(dropped));
+    }
+    dropped
 }
 
 /// Copy one file, if it's there, small and not a link.
@@ -1216,6 +1298,45 @@ pub fn print_compare(cmp: &Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_report_too_large_to_publish_whole_is_published_slim_with_its_scores() {
+        let dir = std::env::temp_dir().join(format!("mtx-slim-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let detail = "x".repeat(40_000);
+        let sessions: Vec<Value> = (0..40)
+            .map(|i| {
+                json!({"scenario": format!("hidden-{i}"), "pnl_usd": i as f64,
+                            "reference_pnl_usd": 1.0, "bound_pnl_usd": 0.0,
+                            "tx_layer": {"blocks": detail}, "amm": [detail]})
+            })
+            .collect();
+        let big = dir.join("big.json");
+        std::fs::write(
+            &big,
+            json!({"headline": "v2", "reward": 0.4, "scenarios": sessions}).to_string(),
+        )
+        .unwrap();
+        assert!(std::fs::metadata(&big).unwrap().len() > MAX_FILE_BYTES);
+        let (out, mut skipped) = (dir.join("out/report.json"), vec![]);
+        copy_report(&big, &out, &mut skipped).unwrap();
+        assert!(skipped.is_empty(), "{skipped:?}");
+        let slim: Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(slim["headline"], "v2");
+        assert_eq!(slim["slimmed"], json!(["amm", "tx_layer"]));
+        assert_eq!(slim["scenarios"].as_array().unwrap().len(), 40);
+        assert_eq!(slim["scenarios"][7]["pnl_usd"], 7.0);
+        assert!(slim["scenarios"][7].get("tx_layer").is_none());
+        // A small report is copied as it is, with no `slimmed`.
+        let small = dir.join("small.json");
+        std::fs::write(&small, r#"{"reward": 1.0, "scenarios": []}"#).unwrap();
+        copy_report(&small, &dir.join("out/small.json"), &mut skipped).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("out/small.json")).unwrap(),
+            r#"{"reward": 1.0, "scenarios": []}"#
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     /// A root with one finished trial of `task` by `model`, its report given.
     fn root_with(report: &str) -> Root {
