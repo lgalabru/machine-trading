@@ -17,19 +17,15 @@
 #[path = "../../../../reference/src/reopen.rs"]
 pub mod reopen;
 
-use mtx_kit::{
-    Pubkey, log,
-    prelude::*,
-    serde_json,
-    venue::{PhoenixVenue, perp_position, perp_position_live},
+use mtx_kit::{Pubkey, log, prelude::*, serde_json, venue::PhoenixVenue};
+use reopen::{
+    ACCOUNTS_MAX, Account, Clock, Phase, Positions, expected_gap_given_votes, position_for,
+    trade_toward,
 };
-use reopen::{Account, Clock, Phase, position_for, trade_toward};
 
 /// The most informed wallets it watches: the family seats two.
 const WALLETS_MAX: usize = 8;
-/// The most accounts a trader index or active trader buffer spans, as the
-/// runtime bounds them.
-const ARENA_ACCOUNTS_MAX: usize = 16;
+const _: () = assert!(WALLETS_MAX <= ACCOUNTS_MAX);
 /// A position change smaller than this, in SPCX, is no trade: under
 /// Phoenix's lot (0.001 SPCX).
 const FLOW_MIN: f64 = 0.0005;
@@ -38,7 +34,7 @@ const FLOW_MIN: f64 = 0.0005;
 /// and its net flow since it started.
 #[derive(Debug, Clone)]
 struct Watched {
-    trader: Pubkey,
+    authority: Pubkey,
     position: Option<f64>,
     net_flow: f64,
 }
@@ -62,8 +58,7 @@ pub struct Informed {
     venue: Option<PhoenixVenue>,
     told: Option<Told>,
     watched: Vec<Watched>,
-    trader_index: Vec<String>,
-    trader_buffer: Vec<String>,
+    positions: Positions,
     start_mid: Option<f64>,
     target: f64,
     account: Account,
@@ -81,19 +76,12 @@ impl Strategy for Informed {
             .wallets
             .iter()
             .map(|authority| Watched {
-                trader: venue.trader_account(authority),
+                authority: *authority,
                 position: None,
                 net_flow: 0.0,
             })
             .collect();
-        let keys = &venue.exchange().keys;
-        self.trader_index = keys.global_trader_index.clone();
-        self.trader_buffer = keys.active_trader_buffer.clone();
-        if self.trader_index.len() > ARENA_ACCOUNTS_MAX
-            || self.trader_buffer.len() > ARENA_ACCOUNTS_MAX
-        {
-            return Err("the trader arenas span more accounts than the bot reads".into());
-        }
+        self.positions = Positions::new(&venue)?;
         self.clock = Some(Clock::from_session(session)?);
         self.cap = session.cap;
         self.symbol = session.symbol.clone();
@@ -142,28 +130,9 @@ impl Informed {
     /// the last read to its net flow.
     fn read(&mut self) -> Result<(), String> {
         let venue = self.venue.as_ref().ok_or("step before start")?;
-        let market = venue.market(&self.symbol)?;
-        let traders: Vec<String> = self.watched.iter().map(|w| w.trader.to_string()).collect();
-        let addresses: Vec<&str> = traders
-            .iter()
-            .chain(&self.trader_index)
-            .chain(&self.trader_buffer)
-            .map(String::as_str)
-            .collect();
-        let accounts = mtx_kit::rpc_accounts(&addresses)?;
-        assert_eq!(accounts.len(), addresses.len());
-        let (own, arenas) = accounts.split_at(traders.len());
-        let (index, buffer) = arenas.split_at(self.trader_index.len());
-        let index: Vec<&[u8]> = arenas_of(index)?;
-        let buffer: Vec<&[u8]> = arenas_of(buffer)?;
-        for (watched, account) in self.watched.iter_mut().zip(own) {
-            let live = perp_position_live(market, &watched.trader, &index, &buffer)?;
-            let position = match (live, account) {
-                (Some(position), _) => position.size,
-                (None, Some(data)) => perp_position(market, data)?.size,
-                // Not onboarded yet: it holds nothing.
-                (None, None) => 0.0,
-            };
+        let authorities: Vec<Pubkey> = self.watched.iter().map(|w| w.authority).collect();
+        let positions = self.positions.read(venue, &self.symbol, &authorities)?;
+        for (watched, position) in self.watched.iter_mut().zip(positions) {
             if let Some(last) = watched.position {
                 watched.net_flow += position - last;
             }
@@ -171,17 +140,6 @@ impl Informed {
         }
         Ok(())
     }
-}
-
-/// Each arena account's data: every one must exist.
-fn arenas_of(accounts: &[Option<Vec<u8>>]) -> Result<Vec<&[u8]>, String> {
-    accounts
-        .iter()
-        .map(|a| {
-            a.as_deref()
-                .ok_or_else(|| "a trader arena account is missing".to_string())
-        })
-        .collect()
 }
 
 /// What the latent state tells: the informed wallets, as the session
@@ -232,46 +190,16 @@ impl Told {
         })
     }
 
-    /// The gap it expects, in percent: the reopen's process for the prior
-    /// (normal, around what the weekend's move says, give or take the
-    /// residual), the votes' odds for whether it opens up or down, and the
-    /// mean of the prior on that side.
+    /// The gap it expects, in percent: the reopen's process, and the
+    /// informed wallets' votes, each right with the told hit rate.
     fn expected_gap_pct(&self, weekend_pct: f64, votes: f64) -> f64 {
-        let mean = (self.reopen_keep - 1.0) * weekend_pct;
-        let sd = self.open_residual_sd_pct;
-        assert!(sd > 0.0 && votes.abs() <= WALLETS_MAX as f64);
-        let z = mean / sd;
-        let up = normal_cdf(z).clamp(1e-9, 1.0 - 1e-9);
-        let density = normal_pdf(z);
-        let mean_up = mean + sd * density / up;
-        let mean_down = mean - sd * density / (1.0 - up);
-        let odds = (self.hit_rate / (1.0 - self.hit_rate)).ln();
-        let logit = (up / (1.0 - up)).ln() + votes * odds;
-        let posterior_up = 1.0 / (1.0 + (-logit).exp());
-        let expected = posterior_up * mean_up + (1.0 - posterior_up) * mean_down;
-        assert!(expected.is_finite());
-        expected
-    }
-}
-
-fn normal_pdf(z: f64) -> f64 {
-    (-0.5 * z * z).exp() / (2.0 * std::f64::consts::PI).sqrt()
-}
-
-/// The standard normal's distribution function, through Abramowitz and
-/// Stegun's 7.1.26 for the error function (error under 1.5e-7).
-fn normal_cdf(z: f64) -> f64 {
-    let x = z.abs() / std::f64::consts::SQRT_2;
-    let t = 1.0 / (1.0 + 0.327_591_1 * x);
-    let poly = t
-        * (0.254_829_592
-            + t * (-0.284_496_736
-                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
-    let erf = 1.0 - poly * (-x * x).exp();
-    if z >= 0.0 {
-        0.5 * (1.0 + erf)
-    } else {
-        0.5 * (1.0 - erf)
+        expected_gap_given_votes(
+            weekend_pct,
+            self.reopen_keep,
+            self.open_residual_sd_pct,
+            votes,
+            self.hit_rate,
+        )
     }
 }
 
@@ -331,12 +259,5 @@ mod tests {
         assert!(told.expected_gap_pct(1.0, 2.0) > 0.0);
         assert!(told.expected_gap_pct(1.0, -2.0) < prior);
         assert!(told.expected_gap_pct(1.0, 1.0) > prior);
-    }
-
-    #[test]
-    fn the_normal_distribution_is_right_to_a_few_decimals() {
-        assert!((normal_cdf(0.0) - 0.5).abs() < 1e-7);
-        assert!((normal_cdf(1.96) - 0.975).abs() < 1e-4);
-        assert!((normal_cdf(-1.0) - 0.158_655).abs() < 1e-5);
     }
 }
