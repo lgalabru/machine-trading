@@ -102,7 +102,7 @@ The score is linear in PnL between those points, pooled over all the sessions: l
 - **Breaking the rules is worse than losing.** A call the RPC proxy refuses, tampering with the grade, or a bot that can't be graded scores −1, the bottom of the scale, whatever its sessions made.
 <!-- mtx:scoring end -->
 
-The task's reference rides a shock once it is confirmed and stops out when it turns back, with a drawdown halt; it doesn't know when a shock is coming. The informed bot is told which wallets are the informed traders' (never what they will do) and the process above; it reads their trades as they land.
+The task's reference reads net taking off the book and rides the move it calls, or a shock once it is confirmed, and stops out when it turns back, with a drawdown halt; it can't tell who is informed. The informed bot is told which wallets are the informed traders' (never what they will do) and the process above; it reads their trades as they land.
 
 The report also gives your return on capital, your per-session Sharpe ratio, your drawdowns against the loss limit, the share of sessions that made money and your worst session. These explain the score; they aren't scored.
 

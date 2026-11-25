@@ -32,7 +32,7 @@ use crate::{scoring_text, tasks};
 pub enum Base {
     /// Directional: the market moves along a scripted path (crashes,
     /// squeezes, halts…) and the bot trades it. Starts from
-    /// flash-crash-spcx.
+    /// flash-crash-nvda.
     Shocks,
     /// Quoting: the grader runs counterparties (takers, competing makers)
     /// that trade with the bot. Starts from market-making-spcx.
@@ -42,7 +42,7 @@ pub enum Base {
 impl Base {
     fn task(self) -> &'static str {
         match self {
-            Base::Shocks => "flash-crash-spcx",
+            Base::Shocks => "flash-crash-nvda",
             Base::Making => "market-making-spcx",
         }
     }
@@ -50,7 +50,15 @@ impl Base {
     /// draws until its own exists.
     fn generator(self) -> &'static str {
         match self {
-            Base::Shocks => "flash-crash",
+            Base::Shocks => "flash-crash-nvda",
+            Base::Making => "market-making",
+        }
+    }
+    /// The name the image builds the base's anchors under (its task.toml's
+    /// `anchor`, else its generator), which its verifier runs.
+    fn anchor(self) -> &'static str {
+        match self {
+            Base::Shocks => "flash-crash-nvda",
             Base::Making => "market-making",
         }
     }
@@ -73,7 +81,7 @@ pub struct TaskSpec {
     )]
     pub summary: String,
     #[schemars(
-        description = "The closest existing task to start from: `shocks` (the market moves along a scripted path and the bot trades it; from flash-crash-spcx) or `making` (the grader runs counterparties the bot trades with; from market-making-spcx)."
+        description = "The closest existing task to start from: `shocks` (the market moves along a scripted path and the bot trades it; from flash-crash-nvda) or `making` (the grader runs counterparties the bot trades with; from market-making-spcx)."
     )]
     pub base: Option<Base>,
     #[schemars(
@@ -211,7 +219,7 @@ impl TaskSpec {
 }
 
 /// A task's scenario family: its name without the instrument it trades
-/// (`flash-crash-spcx` draws `flash-crash`). Tasks are named for the skill
+/// (`flash-crash-nvda` draws `flash-crash`). Tasks are named for the skill
 /// and the instrument; the venue is a means to an end.
 pub fn family_of(task: &str) -> String {
     task.rsplit_once('-')
@@ -303,8 +311,14 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         &format!("{family}-informed"),
     )
     .replace(
-        &format!("--reference /opt/mtx/anchors/{} ", base.generator()),
+        &format!("--reference /opt/mtx/anchors/{} ", base.anchor()),
         &format!("--reference /opt/mtx/anchors/{family} "),
+    )
+    // A base already scored by v2 runs its own informed bot: this task's
+    // is its own.
+    .replace(
+        &format!("--informed /opt/mtx/anchors/{}-informed ", base.anchor()),
+        &format!("--informed /opt/mtx/anchors/{family}-informed "),
     );
     let test = test.replacen(
         "set -euo pipefail\n",
@@ -1583,20 +1597,20 @@ mod tests {
         let problems = bad.problems(&root);
         assert_eq!(problems.len(), 2, "{problems:?}");
         let mut taken = spec();
-        taken.name = "flash-crash-spcx".into();
+        taken.name = "flash-crash-nvda".into();
         assert!(taken.problems(&root)[0].contains("already exists"));
         assert!(spec().problems(&root).is_empty());
     }
 
-    /// A scratch repository holding flash-crash-spcx (without its checks)
+    /// A scratch repository holding flash-crash-nvda (without its checks)
     /// and the files the task lists are written into.
     fn scratch_repo() -> PathBuf {
         let real = repo_root();
         let root =
             std::env::temp_dir().join(format!("mtx-author-{}", uuid::Uuid::new_v4().simple()));
         copy_dir(
-            &real.join("bench/tasks/flash-crash-spcx"),
-            &root.join("bench/tasks/flash-crash-spcx"),
+            &real.join("bench/tasks/flash-crash-nvda"),
+            &root.join("bench/tasks/flash-crash-nvda"),
             &["bin", "target", "practice", "checks"],
         )
         .unwrap();
@@ -1662,11 +1676,14 @@ mod tests {
         let toml = read(&task.join("task.toml"));
         std::fs::write(
             task.join("task.toml"),
-            toml.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\""),
+            toml.replace(
+                "generator = \"flash-crash-nvda\"",
+                "generator = \"weekend-gap\"",
+            ),
         )
         .unwrap();
         let test = read(&task.join("tests/test.sh"))
-            .replace("--draw flash-crash", "--draw weekend-gap")
+            .replace("--draw flash-crash-nvda", "--draw weekend-gap")
             .replace("TODO(family)", "note");
         std::fs::write(task.join("tests/test.sh"), test).unwrap();
         let steps = status(&root, "funding-squeeze-spcx").unwrap();
@@ -1819,7 +1836,7 @@ mod tests {
         assert!(
             images
                 .iter()
-                .all(|i| !i.contains('@') && !i.contains("flash-crash-spcx")),
+                .all(|i| !i.contains('@') && !i.contains("flash-crash-nvda")),
             "{images:?}"
         );
         assert!(!instruction.contains("the reward needs no reference"));
@@ -1860,7 +1877,7 @@ mod tests {
             vec![format!("bench/tasks/{name}/checks/bots/informed")]
         );
         let ladder: Value = serde_json::from_str(&read(&task.join("checks/ladder.json"))).unwrap();
-        assert_eq!(ladder["family"], "flash-crash");
+        assert_eq!(ladder["family"], "flash-crash-nvda");
         assert_eq!(
             ladder["anchors"],
             json!({ "reference": "reference", "informed": "informed" })
@@ -1962,7 +1979,7 @@ mod tests {
         let blind = tamper(&|l| l["anchors"]["reference"] = json!("blind-long"));
         assert!(blind.contains("not the task's reference bot"), "{blind}");
         let elsewhere =
-            tamper(&|l| l["rungs"][3]["dir"] = json!("bench/tasks/flash-crash-spcx/reference"));
+            tamper(&|l| l["rungs"][3]["dir"] = json!("bench/tasks/flash-crash-nvda/reference"));
         assert!(
             elsewhere.contains("not the task's reference bot"),
             "{elsewhere}"
@@ -1985,7 +2002,7 @@ mod tests {
             task.join("tests/test.sh"),
             test.replace(
                 "/opt/mtx/anchors/funding-squeeze ",
-                "/opt/mtx/anchors/flash-crash ",
+                "/opt/mtx/anchors/flash-crash-nvda ",
             ),
         )
         .unwrap();
@@ -2100,7 +2117,7 @@ mod tests {
 
     #[test]
     fn a_v1_task_has_no_v2_steps() {
-        let steps = status(&repo_root(), "flash-crash-spcx").unwrap();
+        let steps = status(&repo_root(), "weekend-gap-spcx").unwrap();
         for id in ["anchors", "scoring", "probes"] {
             assert!(steps.iter().all(|s| s.id != id), "{id}");
         }

@@ -636,7 +636,7 @@ mod tests {
     fn a_task_whose_sessions_reach_only_components_plays_its_anchors_as_components() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let read = |p: &Path| std::fs::read(root.join(p)).ok();
-        for (task, component) in [("liquidation-flash", true), ("flash-crash-spcx", false)] {
+        for (task, component) in [("liquidation-flash", true), ("flash-crash-nvda", false)] {
             let meta = Meta::of(&root, task, &read).unwrap();
             assert_eq!(meta.component_anchors, component, "{task}");
         }

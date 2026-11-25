@@ -779,7 +779,7 @@ mod tests {
         assert!(image_problems(&own("new-spcx", ""), "new-spcx").is_empty());
         assert!(image_problems(&own("new-spcx", "@sha256:ab12"), "new-spcx").is_empty());
         // A scaffold that kept its base's images runs the base's unguarded image.
-        let problems = image_problems(&own("flash-crash-spcx", ""), "new-spcx");
+        let problems = image_problems(&own("flash-crash-nvda", ""), "new-spcx");
         assert_eq!(problems.len(), 2, "{problems:?}");
         // Neither section is left out.
         assert_eq!(image_problems("[environment]\n", "new-spcx").len(), 2);
@@ -880,7 +880,7 @@ mod tests {
     fn a_shared_generator_needs_its_own_anchor() {
         let dir = std::env::temp_dir().join(format!("mtx-tasks-{}", uuid::Uuid::new_v4().simple()));
         let real = crate::authoring::repo_root();
-        for name in ["flash-crash-spcx", "market-making-spcx"] {
+        for name in ["flash-crash-nvda", "market-making-spcx"] {
             let folder = dir.join("bench/tasks").join(name);
             std::fs::create_dir_all(folder.join("reference")).unwrap();
             for file in ["task.toml", "reference/Cargo.toml"] {
@@ -890,13 +890,13 @@ mod tests {
                 )
                 .unwrap();
             }
-            // Both tasks draw flash-crash.
+            // Both tasks draw flash-crash-nvda.
             let toml = std::fs::read_to_string(folder.join("task.toml")).unwrap();
             std::fs::write(
                 folder.join("task.toml"),
                 toml.replace(
                     "generator = \"market-making\"",
-                    "generator = \"flash-crash\"",
+                    "generator = \"flash-crash-nvda\"",
                 ),
             )
             .unwrap();

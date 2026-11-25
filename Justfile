@@ -92,7 +92,7 @@ bots:
 geyser-parity:
     #!/usr/bin/env bash
     set -euo pipefail
-    just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
+    just --justfile bench/tasks/flash-crash-nvda/reference/Justfile build
     just --justfile bench/tasks/market-making-spcx/reference/Justfile build
     cargo build -p mtx-geyser
     case "$(uname -s)" in Darwin) lib=libmtx_geyser.dylib ;; *) lib=libmtx_geyser.so ;; esac
@@ -403,7 +403,7 @@ compat-0-2-0:
 # (target/logs/wit-probe) shows what it was handed and what became of each.
 wit-probe:
     just --justfile bots/wit-probe/Justfile build
-    cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/wit-probe --logs target/logs/wit-probe bench/tasks/flash-crash-spcx/environment/practice/practice-1.json
+    cargo run --release -- grade --components-only --snapshot snapshots/phoenix-perps-2026-11-13 --bot bots/wit-probe --logs target/logs/wit-probe bench/tasks/flash-crash-nvda/environment/practice/practice-1.json
 
 # Raw sends end to end: the probe tries one of each kind, allowed and not,
 # in a session that enables them, and its log (target/logs/raw-probe) shows
@@ -851,7 +851,7 @@ preflight models:
 # per route through the key proxy to a stand-in provider on this machine;
 # the second must see nothing the first planted, and the key must reach no
 # trial file, nor anything the agent can read under /proc.
-hermes-check task="flash-crash-spcx" routes="openai anthropic openrouter chat":
+hermes-check task="flash-crash-nvda" routes="openai anthropic openrouter chat":
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
@@ -919,7 +919,7 @@ check-solution:
 # The checks every task change should pass: oracle ~1, and nop and every
 # cheater 0, each grade completing. The component cheater's log must show
 # every attempt refused; the process cheaters aren't graded (not_graded 1).
-harbor-checks task="flash-crash-spcx" surfpool="" jobs="jobs": (image surfpool) check-solution
+harbor-checks task="flash-crash-nvda" surfpool="" jobs="jobs": (image surfpool) check-solution
     #!/usr/bin/env bash
     set -euo pipefail
     # The checks run on the images `image` just built: a task still pinned to
@@ -1086,7 +1086,7 @@ clock-probe task:
 # short sets), `out` the report directory (it keeps
 # `<out>/<task>/summary.json`, which `mtx gates` reads) and `public_seed`
 # draws fixed, public sets from a label instead of fresh hidden ones.
-ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="target/ladder" min_odds="" public_seed="":
+ladder task="flash-crash-nvda" sets="4" jobs="4" parallel="1" count="" out="target/ladder" min_odds="" public_seed="":
     #!/usr/bin/env bash
     set -euo pipefail
     [ -f "{{tasks}}/{{task}}/checks/ladder.json" ] || { echo "{{task}} has no checks/ladder.json"; exit 1; }

@@ -44,8 +44,8 @@
     "permanent_share": 0.5,
     "probe": 6.250625
   },
-  "informed_max_drawdown_usd": 80.25,
-  "informed_pnl_usd": 1033.21,
+  "informed_max_drawdown_usd": 471.77,
+  "informed_pnl_usd": 77.32,
   "mandate": {
     "limits": {
       "max_drawdown_usd": 1000.0
@@ -301,7 +301,7 @@
       "slot": 476
     }
   ],
-  "reference_max_drawdown_usd": 332.8,
-  "reference_pnl_usd": -260.81,
+  "reference_max_drawdown_usd": 80.25,
+  "reference_pnl_usd": 875.49,
   "symbol": "NVDA"
 }

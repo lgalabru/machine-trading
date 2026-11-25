@@ -186,11 +186,11 @@ jobs:
           done
           cargo clippy -p mtx-kit --no-default-features --features component,venue,phoenix-v1-venue,openbook-v2-venue --lib --target wasm32-wasip2 -- -D warnings
           just --justfile bots/starter/Justfile build
-          just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
+          just --justfile bench/tasks/flash-crash-nvda/reference/Justfile build
           just --justfile bots/spot-smoke/Justfile build
           just --justfile bots/wit-probe/Justfile build
           just --justfile bots/raw-probe/Justfile build
-          MTX_TEST_WASM="$PWD/bench/tasks/flash-crash-spcx/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
+          MTX_TEST_WASM="$PWD/bench/tasks/flash-crash-nvda/reference/bot.wasm" MTX_TEST_PROBE_WASM="$PWD/bots/wit-probe/bot.wasm" \
             cargo test -p mtx-runtime host::tests -- --ignored --skip a_0_2_0_component_still_plays
           MTX_TEST_SPOT_WASM="$PWD/bots/spot-smoke/buyer/bot.wasm" cargo test -p mtx-runtime the_spot_smoke_component -- --ignored
           MTX_TEST_RAW_PROBE_WASM="$PWD/bots/raw-probe/bot.wasm" \
@@ -405,7 +405,7 @@ jobs:
         # itself) scores skill 1 exactly.
         run: |
           export MTX_EVAL_SEED="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
-          harbor run -p bench/tasks/flash-crash-spcx -a oracle -o jobs
+          harbor run -p bench/tasks/flash-crash-nvda -a oracle -o jobs
           skill=$(jq '.skill' "$(find jobs -name reward.json | head -1)")
           echo "oracle skill: $skill"
           jq -en "$skill > 0.999 and $skill < 1.001" > /dev/null

@@ -6,7 +6,6 @@ backrun-thin-pools mtx-bot-backrun-thin-pools mtx-backrun-thin-pools bench/tasks
 backrun-thin-pools-informed mtx-bot-backrun-thin-pools-informed mtx-backrun-thin-pools-informed bench/tasks/backrun-thin-pools/checks/bots/informed component
 flash-crash-nvda mtx-bot-flash-crash-nvda mtx-flash-crash-nvda bench/tasks/flash-crash-nvda/reference
 flash-crash-nvda-informed mtx-bot-flash-crash-nvda-informed mtx-flash-crash-nvda-informed bench/tasks/flash-crash-nvda/checks/bots/informed
-flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 liquidation-flash mtx-bot-liquidation-flash mtx-liquidation-flash bench/tasks/liquidation-flash/reference component
 liquidation-flash-informed mtx-bot-liquidation-flash-informed mtx-liquidation-flash-informed bench/tasks/liquidation-flash/checks/bots/informed component

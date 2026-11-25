@@ -6,14 +6,13 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
 
 - **0.15.0** (draft). Every task's market measured against mainnet's
   Phoenix tape (RFD 0007, the study `phoenix-tape.20261125.fc443f1e`).
-  - **`flash-crash-nvda`, new: the shocks on the market where they were.**
-    `flash-crash-spcx` continues on NVDA, which carried 9 of the tape's 93
-    jumps (2026-11-23's leader among them); `flash-crash-spcx` itself is
-    left as 0.14.0 shipped it, so its pins don't move, and `mtx bench
-    review` lines the two up by their skill. On the tape a jump of 1.5% or
-    more went on by half of itself again 45% of the time fifteen minutes
-    on, and gave half back 31%; flash-crash-spcx's shocks reverted 65% and
-    extended 15%, so fading paid by construction. The new task draws from
+  - **Renamed: `flash-crash-spcx` is now `flash-crash-nvda`, on the market
+    where the shocks were.** NVDA carried 9 of the tape's 93 jumps
+    (2026-11-23's leader among them); `mtx bench review` lines the two names
+    up by their skill. On the tape a jump of 1.5% or more went on by half
+    of itself again 45% of the time fifteen minutes on, and gave half back
+    31%; flash-crash-spcx's shocks reverted 65% and extended 15%, so fading
+    paid by construction. The task now draws from
     `flash-crash-nvda` (`ShockFamily::nvda()`): revert 31%, stall 24%,
     extend 45%; legs from a Pareto fitted to the 93 jumps' sizes (1.5 to
     9.5%, median about 2%); small moves that mostly don't give their move
