@@ -4,6 +4,35 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **0.15.0** (draft). Every task's market measured against mainnet's
+  Phoenix tape (RFD 0007, the study `phoenix-tape.20261125.fc443f1e`).
+  - **`funding-carry-sol`, new: the carry trade on the market it can be
+    measured on.** `funding-carry-spcx` continues on SOL;
+    `funding-carry-spcx` itself is left as 0.14.0 shipped it, so its pins
+    don't move. Its premiums (30 to 150 bp, scripted crowded or informed)
+    looked like nothing on Phoenix: over 90 days of Phoenix's hourly SOL
+    funding (a new study, `phoenix-funding.sol.20261125.248a28ea`, from
+    Phoenix's public `/v1/funding/SOL/rates`) the premium averaged +1.43
+    bp, never passed 8.3 bp, never reached the cap, and longs paid shorts
+    92% of the hours. The new task draws from `funding-carry-sol`
+    (`carry::measured::MeasuredCarryFamily`): Phoenix's own funding on
+    the snapshot's SOL market, its clock compressed (an interval of 3 or 4
+    seconds for mainnet's 3,600, the period eight intervals as on chain,
+    the snapshot's cap), so a six-to-eight-minute session plays four to
+    seven days of funding; the premium's level per session and its wander
+    from five-day windows of that study; the index from SOL's calibration
+    through the market model v2, at its real pace; noise and informed
+    takers from the actor library at the tape's pace and sizes by kind of
+    hours, the informed share fitted to the tape's one-minute markout
+    (1.33 bp); an arbitrageur that takes the book back to within 3.5 to 5
+    bp of the index within a slot or two, as the exchanges lead Phoenix's
+    SOL; price impact that fades in a minute. Stated departures, in its
+    instruction: funding's and the premium's clocks, the pinger's pace,
+    coin-flip taker sides, the informed horizon. Scored by v2 from its
+    first release: its reference sells the premium in slices when the
+    funding it expects pays twice its entry; its informed bot is told the
+    premium's level, spread and half-life. Its snapshot is
+    `phoenix-perps-2026-11-13`.
 - **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
   mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
   unchanged: their anchor digests did not move.
