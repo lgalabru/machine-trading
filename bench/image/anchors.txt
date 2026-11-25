@@ -10,3 +10,4 @@ liquidation-flash mtx-bot-liquidation-flash mtx-liquidation-flash bench/tasks/li
 liquidation-flash-informed mtx-bot-liquidation-flash-informed mtx-liquidation-flash-informed bench/tasks/liquidation-flash/checks/bots/informed component
 market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
+weekend-gap-informed mtx-bot-weekend-gap-spcx-informed mtx-weekend-gap-spcx-informed bench/tasks/weekend-gap-spcx/checks/bots/informed

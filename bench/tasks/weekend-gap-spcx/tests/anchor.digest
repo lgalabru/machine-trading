@@ -6,6 +6,6 @@
 # means the engine changed what this task does: run
 # `mtx task sync --anchors` and commit the result.
 format: 1
-anchors: reference (this task has no informed bot)
-inputs: a3699a39e2c74228f886507eda4269d61d6b5bf393a6bf6524e1568ace325706
-digest: bbaee6e93d936666b61a383d162e4d6f99019f1e2a56932964e4e745c5a177e6
+anchors: reference and informed bot
+inputs: 82ef682131dd24b074bf0b8c34d30f15d7545a58c780c79e88c557db3e7a0518
+digest: pending: run `mtx task sync --anchors` on Linux

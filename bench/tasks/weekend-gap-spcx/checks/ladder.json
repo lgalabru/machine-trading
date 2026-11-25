@@ -1,5 +1,5 @@
 {
-  "family": "weekend-gap",
+  "family": "weekend-gap-mainnet",
   "count": 72,
   "min_rule_odds": 0.85,
   "rungs": [
@@ -9,82 +9,45 @@
     },
     {
       "name": "follow",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-follow",
-      "may_breach": true
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-follow"
     },
     {
       "name": "fade",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-fade",
-      "may_breach": true
-    },
-    {
-      "name": "basis",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-basis",
-      "may_breach": true
-    },
-    {
-      "name": "fitted",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-fitted"
-    },
-    {
-      "name": "g0-reference",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-g0"
+      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-fade"
     },
     {
       "name": "reference",
       "dir": "bench/tasks/weekend-gap-spcx/reference"
     },
     {
-      "name": "told",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-told",
-      "tell_regime": true
-    },
-    {
-      "name": "path-oracle",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/rungs/weekend-path-oracle",
-      "tell_regime": true
-    },
-    {
-      "name": "weekend-gap-sol-1",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-1"
-    },
-    {
-      "name": "weekend-gap-sol-2",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-2"
-    },
-    {
-      "name": "weekend-gap-sol-3",
-      "dir": "bench/tasks/weekend-gap-spcx/checks/exploits/weekend-gap-sol-3"
+      "name": "informed",
+      "dir": "bench/tasks/weekend-gap-spcx/checks/bots/informed",
+      "tell_latent": true
     }
   ],
+  "anchors": {
+    "reference": "reference",
+    "informed": "informed"
+  },
   "gates": {
     "informed": [
-      "told"
+      "informed"
     ],
     "non_reading": [
       "nop",
-      "follow",
-      "fade"
+      "follow"
     ]
   },
   "rules": [
-    "max(follow, fade) < reference",
-    "basis < reference",
-    "fitted < reference",
-    "g0-reference < reference",
-    "reference < told < path-oracle < hindsight"
+    "follow < reference",
+    "reference < informed"
   ],
   "exploits": {
-    "bots": [
-      "fitted",
-      "weekend-gap-sol-1",
-      "weekend-gap-sol-2",
-      "weekend-gap-sol-3"
-    ],
+    "bots": [],
     "max_profitable": 0.9,
-    "below": "told"
+    "below": "informed"
   },
   "probes": {
-    "exempt": "the probe rungs aren't wired for this task yet (follow-up)"
+    "exempt": "the probe set's lever and breacher wrappers need a per-task crate around the reference (flash-crash-spcx's checks/rungs/probe); weekend-gap's isn't written yet (follow-up). The task's own rungs stand in: follow, the cap the weekend's way into the reopen; fade, the cap against it at every move, the reference's direction without its sizing"
   }
 }

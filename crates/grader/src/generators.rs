@@ -24,6 +24,7 @@ use crate::{
     scenario::{Shape, ShockFamily},
     thin_pools::{ThinPoolsFamily, ThinPoolsShape},
     weekend::{WeekendFamily, WeekendShape},
+    weekend_measured::MeasuredWeekendShape,
 };
 use crate::{error::Result, scenario::Scenario};
 
@@ -161,6 +162,24 @@ pub const GENERATORS: &[Generator] = &[
             )
         },
         params: || format!("{:?}", WeekendFamily::spcx()),
+    },
+    Generator {
+        name: "weekend-gap-mainnet",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                WeekendFamily::mainnet().draw_set(prefix, count, seed),
+                false,
+                mainnet_weekend_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                WeekendFamily::mainnet().draw_set("hidden", count, seed),
+                tell,
+                mainnet_weekend_latent,
+            )
+        },
+        params: || format!("{:?}", WeekendFamily::mainnet()),
     },
     Generator {
         name: "liquidation-flash",
@@ -342,6 +361,14 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
+    ("weekend-gap-mainnet", "reopen_keep", Knowable::Process),
+    (
+        "weekend-gap-mainnet",
+        "open_residual_sd_pct",
+        Knowable::Process,
+    ),
+    ("weekend-gap-mainnet", "horizon_slots", Knowable::Process),
+    ("weekend-gap-mainnet", "hit_rate", Knowable::Process),
     ("liquidation-flash", "liquidators", Knowable::Identity),
     ("liquidation-flash", "bids", Knowable::Identity),
     ("liquidation-flash", "bid_share", Knowable::Process),
@@ -499,6 +526,27 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
         "impact_pct": shape.impact_pct,
         "half_life_slots": shape.half_life_slots,
     })
+}
+
+#[cfg(feature = "generators")]
+/// Who positions into the reopen on information, and the process every
+/// session is drawn from: the informed traders' wallets (resolved as the
+/// session starts), how far ahead they see and how often they are right,
+/// and how much of the weekend's move the reopen keeps, give or take what.
+/// Never the session's own draws: the weekend's move, the open, whether
+/// an informed wallet's view is right this time. Every session tells the
+/// same process; only the wallets differ.
+fn mainnet_weekend_latent(_: &MeasuredWeekendShape) -> Value {
+    let family = WeekendFamily::mainnet();
+    let positioners = &family.positioners;
+    let latent = crate::latent::Latent::new()
+        .roster(&["informed"])
+        .and_then(|l| l.process("reopen_keep", family.reopen_keep))
+        .and_then(|l| l.process("open_residual_sd_pct", family.open_residual_sd_pct))
+        .and_then(|l| l.process("horizon_slots", positioners.horizon_slots))
+        .and_then(|l| l.process("hit_rate", positioners.hit_rate))
+        .expect("the mainnet weekend's latent fields are sound");
+    serde_json::from_str(&latent.to_json()).expect("a latent is JSON")
 }
 
 #[cfg(test)]
@@ -722,6 +770,27 @@ mod tests {
         for name in ["market-making", "market-making-v2"] {
             assert!(latent(name).iter().all(|l| l == "{}"), "{name}");
         }
+    }
+
+    /// The mainnet weekend tells its informed bot who positions on
+    /// information and the process, the same in every session, and nothing
+    /// of the session's own draw: not the weekend's move nor the open.
+    #[cfg(feature = "generators")]
+    #[test]
+    fn the_mainnet_weekend_latent_is_the_process_and_the_informed_wallets() {
+        let hidden = (generator("weekend-gap-mainnet").unwrap().hidden)(24, 5, false).unwrap();
+        let first: Value = serde_json::from_str(&hidden.latent[0]).unwrap();
+        assert!(hidden.latent.iter().all(|l| *l == hidden.latent[0]));
+        assert_eq!(first["roster"], json!(["informed"]));
+        assert_eq!(first["reopen_keep"], 0.78);
+        assert_eq!(first["open_residual_sd_pct"], 0.5);
+        assert_eq!(first["horizon_slots"], 40);
+        assert_eq!(first["hit_rate"], 0.8);
+        for drawn in ["weekend_pct", "open_pct", "gap_pct", "path", "reopen_slot"] {
+            assert!(first.get(drawn).is_none(), "{drawn} is the session's draw");
+        }
+        let annotation = &hidden.annotations[0]["shape"];
+        assert!(annotation.get("gap_pct").is_some());
     }
 
     /// The check above would catch a draw handed over: a shock's direction
