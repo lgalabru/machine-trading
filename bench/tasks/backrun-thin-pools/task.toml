@@ -4,7 +4,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/backrun-thin-pools"
-version = "0.14.0"
+version = "0.15.0"
 description = "Write a bot that backruns large swaps on ten thin Orca and Raydium concentrated pools over SOL, USDC, JitoSOL, JTO and GEOD, searching the graph of pools for the cycle each swap opened and closing it atomically in the swap's own slot, against competing searchers, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "amm", "orca", "raydium", "clmm", "backrun", "atomic-arbitrage", "cycle", "jitosol", "jito", "surfpool", "rust"]
 
