@@ -796,7 +796,7 @@ mod tests {
         assert_eq!(first["reopen_keep"], 0.78);
         assert_eq!(first["open_residual_sd_pct"], 0.5);
         assert_eq!(first["horizon_slots"], 40);
-        assert_eq!(first["hit_rate"], 0.8);
+        assert_eq!(first["hit_rate"], 0.95);
         assert_eq!(first["edge_bps"], 10.0);
         assert_eq!(first["view_noise_bps"], 10.0);
         assert_eq!(first["orders_per_wallet"], 3.0);
