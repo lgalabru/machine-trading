@@ -10,7 +10,7 @@ copy of Solana mainnet, restored with
 | --- | --- | --- |
 | [`backrun-sol-usdc`](backrun-sol-usdc) | Orca Whirlpool and Raydium CLMM, SOL/USDC | reacts in the trigger's slot, sizes the cycle to the fee band through both curves, and bids only what it must to beat the other searchers |
 | [`backrun-thin-pools`](backrun-thin-pools) | Orca Whirlpool and Raydium CLMM, ten pools over SOL, USDC, JitoSOL, JTO and GEOD | searches a graph of pools for the cycle that the latest swap opened, and skips cycles whose fees eat the gap |
-| [`flash-crash-spcx`](flash-crash-spcx) | Phoenix SPCX perp | fades crashes and squeezes that revert, and survives the ones that don't |
+| [`flash-crash-nvda`](flash-crash-nvda) | Phoenix NVDA perp | tells a shock from noise, rides the ones that keep going and cuts the ones that turn, and pays for every move it trades |
 | [`funding-carry-spcx`](funding-carry-spcx) | Phoenix SPCX perp | earns the premium and Phoenix's funding when the crowd's positioning opened the gap, follows when the index follows, and reads the session's own noise |
 | [`liquidation-flash`](liquidation-flash) | Kamino main market, SOL/USDC | reads the price upstream of Kamino's oracle, sees an obligation cross its liquidation threshold before the oracle shows it, and pushes the update, liquidates with a flash loan and sells the collateral in one transaction, bidding only what it must to land ahead of competing liquidators |
 | [`market-making-spcx`](market-making-spcx) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |

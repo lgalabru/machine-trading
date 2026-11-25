@@ -4,8 +4,29 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
-- **0.15.0** (draft). Every task's market measured against mainnet
-  (RFD 0007).
+- **0.15.0** (draft). Every task's market measured against mainnet's
+  Phoenix tape (RFD 0007, the study `phoenix-tape.20261125.fc443f1e`).
+  - **Renamed: `flash-crash-spcx` is now `flash-crash-nvda`, on the market
+    where the shocks were.** NVDA carried 9 of the tape's 93 jumps
+    (2026-11-23's leader among them); `mtx bench review` lines the two names
+    up by their skill. On the tape a jump of 1.5% or more went on by half
+    of itself again 45% of the time fifteen minutes on, and gave half back
+    31%; flash-crash-spcx's shocks reverted 65% and extended 15%, so fading
+    paid by construction. The task now draws from
+    `flash-crash-nvda` (`ShockFamily::nvda()`): revert 31%, stall 24%,
+    extend 45%; legs from a Pareto fitted to the 93 jumps' sizes (1.5 to
+    9.5%, median about 2%); small moves that mostly don't give their move
+    back (26% revert, 37% stall, 37% extend); a quarter of the sessions
+    quiet, with no shock; NVDA's wobble from its calibration. NVDA's takers
+    trade beside the bot (the actor library: noise at NVDA's measured pace,
+    informed takers who see about ten seconds ahead, chasers, at the flow
+    NVDA's jumps carried), and its trades move the price (impact). Stated
+    departures, in its instruction: shocks far more common than on
+    mainnet, the aftermath inside the session, direction 50/50, aftermath
+    odds and leg sizes pooled over all markets. Its reference rides a
+    confirmed move with a trailing stop (fading loses on these odds); an
+    informed bot, told the informed takers' wallets, is v2's 1. Its
+    snapshot is `phoenix-perps-2026-11-13`.
   - **`weekend-gap-spcx`: the weekend mainnet measured, scored by v2.** The
     old task's premise, weekend taker flow that knows where SPCX opens and
     moves the perp there, didn't show on Phoenix: the tape's 23 weekend
