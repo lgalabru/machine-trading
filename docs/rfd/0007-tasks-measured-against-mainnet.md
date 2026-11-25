@@ -178,3 +178,22 @@ What each task becomes, to be settled as the work goes:
   rewards measured a game.
 
 ## What we learned
+
+- 2026-11-24: what the engine already has, and what it blocks (astra).
+  The four perp families read no calibration: every number is a
+  constant in `ShockFamily::spcx()`, `MakingFamily::spcx()`,
+  `CarryFamily::spcx()` and `WeekendFamily::spcx()`. The SPCX
+  calibration's venue numbers (`spcx.20261112.d1f48be2`: 1.463 trades a
+  minute, median 0.021 SPCX) are the pinger's $3 prints, read from
+  candles; its book is defaults. Three engine limits shape 0.15:
+  - price impact is refused beside a competing maker or a closed
+    period, so market-making and weekend-gap can't take it yet;
+  - no perp actor sends through the transaction layer: only the lending
+    liquidator and the pool actors attach to it;
+  - the actor library's `scale` is filled by hand; nothing copies it
+    from a calibration.
+
+  So 0.15 adds new constructors beside the old ones (`ShockFamily` and
+  `MakingFamily` first), built from the tape study, and leaves the old
+  generators and their pins alone. Flash-crash and market-making are
+  being built on branches of `release/0.15.0`.
