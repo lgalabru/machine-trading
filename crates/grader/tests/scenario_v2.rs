@@ -68,7 +68,7 @@ const GOLDEN: [(&str, &str); 6] = [
         "flash-crash.json",
     ),
     (
-        "bench/tasks/market-making-spcx/environment/practice/practice-1.json",
+        "bench/tasks/market-making-ant/environment/practice/practice-1.json",
         "market-making.json",
     ),
     (

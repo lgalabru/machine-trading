@@ -1,5 +1,5 @@
 {
-  "family": "market-making-measured",
+  "family": "market-making-ant",
   "count": 72,
   "min_rule_odds": 0.85,
   "rungs": [
@@ -9,48 +9,40 @@
     },
     {
       "name": "naive-quoter",
-      "dir": "bench/tasks/market-making-spcx/checks/rungs/naive-quoter"
+      "dir": "bench/tasks/market-making-ant/checks/rungs/naive-quoter"
     },
     {
       "name": "skew-quoter",
-      "dir": "bench/tasks/market-making-spcx/checks/rungs/skew-quoter"
+      "dir": "bench/tasks/market-making-ant/checks/rungs/skew-quoter"
     },
     {
       "name": "reference",
-      "dir": "bench/tasks/market-making-spcx/reference"
+      "dir": "bench/tasks/market-making-ant/reference"
     },
     {
       "name": "informed",
-      "dir": "bench/tasks/market-making-spcx/checks/bots/informed",
+      "dir": "bench/tasks/market-making-ant/checks/bots/informed",
       "tell_latent": true
     },
     {
       "name": "market-making-opus",
-      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-opus"
+      "dir": "bench/tasks/market-making-ant/checks/exploits/market-making-opus"
     },
     {
       "name": "market-making-fable",
-      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-fable"
+      "dir": "bench/tasks/market-making-ant/checks/exploits/market-making-fable"
     },
     {
       "name": "market-making-opus-0.10",
-      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-opus-0.10"
+      "dir": "bench/tasks/market-making-ant/checks/exploits/market-making-opus-0.10"
     },
     {
       "name": "market-making-fable-0.10",
-      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-fable-0.10"
+      "dir": "bench/tasks/market-making-ant/checks/exploits/market-making-fable-0.10"
     },
     {
       "name": "market-making-astra-ring-0.12",
-      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-astra-ring-0.12"
-    },
-    {
-      "name": "market-making-astra-accounts-0.12",
-      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-astra-accounts-0.12"
-    },
-    {
-      "name": "market-making-astra-blocks-0.12",
-      "dir": "bench/tasks/market-making-spcx/checks/exploits/market-making-astra-blocks-0.12"
+      "dir": "bench/tasks/market-making-ant/checks/exploits/market-making-astra-ring-0.12"
     }
   ],
   "anchors": {
@@ -78,9 +70,7 @@
       "market-making-fable",
       "market-making-opus-0.10",
       "market-making-fable-0.10",
-      "market-making-astra-ring-0.12",
-      "market-making-astra-accounts-0.12",
-      "market-making-astra-blocks-0.12"
+      "market-making-astra-ring-0.12"
     ],
     "max_profitable": 0.9,
     "below": "informed"

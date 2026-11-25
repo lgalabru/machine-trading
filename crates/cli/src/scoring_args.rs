@@ -152,9 +152,9 @@ mod tests {
         let lambda = |given: &ScoringArgs, task| given.params(task).unwrap().unwrap().risk_weight;
         let mut given = args(Scoring::V2, &["0.3"]);
         assert_eq!(lambda(&given, Some("flash-crash-spcx")), 1.0);
-        given.risk_weight = vec!["2".into(), "market-making-spcx=0".into()];
+        given.risk_weight = vec!["2".into(), "market-making-ant=0".into()];
         assert_eq!(lambda(&given, Some("flash-crash-spcx")), 2.0);
-        assert_eq!(lambda(&given, Some("market-making-spcx")), 0.0);
+        assert_eq!(lambda(&given, Some("market-making-ant")), 0.0);
         let mut v1 = args(Scoring::V1, &[]);
         v1.risk_weight = vec!["2".into()];
         assert!(v1.params(None).is_err());

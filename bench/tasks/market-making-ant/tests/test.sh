@@ -18,8 +18,8 @@ trap 'rm -f /logs/verifier/reward.json' ERR
 
 # This script and the image it runs in must be the same task's: a build that
 # mixed two tasks' files would grade the bot on the wrong market.
-if [ "${MTX_TASK:-}" != "market-making-spcx" ]; then
-  echo "test.sh: this is market-making-spcx's verifier, in an image built for" \
+if [ "${MTX_TASK:-}" != "market-making-ant" ]; then
+  echo "test.sh: this is market-making-ant's verifier, in an image built for" \
     "'${MTX_TASK:-}': its tests were mixed up at build time. Rebuild it." >&2
   exit 3
 fi
@@ -42,10 +42,10 @@ fi
 # pace, the arbitrageur's latency and edge; never the path, a jump or an
 # order); the bot is told nothing.
 mtx grade \
-  --informed /opt/mtx/anchors/market-making-informed \
-  --draw market-making-measured \
+  --informed /opt/mtx/anchors/market-making-ant-informed \
+  --draw market-making-ant \
   --count 72 \
-  --reference /opt/mtx/anchors/market-making \
+  --reference /opt/mtx/anchors/market-making-ant \
   --anchor-jobs 4 \
   --jobs 4 \
   --scoring v2-headline \

@@ -1705,7 +1705,7 @@ mod tests {
         assert_eq!(skill_of("phoenix-flash-crash"), "flash-crash");
         assert_eq!(skill_of("flash-crash-spcx"), "flash-crash");
         assert_eq!(skill_of("phoenix-market-making"), "market-making");
-        assert_eq!(skill_of("market-making-spcx"), "market-making");
+        assert_eq!(skill_of("market-making-ant"), "market-making");
         assert_eq!(skill_of("demo"), "demo");
     }
 
