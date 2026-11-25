@@ -33,6 +33,7 @@
 //! solution), and a process (`src/main.rs`), the anchor hidden sets are
 //! scored against.
 
+pub mod markouts;
 pub mod tape;
 
 use std::collections::VecDeque;
@@ -49,6 +50,30 @@ const DRIFT_WEIGHT: f64 = 0.5;
 const DRIFT_SLOTS: f64 = 80.0;
 const DRIFT_MAX_BPS: f64 = 5.0;
 const QUOTE_SIZE: f64 = 1.0;
+/// Its quote size once its fills have shown they aren't run over: after
+/// `MARKOUT_FILLS` fills whose 10 s markout (`MARKOUT_SLOTS`) gives back
+/// no more than half the half-spread it quotes at.
+const LEARNED_QUOTE_SIZE: f64 = 2.0;
+const MARKOUT_FILLS: u32 = 10;
+const MARKOUT_SLOTS: u64 = 40;
+const MARKOUT_GIVEBACK: f64 = 0.5;
+
+/// Whether its fills have shown they aren't run over: their markout takes
+/// back no more than `MARKOUT_GIVEBACK` of the half-spread it quotes at.
+fn fills_hold_up(markouts: &markouts::Markouts, half_spread_bps: f64) -> bool {
+    markouts
+        .mean_bps(MARKOUT_FILLS)
+        .is_some_and(|mean| mean >= -MARKOUT_GIVEBACK * half_spread_bps)
+}
+
+/// Its quote size, from what its fills have earned so far.
+fn learned_size(markouts: &markouts::Markouts, half_spread_bps: f64) -> f64 {
+    if fills_hold_up(markouts, half_spread_bps) {
+        LEARNED_QUOTE_SIZE
+    } else {
+        QUOTE_SIZE
+    }
+}
 const INVENTORY_LIMIT: f64 = 0.25;
 const TOXIC_UNITS: f64 = 1.5;
 const TOXIC_WINDOW_SLOTS: u64 = 8;
@@ -76,6 +101,8 @@ pub struct Maker {
     half_spread_bps: f64,
     /// (slot, position) at each step of the toxic window.
     history: VecDeque<(u64, f64)>,
+    /// Its own fills' markouts, which set how much size it shows.
+    markouts: markouts::Markouts,
     toxic_until: u64,
     /// Which way the toxic fills took the inventory: +1 long, -1 short.
     toxic_side: f64,
@@ -92,6 +119,7 @@ pub struct Maker {
 impl Strategy for Maker {
     fn start(&mut self, session: &Session) -> BotResult {
         self.cap = session.mandate.universe[0].max_position;
+        self.markouts = markouts::Markouts::new(MARKOUT_SLOTS);
         self.half_spread_bps = competitor_half_spread_bps(session)?;
         let venue = PhoenixVenue::from_json(&session.venue)?;
         self.tape = tape::Tape::new(&venue, &session.symbol, FLOW_WINDOW_SLOTS)?;
@@ -104,6 +132,7 @@ impl Strategy for Maker {
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         let (slot, mark, held, cap) = (market.slot, market.oracle, market.position.size, self.cap);
+        self.markouts.step(slot, held, mark);
         // It never takes, so its whole position came from its quotes' fills.
         self.history.push_back((slot, held));
         while self
@@ -129,8 +158,11 @@ impl Strategy for Maker {
         // run is hitting steps out of its way, unless it sheds inventory.
         let flow = self.tape.read(slot);
         let pull = flow_pull(&self.tape);
-        let buyers_run = flow >= pull && held <= 0.0;
-        let sellers_run = flow <= -pull && held >= 0.0;
+        // Only while its own fills are being run over: a run of takers who
+        // know nothing is flow to earn from, not to dodge.
+        let toxic_tape = !fills_hold_up(&self.markouts, self.half_spread_bps);
+        let buyers_run = toxic_tape && flow >= pull && held <= 0.0;
+        let sellers_run = toxic_tape && flow <= -pull && held >= 0.0;
 
         let mean = match self.average {
             Some((at, mean)) => {
@@ -146,7 +178,8 @@ impl Strategy for Maker {
         let half = self.half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
-        let (bid_size, ask_size) = (QUOTE_SIZE.min(cap - held), QUOTE_SIZE.min(cap + held));
+        let size = learned_size(&self.markouts, self.half_spread_bps);
+        let (bid_size, ask_size) = (size.min(cap - held), size.min(cap + held));
         let runs = (buyers_run, sellers_run);
         let moved = self.runs != runs
             || self.quoted.is_none_or(|(at, b, a)| {
