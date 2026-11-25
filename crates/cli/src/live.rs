@@ -280,6 +280,26 @@ fn watch(socket: &Path, json: bool) -> Result<()> {
             Event::Lagged { dropped } => {
                 format!("lagged: {dropped} events lost; run `mtx live status`")
             }
+            Event::Touch {
+                symbol,
+                index,
+                best_bid,
+                best_bid_size,
+                best_ask,
+                best_ask_size,
+                ..
+            } => {
+                let side = |p: &Option<f64>, s: &Option<f64>| match (p, s) {
+                    (Some(p), Some(s)) => format!("{s}@{p}"),
+                    (Some(p), None) => format!("{p}"),
+                    _ => "–".to_string(),
+                };
+                format!(
+                    "{symbol}: {} / {} (index {index})",
+                    side(best_bid, best_bid_size),
+                    side(best_ask, best_ask_size)
+                )
+            }
             Event::Quote {
                 symbol,
                 best_bid,
