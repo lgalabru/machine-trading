@@ -20,7 +20,7 @@ use crate::{
     backrun::{BackrunFamily, BackrunShape},
     carry::{CarryFamily, Shape as CarryShape},
     liquidation_flash::{LiquidationFamily, LiquidationShape},
-    making::MakingFamily,
+    making::{MakingFamily, measured::MeasuredFamily},
     scenario::{Shape, ShockFamily},
     thin_pools::{ThinPoolsFamily, ThinPoolsShape},
     weekend::{WeekendFamily, WeekendShape},
@@ -119,6 +119,28 @@ pub const GENERATORS: &[Generator] = &[
         },
         hidden: |count, seed, tell| making_drawn(&MakingFamily::v2(), "hidden", count, seed, tell),
         params: || format!("{:?}", MakingFamily::v2()),
+    },
+    Generator {
+        name: "market-making-measured",
+        practice_drawn: |prefix, count, seed| {
+            measured_drawn(&MeasuredFamily::spcx(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| {
+            measured_drawn(&MeasuredFamily::spcx(), "hidden", count, seed, tell)
+        },
+        params: || format!("{:?}", MeasuredFamily::spcx()),
+    },
+    // The same market on ANT's measured flow: the profile the task may move
+    // to (RFD 0007's open question), drawn so the ladder can compare them.
+    Generator {
+        name: "market-making-measured-ant",
+        practice_drawn: |prefix, count, seed| {
+            measured_drawn(&MeasuredFamily::ant(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| {
+            measured_drawn(&MeasuredFamily::ant(), "hidden", count, seed, tell)
+        },
+        params: || format!("{:?}", MeasuredFamily::ant()),
     },
     Generator {
         name: "funding-carry",
@@ -276,6 +298,48 @@ fn making_drawn(
 }
 
 #[cfg(feature = "generators")]
+/// A measured market-making hidden set: each session annotated with its
+/// kind, its latent state the informed takers' and the arbitrageur's
+/// roster and the flow's process, and, when told, the kind as the regime.
+fn measured_drawn(
+    family: &MeasuredFamily,
+    prefix: &str,
+    count: usize,
+    seed: u64,
+    tell: bool,
+) -> Result<Hidden> {
+    let drawn = family.sample_set(prefix, count, seed);
+    let annotations = drawn
+        .iter()
+        .map(|(_, shape)| json!({ "regime": shape.regime_name(), "latent": shape.latent() }))
+        .collect();
+    let regimes = if tell {
+        Some(
+            drawn
+                .iter()
+                .map(|(_, shape)| {
+                    Ok(serde_json::to_string(
+                        &json!({ "regime": shape.regime_name() }),
+                    )?)
+                })
+                .collect::<Result<_>>()?,
+        )
+    } else {
+        None
+    };
+    let latent = drawn
+        .iter()
+        .map(|(_, shape)| Ok(serde_json::to_string(&shape.latent())?))
+        .collect::<Result<_>>()?;
+    Ok(Hidden {
+        scenarios: drawn.into_iter().map(|(scenario, _)| scenario).collect(),
+        annotations,
+        regimes,
+        latent,
+    })
+}
+
+#[cfg(feature = "generators")]
 /// A hidden set drawn with each scenario's shape: annotated `{"shape": ..}`,
 /// with its `latent` state and, when told, the shape as the regime.
 fn shaped<S: serde::Serialize>(
@@ -355,6 +419,66 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("backrun-thin-pools", "searchers", Knowable::Identity),
     ("backrun-thin-pools", "pool_searchers", Knowable::Identity),
     ("backrun-thin-pools", "flow_scale", Knowable::Process),
+    (
+        "market-making-measured",
+        "informed_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured",
+        "informed_horizon_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured",
+        "informed_hit_rate",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured",
+        "orders_per_minute",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured",
+        "arbitrageur_latency_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured",
+        "arbitrageur_edge_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_horizon_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_hit_rate",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "orders_per_minute",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "arbitrageur_latency_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "arbitrageur_edge_bps",
+        Knowable::Process,
+    ),
 ];
 
 /// The members of a latent state itself, which no shipped practice file may
