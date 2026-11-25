@@ -9,7 +9,7 @@ reopen, on a weekend measured from mainnet.
 | Sessions | 72 hidden per grade, half with weekends that went up and half down; 6 practice. Each session is a closed period of 100–160 s of market time (a weekend's 48 hours, compressed), then 12–40 s after the reopen. |
 | Mandate | 70 SPCX position cap (about 1× collateral); $1,000 loss limit (10% of collateral) |
 | Scoring | v2: 0 doing nothing, 0.5 the reference, 1 the informed bot (told the informed wallets and the process, never the session's draws) |
-| Reference | Fades the part of the weekend's move the reopen is expected to take back, sized by its size, entered after the makers' last re-price and held to the end. It doesn't read who trades. |
+| Reference | Fades the part of the weekend's move the reopen is expected to take back, leaned by the late positioners' summed position (read from the market's transactions; it can't tell the informed from the decoys), sized by the gap it expects, entered after the makers' last re-price and held to the end. |
 
 How every task is scored, and how risk is enforced, is in the
 [dataset README](../README.md#how-a-bot-is-judged).
