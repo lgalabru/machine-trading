@@ -571,7 +571,7 @@
       "slot": 615
     }
   ],
-  "reference_max_drawdown_usd": 5.95,
-  "reference_pnl_usd": 5.53,
+  "reference_max_drawdown_usd": 0.0,
+  "reference_pnl_usd": 0.0,
   "symbol": "SPCX"
 }
