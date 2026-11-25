@@ -436,6 +436,11 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ),
     (
         "market-making-measured",
+        "informed_edge_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured",
         "orders_per_minute",
         Knowable::Process,
     ),
@@ -462,6 +467,11 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     (
         "market-making-measured-ant",
         "informed_hit_rate",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_edge_bps",
         Knowable::Process,
     ),
     (
