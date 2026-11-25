@@ -2139,8 +2139,8 @@
       "slot": 1668
     }
   ],
-  "reference_max_drawdown_usd": 0.0,
-  "reference_pnl_usd": 0.0,
+  "reference_max_drawdown_usd": 23.23,
+  "reference_pnl_usd": -18.46,
   "symbol": "SOL",
   "tape": [
     {
