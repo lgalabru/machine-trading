@@ -18,7 +18,10 @@ use serde_json::json;
 #[cfg(feature = "generators")]
 use crate::{
     backrun::{BackrunFamily, BackrunShape},
-    carry::{CarryFamily, Shape as CarryShape},
+    carry::{
+        CarryFamily, Shape as CarryShape,
+        measured::{MeasuredCarryFamily, MeasuredCarryShape},
+    },
     liquidation_flash::{LiquidationFamily, LiquidationShape},
     making::MakingFamily,
     scenario::{Shape, ShockFamily},
@@ -143,6 +146,26 @@ pub const GENERATORS: &[Generator] = &[
                 CarryFamily::practice()
             )
         },
+    },
+    // 0.15.0: funding-carry on Phoenix's SOL perp, measured from mainnet
+    // (`carry::measured`). The SPCX family above keeps its pins.
+    Generator {
+        name: "funding-carry-sol",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                MeasuredCarryFamily::practice().draw_set(prefix, count, seed),
+                false,
+                MeasuredCarryShape::latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                MeasuredCarryFamily::sol().draw_set("hidden", count, seed),
+                tell,
+                MeasuredCarryShape::latent,
+            )
+        },
+        params: || format!("{:?}", MeasuredCarryFamily::sol()),
     },
     Generator {
         name: "weekend-gap",
@@ -336,6 +359,26 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("funding-carry", "funding", Knowable::Process),
     ("funding-carry", "cap_pct", Knowable::Process),
     ("funding-carry", "noise_pct", Knowable::Process),
+    ("funding-carry-sol", "premium_mean_bps", Knowable::Process),
+    ("funding-carry-sol", "premium_sd_bps", Knowable::Process),
+    (
+        "funding-carry-sol",
+        "premium_half_life_slots",
+        Knowable::Process,
+    ),
+    ("funding-carry-sol", "funding", Knowable::Process),
+    ("funding-carry-sol", "orders_per_minute", Knowable::Process),
+    ("funding-carry-sol", "informed_share", Knowable::Process),
+    (
+        "funding-carry-sol",
+        "arbitrageur_latency_slots",
+        Knowable::Process,
+    ),
+    (
+        "funding-carry-sol",
+        "arbitrageur_edge_bps",
+        Knowable::Process,
+    ),
     ("weekend-gap", "informed", Knowable::Identity),
     ("weekend-gap", "informed_account", Knowable::Identity),
     ("weekend-gap", "worker", Knowable::Identity),

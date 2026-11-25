@@ -25,6 +25,8 @@
 //! crowded premium sometimes widens before it fades. The session's length
 //! is drawn first, and the path is cut where it ends.
 
+pub mod measured;
+
 use mtx_kit::Mandate;
 use serde::Serialize;
 
