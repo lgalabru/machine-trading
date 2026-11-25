@@ -7,7 +7,7 @@
           "until": 402
         },
         "edge_bps": 10.0,
-        "hit_rate": 0.8,
+        "hit_rate": 0.95,
         "horizon_slots": 40,
         "informed_for": {
           "from": 362,
@@ -27,7 +27,7 @@
           "until": 402
         },
         "edge_bps": 10.0,
-        "hit_rate": 0.8,
+        "hit_rate": 0.95,
         "horizon_slots": 40,
         "intensity_mult": 1.9451612903225808,
         "limit_bps": 50.0,
@@ -67,7 +67,7 @@
   "description": "SPCX practice session",
   "duration_slots": 557,
   "informed_max_drawdown_usd": 11.2,
-  "informed_pnl_usd": 8.63,
+  "informed_pnl_usd": 15.77,
   "mandate": {
     "limits": {
       "max_drawdown_usd": 1000.0
@@ -535,7 +535,7 @@
       "slot": 548
     }
   ],
-  "reference_max_drawdown_usd": 5.6,
-  "reference_pnl_usd": 14.91,
+  "reference_max_drawdown_usd": 11.2,
+  "reference_pnl_usd": -3.24,
   "symbol": "SPCX"
 }

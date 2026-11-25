@@ -392,6 +392,13 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ),
     ("weekend-gap-mainnet", "horizon_slots", Knowable::Process),
     ("weekend-gap-mainnet", "hit_rate", Knowable::Process),
+    ("weekend-gap-mainnet", "edge_bps", Knowable::Process),
+    ("weekend-gap-mainnet", "view_noise_bps", Knowable::Process),
+    (
+        "weekend-gap-mainnet",
+        "orders_per_wallet",
+        Knowable::Process,
+    ),
     ("liquidation-flash", "liquidators", Knowable::Identity),
     ("liquidation-flash", "bids", Knowable::Identity),
     ("liquidation-flash", "bid_share", Knowable::Process),
@@ -599,6 +606,7 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
 /// Who positions into the reopen on information, and the process every
 /// session is drawn from: the informed traders' wallets (resolved as the
 /// session starts), how far ahead they see and how often they are right,
+/// when they trade at all (past an edge, through a noisy view, at a pace),
 /// and how much of the weekend's move the reopen keeps, give or take what.
 /// Never the session's own draws: the weekend's move, the open, whether
 /// an informed wallet's view is right this time. Every session tells the
@@ -612,6 +620,9 @@ fn mainnet_weekend_latent(_: &MeasuredWeekendShape) -> Value {
         .and_then(|l| l.process("open_residual_sd_pct", family.open_residual_sd_pct))
         .and_then(|l| l.process("horizon_slots", positioners.horizon_slots))
         .and_then(|l| l.process("hit_rate", positioners.hit_rate))
+        .and_then(|l| l.process("edge_bps", positioners.edge_bps))
+        .and_then(|l| l.process("view_noise_bps", positioners.view_noise_bps))
+        .and_then(|l| l.process("orders_per_wallet", positioners.orders_per_wallet))
         .expect("the mainnet weekend's latent fields are sound");
     serde_json::from_str(&latent.to_json()).expect("a latent is JSON")
 }
@@ -852,7 +863,10 @@ mod tests {
         assert_eq!(first["reopen_keep"], 0.78);
         assert_eq!(first["open_residual_sd_pct"], 0.5);
         assert_eq!(first["horizon_slots"], 40);
-        assert_eq!(first["hit_rate"], 0.8);
+        assert_eq!(first["hit_rate"], 0.95);
+        assert_eq!(first["edge_bps"], 10.0);
+        assert_eq!(first["view_noise_bps"], 10.0);
+        assert_eq!(first["orders_per_wallet"], 3.0);
         for drawn in ["weekend_pct", "open_pct", "gap_pct", "path", "reopen_slot"] {
             assert!(first.get(drawn).is_none(), "{drawn} is the session's draw");
         }

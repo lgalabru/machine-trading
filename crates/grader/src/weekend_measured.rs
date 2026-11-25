@@ -26,7 +26,9 @@
 //!   moves didn't move with SPCX's reopen gap (r −0.17 and −0.13 over the 21
 //!   weekends), so no cross-market channel is carried.
 //! - **Departures, stated.** Two informed traders position into the reopen
-//!   in its last stretch, right 80% of the time each, and two decoys trade
+//!   in its last stretch, right 95% of the time each (80% until 0.15.0's
+//!   ladders showed the informed bot couldn't lead the reference reliably),
+//!   and two decoys trade
 //!   as they do until they lose the thread: competition for the reopen that
 //!   the tape never saw on SPCX (it saw one order in 23 weekend hours) and
 //!   that the task needs for an informed bot to read. Their pace and sizes
@@ -200,7 +202,9 @@ impl MeasuredWeekendFamily {
                 informed_wallets: 2,
                 decoy_wallets: 2,
                 horizon_slots: 40,
-                hit_rate: 0.8,
+                // 0.8 at first: the informed bot then led the reference
+                // by too little and lost whole sets.
+                hit_rate: 0.95,
                 edge_bps: 10.0,
                 view_noise_bps: 10.0,
                 orders_per_wallet: 3.0,

@@ -10,26 +10,24 @@
 //! fifths of the weekend's move), and the informed wallets' trades, read on
 //! chain every step from their positions, as anyone could who knew which
 //! wallets to watch. Each wallet's net flow over the last stretch is a vote
-//! on which way the reopen goes, right with the told hit rate; the votes
-//! move the prior's odds, and it takes the gap it then expects, with the
-//! reference's mechanics (`reopen.rs`, the same file).
+//! on which way the reopen goes, right with the told hit rate; a wallet
+//! still silent is evidence too, since it trades only while the gap it sees
+//! is past its edge (told, with its view's noise and its pace). It weighs a
+//! grid of gaps by the prior and every wallet's record, takes the
+//! posterior's mean, and trades it with the reference's mechanics
+//! (`reopen.rs`, the same file).
 
 #[path = "../../../../reference/src/reopen.rs"]
 pub mod reopen;
 
-use mtx_kit::{
-    Pubkey, log,
-    prelude::*,
-    serde_json,
-    venue::{PhoenixVenue, perp_position, perp_position_live},
+use mtx_kit::{Pubkey, log, prelude::*, serde_json, venue::PhoenixVenue};
+use reopen::{
+    ACCOUNTS_MAX, Account, Clock, Phase, Positions, normal_cdf, position_for, trade_toward,
 };
-use reopen::{Account, Clock, Phase, position_for, trade_toward};
 
 /// The most informed wallets it watches: the family seats two.
 const WALLETS_MAX: usize = 8;
-/// The most accounts a trader index or active trader buffer spans, as the
-/// runtime bounds them.
-const ARENA_ACCOUNTS_MAX: usize = 16;
+const _: () = assert!(WALLETS_MAX <= ACCOUNTS_MAX);
 /// A position change smaller than this, in SPCX, is no trade: under
 /// Phoenix's lot (0.001 SPCX).
 const FLOW_MIN: f64 = 0.0005;
@@ -38,7 +36,7 @@ const FLOW_MIN: f64 = 0.0005;
 /// and its net flow since it started.
 #[derive(Debug, Clone)]
 struct Watched {
-    trader: Pubkey,
+    authority: Pubkey,
     position: Option<f64>,
     net_flow: f64,
 }
@@ -62,8 +60,7 @@ pub struct Informed {
     venue: Option<PhoenixVenue>,
     told: Option<Told>,
     watched: Vec<Watched>,
-    trader_index: Vec<String>,
-    trader_buffer: Vec<String>,
+    positions: Positions,
     start_mid: Option<f64>,
     target: f64,
     account: Account,
@@ -81,19 +78,12 @@ impl Strategy for Informed {
             .wallets
             .iter()
             .map(|authority| Watched {
-                trader: venue.trader_account(authority),
+                authority: *authority,
                 position: None,
                 net_flow: 0.0,
             })
             .collect();
-        let keys = &venue.exchange().keys;
-        self.trader_index = keys.global_trader_index.clone();
-        self.trader_buffer = keys.active_trader_buffer.clone();
-        if self.trader_index.len() > ARENA_ACCOUNTS_MAX
-            || self.trader_buffer.len() > ARENA_ACCOUNTS_MAX
-        {
-            return Err("the trader arenas span more accounts than the bot reads".into());
-        }
+        self.positions = Positions::new(&venue)?;
         self.clock = Some(Clock::from_session(session)?);
         self.cap = session.cap;
         self.symbol = session.symbol.clone();
@@ -126,9 +116,11 @@ impl Strategy for Informed {
         }
         if phase == Phase::Entry {
             let told = self.told.as_ref().ok_or("step before start")?;
-            let votes: f64 = self.watched.iter().map(Watched::vote).sum();
+            let votes: Vec<f64> = self.watched.iter().map(Watched::vote).collect();
             let weekend_pct = (mid / start_mid - 1.0) * 100.0;
-            let expected = told.expected_gap_pct(weekend_pct, votes);
+            let stretch_from = clock.reopen_slot as f64 - told.horizon_slots;
+            let elapsed = (market.slot as f64 - stretch_from).max(0.0);
+            let expected = told.expected_gap_pct(weekend_pct, &votes, elapsed);
             self.target = position_for(expected, self.cap);
         }
         assert!(self.target.abs() <= self.cap);
@@ -142,28 +134,9 @@ impl Informed {
     /// the last read to its net flow.
     fn read(&mut self) -> Result<(), String> {
         let venue = self.venue.as_ref().ok_or("step before start")?;
-        let market = venue.market(&self.symbol)?;
-        let traders: Vec<String> = self.watched.iter().map(|w| w.trader.to_string()).collect();
-        let addresses: Vec<&str> = traders
-            .iter()
-            .chain(&self.trader_index)
-            .chain(&self.trader_buffer)
-            .map(String::as_str)
-            .collect();
-        let accounts = mtx_kit::rpc_accounts(&addresses)?;
-        assert_eq!(accounts.len(), addresses.len());
-        let (own, arenas) = accounts.split_at(traders.len());
-        let (index, buffer) = arenas.split_at(self.trader_index.len());
-        let index: Vec<&[u8]> = arenas_of(index)?;
-        let buffer: Vec<&[u8]> = arenas_of(buffer)?;
-        for (watched, account) in self.watched.iter_mut().zip(own) {
-            let live = perp_position_live(market, &watched.trader, &index, &buffer)?;
-            let position = match (live, account) {
-                (Some(position), _) => position.size,
-                (None, Some(data)) => perp_position(market, data)?.size,
-                // Not onboarded yet: it holds nothing.
-                (None, None) => 0.0,
-            };
+        let authorities: Vec<Pubkey> = self.watched.iter().map(|w| w.authority).collect();
+        let positions = self.positions.read(venue, &self.symbol, &authorities)?;
+        for (watched, position) in self.watched.iter_mut().zip(positions) {
             if let Some(last) = watched.position {
                 watched.net_flow += position - last;
             }
@@ -171,17 +144,6 @@ impl Informed {
         }
         Ok(())
     }
-}
-
-/// Each arena account's data: every one must exist.
-fn arenas_of(accounts: &[Option<Vec<u8>>]) -> Result<Vec<&[u8]>, String> {
-    accounts
-        .iter()
-        .map(|a| {
-            a.as_deref()
-                .ok_or_else(|| "a trader arena account is missing".to_string())
-        })
-        .collect()
 }
 
 /// What the latent state tells: the informed wallets, as the session
@@ -192,6 +154,13 @@ struct Told {
     hit_rate: f64,
     reopen_keep: f64,
     open_residual_sd_pct: f64,
+    /// When an informed wallet trades at all: from `horizon_slots` before
+    /// the reopen, while the gap it sees (off by a normal `view_noise_bps`)
+    /// is past `edge_bps`, about `orders_per_wallet` orders over the stretch.
+    horizon_slots: f64,
+    edge_bps: f64,
+    view_noise_bps: f64,
+    orders_per_wallet: f64,
 }
 
 impl Told {
@@ -229,51 +198,57 @@ impl Told {
             hit_rate,
             reopen_keep: number("reopen_keep")?,
             open_residual_sd_pct: number("open_residual_sd_pct")?,
+            horizon_slots: number("horizon_slots")?,
+            edge_bps: number("edge_bps")?,
+            view_noise_bps: number("view_noise_bps")?,
+            orders_per_wallet: number("orders_per_wallet")?,
         })
     }
 
-    /// The gap it expects, in percent: the reopen's process for the prior
-    /// (normal, around what the weekend's move says, give or take the
-    /// residual), the votes' odds for whether it opens up or down, and the
-    /// mean of the prior on that side.
-    fn expected_gap_pct(&self, weekend_pct: f64, votes: f64) -> f64 {
+    /// The gap it expects, in percent: the posterior mean over a grid of
+    /// gaps, from the reopen's prior (normal, around `(keep - 1) × weekend`,
+    /// give or take the residual) and each informed wallet's record so far
+    /// (`votes`: +1 bought, -1 sold, 0 silent), `elapsed_slots` into its
+    /// stretch. A wallet trades only while the gap it sees is past its edge,
+    /// so silence is evidence too: of a gap too small to trade, or of no
+    /// order drawn yet.
+    fn expected_gap_pct(&self, weekend_pct: f64, votes: &[f64], elapsed_slots: f64) -> f64 {
+        assert!(votes.len() <= WALLETS_MAX && elapsed_slots >= 0.0);
         let mean = (self.reopen_keep - 1.0) * weekend_pct;
         let sd = self.open_residual_sd_pct;
-        assert!(sd > 0.0 && votes.abs() <= WALLETS_MAX as f64);
-        let z = mean / sd;
-        let up = normal_cdf(z).clamp(1e-9, 1.0 - 1e-9);
-        let density = normal_pdf(z);
-        let mean_up = mean + sd * density / up;
-        let mean_down = mean - sd * density / (1.0 - up);
-        let odds = (self.hit_rate / (1.0 - self.hit_rate)).ln();
-        let logit = (up / (1.0 - up)).ln() + votes * odds;
-        let posterior_up = 1.0 / (1.0 + (-logit).exp());
-        let expected = posterior_up * mean_up + (1.0 - posterior_up) * mean_down;
+        let elapsed = elapsed_slots.min(self.horizon_slots);
+        let none_drawn = (-self.orders_per_wallet * elapsed / self.horizon_slots).exp();
+        let (mut weight_sum, mut gap_sum) = (0.0_f64, 0.0_f64);
+        for k in 0..=GRID_POINTS {
+            let z = -GRID_SDS + 2.0 * GRID_SDS * k as f64 / GRID_POINTS as f64;
+            let gap_pct = mean + sd * z;
+            let mut weight = (-0.5 * z * z).exp();
+            let gap_bps = gap_pct * 100.0;
+            let up = normal_cdf((gap_bps - self.edge_bps) / self.view_noise_bps);
+            let down = normal_cdf((-gap_bps - self.edge_bps) / self.view_noise_bps);
+            for vote in votes {
+                weight *= if *vote > 0.0 {
+                    (1.0 - none_drawn) * (up * self.hit_rate + down * (1.0 - self.hit_rate))
+                } else if *vote < 0.0 {
+                    (1.0 - none_drawn) * (down * self.hit_rate + up * (1.0 - self.hit_rate))
+                } else {
+                    (1.0 - up - down) + (up + down) * none_drawn
+                };
+            }
+            weight_sum += weight;
+            gap_sum += weight * gap_pct;
+        }
+        assert!(weight_sum > 0.0);
+        let expected = gap_sum / weight_sum;
         assert!(expected.is_finite());
         expected
     }
 }
 
-fn normal_pdf(z: f64) -> f64 {
-    (-0.5 * z * z).exp() / (2.0 * std::f64::consts::PI).sqrt()
-}
-
-/// The standard normal's distribution function, through Abramowitz and
-/// Stegun's 7.1.26 for the error function (error under 1.5e-7).
-fn normal_cdf(z: f64) -> f64 {
-    let x = z.abs() / std::f64::consts::SQRT_2;
-    let t = 1.0 / (1.0 + 0.327_591_1 * x);
-    let poly = t
-        * (0.254_829_592
-            + t * (-0.284_496_736
-                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
-    let erf = 1.0 - poly * (-x * x).exp();
-    if z >= 0.0 {
-        0.5 * (1.0 + erf)
-    } else {
-        0.5 * (1.0 - erf)
-    }
-}
+/// The posterior's grid: this many intervals over this many standard
+/// deviations of the prior either side.
+const GRID_POINTS: u32 = 240;
+const GRID_SDS: f64 = 6.0;
 
 #[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Informed);
@@ -289,6 +264,10 @@ mod tests {
             hit_rate: 0.8,
             reopen_keep: 0.78,
             open_residual_sd_pct: 0.5,
+            horizon_slots: 40.0,
+            edge_bps: 10.0,
+            view_noise_bps: 10.0,
+            orders_per_wallet: 3.0,
         }
     }
 
@@ -297,7 +276,8 @@ mod tests {
         let key = Pubkey::new_unique();
         let parsed = Told::from_regime(&format!(
             r#"{{"wallets": {{"informed": ["{key}"]}}, "hit_rate": 0.8, "reopen_keep": 0.78,
-                "open_residual_sd_pct": 0.5, "horizon_slots": 40}}"#
+                "open_residual_sd_pct": 0.5, "horizon_slots": 40,
+                "edge_bps": 10.0, "view_noise_bps": 10.0, "orders_per_wallet": 3.0}}"#
         ))
         .unwrap();
         assert_eq!(parsed.wallets, vec![key]);
@@ -312,12 +292,13 @@ mod tests {
     }
 
     #[test]
-    fn without_votes_it_expects_what_the_reference_does() {
+    fn with_no_record_yet_it_expects_what_the_reference_does() {
         let told = told();
         for weekend in [-2.0, -0.5, 0.3, 1.0, 2.5] {
-            let expected = told.expected_gap_pct(weekend, 0.0);
+            // Before the stretch, no wallet has had a chance to trade.
+            let expected = told.expected_gap_pct(weekend, &[0.0, 0.0], 0.0);
             assert!(
-                (expected - expected_gap_pct(weekend)).abs() < 1e-6,
+                (expected - expected_gap_pct(weekend)).abs() < 1e-3,
                 "{weekend}"
             );
         }
@@ -326,17 +307,21 @@ mod tests {
     #[test]
     fn votes_move_the_expected_gap_their_way() {
         let told = told();
-        let prior = told.expected_gap_pct(1.0, 0.0);
+        let prior = told.expected_gap_pct(1.0, &[0.0, 0.0], 0.0);
         assert!(prior < 0.0);
-        assert!(told.expected_gap_pct(1.0, 2.0) > 0.0);
-        assert!(told.expected_gap_pct(1.0, -2.0) < prior);
-        assert!(told.expected_gap_pct(1.0, 1.0) > prior);
+        assert!(told.expected_gap_pct(1.0, &[1.0, 1.0], 32.0) > 0.0);
+        assert!(told.expected_gap_pct(1.0, &[-1.0, -1.0], 32.0) < prior);
+        assert!(told.expected_gap_pct(1.0, &[1.0, 0.0], 32.0) > prior);
     }
 
+    /// Both informed wallets silent most of the way through their stretch:
+    /// the gap is most likely under their edge, so it expects little.
     #[test]
-    fn the_normal_distribution_is_right_to_a_few_decimals() {
-        assert!((normal_cdf(0.0) - 0.5).abs() < 1e-7);
-        assert!((normal_cdf(1.96) - 0.975).abs() < 1e-4);
-        assert!((normal_cdf(-1.0) - 0.158_655).abs() < 1e-5);
+    fn silence_late_in_the_stretch_says_the_gap_is_small() {
+        let told = told();
+        let prior = told.expected_gap_pct(2.0, &[0.0, 0.0], 0.0);
+        let silent = told.expected_gap_pct(2.0, &[0.0, 0.0], 32.0);
+        assert!(prior < -0.4, "{prior}");
+        assert!(silent.abs() < 0.15, "{silent}");
     }
 }
