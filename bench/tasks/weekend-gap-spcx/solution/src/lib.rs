@@ -15,7 +15,8 @@
 //!   the weekend's prints come from wallets it has seen all weekend. Their
 //!   positions, summed, are one vote on which way the reopen goes. It can't
 //!   tell the informed from the decoys, so it trusts the vote as one right
-//!   65% of the time: a hedge, not a fit.
+//!   60% of the time: a hedge, not a fit (at 65% it beat the informed bot
+//!   on one of six ladder sets).
 //!
 //! A few slots before the reopen, after the makers' last re-price, it takes
 //! the gap it then expects, sized by how big that is, and holds it through
@@ -42,7 +43,7 @@ const POSITIONING_SLOTS: u64 = 40;
 /// How often it takes the positioners' net flow to be right about the
 /// reopen's direction: the informed are right 80% of the time, but half the
 /// late wallets are decoys, and it can't tell which.
-const FLOW_HIT_RATE: f64 = 0.65;
+const FLOW_HIT_RATE: f64 = 0.6;
 /// A net position smaller than this, in SPCX, is no vote.
 const FLOW_MIN: f64 = 0.0005;
 
@@ -205,8 +206,9 @@ mod tests {
         assert_eq!(reference.decide(-2.0, 0.0), 70.0);
         // A quiet weekend: nothing worth the entry.
         assert_eq!(reference.decide(0.2, 0.0), 0.0);
-        // The positioners buying a flat weekend: a long.
-        assert!(reference.decide(0.0, 1.0) > 0.0);
+        // The positioners buying a small dip: a long it wouldn't take alone.
+        assert_eq!(reference.decide(-0.3, 0.0), 0.0);
+        assert!(reference.decide(-0.3, 1.0) > 0.0);
         // Selling into a fade: a bigger short.
         assert!(reference.decide(0.5, -1.0) < reference.decide(0.5, 0.0));
     }
