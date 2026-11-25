@@ -61,12 +61,11 @@ the scenario's price, not where trades pushed the book.
 
 ## Baselines
 
-On one fresh 72-session hidden set (2026-11-24, a local secret): the
-reference made $11,156 ($9,571 weighted as v2 weighs losses, Sharpe 0.46,
-no breach) and the informed bot $31,522 ($30,898 weighted, Sharpe 0.90):
-the reference is 0.31 of the informed bot, inside the strength band. On
-the 6 practice sessions, −$32.85 and $2,545.21. The full ladder hasn't run
-on 0.15.0's family yet.
+Not yet in the strength band: on 72 NVDA sessions (six 12-session draws,
+2026-11-25) the reference made $6,343 ($4,881 weighted as v2 weighs losses,
+Sharpe 0.33) and the informed bot $33,706 ($33,487 weighted): 0.15 of it,
+under the band's 0.2. DESIGN.md says why and what we'd change. On the 6
+practice sessions, −$311.87 and $3,317.95. The full ladder hasn't run.
 
 | Rung | What it is | Expected |
 | --- | --- | --- |
