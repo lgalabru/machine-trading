@@ -28,7 +28,7 @@ use mtx_core::mandate::Taking;
 
 use super::{Competition, Making, Reactive, round2, round3};
 use crate::{
-    actors::library::{self, Arbitrageur, Informed, Library, Noise, Scale},
+    actors::library::{self, Arbitrageur, IndexChaser, Informed, Library, Noise, Scale},
     obligations::Obligations,
     scenario::{Scenario, SplitMix64, VENUE, Waypoint, move_slots, shuffled},
 };
@@ -129,6 +129,11 @@ pub struct MarketProfile {
     /// The worst fill's distance from the mid, p90, bp, over the orders of
     /// $100 to $10k (`markets.<m>.impact`): how deep big orders reach.
     pub impact_p90_bps: f64,
+    /// The mid's volatility in US regular hours, bp a second: the sd of 60 s
+    /// returns of the tape's mid, over the root of 60 (measured for 0.15.0
+    /// by the study's rules; SPCX's 1.55 equals its calibration's
+    /// `per_second_sd`, which checks the method).
+    pub vol_bps_per_second: f64,
     /// The takers' markouts by size (`markets.<m>.markouts`), buckets with
     /// fewer than [`Bucket`]s of 30 orders left out.
     pub buckets: &'static [Bucket],
@@ -209,6 +214,7 @@ impl MarketProfile {
             order_usd_log_sd: 1.315,
             order_usd_p90: 3_483.1,
             same_side_next: 0.467,
+            vol_bps_per_second: 1.55,
             touch_half_spread_bps: 0.4,
             // 100-1000: 17.43, 1000-10000: 15.53.
             impact_p90_bps: 15.53,
@@ -226,6 +232,7 @@ impl MarketProfile {
             order_usd_log_sd: 1.522,
             order_usd_p90: 1_000.99,
             same_side_next: 0.562,
+            vol_bps_per_second: 4.45,
             touch_half_spread_bps: 2.7,
             // 100-1000: 11.42, 1000-10000: 16.54.
             impact_p90_bps: 16.54,
@@ -241,6 +248,18 @@ impl MarketProfile {
         self.buckets
             .iter()
             .map(|b| f64::from(b.orders) * b.markout_60s_bps)
+            .sum::<f64>()
+            / orders
+    }
+
+    /// The average taker's ten-second markout, bp, weighted as
+    /// [`MarketProfile::markout_60s_bps`].
+    pub fn markout_10s_bps(&self) -> f64 {
+        let orders: f64 = self.buckets.iter().map(|b| f64::from(b.orders)).sum();
+        assert!(orders > 0.0, "a profile has measured buckets");
+        self.buckets
+            .iter()
+            .map(|b| f64::from(b.orders) * b.markout_10s_bps)
             .sum::<f64>()
             / orders
     }
@@ -300,6 +319,20 @@ pub struct MeasuredFamily {
     pub informed_share: f64,
     pub informed_intensity: f64,
     pub informed_edge_bps: f64,
+    /// Index chasers (the public mechanism): the share of the orders that
+    /// takes the way the index has moved ahead of the book, past
+    /// `index_trigger_bps` (the measured touch: the gap must pay the cost to
+    /// cross), and their pace while the gap is open. Fitted with the
+    /// informed share to the profile's 10 s and 60 s markouts
+    /// ([`MeasuredFamily::fit_flow`]).
+    pub index_share: f64,
+    pub index_intensity: f64,
+    pub index_trigger_bps: f64,
+    pub index_wallets: u32,
+    /// How far the book (Phoenix's makers) lags the index, slots, drawn per
+    /// session: 1 to 2 s, as Binance leads Phoenix's SOL by about 0.5 s and
+    /// Coinbase by 0.25 s, and the index by a second or two (luthor RFD 0001).
+    pub book_lead_slots: (u64, u64),
     pub informed_horizon_slots: u64,
     pub informed_hit_rate: f64,
     /// Informed orders are larger than noise by this: the profile's big
@@ -345,7 +378,12 @@ impl MeasuredFamily {
             calm_odds: 0.55,
             trend_odds: 0.39,
             duration: (480, 800),
-            step_vol_pct: (0.011, 0.034),
+            // SPCX's calibration, scaled by the profile's measured volatility
+            // over SPCX's (ANT: 4.45 / 1.55, 2.9x): ANT has no calibration.
+            step_vol_pct: (
+                round4(0.011 * profile.vol_bps_per_second / SPCX_VOL_BPS_PER_SECOND),
+                round4(0.034 * profile.vol_bps_per_second / SPCX_VOL_BPS_PER_SECOND),
+            ),
             step_gap: (3, 9),
             trend_drift_pct: (0.002, 0.006),
             jump_pct: (1.5, 4.2),
@@ -353,6 +391,11 @@ impl MeasuredFamily {
             informed_share: 0.0,
             informed_intensity: 0.0,
             informed_edge_bps: INFORMED_EDGE_BPS,
+            index_share: 0.0,
+            index_intensity: 0.0,
+            index_trigger_bps: round2(touch),
+            index_wallets: 4,
+            book_lead_slots: (4, 8),
             informed_horizon_slots: 240,
             informed_hit_rate: 0.85,
             informed_size_mult: 1.5,
@@ -375,22 +418,28 @@ impl MeasuredFamily {
             market,
             profile,
         };
-        let (share, active) = family.fit_informed();
-        family.informed_share = share;
-        family.informed_intensity = round3(share / active);
+        let fit = family.fit_flow();
+        family.informed_share = fit.informed_share;
+        family.informed_intensity = round3(fit.informed_share / fit.informed_active);
+        family.index_share = fit.index_share;
+        family.index_intensity = round3(fit.index_share / fit.index_active.max(f64::MIN_POSITIVE));
         family
     }
 
-    /// The informed share of orders that gives the profile's average
-    /// one-minute markout, and the share of the time an informed wallet
-    /// trades: on calm paths of this family (the tape's SPCX had no jump),
-    /// an informed order's markout is `(2 h - 1)` times the move it saw
-    /// ahead, and it trades only while that move is past its edge. Noise's
-    /// markout is 0. Clamped to [0.05, 0.9] so neither kind vanishes.
-    fn fit_informed(&self) -> (f64, f64) {
-        let (mut seen_bps, mut active, mut slots) = (0.0, 0u64, 0u64);
+    /// The informed and index-chasing shares of the orders that give the
+    /// profile's average 10 s and 60 s markouts, against the book's mid as
+    /// the tape measures them, on calm paths of this family (the tape's ANT
+    /// had four jumps in three days, SPCX none). An index chaser's markout
+    /// is the gap it trades on, closed within the book's lag; an informed
+    /// trader's builds over its minute, `(2 h - 1)` times the move it saw.
+    /// Noise's is 0. Each share is clamped to [0, 0.9], and both to 0.95.
+    fn fit_flow(&self) -> Fit {
+        let mut informed = Tally::default();
+        let mut index = Tally::default();
         let mut drawn = 0u64;
         let mut seed = FIT_SEED;
+        let horizon = self.informed_horizon_slots;
+        let hit = 2.0 * self.informed_hit_rate - 1.0;
         while drawn < FIT_SESSIONS {
             seed += 1;
             assert!(
@@ -401,29 +450,62 @@ impl MeasuredFamily {
                 continue;
             }
             drawn += 1;
-            let mut rng = SplitMix64(seed);
-            let _ = rng.next_f64(); // The regime's draw, as `sample` takes it.
-            let duration = rng.range_u64(self.duration);
-            let path = self.path(&mut rng, MeasuredRegime::Calm, duration);
+            let (path, duration) = self.calm_path(seed);
+            let book = |t: u64| super::book_at(&path, t.min(duration));
+            let level = |t: u64| super::level_at(&path, t.min(duration));
             for slot in (0..duration).step_by(2) {
-                let ahead =
-                    super::level_at(&path, (slot + self.informed_horizon_slots).min(duration))
-                        - super::level_at(&path, slot);
-                let ahead_bps = (ahead * 100.0).abs();
-                slots += 1;
-                if ahead_bps > self.informed_edge_bps {
-                    active += 1;
-                    seen_bps += ahead_bps;
+                informed.slots += 1;
+                index.slots += 1;
+                let ahead_bps = (level(slot + horizon) - level(slot)) * 100.0;
+                if ahead_bps.abs() > self.informed_edge_bps {
+                    let side = ahead_bps.signum() * hit;
+                    informed.add(
+                        side * (book(slot + 40) - book(slot)) * 100.0,
+                        side * (book(slot + 240) - book(slot)) * 100.0,
+                    );
+                }
+                let gap_bps = (level(slot) - book(slot)) * 100.0;
+                if gap_bps.abs() > self.index_trigger_bps {
+                    let side = gap_bps.signum();
+                    index.add(
+                        side * (book(slot + 40) - book(slot)) * 100.0,
+                        side * (book(slot + 240) - book(slot)) * 100.0,
+                    );
                 }
             }
         }
-        assert!(
-            active > 0 && slots > 0,
-            "an informed wallet sees a move past its edge"
+        let (p10, p60) = informed.means();
+        let (g10, g60) = index.means();
+        let (m10, m60) = (
+            self.profile.markout_10s_bps(),
+            self.profile.markout_60s_bps(),
         );
-        let markout = (2.0 * self.informed_hit_rate - 1.0) * seen_bps / active as f64;
-        let share = (self.profile.markout_60s_bps() / markout).clamp(0.05, 0.9);
-        (round3(share), active as f64 / slots as f64)
+        // m10 = i g10 + s p10, m60 = i g60 + s p60.
+        let det = g10 * p60 - g60 * p10;
+        assert!(
+            det.abs() > 1e-9,
+            "the two mechanisms' markouts differ in shape"
+        );
+        let index_share = ((m10 * p60 - m60 * p10) / det).clamp(0.0, 0.9);
+        let informed_share = ((m60 - index_share * g60) / p60).clamp(0.0, 0.9);
+        let scale = (0.95 / (index_share + informed_share)).min(1.0);
+        Fit {
+            informed_share: round3(informed_share * scale),
+            informed_active: informed.active as f64 / informed.slots as f64,
+            index_share: round3(index_share * scale),
+            index_active: index.active as f64 / index.slots as f64,
+        }
+    }
+
+    /// The calm path `sample` draws from `seed`, and its duration.
+    fn calm_path(&self, seed: u64) -> (Vec<Waypoint>, u64) {
+        let mut rng = SplitMix64(seed);
+        let _ = rng.next_f64(); // The regime's draw, as `sample` takes it.
+        let duration = rng.range_u64(self.duration);
+        (
+            self.path(&mut rng, MeasuredRegime::Calm, duration).0,
+            duration,
+        )
     }
 
     /// ANT's measured market on Phoenix's ANT, at its own pace: the task's
@@ -457,7 +539,7 @@ impl MeasuredFamily {
         let mut rng = SplitMix64(seed);
         let regime = regime_of(rng.next_f64(), self.calm_odds, self.trend_odds);
         let duration = rng.range_u64(self.duration);
-        let path = self.path(&mut rng, regime, duration);
+        let (path, book_lead_slots) = self.path(&mut rng, regime, duration);
         let competitor_bps = round2(rng.range_f64(self.competitor_bps));
         let competition = Competition {
             floor_bps: round2((self.floor_share * competitor_bps).max(0.01)),
@@ -475,6 +557,9 @@ impl MeasuredFamily {
             informed_hit_rate: self.informed_hit_rate,
             informed_edge_bps: self.informed_edge_bps,
             orders_per_minute: round3(self.orders_per_minute()),
+            index_share: self.index_share,
+            index_trigger_bps: self.index_trigger_bps,
+            book_lead_slots,
             arbitrageur_latency_slots: rng.range_u64(self.arbitrageur_latency_slots),
             arbitrageur_edge_bps: round2(rng.range_f64(self.arbitrageur_edge_bps)),
         };
@@ -520,7 +605,7 @@ impl MeasuredFamily {
             },
             noise: vec![Noise {
                 wallets: self.noise_wallets,
-                flow_mult: round3(1.0 - self.informed_share),
+                flow_mult: round3(1.0 - self.informed_share - self.index_share),
                 size_mult: 1.0,
                 limit_bps: self.taker_limit_bps,
                 active: None,
@@ -536,11 +621,27 @@ impl MeasuredFamily {
                 limit_bps: self.taker_limit_bps,
                 active: None,
             }],
+            index_chasers: if self.index_share > 0.0 {
+                vec![IndexChaser {
+                    wallets: self.index_wallets,
+                    trigger_bps: self.index_trigger_bps,
+                    intensity_mult: self.index_intensity,
+                    size_mult: 1.0,
+                    limit_bps: self.taker_limit_bps,
+                    active: None,
+                }]
+            } else {
+                Vec::new()
+            },
             arbitrageur: Some(Arbitrageur {
                 latency_slots: shape.arbitrageur_latency_slots,
                 edge_bps: shape.arbitrageur_edge_bps,
                 size_mult: 1.0,
                 max_inventory_mult: 40.0,
+                // Its latency, from the index: a 1-slot arbitrageur looks right
+                // after the move, before the bot's turn; a 2-slot one a step
+                // later, after it. Mainnet's lead is 1 to 2 slots.
+                after_turn: shape.arbitrageur_latency_slots >= 2,
             }),
             ..Library::default()
         }
@@ -589,7 +690,14 @@ impl MeasuredFamily {
             .collect()
     }
 
-    fn path(&self, rng: &mut SplitMix64, regime: MeasuredRegime, duration: u64) -> Vec<Waypoint> {
+    /// A session's path, the book `lead` slots behind the index, and the lead.
+    fn path(
+        &self,
+        rng: &mut SplitMix64,
+        regime: MeasuredRegime,
+        duration: u64,
+    ) -> (Vec<Waypoint>, u64) {
+        let lead = rng.range_u64(self.book_lead_slots);
         let vol = rng.log_range_f64(self.step_vol_pct);
         let drift = match regime {
             MeasuredRegime::Trend => {
@@ -618,12 +726,14 @@ impl MeasuredFamily {
             };
             level = round3(level);
             path.push(Waypoint::at(slot, level));
-            // A jump can take more than one of Phoenix's steps: wait it out.
-            slot =
-                (slot + rng.range_u64(self.step_gap)).max(slot + move_slots(previous, level) + 1);
+            // A jump can take more than one of Phoenix's steps, for the
+            // index and then for the book behind it: wait them out.
+            let moving = move_slots(previous, level) + 1;
+            let wait = if moving > 2 { lead + moving } else { moving };
+            slot = (slot + rng.range_u64(self.step_gap)).max(slot + wait);
         }
         assert!(!path.is_empty(), "a session of {duration} slots walks");
-        path
+        (lag_book(&path, lead, duration), lead)
     }
 
     fn scenario(
@@ -716,6 +826,9 @@ pub struct MeasuredShape {
     pub informed_hit_rate: f64,
     pub informed_edge_bps: f64,
     pub orders_per_minute: f64,
+    pub index_share: f64,
+    pub index_trigger_bps: f64,
+    pub book_lead_slots: u64,
     pub arbitrageur_latency_slots: u64,
     pub arbitrageur_edge_bps: f64,
 }
@@ -727,13 +840,21 @@ impl MeasuredShape {
     /// pace, the arbitrageur's latency and edge). Never the path, a jump, or
     /// when anyone trades.
     pub fn latent(&self) -> serde_json::Value {
+        let roster: &[&str] = if self.index_share > 0.0 {
+            &["informed", "index-chaser", "arbitrageur"]
+        } else {
+            &["informed", "arbitrageur"]
+        };
         serde_json::json!({
-            crate::latent::ROSTER: ["informed", "arbitrageur"],
+            crate::latent::ROSTER: roster,
             "informed_share": self.informed_share,
             "informed_horizon_slots": self.informed_horizon_slots,
             "informed_hit_rate": self.informed_hit_rate,
             "informed_edge_bps": self.informed_edge_bps,
             "orders_per_minute": self.orders_per_minute,
+            "index_share": self.index_share,
+            "index_trigger_bps": self.index_trigger_bps,
+            "book_lead_slots": self.book_lead_slots,
             "arbitrageur_latency_slots": self.arbitrageur_latency_slots,
             "arbitrageur_edge_bps": self.arbitrageur_edge_bps,
         })
@@ -749,6 +870,76 @@ impl MeasuredShape {
     }
 }
 
+/// The path with the book `lead` slots behind the index: at each index
+/// move the makers stay where they were (a premium of the old level over
+/// the new), and `lead` slots later they catch up.
+fn lag_book(levels: &[Waypoint], lead: u64, duration: u64) -> Vec<Waypoint> {
+    assert!(levels.iter().all(|w| w.premium_pct == 0.0));
+    let mut slots: Vec<u64> = levels
+        .iter()
+        .flat_map(|w| [w.slot, w.slot + lead])
+        .filter(|s| *s + 4 < duration)
+        .collect();
+    slots.sort_unstable();
+    slots.dedup();
+    let path: Vec<Waypoint> = slots
+        .into_iter()
+        .map(|slot| {
+            let level = super::level_at(levels, slot);
+            let book = super::level_at(levels, slot.saturating_sub(lead));
+            let book = if slot < lead { 0.0 } else { book };
+            let premium = ((1.0 + book / 100.0) / (1.0 + level / 100.0) - 1.0) * 100.0;
+            Waypoint {
+                premium_pct: (premium * 1e6).round() / 1e6,
+                ..Waypoint::at(slot, level)
+            }
+        })
+        .collect();
+    assert!(path.windows(2).all(|w| w[0].slot < w[1].slot));
+    path
+}
+
+/// What [`MeasuredFamily::fit_flow`] finds: each mechanism's share of the
+/// orders and the share of the time it trades.
+struct Fit {
+    informed_share: f64,
+    informed_active: f64,
+    index_share: f64,
+    index_active: f64,
+}
+
+/// A mechanism's slots, the ones it trades in, and its markouts there.
+#[derive(Default)]
+struct Tally {
+    slots: u64,
+    active: u64,
+    markout_10s_bps: f64,
+    markout_60s_bps: f64,
+}
+
+impl Tally {
+    fn add(&mut self, markout_10s_bps: f64, markout_60s_bps: f64) {
+        self.active += 1;
+        self.markout_10s_bps += markout_10s_bps;
+        self.markout_60s_bps += markout_60s_bps;
+    }
+
+    fn means(&self) -> (f64, f64) {
+        assert!(self.active > 0, "a mechanism trades in some slots");
+        let n = self.active as f64;
+        (self.markout_10s_bps / n, self.markout_60s_bps / n)
+    }
+}
+
+fn round4(v: f64) -> f64 {
+    (v * 10_000.0).round() / 10_000.0
+}
+
+/// SPCX's regular-hours volatility, bp a second: the calibration's
+/// `per_second_sd` (`spcx.20261112.d1f48be2`), which the walk's step sizes
+/// are drawn from.
+const SPCX_VOL_BPS_PER_SECOND: f64 = 1.55;
+
 fn regime_of(draw: f64, calm_odds: f64, trend_odds: f64) -> MeasuredRegime {
     if draw < calm_odds {
         MeasuredRegime::Calm
@@ -759,41 +950,60 @@ fn regime_of(draw: f64, calm_odds: f64, trend_odds: f64) -> MeasuredRegime {
     }
 }
 
+/// One simulated taker order: its session's kind, its size in USD, and its
+/// markouts against the book's mid 10 s and 60 s on, bp.
+#[derive(Debug, Clone, Copy)]
+pub struct SimulatedOrder {
+    pub regime: MeasuredRegime,
+    pub usd: f64,
+    pub markout_10s_bps: f64,
+    pub markout_60s_bps: f64,
+}
+
 /// Simulated markouts, for the profile checks: draws `sessions` sessions'
-/// paths and flow by the library's rules (Poisson arrivals at the scale's
-/// pace, one view per informed wallet, held a horizon, right with the hit
-/// rate) and returns each order's (USD size, one-minute markout in bp).
-pub fn simulate_markouts(
-    family: &MeasuredFamily,
-    sessions: u64,
-    seed: u64,
-) -> Vec<(MeasuredRegime, f64, f64)> {
+/// paths and flow by the library's rules (arrivals at the scale's pace;
+/// noise either side; index chasers the way the index leads the book past
+/// their trigger; informed wallets one view each, held a horizon, right
+/// with the hit rate, past their edge) and marks each order out against the
+/// book's mid, as the tape does.
+pub fn simulate_markouts(family: &MeasuredFamily, sessions: u64, seed: u64) -> Vec<SimulatedOrder> {
     let mut out = Vec::new();
     let mut rng = SplitMix64(seed);
-    let per_slot = family.orders_per_minute() / SLOTS_PER_MINUTE;
+    let per_pair = 2.0 * family.orders_per_minute() / SLOTS_PER_MINUTE;
     let horizon = family.informed_horizon_slots;
     for n in 0..sessions {
         let (scenario, shape) = family.sample("sim", seed.wrapping_add(n));
-        let level = |slot: u64| super::level_at(&scenario.path, slot);
         let end = scenario.duration_slots;
+        let level = |slot: u64| super::level_at(&scenario.path, slot.min(end));
+        let book = |slot: u64| super::book_at(&scenario.path, slot.min(end));
         let mut views = vec![(0u64, false); family.informed_wallets as usize];
+        let mut push = |rng: &mut SplitMix64, slot: u64, side: f64, mult: f64| {
+            let usd = family.profile.order_usd_median
+                * mult
+                * (family.profile.order_usd_log_sd * rng.normal()).exp();
+            out.push(SimulatedOrder {
+                regime: shape.regime,
+                usd,
+                markout_10s_bps: side * (book(slot + 40) - book(slot)) * 100.0,
+                markout_60s_bps: side * (book(slot + 240) - book(slot)) * 100.0,
+            });
+        };
+        // Bernoulli per slot pair: the means are far under 1.
+        let arrives = |rng: &mut SplitMix64, mean: f64| rng.next_f64() < mean;
         for slot in (0..end).step_by(2) {
-            let arrivals = |rng: &mut SplitMix64, mean: f64| -> u32 {
-                // Bernoulli per slot pair: the means are far under 1.
-                u32::from(rng.next_f64() < mean)
-            };
-            let usd = |rng: &mut SplitMix64, mult: f64| {
-                family.profile.order_usd_median
-                    * mult
-                    * (family.profile.order_usd_log_sd * rng.normal()).exp()
-            };
-            let ahead = level((slot + horizon).min(end)) - level(slot);
-            let markout = |side: f64| side * ahead * 100.0;
-            for _ in 0..arrivals(&mut rng, 2.0 * per_slot * (1.0 - family.informed_share)) {
+            let noise = 1.0 - family.informed_share - family.index_share;
+            if arrives(&mut rng, per_pair * noise) {
                 let side = if rng.next_f64() < 0.5 { 1.0 } else { -1.0 };
-                out.push((shape.regime, usd(&mut rng, 1.0), markout(side)));
+                push(&mut rng, slot, side, 1.0);
             }
-            let wallets = views.len();
+            let gap_bps = (level(slot) - book(slot)) * 100.0;
+            if gap_bps.abs() > family.index_trigger_bps
+                && arrives(&mut rng, per_pair * family.index_intensity)
+            {
+                push(&mut rng, slot, gap_bps.signum(), 1.0);
+            }
+            let ahead = level(slot + horizon) - level(slot);
+            let wallets = views.len() as f64;
             for view in views.iter_mut() {
                 if slot >= view.0 {
                     *view = (slot + horizon, rng.next_f64() >= family.informed_hit_rate);
@@ -801,17 +1011,13 @@ pub fn simulate_markouts(
                 if (ahead * 100.0).abs() <= family.informed_edge_bps {
                     continue;
                 }
-                let mean = 2.0 * per_slot * family.informed_intensity / wallets as f64;
-                for _ in 0..arrivals(&mut rng, mean) {
-                    let right = if ahead > 0.0 { 1.0 } else { -1.0 };
-                    let side = if view.1 { -right } else { right };
-                    if ahead != 0.0 {
-                        out.push((
-                            shape.regime,
-                            usd(&mut rng, family.informed_size_mult),
-                            markout(side),
-                        ));
-                    }
+                if arrives(&mut rng, per_pair * family.informed_intensity / wallets) {
+                    let side = if view.1 {
+                        -ahead.signum()
+                    } else {
+                        ahead.signum()
+                    };
+                    push(&mut rng, slot, side, family.informed_size_mult);
                 }
             }
         }
@@ -871,7 +1077,9 @@ mod tests {
             "{per_session_minute}"
         );
         let noise = actors.noise[0].flow_mult;
-        assert!((noise + ant.informed_share - 1.0).abs() < 1e-9);
+        assert!((noise + ant.informed_share + ant.index_share - 1.0).abs() < 1e-3);
+        assert_eq!(actors.index_chasers.len(), 1);
+        assert_eq!(actors.index_chasers[0].trigger_bps, 2.7);
         // Informed wallets trade only while they see a move past their
         // edge, faster then, so their count share is the fitted one.
         assert_eq!(actors.informed[0].edge_bps, INFORMED_EDGE_BPS);
@@ -902,6 +1110,8 @@ mod tests {
                 let wallets = actors.wallets();
                 assert!(wallets.iter().any(|(r, _)| *r == "arbitrageur"));
                 assert_eq!(wallets.iter().filter(|(r, _)| *r == "informed").count(), 4);
+                let chasers = wallets.iter().filter(|(r, _)| *r == "index-chaser").count();
+                assert_eq!(chasers > 0, family.index_share > 0.0);
             }
         }
     }
@@ -958,35 +1168,72 @@ mod tests {
         }
     }
 
-    /// The average taker's one-minute markout comes out near the profile's,
-    /// and the big ones are the more informed.
+    /// The average taker's 10 s and 60 s markouts against the book come out
+    /// near the profile's on calm sessions, and the big orders are the more
+    /// informed.
     #[test]
     fn simulated_markouts_match_the_profile() {
         for family in [MeasuredFamily::spcx(), MeasuredFamily::ant()] {
-            let orders: Vec<(f64, f64)> = simulate_markouts(&family, 2_000, 17)
+            let orders: Vec<SimulatedOrder> = simulate_markouts(&family, 2_000, 17)
                 .into_iter()
-                .filter(|o| o.0 == MeasuredRegime::Calm)
-                .map(|o| (o.1, o.2))
+                .filter(|o| o.regime == MeasuredRegime::Calm)
                 .collect();
-            let all = mean(orders.iter().map(|o| o.1));
+            let m10 = mean(orders.iter().map(|o| o.markout_10s_bps));
+            let m60 = mean(orders.iter().map(|o| o.markout_60s_bps));
+            let (t10, t60) = (
+                family.profile.markout_10s_bps(),
+                family.profile.markout_60s_bps(),
+            );
             eprintln!(
-                "{}: calm {all:.2} bp, informed share {}, intensity {}",
-                family.profile.market, family.informed_share, family.informed_intensity
+                "{}: 10 s {m10:.2} (target {t10:.2}), 60 s {m60:.2} (target {t60:.2}); informed {}, index {}",
+                family.profile.market, family.informed_share, family.index_share
             );
-            let target = family.profile.markout_60s_bps();
+            let market = family.profile.market;
             assert!(
-                (all - target).abs() < 0.6 + 0.25 * target,
-                "{}: {all:.2} bp against {target:.2}",
-                family.profile.market
+                (m60 - t60).abs() < 0.6 + 0.25 * t60.abs(),
+                "{market}: 60 s {m60:.2}"
             );
+            if family.index_share > 0.0 {
+                assert!(
+                    (m10 - t10).abs() < 0.6 + 0.3 * t10.abs(),
+                    "{market}: 10 s {m10:.2}"
+                );
+            }
             let median = family.profile.order_usd_median;
-            let small = mean(orders.iter().filter(|o| o.0 < median).map(|o| o.1));
-            let big = mean(orders.iter().filter(|o| o.0 >= 2.0 * median).map(|o| o.1));
-            assert!(
-                big > small,
-                "{}: big {big:.2}, small {small:.2}",
-                family.profile.market
+            let small = mean(
+                orders
+                    .iter()
+                    .filter(|o| o.usd < median)
+                    .map(|o| o.markout_60s_bps),
             );
+            let big = mean(
+                orders
+                    .iter()
+                    .filter(|o| o.usd >= 2.0 * median)
+                    .map(|o| o.markout_60s_bps),
+            );
+            assert!(big > small, "{market}: big {big:.2}, small {small:.2}");
+        }
+    }
+
+    #[test]
+    fn the_book_lags_the_index_by_one_to_two_seconds() {
+        for seed in 0..20 {
+            let (s, shape) = MeasuredFamily::ant().sample("s", seed);
+            assert!((4..=8).contains(&shape.book_lead_slots));
+            let lead = shape.book_lead_slots;
+            for w in s
+                .path
+                .iter()
+                .filter(|w| w.premium_pct == 0.0 && w.slot > lead)
+            {
+                // Where the book has caught up, it is where the index was
+                // `lead` slots before.
+                let before = super::super::level_at(&s.path, w.slot - lead);
+                assert!((w.book_pct() - before).abs() < 1e-3 || w.level_pct == before);
+            }
+            let leads = s.path.iter().filter(|w| w.premium_pct != 0.0).count();
+            assert!(leads > 0, "the index moves first");
         }
     }
 
@@ -994,9 +1241,16 @@ mod tests {
     fn the_latent_state_names_the_informed_and_the_arbitrageur_and_no_draw() {
         let (_, shape) = MeasuredFamily::spcx().sample("s", 1);
         let latent = shape.latent();
+        // SPCX's flow has no index chasers: the roster names only kinds the
+        // session seats.
         assert_eq!(
             latent["roster"],
             serde_json::json!(["informed", "arbitrageur"])
+        );
+        let (_, shape) = MeasuredFamily::ant().sample("s", 1);
+        assert_eq!(
+            shape.latent()["roster"],
+            serde_json::json!(["informed", "index-chaser", "arbitrageur"])
         );
         let text = latent.to_string();
         for draw in ["jump", "slot\"", "path", "trend", "regime"] {

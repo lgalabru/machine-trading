@@ -440,6 +440,21 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ),
     (
         "market-making-measured-spcx",
+        "index_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "index_trigger_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "book_lead_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
         "orders_per_minute",
         Knowable::Process,
     ),
@@ -461,6 +476,9 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ),
     ("market-making-ant", "informed_hit_rate", Knowable::Process),
     ("market-making-ant", "informed_edge_bps", Knowable::Process),
+    ("market-making-ant", "index_share", Knowable::Process),
+    ("market-making-ant", "index_trigger_bps", Knowable::Process),
+    ("market-making-ant", "book_lead_slots", Knowable::Process),
     ("market-making-ant", "orders_per_minute", Knowable::Process),
     (
         "market-making-ant",
