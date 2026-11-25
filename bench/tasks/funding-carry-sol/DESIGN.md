@@ -146,6 +146,8 @@ trading costs.
   risk as v2 weighs losses, and holds up to the full cap. It never sees the
   path, the premium as it will wander, or an order.
 
+Frozen for 0.15.0 (SHA-256 of `src/lib.rs` then `src/main.rs`, first 16 hex): the reference `6d0a78b29bfde215`, the informed bot `0aaab64daf9ad468`.
+
 The latent fields are all process facts (`LATENT_FIELDS`,
 `funding-carry-sol`): `premium_mean_bps`, `premium_sd_bps`,
 `premium_half_life_slots`, `funding`, `orders_per_minute`,
@@ -167,4 +169,4 @@ until `bench/checks/probes/calibrate.py` is run on this task.
 
 | Version | What happened | What changed |
 | --- | --- | --- |
-| 0.15.0 | Built on `release/0.15.0-funding-carry`. Engine checks on this machine (macOS, the 96-market snapshot): a 1,610-slot flat session at a 3 bp premium paid a 125 SOL short +$14.57 against -$25.67 at no premium, so Phoenix's funding paid $40.24 (the formula's $50, less what the bot's own walk took off the book's premium while it lasted); 0 of 221 pinger orders failed; the library's takers and the arbitrageur traded (9 takes in 1,573 slots on an off-hours session). See the README for the anchors' numbers | New task: SOL, measured. The scripted crowded and informed episodes of `funding-carry-spcx` are gone: SOL's realised premium never came near them |
+| 0.15.0 | Built on `release/0.15.0-funding-carry`. Engine checks on this machine (macOS, the 96-market snapshot): a 1,610-slot flat session at a 3 bp premium paid a 125 SOL short +$14.57 against -$25.67 at no premium, so Phoenix's funding paid $40.24 (the formula's $50, less what the bot's own walk took off the book's premium while it lasted); 0 of 221 pinger orders failed; the library's takers and the arbitrageur traded (9 takes in 1,573 slots on an off-hours session). Anchors on one development set (`mtx grade --draw funding-carry-sol --count 12`, a throwaway secret, v2 sessions): reference +$57.64 (7 of 12 sessions up, per-session Sharpe 0.38), informed +$143.15 (Sharpe 0.49); weighted as v2 weighs losses, 43.75 against 119.79, so the reference is 0.37 of the informed bot, inside the 0.2-0.7 band; doing nothing $0. Twelve sessions: the ladder's four sets of 72 decide. Grading on this machine was flaky while other worktrees graded at once (surfnets unreachable mid-session, `RPC port … is already in use`): most runs past the first ~40 sessions failed before finishing, including a plain SPCX control | New task: SOL, measured. The scripted crowded and informed episodes of `funding-carry-spcx` are gone: SOL's realised premium never came near them |

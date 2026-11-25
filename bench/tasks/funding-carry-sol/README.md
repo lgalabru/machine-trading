@@ -66,9 +66,12 @@ than a tenth of the pinger's orders fail voids the grade.
 
 ## Baselines
 
-To be measured before release with `just ladder funding-carry-sol` and
-`mtx gates funding-carry-sol`. The anchors' numbers on development sets
-are in DESIGN.md's generations table.
+On one development set of 12 sessions (a throwaway secret, v2
+sessions): the reference made +$57.64 (per-session Sharpe 0.38), the
+informed bot +$143.15; weighted as v2 weighs losses the reference is 0.37
+of the informed bot. Doing nothing makes $0. The ladder
+(`just ladder funding-carry-sol`) and `mtx gates funding-carry-sol` are
+still to run on a machine that can hold them.
 
 ## Realism limits
 
