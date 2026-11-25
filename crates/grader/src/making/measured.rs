@@ -33,8 +33,11 @@ use crate::{
     scenario::{Scenario, SplitMix64, VENUE, Waypoint, move_slots, shuffled},
 };
 
-/// The tape study every profile number comes from.
-pub const STUDY: &str = "phoenix-tape.20261125.fc443f1e";
+/// The tape study every profile number comes from: the tape of
+/// `phoenix-tape.20261125.fc443f1e` (the same 543,438 rows, exported again),
+/// studied with CBRS's markouts and impact too (`--markets CBRS,SPCX,ANT`);
+/// its SPCX and ANT numbers equal the first study's.
+pub const STUDY: &str = "phoenix-tape.20261125.3cb49758";
 
 /// Luthor's top-of-book reads of the touch's half-spread, on mtx-alpha
 /// (`history.sqlite`, table `quotes`), from 2026-11-25 ~01:40 UTC: ANT
@@ -67,6 +70,18 @@ impl SnapshotMarket {
             mark_usd: 79.99,
             tick_usd: 0.01,
             max_position: 35.0,
+        }
+    }
+
+    /// Phoenix's CBRS, the Cerebras perp (`snapshots/phoenix-cbrs-2026-11-25`,
+    /// cross-margin): $84.37, a $0.01 tick (1.19 bp), and a cap of 33 CBRS,
+    /// about $2,800, the 0.3x of collateral the others' caps are.
+    pub fn cbrs() -> Self {
+        Self {
+            symbol: "CBRS",
+            mark_usd: 84.37,
+            tick_usd: 0.01,
+            max_position: 33.0,
         }
     }
 
@@ -134,6 +149,11 @@ pub struct MarketProfile {
     /// by the study's rules; SPCX's 1.55 equals its calibration's
     /// `per_second_sd`, which checks the method).
     pub vol_bps_per_second: f64,
+    /// The pinger: a bot that prints a few dollars about once a minute on
+    /// every Phoenix market, uninformed (the study leaves orders under $5
+    /// out of the flow). Its prints a minute and their size in USD.
+    pub pinger_per_minute: f64,
+    pub pinger_usd: f64,
     /// The takers' markouts by size (`markets.<m>.markouts`), buckets with
     /// fewer than [`Bucket`]s of 30 orders left out.
     pub buckets: &'static [Bucket],
@@ -164,6 +184,34 @@ const SPCX_BUCKETS: &[Bucket] = &[
         paid_bps: -2.097,
         markout_10s_bps: -0.537,
         markout_60s_bps: 0.779,
+    },
+];
+
+/// CBRS's buckets: $10k+ held no order.
+const CBRS_BUCKETS: &[Bucket] = &[
+    Bucket {
+        usd_low: 5.0,
+        usd_high: 100.0,
+        orders: 47,
+        paid_bps: -2.694,
+        markout_10s_bps: -4.193,
+        markout_60s_bps: -2.634,
+    },
+    Bucket {
+        usd_low: 100.0,
+        usd_high: 1_000.0,
+        orders: 109,
+        paid_bps: -6.328,
+        markout_10s_bps: -3.196,
+        markout_60s_bps: -9.978,
+    },
+    Bucket {
+        usd_low: 1_000.0,
+        usd_high: 10_000.0,
+        orders: 12,
+        paid_bps: 12.508,
+        markout_10s_bps: 16.663,
+        markout_60s_bps: -5.024,
     },
 ];
 
@@ -215,6 +263,8 @@ impl MarketProfile {
             order_usd_p90: 3_483.1,
             same_side_next: 0.467,
             vol_bps_per_second: 1.55,
+            pinger_per_minute: 0.0,
+            pinger_usd: 3.0,
             touch_half_spread_bps: 0.4,
             // 100-1000: 17.43, 1000-10000: 15.53.
             impact_p90_bps: 15.53,
@@ -233,10 +283,37 @@ impl MarketProfile {
             order_usd_p90: 1_000.99,
             same_side_next: 0.562,
             vol_bps_per_second: 4.45,
+            pinger_per_minute: 0.0,
+            pinger_usd: 3.0,
             touch_half_spread_bps: 2.7,
             // 100-1000: 11.42, 1000-10000: 16.54.
             impact_p90_bps: 16.54,
             buckets: ANT_BUCKETS,
+        }
+    }
+
+    /// CBRS, the Cerebras perp, measured ([`STUDY`], `markets.CBRS`; touch
+    /// from 4.8 hours of luthor's quotes; volatility from 60 s returns of the
+    /// tape's mid, regular hours, an upper bound: the wide book's mid bounces
+    /// between prints, robust sd 2.05). A thin, wide book: 96% of its orders
+    /// are the pinger's. Its other orders are nearly one size (median $298,
+    /// p90 $308: another bot, most likely), and its takers lose: a minute
+    /// on, the mid has moved 7.6 bp against them on average.
+    pub fn cbrs() -> Self {
+        Self {
+            market: "CBRS",
+            orders_per_minute: 0.1846,
+            order_usd_median: 298.27,
+            order_usd_log_sd: 1.295,
+            order_usd_p90: 308.23,
+            same_side_next: 0.608,
+            vol_bps_per_second: 3.44,
+            pinger_per_minute: 1.0,
+            pinger_usd: 3.0,
+            touch_half_spread_bps: 13.9,
+            // 5-100: 28.87, 100-1000: 30.07 (1000-10000: 99.79, 12 orders).
+            impact_p90_bps: 30.07,
+            buckets: CBRS_BUCKETS,
         }
     }
 
@@ -420,7 +497,8 @@ impl MeasuredFamily {
         };
         let fit = family.fit_flow();
         family.informed_share = fit.informed_share;
-        family.informed_intensity = round3(fit.informed_share / fit.informed_active);
+        family.informed_intensity =
+            round3(fit.informed_share / fit.informed_active.max(f64::MIN_POSITIVE));
         family.index_share = fit.index_share;
         family.index_intensity = round3(fit.index_share / fit.index_active.max(f64::MIN_POSITIVE));
         family
@@ -508,8 +586,23 @@ impl MeasuredFamily {
         )
     }
 
-    /// ANT's measured market on Phoenix's ANT, at its own pace: the task's
-    /// (`market-making-ant`).
+    /// CBRS's measured market on Phoenix's CBRS: the task's
+    /// (`market-making-cbrs`). Its flow is thin (0.18 orders a minute in
+    /// regular hours), so sessions run twice as long (4 to 6.7 minutes) and
+    /// the flow is [`CBRS_FLOW_MULT`] times the measured (stated).
+    pub fn cbrs() -> Self {
+        let mut family = Self::new(
+            MarketProfile::cbrs(),
+            CBRS_FLOW_MULT,
+            SnapshotMarket::cbrs(),
+        );
+        family.duration = (960, 1600);
+        family
+    }
+
+    /// ANT's measured market on Phoenix's ANT, at its own pace: the profile
+    /// the task was drawn on before the owner moved it to CBRS, kept to
+    /// compare.
     pub fn ant() -> Self {
         Self::new(MarketProfile::ant(), 1.0, SnapshotMarket::ant())
     }
@@ -603,24 +696,22 @@ impl MeasuredFamily {
                 trade_size: round3(self.profile.order_size(&self.market)),
                 trade_size_sigma: self.profile.order_usd_log_sd,
             },
-            noise: vec![Noise {
-                wallets: self.noise_wallets,
-                flow_mult: round3(1.0 - self.informed_share - self.index_share),
-                size_mult: 1.0,
-                limit_bps: self.taker_limit_bps,
-                active: None,
-            }],
-            informed: vec![Informed {
-                wallets: self.informed_wallets,
-                horizon_slots: self.informed_horizon_slots,
-                edge_bps: self.informed_edge_bps,
-                hit_rate: self.informed_hit_rate,
-                view_noise_bps: 0.0,
-                intensity_mult: self.informed_intensity,
-                size_mult: self.informed_size_mult,
-                limit_bps: self.taker_limit_bps,
-                active: None,
-            }],
+            noise: self.noise(),
+            informed: if self.informed_share > 0.0 {
+                vec![Informed {
+                    wallets: self.informed_wallets,
+                    horizon_slots: self.informed_horizon_slots,
+                    edge_bps: self.informed_edge_bps,
+                    hit_rate: self.informed_hit_rate,
+                    view_noise_bps: 0.0,
+                    intensity_mult: self.informed_intensity,
+                    size_mult: self.informed_size_mult,
+                    limit_bps: self.taker_limit_bps,
+                    active: None,
+                }]
+            } else {
+                Vec::new()
+            },
             index_chasers: if self.index_share > 0.0 {
                 vec![IndexChaser {
                     wallets: self.index_wallets,
@@ -645,6 +736,29 @@ impl MeasuredFamily {
             }),
             ..Library::default()
         }
+    }
+
+    /// The noise takers, and the pinger where the profile has one: its own
+    /// wallet, its measured prints a minute (not multiplied: one bot), its
+    /// few dollars a print.
+    fn noise(&self) -> Vec<Noise> {
+        let mut noise = vec![Noise {
+            wallets: self.noise_wallets,
+            flow_mult: round3(1.0 - self.informed_share - self.index_share),
+            size_mult: 1.0,
+            limit_bps: self.taker_limit_bps,
+            active: None,
+        }];
+        if self.profile.pinger_per_minute > 0.0 {
+            noise.push(Noise {
+                wallets: 1,
+                flow_mult: round4(self.profile.pinger_per_minute / self.orders_per_minute()),
+                size_mult: round4(self.profile.pinger_usd / self.profile.order_usd_median),
+                limit_bps: self.taker_limit_bps,
+                active: None,
+            });
+        }
+        noise
     }
 
     /// `count` sessions named `<prefix>-<n>`, each kind in proportion to its
@@ -807,6 +921,11 @@ impl MeasuredFamily {
 /// hold one.
 pub const SPCX_FLOW_MULT: f64 = 35.0;
 
+/// Stated departure: CBRS's 0.185 orders a minute times 30 is 5.5 a minute,
+/// about 30 orders in a session of 4 to 6.7 minutes. At its own pace a
+/// session would hold one.
+pub const CBRS_FLOW_MULT: f64 = 30.0;
+
 /// The move an informed wallet must see before it trades, bp: Phoenix's
 /// 3.5 bp taker fee (`venues.phoenix_perp.taker_fee`) in and out.
 pub const INFORMED_EDGE_BPS: f64 = 7.0;
@@ -840,11 +959,14 @@ impl MeasuredShape {
     /// pace, the arbitrageur's latency and edge). Never the path, a jump, or
     /// when anyone trades.
     pub fn latent(&self) -> serde_json::Value {
-        let roster: &[&str] = if self.index_share > 0.0 {
-            &["informed", "index-chaser", "arbitrageur"]
-        } else {
-            &["informed", "arbitrageur"]
-        };
+        let mut roster = Vec::new();
+        if self.informed_share > 0.0 {
+            roster.push("informed");
+        }
+        if self.index_share > 0.0 {
+            roster.push("index-chaser");
+        }
+        roster.push("arbitrageur");
         serde_json::json!({
             crate::latent::ROSTER: roster,
             "informed_share": self.informed_share,
@@ -1213,6 +1335,41 @@ mod tests {
                     .map(|o| o.markout_60s_bps),
             );
             assert!(big > small, "{market}: big {big:.2}, small {small:.2}");
+        }
+    }
+
+    /// CBRS's takers lose on average (the mid moves against them): no
+    /// mechanism that knows something fits, so its flow is noise and the
+    /// pinger, and the arbitrageur picks off what a move leaves behind.
+    #[test]
+    fn cbrs_is_a_thin_wide_book_of_uninformed_takers() {
+        let family = MeasuredFamily::cbrs();
+        assert!(family.profile.markout_60s_bps() < -7.0);
+        assert_eq!(family.informed_share, 0.0);
+        assert_eq!(family.index_share, 0.0);
+        assert_eq!(family.duration, (960, 1600));
+        assert!((family.orders_per_minute() - 5.538).abs() < 1e-3);
+        for seed in 0..10 {
+            let (s, shape) = family.sample("s", seed);
+            s.validate().unwrap();
+            assert_eq!(s.symbol, "CBRS");
+            assert_eq!(s.mandate.universe[0].max_position, 33.0);
+            let actors = s.actors.as_ref().unwrap();
+            actors.validate().unwrap();
+            assert!(actors.informed.is_empty() && actors.index_chasers.is_empty());
+            // The noise takers, and the pinger: about one $3 print a minute.
+            assert_eq!(actors.noise.len(), 2);
+            let pinger = &actors.noise[1];
+            let per_minute = actors.scale.per_slot() * SLOTS_PER_MINUTE * pinger.flow_mult;
+            assert!((per_minute - 1.0).abs() < 0.01, "{per_minute}");
+            assert!((actors.scale.trade_size * 84.37 * pinger.size_mult - 3.0).abs() < 0.05);
+            let m = s.making.unwrap();
+            assert!(
+                m.competitor_bps >= 10.0 && m.competitor_bps <= 18.1,
+                "{}",
+                m.competitor_bps
+            );
+            assert_eq!(shape.latent()["roster"], serde_json::json!(["arbitrageur"]));
         }
     }
 

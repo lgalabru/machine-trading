@@ -8,6 +8,6 @@ flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/referen
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 liquidation-flash mtx-bot-liquidation-flash mtx-liquidation-flash bench/tasks/liquidation-flash/reference component
 liquidation-flash-informed mtx-bot-liquidation-flash-informed mtx-liquidation-flash-informed bench/tasks/liquidation-flash/checks/bots/informed component
-market-making-ant mtx-bot-maker mtx-maker bench/tasks/market-making-ant/reference component
-market-making-ant-informed mtx-bot-market-making-informed mtx-market-making-informed bench/tasks/market-making-ant/checks/bots/informed component
+market-making-cbrs mtx-bot-maker mtx-maker bench/tasks/market-making-cbrs/reference component
+market-making-cbrs-informed mtx-bot-market-making-informed mtx-market-making-informed bench/tasks/market-making-cbrs/checks/bots/informed component
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
