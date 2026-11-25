@@ -20,6 +20,7 @@
 //! It knows who is informed and how they trade, never the path, a jump, or
 //! when anyone will trade: what it reads is what they already did.
 
+mod markouts;
 mod tape;
 
 use std::collections::VecDeque;
@@ -36,6 +37,21 @@ const DRIFT_WEIGHT: f64 = 0.5;
 const DRIFT_SLOTS: f64 = 80.0;
 const DRIFT_MAX_BPS: f64 = 5.0;
 const QUOTE_SIZE: f64 = 1.0;
+/// Its quote size once its fills have shown they aren't run over: after
+/// `MARKOUT_FILLS` fills whose 10 s markout (`MARKOUT_SLOTS`) averages no
+/// worse than `MARKOUT_FLOOR_BPS`.
+const LEARNED_QUOTE_SIZE: f64 = 2.0;
+const MARKOUT_FILLS: u32 = 10;
+const MARKOUT_SLOTS: u64 = 40;
+const MARKOUT_FLOOR_BPS: f64 = -2.0;
+
+/// Its quote size, from what its fills have earned so far.
+fn learned_size(markouts: &markouts::Markouts) -> f64 {
+    match markouts.mean_bps(MARKOUT_FILLS) {
+        Some(mean) if mean >= MARKOUT_FLOOR_BPS => LEARNED_QUOTE_SIZE,
+        _ => QUOTE_SIZE,
+    }
+}
 /// Its quote size when every taker is noise, base units.
 const UNINFORMED_QUOTE_SIZE: f64 = 3.0;
 const INVENTORY_LIMIT: f64 = 0.25;
@@ -77,6 +93,8 @@ pub struct Informed {
     half_spread_bps: f64,
     /// (slot, position) at each step of the toxic window.
     history: VecDeque<(u64, f64)>,
+    /// Its own fills' markouts, which set how much size it shows.
+    markouts: markouts::Markouts,
     toxic_until: u64,
     /// Which way the toxic fills took the inventory: +1 long, -1 short.
     toxic_side: f64,
@@ -94,6 +112,7 @@ pub struct Informed {
 impl Strategy for Informed {
     fn start(&mut self, session: &Session) -> BotResult {
         self.cap = session.mandate.universe[0].max_position;
+        self.markouts = markouts::Markouts::new(MARKOUT_SLOTS);
         self.half_spread_bps = competitor_half_spread_bps(session)?;
         let regime = session
             .var("MTX_REGIME")
@@ -110,6 +129,7 @@ impl Strategy for Informed {
 
     fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
         let (slot, mark, held, cap) = (market.slot, market.oracle, market.position.size, self.cap);
+        self.markouts.step(slot, held, mark);
         // It never takes, so its whole position came from its quotes' fills.
         self.history.push_back((slot, held));
         while self
@@ -156,7 +176,7 @@ impl Strategy for Informed {
         let half = self.half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
-        let size = self.flow.quote_size();
+        let size = self.flow.quote_size().max(learned_size(&self.markouts));
         let (bid_size, ask_size) = (size.min(cap - held), size.min(cap + held));
         let pulled = (informed_buying, informed_selling);
         let moved = self.pulled != pulled

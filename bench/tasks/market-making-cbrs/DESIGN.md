@@ -91,61 +91,54 @@ How the family turns them into a session:
 
 ## The central decision
 
-Where to quote and how much inventory to carry, against flow that is a
-little informed on average, an arbitrageur that takes stale quotes, and a
-competitor at the measured touch. The average taker gets back about what it
-paid within a minute, so a maker earns only by turning inventory over fast,
-quoting where it isn't picked off, and stepping out of the way of informed
-flow.
+Where to quote and how much to show, inside a wide spread, against takers
+who know nothing, an arbitrageur that takes quotes a move left stale, and a
+competitor at the measured touch. The spread pays (luthor's mainnet maker:
++7 bp a fill); the costs are inventory through moves and the quotes left
+behind when the index moves.
 
 ## Anchors
 
 - **Reference** (`reference/`): one tick inside the competing makers
-  around the oracle, a linear skew against inventory, a lean with the
-  drift, and a pause on a side after one-sided fills of its own or a
-  one-sided run on the tape (net taker volume over 40 slots past 4 ANT,
-  read from Phoenix's trade list in the market account, `reference/src/tape.rs`).
-  Never takes.
+  around the oracle (the index), a linear skew against inventory, a lean
+  with the drift; it steps off a side after one-sided fills of its own or a
+  one-sided run on the tape (net taker volume over 40 slots past three
+  typical trades, weighted by volume, from Phoenix's trade list in the
+  market account, `reference/src/tape.rs`), and it marks out its own fills
+  10 s on (`reference/src/markouts.rs`): after 10 fills whose markout
+  averages no worse than -2 bp it shows 2 units instead of 1. Never takes.
 - **Informed bot** (`checks/bots/informed/`): the reference, told the
-  latent state (`MTX_REGIME`: the informed and arbitrageur wallets, the
-  informed share, horizon, edge and hit rate, the flow's pace, the
-  arbitrageur's latency and edge). Each step it reads the informed wallets'
-  trader accounts (one `getMultipleAccounts`) and takes each position change
-  as a trade; a trade's side, weighted by what is left of its 240-slot
-  horizon and by `2 h - 1`, sums into a signal in [-1, 1]. It leans its
-  reservation price 6 bp a unit of signal, skews toward holding half the
-  cap the signal's way (built with quotes), and pulls the side the informed
-  hit past a signal of 0.1. Of four variants on 48 sessions (target 0,
-  0.5, 0.75 of the cap; lean 0 to 8 bp; a larger quote when quiet; a
-  market-order flatten against two agreeing wallets) this was the best.
+  latent state (`MTX_REGIME`: the informed and index-chasing shares and
+  wallets, if any, the informed process, the book's lead over the index, the
+  arbitrageur's latency and edge). On CBRS both shares are 0: it knows from
+  the first step that every taker is noise, and shows 3 units. Where there
+  are informed wallets (ANT's profile) it reads their trader accounts and
+  leans with them. Of 2, 3 and 5 units on 48 sessions, 3 kept the reference
+  in the band with the best Sharpe.
 - Neither knows a path, a jump or when anyone trades.
 
 ## Detectability
 
-Measured on mtx-bench-2 (Linux), ANT snapshot, the measured volatility,
-index chasers and the 1-2 s book lag, two sets of 24 sessions (13 calm, 9
-trend, 2 jump each), PnL in USD:
+Measured on mtx-bench-2 (Linux), CBRS snapshot, `mtx grade --draw
+market-making-cbrs`, two sets of 24 sessions (13 calm, 9 trend, 2 jump
+each), PnL in USD, Sharpe a session:
 
-| Bot | Set 1 | Set 2 |
-| --- | --- | --- |
-| reference | -0.62 (Sharpe -0.05) | -6.12 (-0.85) |
-| informed | +1.40 (0.10) | -0.54 (-0.05) |
-| naive quoter (before the post-only competitor) | -6.65 | |
-| skew quoter (same) | -7.71 | |
+| Bot | Set 1 | Set 2 | 48 sessions |
+| --- | --- | --- | --- |
+| nop | 0 | 0 | 0 |
+| naive quoter | +72.75 (0.76) | NAIVE2 | |
+| skew quoter | +56.70 (1.14) | SKEW2 | |
+| reference | +64.34 (1.16) | +41.68 (0.95) | +106.02 |
+| informed | +76.64 (1.19) | +80.81 (2.13) | +157.45 |
 
-By the arbitrageur's latency: reference -3.20 in 8 sessions with a 1-slot
-arbitrageur and +2.59 in 16 with a 2-slot one (set 1); -5.22 in 13 and
--0.90 in 11 (set 2). Informed: -1.60 / +3.00 and -0.52 / -0.02.
-
-Where the reference loses (both sets): the arbitrageur picking off quotes a
-move left behind (-3.05, -7.27 of spread), informed fills' 60 s markout
-(-6.03, -4.29), fees (-2.35, -3.29); against +1.16 and +0.83 of spread
-from noise. At ANT's measured volatility an index step is 3 to 10 bp, more
-than the 2.0-3.5 bp touch, so a quote left resting through a move is
-picked off by a 1-slot arbitrageur before the bot can requote, and the
-noise flow pays about $1 a session at most at the measured touch and pace.
-The band (reference at 0.2 to 0.7 of the informed bot, Sharpe 0.25) is not
-met.
+The reference's PnL is 0.67 of the informed bot's. Where it comes from
+(reference, set 1): the spread from noise takers +53.12 over 482 CBRS
+filled, the arbitrageur -3 to -4 of spread, fees -2, the rest inventory
+(the two jump sessions +15). The informed bot fills twice the volume (994
+CBRS) at about the same spread a unit. The naive quoter's set 1 lead over
+the reference is inventory through the walk and the jumps (+29 of its
++73), not spread (+48 against the reference's +53): luck the ladder's
+bootstrap must weigh.
 
 ## Fairness
 
