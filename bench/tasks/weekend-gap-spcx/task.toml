@@ -4,8 +4,8 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/weekend-gap-spcx"
-version = "0.14.0"
-description = "Write a bot that trades Phoenix SPCX (SpaceX) perps over a weekend, while SpaceX's own market is closed and Phoenix prices the index from its own book, and through the reopen, on an offline copy of Solana mainnet."
+version = "0.15.0"
+description = "Write a bot that trades Phoenix SPCX (SpaceX) perps into the weekend's reopen, on a weekend measured from mainnet: makers who re-price with almost no trade behind them, a reopen that keeps most of their move, and other traders positioning into it, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "surfpool", "rust", "price-discovery"]
 
 [[task.authors]]
@@ -17,28 +17,28 @@ difficulty = "hard"
 category = "trading"
 # Chain state the task trades on (MTX_SNAPSHOT); see snapshots/<name>/manifest.json.
 snapshot = "phoenix-spcx-2026-10-29"
-# The reference is graded on the hidden sessions only: practice scenarios
-# carry no baseline, and practice grades don't run it.
-practice_reference = false
 
 [metadata.mtx]
 # What the repository's lists are written from (`mtx task sync`).
-generator = "weekend-gap"
+generator = "weekend-gap-mainnet"
+# The anchors keep the name the images and earlier releases built them under.
+anchor = "weekend-gap"
 emoji = "🌙"
 market = "Phoenix SPCX perp"
-summary = "reads which weekend flow on the SPCX perp knows where SPCX will open, and holds that gap into the reopen"
-skill = "reads which weekend flow knows where SPCX will open, and holds that gap into the reopen"
+summary = "positions the SPCX perp into the weekend's reopen, on a weekend measured from mainnet: what the reopen keeps of the makers' weekend move, and which of the few traders positioning into it know where it opens"
+skill = "knows what the reopen keeps of a weekend's move, tells the traders who know where it opens from the ones who don't, and sizes for the open's spread"
 # Lines only the answers hold, for `just leak-audit`.
-leak_needles = ["hold the gap into the reopen"]
+leak_needles = ["takes a position against the fifth it expects back", "each wallet's net flow over the last stretch is a vote"]
+headline = "v2"
 
 [verifier]
-# Seventy-two hidden sessions drawn from the batch's secret, plus the
-# reference on the same sessions first: four of its sessions at a time,
-# and of the bot's as many as the memory holds (two in 6 GB). The
-# world moves only between the bot's turns, so a session takes as long as
-# the bot thinks: under a minute for most bots, under four at worst (half a
-# second a step over 400 steps). A disqualified bot stops at its first
-# breach.
+# Seventy-two hidden sessions drawn from the batch's secret, graded with
+# the reference and then the informed bot on the same sessions first, four
+# sessions at a time each, then the bot's, four at a time. The world moves
+# only between the bot's turns, so a session takes as long as the bot
+# thinks: under a minute for most bots, under four at worst (half a second
+# a step over 400 steps). Every session is graded, a breached one too
+# (scoring v2).
 timeout_sec = 18000.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and

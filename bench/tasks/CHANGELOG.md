@@ -4,6 +4,23 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
+- **0.15.0** (draft). Every task's market measured against mainnet
+  (RFD 0007).
+  - **`weekend-gap-spcx`: the weekend mainnet measured, scored by v2.** The
+    old task's premise, weekend taker flow that knows where SPCX opens and
+    moves the perp there, didn't show on Phoenix: the tape's 23 weekend
+    hours held one order, and over 21 weekends of candles the book's move
+    was the makers'. Its sessions now draw from `weekend-gap-mainnet`
+    (`WeekendFamily::mainnet()`): a weekend move resampled from the 21
+    measured ones (median 0.86%), a reopen that keeps 0.78 of it give or
+    take 0.50% (95% 0.57 to 1.04), the weekend's few prints and a burst at
+    the reopen (`calibration/weekend/spcx-reopens.20261120.json`). Stated
+    departures, in its instruction: time compressed, direction a coin flip,
+    an unrecorded weekend book, and two informed traders and two decoys
+    positioning into the reopen, flow the tape never saw. The reference
+    fades the take-back by its size; an informed bot, told the informed
+    wallets, is v2's 1. The rungs fitted to the old family are gone, and
+    rewards don't compare with 0.14.0's.
 - **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
   mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
   unchanged: their anchor digests did not move.

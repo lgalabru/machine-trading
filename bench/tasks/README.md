@@ -14,7 +14,7 @@ copy of Solana mainnet, restored with
 | [`funding-carry-spcx`](funding-carry-spcx) | Phoenix SPCX perp | earns the premium and Phoenix's funding when the crowd's positioning opened the gap, follows when the index follows, and reads the session's own noise |
 | [`liquidation-flash`](liquidation-flash) | Kamino main market, SOL/USDC | reads the price upstream of Kamino's oracle, sees an obligation cross its liquidation threshold before the oracle shows it, and pushes the update, liquidates with a flash loan and sells the collateral in one transaction, bidding only what it must to land ahead of competing liquidators |
 | [`market-making-spcx`](market-making-spcx) | Phoenix SPCX perp | earns the spread from noise and steps back before informed flow |
-| [`weekend-gap-spcx`](weekend-gap-spcx) | Phoenix SPCX perp | reads which weekend flow knows where SPCX will open, and holds that gap into the reopen |
+| [`weekend-gap-spcx`](weekend-gap-spcx) | Phoenix SPCX perp | knows what the reopen keeps of a weekend's move, tells the traders who know where it opens from the ones who don't, and sizes for the open's spread |
 <!-- mtx:tasks end -->
 
 Planned tasks are
