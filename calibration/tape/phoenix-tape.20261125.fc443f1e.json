@@ -1,0 +1,7416 @@
+{
+ "code_sha256": "a3878f6f8e07025fe480019447075bc57ffcf47cdf62e636503e28f74bcca9fb",
+ "id": "phoenix-tape.20261125.fc443f1e",
+ "jumps": {
+  "aftermath": {
+   "15m": {
+    "extend": 42,
+    "revert": 29,
+    "stall": 22
+   },
+   "30m": {
+    "extend": 52,
+    "revert": 26,
+    "stall": 15
+   },
+   "5m": {
+    "extend": 41,
+    "revert": 27,
+    "stall": 25
+   }
+  },
+  "count": 93,
+  "events": [
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795444200000,
+    "gap_minutes": 1,
+    "move_pct": -1.73,
+    "session": "regular",
+    "symbol": "AMAT",
+    "usd": 4963
+   },
+   {
+    "15m": "revert",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795513320000,
+    "gap_minutes": 1,
+    "move_pct": 2.92,
+    "session": "off",
+    "symbol": "ANSEM",
+    "usd": 2964
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "revert",
+    "at_ms": 1795513440000,
+    "gap_minutes": 1,
+    "move_pct": 5.03,
+    "session": "off",
+    "symbol": "ANSEM",
+    "usd": 6053
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "revert",
+    "at_ms": 1795514460000,
+    "gap_minutes": 1,
+    "move_pct": 1.76,
+    "session": "off",
+    "symbol": "ANSEM",
+    "usd": 3302
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795527540000,
+    "gap_minutes": 1,
+    "move_pct": -1.84,
+    "session": "off",
+    "symbol": "ANSEM",
+    "usd": 2044
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442280000,
+    "gap_minutes": 1,
+    "move_pct": 1.66,
+    "session": "off",
+    "symbol": "ANT",
+    "usd": 24641
+   },
+   {
+    "15m": "stall",
+    "30m": "stall",
+    "5m": "extend",
+    "at_ms": 1795444200000,
+    "gap_minutes": 1,
+    "move_pct": -3.45,
+    "session": "regular",
+    "symbol": "ANT",
+    "usd": 57791
+   },
+   {
+    "15m": "stall",
+    "30m": "revert",
+    "5m": "extend",
+    "at_ms": 1795444320000,
+    "gap_minutes": 1,
+    "move_pct": -1.68,
+    "session": "regular",
+    "symbol": "ANT",
+    "usd": 33270
+   },
+   {
+    "15m": "stall",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795467300000,
+    "gap_minutes": 1,
+    "move_pct": 1.96,
+    "session": "regular",
+    "symbol": "ANT",
+    "usd": 30155
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795442280000,
+    "gap_minutes": 1,
+    "move_pct": 2.85,
+    "session": "off",
+    "symbol": "AVAX",
+    "usd": 4739
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795442880000,
+    "gap_minutes": 1,
+    "move_pct": -1.82,
+    "session": "off",
+    "symbol": "AVGO",
+    "usd": 29020
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442940000,
+    "gap_minutes": 1,
+    "move_pct": 1.52,
+    "session": "off",
+    "symbol": "AVGO",
+    "usd": 8569
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795444200000,
+    "gap_minutes": 1,
+    "move_pct": -1.71,
+    "session": "regular",
+    "symbol": "CBRS",
+    "usd": 7771
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795426440000,
+    "gap_minutes": 1,
+    "move_pct": 1.79,
+    "session": "off",
+    "symbol": "CHIP",
+    "usd": 34999
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 9.3,
+    "session": "off",
+    "symbol": "CRWV",
+    "usd": 20403
+   },
+   {
+    "15m": "stall",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795442280000,
+    "gap_minutes": 2,
+    "move_pct": 8.01,
+    "session": "off",
+    "symbol": "CRWV",
+    "usd": 4392
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795442400000,
+    "gap_minutes": 1,
+    "move_pct": -1.9,
+    "session": "off",
+    "symbol": "CRWV",
+    "usd": 14713
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795442640000,
+    "gap_minutes": 2,
+    "move_pct": 4.39,
+    "session": "off",
+    "symbol": "CRWV",
+    "usd": 41986
+   },
+   {
+    "15m": "revert",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795442760000,
+    "gap_minutes": 1,
+    "move_pct": -2.64,
+    "session": "off",
+    "symbol": "CRWV",
+    "usd": 6999
+   },
+   {
+    "15m": "revert",
+    "30m": "stall",
+    "5m": "revert",
+    "at_ms": 1795443120000,
+    "gap_minutes": 1,
+    "move_pct": -1.71,
+    "session": "off",
+    "symbol": "CRWV",
+    "usd": 7966
+   },
+   {
+    "15m": "extend",
+    "30m": "revert",
+    "5m": "extend",
+    "at_ms": 1795443180000,
+    "gap_minutes": 1,
+    "move_pct": 1.65,
+    "session": "off",
+    "symbol": "CRWV",
+    "usd": 6006
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795444200000,
+    "gap_minutes": 2,
+    "move_pct": -2.75,
+    "session": "regular",
+    "symbol": "DELL",
+    "usd": 8022
+   },
+   {
+    "15m": "stall",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795444560000,
+    "gap_minutes": 4,
+    "move_pct": -9.18,
+    "session": "regular",
+    "symbol": "DELL",
+    "usd": 80547
+   },
+   {
+    "15m": "revert",
+    "30m": "stall",
+    "5m": "revert",
+    "at_ms": 1795444620000,
+    "gap_minutes": 1,
+    "move_pct": 3.52,
+    "session": "regular",
+    "symbol": "DELL",
+    "usd": 6023
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795510980000,
+    "gap_minutes": 1,
+    "move_pct": -1.61,
+    "session": "off",
+    "symbol": "DELL",
+    "usd": 2961
+   },
+   {
+    "15m": "stall",
+    "30m": "stall",
+    "5m": "revert",
+    "at_ms": 1795554300000,
+    "gap_minutes": 1,
+    "move_pct": 3.6,
+    "session": "off",
+    "symbol": "DELL",
+    "usd": 45654
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "extend",
+    "at_ms": 1795554480000,
+    "gap_minutes": 1,
+    "move_pct": -1.6,
+    "session": "off",
+    "symbol": "DELL",
+    "usd": 49805
+   },
+   {
+    "15m": "stall",
+    "30m": "revert",
+    "5m": "stall",
+    "at_ms": 1795555200000,
+    "gap_minutes": 1,
+    "move_pct": 2.35,
+    "session": "off",
+    "symbol": "DELL",
+    "usd": 2025
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 2.29,
+    "session": "off",
+    "symbol": "DOGE",
+    "usd": 16165
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 2.93,
+    "session": "off",
+    "symbol": "FARTCOIN",
+    "usd": 4396
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795442280000,
+    "gap_minutes": 1,
+    "move_pct": 2.02,
+    "session": "off",
+    "symbol": "FET",
+    "usd": 3679
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 2.44,
+    "session": "off",
+    "symbol": "INTC",
+    "usd": 8066
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 2.9,
+    "session": "off",
+    "symbol": "IREN",
+    "usd": 23348
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442220000,
+    "gap_minutes": 1,
+    "move_pct": 4.67,
+    "session": "off",
+    "symbol": "IREN",
+    "usd": 3499
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795444260000,
+    "gap_minutes": 1,
+    "move_pct": 1.91,
+    "session": "regular",
+    "symbol": "IREN",
+    "usd": 16290
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795444620000,
+    "gap_minutes": 1,
+    "move_pct": 2.01,
+    "session": "regular",
+    "symbol": "IREN",
+    "usd": 2497
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795445760000,
+    "gap_minutes": 1,
+    "move_pct": 1.9,
+    "session": "regular",
+    "symbol": "IREN",
+    "usd": 4884
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795530660000,
+    "gap_minutes": 1,
+    "move_pct": -2.36,
+    "session": "regular",
+    "symbol": "IREN",
+    "usd": 31467
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 3.43,
+    "session": "off",
+    "symbol": "LIT",
+    "usd": 7527
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795443420000,
+    "gap_minutes": 1,
+    "move_pct": 2.0,
+    "session": "off",
+    "symbol": "LIT",
+    "usd": 2832
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795429200000,
+    "gap_minutes": 1,
+    "move_pct": 1.89,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 6408
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795444080000,
+    "gap_minutes": 1,
+    "move_pct": 1.67,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 49375
+   },
+   {
+    "15m": "stall",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795455660000,
+    "gap_minutes": 1,
+    "move_pct": -1.63,
+    "session": "regular",
+    "symbol": "MON",
+    "usd": 5640
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795486560000,
+    "gap_minutes": 1,
+    "move_pct": 1.77,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 3822
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795490940000,
+    "gap_minutes": 1,
+    "move_pct": 1.65,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 2423
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795529040000,
+    "gap_minutes": 1,
+    "move_pct": -3.31,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 6402
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795529340000,
+    "gap_minutes": 1,
+    "move_pct": -1.54,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 4286
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795529400000,
+    "gap_minutes": 1,
+    "move_pct": -1.99,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 7673
+   },
+   {
+    "15m": "revert",
+    "30m": "stall",
+    "5m": "revert",
+    "at_ms": 1795529700000,
+    "gap_minutes": 1,
+    "move_pct": -4.17,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 57027
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "stall",
+    "at_ms": 1795530000000,
+    "gap_minutes": 1,
+    "move_pct": 3.55,
+    "session": "off",
+    "symbol": "MON",
+    "usd": 58593
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "revert",
+    "at_ms": 1795530720000,
+    "gap_minutes": 1,
+    "move_pct": -2.69,
+    "session": "regular",
+    "symbol": "MON",
+    "usd": 48618
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "stall",
+    "at_ms": 1795441740000,
+    "gap_minutes": 1,
+    "move_pct": -1.99,
+    "session": "off",
+    "symbol": "MORPHO",
+    "usd": 12315
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795441800000,
+    "gap_minutes": 1,
+    "move_pct": -1.9,
+    "session": "off",
+    "symbol": "MORPHO",
+    "usd": 5956
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795441860000,
+    "gap_minutes": 1,
+    "move_pct": -1.61,
+    "session": "off",
+    "symbol": "MORPHO",
+    "usd": 24089
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795441920000,
+    "gap_minutes": 1,
+    "move_pct": 3.62,
+    "session": "off",
+    "symbol": "MORPHO",
+    "usd": 2402
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 2.0,
+    "session": "off",
+    "symbol": "MORPHO",
+    "usd": 24575
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 3.05,
+    "session": "off",
+    "symbol": "MRVL",
+    "usd": 16196
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 1.58,
+    "session": "off",
+    "symbol": "MU",
+    "usd": 10089
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442220000,
+    "gap_minutes": 1,
+    "move_pct": 2.51,
+    "session": "off",
+    "symbol": "MU",
+    "usd": 5992
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442280000,
+    "gap_minutes": 1,
+    "move_pct": 1.51,
+    "session": "off",
+    "symbol": "MU",
+    "usd": 7068
+   },
+   {
+    "15m": "extend",
+    "30m": "stall",
+    "5m": "extend",
+    "at_ms": 1795442400000,
+    "gap_minutes": 1,
+    "move_pct": 1.62,
+    "session": "off",
+    "symbol": "MU",
+    "usd": 24152
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795442820000,
+    "gap_minutes": 1,
+    "move_pct": -1.51,
+    "session": "off",
+    "symbol": "MU",
+    "usd": 28398
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 6.61,
+    "session": "off",
+    "symbol": "NBIS",
+    "usd": 13005
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442220000,
+    "gap_minutes": 1,
+    "move_pct": 6.6,
+    "session": "off",
+    "symbol": "NBIS",
+    "usd": 12958
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "revert",
+    "at_ms": 1795442520000,
+    "gap_minutes": 1,
+    "move_pct": 2.05,
+    "session": "off",
+    "symbol": "NBIS",
+    "usd": 9044
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795442760000,
+    "gap_minutes": 1,
+    "move_pct": -2.93,
+    "session": "off",
+    "symbol": "NBIS",
+    "usd": 19920
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442820000,
+    "gap_minutes": 1,
+    "move_pct": 1.56,
+    "session": "off",
+    "symbol": "NBIS",
+    "usd": 17969
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795444200000,
+    "gap_minutes": 1,
+    "move_pct": -2.56,
+    "session": "regular",
+    "symbol": "NBIS",
+    "usd": 2985
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795444620000,
+    "gap_minutes": 1,
+    "move_pct": 1.53,
+    "session": "regular",
+    "symbol": "NBIS",
+    "usd": 6065
+   },
+   {
+    "15m": "stall",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795395600000,
+    "gap_minutes": 1,
+    "move_pct": -1.51,
+    "session": "off",
+    "symbol": "NVDA",
+    "usd": 14254
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442100000,
+    "gap_minutes": 1,
+    "move_pct": 9.54,
+    "session": "off",
+    "symbol": "NVDA",
+    "usd": 16879
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 2.63,
+    "session": "off",
+    "symbol": "NVDA",
+    "usd": 92765
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795442280000,
+    "gap_minutes": 1,
+    "move_pct": -1.59,
+    "session": "off",
+    "symbol": "NVDA",
+    "usd": 17970
+   },
+   {
+    "15m": "stall",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795442580000,
+    "gap_minutes": 1,
+    "move_pct": 2.35,
+    "session": "off",
+    "symbol": "NVDA",
+    "usd": 44005
+   },
+   {
+    "15m": "revert",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795442700000,
+    "gap_minutes": 1,
+    "move_pct": -2.02,
+    "session": "off",
+    "symbol": "NVDA",
+    "usd": 65844
+   },
+   {
+    "15m": "stall",
+    "30m": "revert",
+    "5m": "extend",
+    "at_ms": 1795444200000,
+    "gap_minutes": 1,
+    "move_pct": -3.16,
+    "session": "regular",
+    "symbol": "NVDA",
+    "usd": 390870
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "stall",
+    "at_ms": 1795444440000,
+    "gap_minutes": 1,
+    "move_pct": -1.83,
+    "session": "regular",
+    "symbol": "NVDA",
+    "usd": 20500
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "revert",
+    "at_ms": 1795444560000,
+    "gap_minutes": 1,
+    "move_pct": 1.88,
+    "session": "regular",
+    "symbol": "NVDA",
+    "usd": 3740
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795442700000,
+    "gap_minutes": 1,
+    "move_pct": 3.08,
+    "session": "off",
+    "symbol": "ORCL",
+    "usd": 14017
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "revert",
+    "at_ms": 1795444260000,
+    "gap_minutes": 1,
+    "move_pct": -1.53,
+    "session": "regular",
+    "symbol": "ORCL",
+    "usd": 4963
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "revert",
+    "at_ms": 1795445520000,
+    "gap_minutes": 1,
+    "move_pct": -1.71,
+    "session": "regular",
+    "symbol": "SNDK",
+    "usd": 3978
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795530660000,
+    "gap_minutes": 1,
+    "move_pct": -1.76,
+    "session": "regular",
+    "symbol": "SNDK",
+    "usd": 2971
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 1.53,
+    "session": "off",
+    "symbol": "SOL",
+    "usd": 166149
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795442280000,
+    "gap_minutes": 1,
+    "move_pct": 2.02,
+    "session": "off",
+    "symbol": "SUI",
+    "usd": 15139
+   },
+   {
+    "15m": "stall",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795442280000,
+    "gap_minutes": 1,
+    "move_pct": 2.3,
+    "session": "off",
+    "symbol": "VIRTUAL",
+    "usd": 9387
+   },
+   {
+    "15m": "revert",
+    "30m": "extend",
+    "5m": "stall",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 1.83,
+    "session": "off",
+    "symbol": "VVV",
+    "usd": 26532
+   },
+   {
+    "15m": "revert",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795451820000,
+    "gap_minutes": 1,
+    "move_pct": -1.86,
+    "session": "regular",
+    "symbol": "VVV",
+    "usd": 8541
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 2.19,
+    "session": "off",
+    "symbol": "WLD",
+    "usd": 4340
+   },
+   {
+    "15m": "revert",
+    "30m": "revert",
+    "5m": "stall",
+    "at_ms": 1795556580000,
+    "gap_minutes": 1,
+    "move_pct": -1.55,
+    "session": "off",
+    "symbol": "XPL",
+    "usd": 4582
+   },
+   {
+    "15m": "stall",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795563120000,
+    "gap_minutes": 1,
+    "move_pct": 2.29,
+    "session": "off",
+    "symbol": "XPL",
+    "usd": 15611
+   },
+   {
+    "15m": "extend",
+    "30m": "stall",
+    "5m": "stall",
+    "at_ms": 1795443360000,
+    "gap_minutes": 1,
+    "move_pct": 2.49,
+    "session": "off",
+    "symbol": "ZEC",
+    "usd": 8460
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 2.23,
+    "session": "off",
+    "symbol": "ZRO",
+    "usd": 7584
+   },
+   {
+    "15m": "extend",
+    "30m": "extend",
+    "5m": "extend",
+    "at_ms": 1795442160000,
+    "gap_minutes": 1,
+    "move_pct": 1.87,
+    "session": "off",
+    "symbol": "kPEPE",
+    "usd": 3031
+   }
+  ]
+ },
+ "markets": {
+  "AAPL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.667,
+     "log_sd": 1.837,
+     "minutes": 2233,
+     "orders_per_minute": 0.0027,
+     "same_side_next": 0.2,
+     "usd_median": 297.07,
+     "usd_p90": 1000.39,
+     "usd_p99": 1000.39,
+     "usd_per_hour": 54.2,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.727,
+     "log_sd": 1.888,
+     "minutes": 780,
+     "orders_per_minute": 0.0141,
+     "same_side_next": 0.6,
+     "usd_median": 727.43,
+     "usd_p90": 1020.41,
+     "usd_p99": 1992.98,
+     "usd_per_hour": 581.1,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3909,
+   "pinger_orders": 3892,
+   "pinger_share": 0.996
+  },
+  "AAVE": {
+   "flow": {
+    "off": {
+     "buy_share": 0.551,
+     "log_sd": 1.084,
+     "minutes": 2233,
+     "orders_per_minute": 0.0878,
+     "same_side_next": 0.549,
+     "usd_median": 401.06,
+     "usd_p90": 1599.16,
+     "usd_p99": 4668.44,
+     "usd_per_hour": 4133.6,
+     "within_1s_share": 0.092
+    },
+    "regular": {
+     "buy_share": 0.535,
+     "log_sd": 1.874,
+     "minutes": 780,
+     "orders_per_minute": 0.1269,
+     "same_side_next": 0.622,
+     "usd_median": 411.26,
+     "usd_p90": 1682.69,
+     "usd_p99": 6231.44,
+     "usd_per_hour": 5796.6,
+     "within_1s_share": 0.214
+    },
+    "weekend": {
+     "buy_share": 0.25,
+     "log_sd": 0.309,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.333,
+     "usd_median": 401.99,
+     "usd_p90": 404.38,
+     "usd_p99": 404.38,
+     "usd_per_hour": 60.5,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4167,
+   "pinger_orders": 3868,
+   "pinger_share": 0.928
+  },
+  "ADA": {
+   "flow": {
+    "off": {
+     "buy_share": 0.509,
+     "log_sd": 1.739,
+     "minutes": 2233,
+     "orders_per_minute": 0.0246,
+     "same_side_next": 0.444,
+     "usd_median": 398.71,
+     "usd_p90": 405.06,
+     "usd_p99": 10382.65,
+     "usd_per_hour": 1209.2,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.462,
+     "log_sd": 1.505,
+     "minutes": 780,
+     "orders_per_minute": 0.05,
+     "same_side_next": 0.5,
+     "usd_median": 396.97,
+     "usd_p90": 1582.27,
+     "usd_p99": 4056.47,
+     "usd_per_hour": 1641.9,
+     "within_1s_share": 0.105
+    },
+    "weekend": {
+     "buy_share": 0.667,
+     "log_sd": 2.055,
+     "minutes": 1395,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 0.5,
+     "usd_median": 394.42,
+     "usd_p90": 395.1,
+     "usd_p99": 395.1,
+     "usd_per_hour": 34.2,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3978,
+   "pinger_orders": 3881,
+   "pinger_share": 0.976
+  },
+  "AERO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.474,
+     "log_sd": 2.047,
+     "minutes": 2233,
+     "orders_per_minute": 0.0425,
+     "same_side_next": 0.468,
+     "usd_median": 5.12,
+     "usd_p90": 408.24,
+     "usd_p99": 1583.46,
+     "usd_per_hour": 374.5,
+     "within_1s_share": 0.011
+    },
+    "regular": {
+     "buy_share": 0.44,
+     "log_sd": 1.97,
+     "minutes": 780,
+     "orders_per_minute": 0.0321,
+     "same_side_next": 0.458,
+     "usd_median": 14.32,
+     "usd_p90": 407.5,
+     "usd_p99": 412.47,
+     "usd_per_hour": 312.9,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.476,
+     "log_sd": 1.281,
+     "minutes": 1395,
+     "orders_per_minute": 0.0151,
+     "same_side_next": 0.55,
+     "usd_median": 5.08,
+     "usd_p90": 5.12,
+     "usd_p99": 399.72,
+     "usd_per_hour": 38.5,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4061,
+   "pinger_orders": 3920,
+   "pinger_share": 0.965
+  },
+  "AMAT": {
+   "flow": {
+    "off": {
+     "buy_share": 0.558,
+     "log_sd": 2.805,
+     "minutes": 2233,
+     "orders_per_minute": 0.0193,
+     "same_side_next": 0.571,
+     "usd_median": 987.44,
+     "usd_p90": 2992.1,
+     "usd_p99": 3024.77,
+     "usd_per_hour": 1015.9,
+     "within_1s_share": 0.143
+    },
+    "regular": {
+     "buy_share": 0.5,
+     "log_sd": 2.382,
+     "minutes": 780,
+     "orders_per_minute": 0.0513,
+     "same_side_next": 0.513,
+     "usd_median": 975.25,
+     "usd_p90": 1989.59,
+     "usd_p99": 2977.0,
+     "usd_per_hour": 2519.4,
+     "within_1s_share": 0.051
+    },
+    "weekend": {
+     "buy_share": 0.714,
+     "log_sd": 0.001,
+     "minutes": 1395,
+     "orders_per_minute": 0.005,
+     "same_side_next": 0.833,
+     "usd_median": 5.03,
+     "usd_p90": 5.04,
+     "usd_p99": 5.04,
+     "usd_per_hour": 1.5,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 1,
+   "orders": 3984,
+   "pinger_orders": 3894,
+   "pinger_share": 0.977
+  },
+  "AMD": {
+   "flow": {
+    "off": {
+     "buy_share": 0.4,
+     "log_sd": 2.153,
+     "minutes": 2233,
+     "orders_per_minute": 0.0179,
+     "same_side_next": 0.538,
+     "usd_median": 9.84,
+     "usd_p90": 1016.25,
+     "usd_p99": 2988.44,
+     "usd_per_hour": 371.7,
+     "within_1s_share": 0.077
+    },
+    "regular": {
+     "buy_share": 0.326,
+     "log_sd": 2.807,
+     "minutes": 780,
+     "orders_per_minute": 0.0551,
+     "same_side_next": 0.643,
+     "usd_median": 507.49,
+     "usd_p90": 5293.41,
+     "usd_p99": 20842.26,
+     "usd_per_hour": 6312.0,
+     "within_1s_share": 0.095
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 342.96,
+     "usd_p90": 342.96,
+     "usd_p99": 342.96,
+     "usd_per_hour": 14.8,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 4013,
+   "pinger_orders": 3929,
+   "pinger_share": 0.979
+  },
+  "AMZN": {
+   "flow": {
+    "off": {
+     "buy_share": 0.317,
+     "log_sd": 2.055,
+     "minutes": 2233,
+     "orders_per_minute": 0.0184,
+     "same_side_next": 0.525,
+     "usd_median": 23.04,
+     "usd_p90": 999.56,
+     "usd_p99": 999.72,
+     "usd_per_hour": 251.5,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.536,
+     "log_sd": 2.536,
+     "minutes": 780,
+     "orders_per_minute": 0.0359,
+     "same_side_next": 0.37,
+     "usd_median": 110.09,
+     "usd_p90": 4997.9,
+     "usd_p99": 5996.53,
+     "usd_per_hour": 2011.0,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.25,
+     "log_sd": 0.0,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.333,
+     "usd_median": 5.1,
+     "usd_p90": 5.1,
+     "usd_p99": 5.1,
+     "usd_per_hour": 0.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3936,
+   "pinger_orders": 3863,
+   "pinger_share": 0.981
+  },
+  "ANSEM": {
+   "flow": {
+    "off": {
+     "buy_share": 0.544,
+     "log_sd": 1.322,
+     "minutes": 2233,
+     "orders_per_minute": 0.112,
+     "same_side_next": 0.482,
+     "usd_median": 126.25,
+     "usd_p90": 509.68,
+     "usd_p99": 2526.03,
+     "usd_per_hour": 1915.9,
+     "within_1s_share": 0.02
+    },
+    "regular": {
+     "buy_share": 0.525,
+     "log_sd": 1.329,
+     "minutes": 780,
+     "orders_per_minute": 0.1026,
+     "same_side_next": 0.278,
+     "usd_median": 499.75,
+     "usd_p90": 506.91,
+     "usd_p99": 836.1,
+     "usd_per_hour": 2276.4,
+     "within_1s_share": 0.038
+    },
+    "weekend": {
+     "buy_share": 0.667,
+     "log_sd": 1.588,
+     "minutes": 1395,
+     "orders_per_minute": 0.0043,
+     "same_side_next": 0.4,
+     "usd_median": 149.21,
+     "usd_p90": 177.99,
+     "usd_p99": 177.99,
+     "usd_per_hour": 27.4,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 4,
+   "orders": 4237,
+   "pinger_orders": 3901,
+   "pinger_share": 0.921
+  },
+  "ANT": {
+   "flow": {
+    "off": {
+     "buy_share": 0.507,
+     "log_sd": 1.3,
+     "minutes": 2233,
+     "orders_per_minute": 7.0376,
+     "same_side_next": 0.613,
+     "usd_median": 130.35,
+     "usd_p90": 1000.64,
+     "usd_p99": 5281.63,
+     "usd_per_hour": 187269.7,
+     "within_1s_share": 0.191
+    },
+    "regular": {
+     "buy_share": 0.498,
+     "log_sd": 1.522,
+     "minutes": 780,
+     "orders_per_minute": 11.6436,
+     "same_side_next": 0.562,
+     "usd_median": 99.61,
+     "usd_p90": 1000.99,
+     "usd_p99": 11002.42,
+     "usd_per_hour": 503293.1,
+     "within_1s_share": 0.196
+    },
+    "weekend": {
+     "buy_share": 0.497,
+     "log_sd": 1.387,
+     "minutes": 1395,
+     "orders_per_minute": 0.2796,
+     "same_side_next": 0.591,
+     "usd_median": 229.71,
+     "usd_p90": 1000.71,
+     "usd_p99": 5775.6,
+     "usd_per_hour": 9059.3,
+     "within_1s_share": 0.075
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": 2.32,
+     "n": 10566,
+     "p90_bps": 11.42
+    },
+    "1000-10000": {
+     "median_bps": 3.42,
+     "n": 2925,
+     "p90_bps": 16.54
+    },
+    "10000-inf": {
+     "median_bps": 5.11,
+     "n": 159,
+     "p90_bps": 23.55
+    },
+    "5-100": {
+     "median_bps": 2.24,
+     "n": 11532,
+     "p90_bps": 10.39
+    }
+   },
+   "jumps": 4,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 2.252,
+      "low": 1.871,
+      "mean": 2.069,
+      "n": 10566
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 1.662,
+       "low": 1.234,
+       "mean": 1.438,
+       "n": 10564
+      },
+      "1s": {
+       "high": 0.093,
+       "low": -0.161,
+       "mean": -0.033,
+       "n": 10566
+      },
+      "300s": {
+       "high": 5.533,
+       "low": 3.279,
+       "mean": 4.403,
+       "n": 10521
+      },
+      "60s": {
+       "high": 3.94,
+       "low": 2.942,
+       "mean": 3.423,
+       "n": 10559
+      }
+     },
+     "orders": 10567
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 3.941,
+      "low": 2.513,
+      "mean": 3.26,
+      "n": 2925
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 2.056,
+       "low": 0.948,
+       "mean": 1.504,
+       "n": 2925
+      },
+      "1s": {
+       "high": 0.489,
+       "low": -0.129,
+       "mean": 0.174,
+       "n": 2925
+      },
+      "300s": {
+       "high": 6.002,
+       "low": -0.775,
+       "mean": 2.604,
+       "n": 2901
+      },
+      "60s": {
+       "high": 4.803,
+       "low": 1.989,
+       "mean": 3.509,
+       "n": 2910
+      }
+     },
+     "orders": 2925
+    },
+    "10000-inf": {
+     "cost_bps": {
+      "high": 8.613,
+      "low": 4.267,
+      "mean": 6.298,
+      "n": 159
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 9.037,
+       "low": 3.824,
+       "mean": 6.613,
+       "n": 159
+      },
+      "1s": {
+       "high": 2.763,
+       "low": 0.193,
+       "mean": 1.467,
+       "n": 159
+      },
+      "300s": {
+       "high": 43.306,
+       "low": 1.35,
+       "mean": 20.039,
+       "n": 159
+      },
+      "60s": {
+       "high": 21.018,
+       "low": 7.209,
+       "mean": 13.65,
+       "n": 159
+      }
+     },
+     "orders": 159
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 2.486,
+      "low": 2.191,
+      "mean": 2.355,
+      "n": 11532
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 3.057,
+       "low": 2.726,
+       "mean": 2.885,
+       "n": 11530
+      },
+      "1s": {
+       "high": 0.448,
+       "low": 0.266,
+       "mean": 0.355,
+       "n": 11531
+      },
+      "300s": {
+       "high": 7.365,
+       "low": 5.243,
+       "mean": 6.232,
+       "n": 11510
+      },
+      "60s": {
+       "high": 5.824,
+       "low": 5.031,
+       "mean": 5.427,
+       "n": 11525
+      }
+     },
+     "orders": 11536
+    }
+   },
+   "orders": 29729,
+   "pinger_orders": 4542,
+   "pinger_share": 0.153
+  },
+  "ANTHROPIC": {
+   "flow": {
+    "off": {
+     "buy_share": 0.429,
+     "log_sd": 2.348,
+     "minutes": 2233,
+     "orders_per_minute": 0.0063,
+     "same_side_next": 0.846,
+     "usd_median": 5.07,
+     "usd_p90": 500.01,
+     "usd_p99": 3065.04,
+     "usd_per_hour": 132.2,
+     "within_1s_share": 0.077
+    },
+    "regular": {
+     "buy_share": 1.0,
+     "log_sd": 2.178,
+     "minutes": 780,
+     "orders_per_minute": 0.0103,
+     "same_side_next": 1.0,
+     "usd_median": 500.0,
+     "usd_p90": 3003.48,
+     "usd_p99": 3003.48,
+     "usd_per_hour": 377.1,
+     "within_1s_share": 0.429
+    },
+    "weekend": {
+     "buy_share": 0.333,
+     "log_sd": 0.455,
+     "minutes": 1395,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 0.5,
+     "usd_median": 13.29,
+     "usd_p90": 13.3,
+     "usd_p99": 13.3,
+     "usd_per_hour": 1.4,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 1664,
+   "pinger_orders": 1639,
+   "pinger_share": 0.985
+  },
+  "ARB": {
+   "flow": {
+    "off": {
+     "buy_share": 0.573,
+     "log_sd": 2.074,
+     "minutes": 2233,
+     "orders_per_minute": 0.0336,
+     "same_side_next": 0.581,
+     "usd_median": 385.07,
+     "usd_p90": 415.43,
+     "usd_p99": 6599.66,
+     "usd_per_hour": 790.1,
+     "within_1s_share": 0.068
+    },
+    "regular": {
+     "buy_share": 0.571,
+     "log_sd": 1.936,
+     "minutes": 780,
+     "orders_per_minute": 0.0538,
+     "same_side_next": 0.537,
+     "usd_median": 397.92,
+     "usd_p90": 1238.25,
+     "usd_p99": 7433.3,
+     "usd_per_hour": 1833.2,
+     "within_1s_share": 0.073
+    },
+    "weekend": {
+     "buy_share": 0.778,
+     "log_sd": 0.932,
+     "minutes": 1395,
+     "orders_per_minute": 0.0065,
+     "same_side_next": 0.875,
+     "usd_median": 2062.94,
+     "usd_p90": 6204.58,
+     "usd_p99": 6204.58,
+     "usd_per_hour": 880.2,
+     "within_1s_share": 0.375
+    }
+   },
+   "jumps": 0,
+   "orders": 4205,
+   "pinger_orders": 4079,
+   "pinger_share": 0.97
+  },
+  "ARM": {
+   "flow": {
+    "off": {
+     "buy_share": 0.383,
+     "log_sd": 2.533,
+     "minutes": 2233,
+     "orders_per_minute": 0.021,
+     "same_side_next": 0.543,
+     "usd_median": 983.98,
+     "usd_p90": 2999.13,
+     "usd_p99": 5995.57,
+     "usd_per_hour": 1213.7,
+     "within_1s_share": 0.065
+    },
+    "regular": {
+     "buy_share": 0.6,
+     "log_sd": 2.473,
+     "minutes": 780,
+     "orders_per_minute": 0.0449,
+     "same_side_next": 0.5,
+     "usd_median": 970.41,
+     "usd_p90": 1031.64,
+     "usd_p99": 2000.51,
+     "usd_per_hour": 1762.3,
+     "within_1s_share": 0.029
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 4018,
+   "pinger_orders": 3936,
+   "pinger_share": 0.98
+  },
+  "ASML": {
+   "flow": {
+    "off": {
+     "buy_share": 0.409,
+     "log_sd": 2.124,
+     "minutes": 2233,
+     "orders_per_minute": 0.0099,
+     "same_side_next": 0.524,
+     "usd_median": 5.91,
+     "usd_p90": 1027.58,
+     "usd_p99": 2999.33,
+     "usd_per_hour": 165.4,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.375,
+     "log_sd": 3.02,
+     "minutes": 780,
+     "orders_per_minute": 0.0103,
+     "same_side_next": 0.857,
+     "usd_median": 1018.12,
+     "usd_p90": 23365.22,
+     "usd_p99": 23365.22,
+     "usd_per_hour": 3332.6,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3923,
+   "pinger_orders": 3893,
+   "pinger_share": 0.992
+  },
+  "AVAX": {
+   "flow": {
+    "off": {
+     "buy_share": 0.333,
+     "log_sd": 1.507,
+     "minutes": 2233,
+     "orders_per_minute": 0.0376,
+     "same_side_next": 0.711,
+     "usd_median": 386.05,
+     "usd_p90": 1579.51,
+     "usd_p99": 3993.78,
+     "usd_per_hour": 1186.5,
+     "within_1s_share": 0.06
+    },
+    "regular": {
+     "buy_share": 0.235,
+     "log_sd": 1.25,
+     "minutes": 780,
+     "orders_per_minute": 0.109,
+     "same_side_next": 0.845,
+     "usd_median": 79.1,
+     "usd_p90": 401.82,
+     "usd_p99": 1800.54,
+     "usd_per_hour": 1747.1,
+     "within_1s_share": 0.048
+    },
+    "weekend": {
+     "buy_share": 0.4,
+     "log_sd": 2.221,
+     "minutes": 1395,
+     "orders_per_minute": 0.0143,
+     "same_side_next": 0.474,
+     "usd_median": 387.55,
+     "usd_p90": 1610.55,
+     "usd_p99": 4122.19,
+     "usd_per_hour": 539.2,
+     "within_1s_share": 0.053
+    }
+   },
+   "jumps": 1,
+   "orders": 4801,
+   "pinger_orders": 4612,
+   "pinger_share": 0.961
+  },
+  "AVGO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.435,
+     "log_sd": 2.827,
+     "minutes": 2233,
+     "orders_per_minute": 0.0309,
+     "same_side_next": 0.706,
+     "usd_median": 14.93,
+     "usd_p90": 2999.52,
+     "usd_p99": 9750.03,
+     "usd_per_hour": 2258.4,
+     "within_1s_share": 0.074
+    },
+    "regular": {
+     "buy_share": 0.75,
+     "log_sd": 2.336,
+     "minutes": 780,
+     "orders_per_minute": 0.0308,
+     "same_side_next": 0.652,
+     "usd_median": 298.32,
+     "usd_p90": 298.61,
+     "usd_p99": 10163.72,
+     "usd_per_hour": 1569.6,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.333,
+     "log_sd": 0.001,
+     "minutes": 1395,
+     "orders_per_minute": 0.0065,
+     "same_side_next": 0.375,
+     "usd_median": 5.08,
+     "usd_p90": 5.09,
+     "usd_p99": 5.09,
+     "usd_per_hour": 2.0,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 2,
+   "orders": 3958,
+   "pinger_orders": 3856,
+   "pinger_share": 0.974
+  },
+  "BABA": {
+   "flow": {
+    "off": {
+     "buy_share": 0.35,
+     "log_sd": 2.475,
+     "minutes": 2233,
+     "orders_per_minute": 0.009,
+     "same_side_next": 0.474,
+     "usd_median": 986.84,
+     "usd_p90": 999.97,
+     "usd_p99": 2999.51,
+     "usd_per_hour": 365.4,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.333,
+     "log_sd": 0.305,
+     "minutes": 780,
+     "orders_per_minute": 0.0038,
+     "same_side_next": 0.5,
+     "usd_median": 1001.9,
+     "usd_p90": 1007.13,
+     "usd_p99": 1007.13,
+     "usd_per_hour": 195.0,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 524.9,
+     "usd_p90": 524.9,
+     "usd_p99": 524.9,
+     "usd_per_hour": 22.6,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3915,
+   "pinger_orders": 3891,
+   "pinger_share": 0.994
+  },
+  "BNB": {
+   "flow": {
+    "off": {
+     "buy_share": 0.457,
+     "log_sd": 0.978,
+     "minutes": 2233,
+     "orders_per_minute": 1.2893,
+     "same_side_next": 0.514,
+     "usd_median": 5.56,
+     "usd_p90": 49.8,
+     "usd_p99": 401.2,
+     "usd_per_hour": 2403.4,
+     "within_1s_share": 0.011
+    },
+    "regular": {
+     "buy_share": 0.49,
+     "log_sd": 0.847,
+     "minutes": 780,
+     "orders_per_minute": 1.1949,
+     "same_side_next": 0.523,
+     "usd_median": 5.57,
+     "usd_p90": 5.73,
+     "usd_p99": 398.34,
+     "usd_per_hour": 1780.4,
+     "within_1s_share": 0.002
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": 0.002,
+     "minutes": 1395,
+     "orders_per_minute": 0.2925,
+     "same_side_next": 0.543,
+     "usd_median": 5.58,
+     "usd_p90": 5.58,
+     "usd_p99": 5.59,
+     "usd_per_hour": 97.8,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4219,
+   "pinger_orders": 0,
+   "pinger_share": 0.0
+  },
+  "BP": {
+   "flow": {
+    "off": {
+     "buy_share": 0.667,
+     "log_sd": 2.248,
+     "minutes": 2233,
+     "orders_per_minute": 0.0202,
+     "same_side_next": 0.568,
+     "usd_median": 298.92,
+     "usd_p90": 2089.83,
+     "usd_p99": 2092.27,
+     "usd_per_hour": 677.4,
+     "within_1s_share": 0.205
+    },
+    "regular": {
+     "buy_share": 0.207,
+     "log_sd": 1.211,
+     "minutes": 780,
+     "orders_per_minute": 0.0744,
+     "same_side_next": 0.842,
+     "usd_median": 301.44,
+     "usd_p90": 1506.1,
+     "usd_p99": 3062.35,
+     "usd_per_hour": 2401.8,
+     "within_1s_share": 0.439
+    },
+    "weekend": {
+     "buy_share": 0.25,
+     "log_sd": 1.677,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.667,
+     "usd_median": 315.66,
+     "usd_p90": 386.75,
+     "usd_p99": 386.75,
+     "usd_per_hour": 44.1,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3987,
+   "pinger_orders": 3880,
+   "pinger_share": 0.973
+  },
+  "BTC": {
+   "flow": {
+    "off": {
+     "buy_share": 0.47,
+     "log_sd": 2.795,
+     "minutes": 2233,
+     "orders_per_minute": 4.1563,
+     "same_side_next": 0.433,
+     "usd_median": 581.92,
+     "usd_p90": 5989.91,
+     "usd_p99": 68274.79,
+     "usd_per_hour": 917468.3,
+     "within_1s_share": 0.167
+    },
+    "regular": {
+     "buy_share": 0.49,
+     "log_sd": 2.727,
+     "minutes": 780,
+     "orders_per_minute": 4.7218,
+     "same_side_next": 0.477,
+     "usd_median": 601.41,
+     "usd_p90": 5988.99,
+     "usd_p99": 68416.42,
+     "usd_per_hour": 1030962.8,
+     "within_1s_share": 0.207
+    },
+    "weekend": {
+     "buy_share": 0.544,
+     "log_sd": 2.722,
+     "minutes": 1395,
+     "orders_per_minute": 1.0767,
+     "same_side_next": 0.399,
+     "usd_median": 578.58,
+     "usd_p90": 7278.9,
+     "usd_p99": 13560.52,
+     "usd_per_hour": 155051.9,
+     "within_1s_share": 0.145
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": -0.08,
+     "n": 3031,
+     "p90_bps": 5.62
+    },
+    "1000-10000": {
+     "median_bps": 0.52,
+     "n": 5258,
+     "p90_bps": 6.01
+    },
+    "10000-inf": {
+     "median_bps": 2.62,
+     "n": 788,
+     "p90_bps": 9.93
+    },
+    "5-100": {
+     "median_bps": 0.42,
+     "n": 5387,
+     "p90_bps": 7.41
+    }
+   },
+   "jumps": 0,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 0.036,
+      "low": -0.364,
+      "mean": -0.166,
+      "n": 3031
+     },
+     "markout_bps": {
+      "10s": {
+       "high": -0.014,
+       "low": -0.503,
+       "mean": -0.275,
+       "n": 3031
+      },
+      "1s": {
+       "high": -0.143,
+       "low": -0.392,
+       "mean": -0.266,
+       "n": 3031
+      },
+      "300s": {
+       "high": 0.997,
+       "low": -1.299,
+       "mean": -0.137,
+       "n": 3030
+      },
+      "60s": {
+       "high": 0.467,
+       "low": -0.758,
+       "mean": -0.114,
+       "n": 3031
+      }
+     },
+     "orders": 3031
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 0.905,
+      "low": 0.623,
+      "mean": 0.76,
+      "n": 5258
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 0.662,
+       "low": 0.336,
+       "mean": 0.495,
+       "n": 5258
+      },
+      "1s": {
+       "high": 0.335,
+       "low": 0.12,
+       "mean": 0.23,
+       "n": 5258
+      },
+      "300s": {
+       "high": 1.656,
+       "low": -0.095,
+       "mean": 0.781,
+       "n": 5257
+      },
+      "60s": {
+       "high": 1.396,
+       "low": 0.543,
+       "mean": 0.969,
+       "n": 5258
+      }
+     },
+     "orders": 5260
+    },
+    "10000-inf": {
+     "cost_bps": {
+      "high": 3.641,
+      "low": 2.863,
+      "mean": 3.217,
+      "n": 788
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 2.863,
+       "low": 1.833,
+       "mean": 2.332,
+       "n": 788
+      },
+      "1s": {
+       "high": 1.352,
+       "low": 0.804,
+       "mean": 1.09,
+       "n": 788
+      },
+      "300s": {
+       "high": 6.548,
+       "low": 1.22,
+       "mean": 3.759,
+       "n": 788
+      },
+      "60s": {
+       "high": 5.477,
+       "low": 3.449,
+       "mean": 4.483,
+       "n": 788
+      }
+     },
+     "orders": 788
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 0.784,
+      "low": 0.467,
+      "mean": 0.629,
+      "n": 5387
+     },
+     "markout_bps": {
+      "10s": {
+       "high": -0.007,
+       "low": -0.265,
+       "mean": -0.143,
+       "n": 5386
+      },
+      "1s": {
+       "high": -0.058,
+       "low": -0.242,
+       "mean": -0.16,
+       "n": 5386
+      },
+      "300s": {
+       "high": 0.603,
+       "low": -0.732,
+       "mean": -0.077,
+       "n": 5381
+      },
+      "60s": {
+       "high": 0.168,
+       "low": -0.406,
+       "mean": -0.12,
+       "n": 5385
+      }
+     },
+     "orders": 5387
+    }
+   },
+   "orders": 14466,
+   "pinger_orders": 0,
+   "pinger_share": 0.0
+  },
+  "CBRS": {
+   "flow": {
+    "off": {
+     "buy_share": 0.667,
+     "log_sd": 2.191,
+     "minutes": 2233,
+     "orders_per_minute": 0.0107,
+     "same_side_next": 0.522,
+     "usd_median": 9.96,
+     "usd_p90": 592.51,
+     "usd_p99": 2598.95,
+     "usd_per_hour": 178.4,
+     "within_1s_share": 0.043
+    },
+    "regular": {
+     "buy_share": 0.611,
+     "log_sd": 1.295,
+     "minutes": 780,
+     "orders_per_minute": 0.1846,
+     "same_side_next": 0.608,
+     "usd_median": 298.27,
+     "usd_p90": 308.23,
+     "usd_p99": 2685.0,
+     "usd_per_hour": 4389.5,
+     "within_1s_share": 0.133
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 1,
+   "orders": 4110,
+   "pinger_orders": 3942,
+   "pinger_share": 0.959
+  },
+  "CHIP": {
+   "flow": {
+    "off": {
+     "buy_share": 0.555,
+     "log_sd": 1.448,
+     "minutes": 2233,
+     "orders_per_minute": 0.1146,
+     "same_side_next": 0.694,
+     "usd_median": 206.71,
+     "usd_p90": 1410.0,
+     "usd_p99": 7809.64,
+     "usd_per_hour": 3711.4,
+     "within_1s_share": 0.078
+    },
+    "regular": {
+     "buy_share": 0.309,
+     "log_sd": 1.198,
+     "minutes": 780,
+     "orders_per_minute": 0.0872,
+     "same_side_next": 0.582,
+     "usd_median": 200.89,
+     "usd_p90": 1399.51,
+     "usd_p99": 21798.67,
+     "usd_per_hour": 4141.0,
+     "within_1s_share": 0.075
+    },
+    "weekend": {
+     "buy_share": 0.8,
+     "log_sd": 1.575,
+     "minutes": 1395,
+     "orders_per_minute": 0.0072,
+     "same_side_next": 0.667,
+     "usd_median": 203.6,
+     "usd_p90": 206.71,
+     "usd_p99": 206.71,
+     "usd_per_hour": 54.2,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 1,
+   "orders": 5105,
+   "pinger_orders": 4771,
+   "pinger_share": 0.935
+  },
+  "COIN": {
+   "flow": {
+    "off": {
+     "buy_share": 0.455,
+     "log_sd": 2.579,
+     "minutes": 2233,
+     "orders_per_minute": 0.0148,
+     "same_side_next": 0.625,
+     "usd_median": 59.76,
+     "usd_p90": 4010.35,
+     "usd_p99": 13697.74,
+     "usd_per_hour": 1290.0,
+     "within_1s_share": 0.094
+    },
+    "regular": {
+     "buy_share": 0.4,
+     "log_sd": 2.109,
+     "minutes": 780,
+     "orders_per_minute": 0.0256,
+     "same_side_next": 0.474,
+     "usd_median": 994.47,
+     "usd_p90": 1002.62,
+     "usd_p99": 2920.62,
+     "usd_per_hour": 1227.5,
+     "within_1s_share": 0.053
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 5.0,
+     "usd_p90": 5.0,
+     "usd_p99": 5.0,
+     "usd_per_hour": 0.2,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3961,
+   "pinger_orders": 3907,
+   "pinger_share": 0.986
+  },
+  "COPPER": {
+   "flow": {
+    "off": {
+     "buy_share": 0.491,
+     "log_sd": 1.228,
+     "minutes": 2233,
+     "orders_per_minute": 0.0519,
+     "same_side_next": 0.539,
+     "usd_median": 5.05,
+     "usd_p90": 94.03,
+     "usd_p99": 561.92,
+     "usd_per_hour": 123.1,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.524,
+     "log_sd": 1.742,
+     "minutes": 780,
+     "orders_per_minute": 0.0269,
+     "same_side_next": 0.45,
+     "usd_median": 5.17,
+     "usd_p90": 218.49,
+     "usd_p99": 253.09,
+     "usd_per_hour": 128.8,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.526,
+     "log_sd": 0.002,
+     "minutes": 1395,
+     "orders_per_minute": 0.0136,
+     "same_side_next": 0.444,
+     "usd_median": 5.04,
+     "usd_p90": 5.04,
+     "usd_p99": 5.04,
+     "usd_per_hour": 4.1,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3904,
+   "pinger_orders": 3748,
+   "pinger_share": 0.96
+  },
+  "CRCL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.591,
+     "log_sd": 2.179,
+     "minutes": 2233,
+     "orders_per_minute": 0.0591,
+     "same_side_next": 0.511,
+     "usd_median": 5.1,
+     "usd_p90": 998.27,
+     "usd_p99": 1997.32,
+     "usd_per_hour": 850.1,
+     "within_1s_share": 0.038
+    },
+    "regular": {
+     "buy_share": 0.378,
+     "log_sd": 2.423,
+     "minutes": 780,
+     "orders_per_minute": 0.0474,
+     "same_side_next": 0.528,
+     "usd_median": 10.38,
+     "usd_p90": 1000.71,
+     "usd_p99": 30536.25,
+     "usd_per_hour": 3218.6,
+     "within_1s_share": 0.028
+    },
+    "weekend": {
+     "buy_share": 0.393,
+     "log_sd": 1.127,
+     "minutes": 1395,
+     "orders_per_minute": 0.0201,
+     "same_side_next": 0.444,
+     "usd_median": 5.01,
+     "usd_p90": 5.03,
+     "usd_p99": 1000.86,
+     "usd_per_hour": 53.8,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3995,
+   "pinger_orders": 3798,
+   "pinger_share": 0.951
+  },
+  "CRV": {
+   "flow": {
+    "off": {
+     "buy_share": 0.447,
+     "log_sd": 1.746,
+     "minutes": 2233,
+     "orders_per_minute": 0.0511,
+     "same_side_next": 0.522,
+     "usd_median": 402.45,
+     "usd_p90": 810.99,
+     "usd_p99": 4322.8,
+     "usd_per_hour": 1571.2,
+     "within_1s_share": 0.062
+    },
+    "regular": {
+     "buy_share": 0.543,
+     "log_sd": 1.877,
+     "minutes": 780,
+     "orders_per_minute": 0.0449,
+     "same_side_next": 0.559,
+     "usd_median": 388.78,
+     "usd_p90": 402.35,
+     "usd_p99": 405.41,
+     "usd_per_hour": 634.1,
+     "within_1s_share": 0.029
+    },
+    "weekend": {
+     "buy_share": 0.333,
+     "log_sd": 1.788,
+     "minutes": 1395,
+     "orders_per_minute": 0.0086,
+     "same_side_next": 0.545,
+     "usd_median": 399.87,
+     "usd_p90": 749.14,
+     "usd_p99": 1497.42,
+     "usd_per_hour": 261.1,
+     "within_1s_share": 0.091
+    }
+   },
+   "jumps": 0,
+   "orders": 4098,
+   "pinger_orders": 3937,
+   "pinger_share": 0.961
+  },
+  "CRWD": {
+   "flow": {
+    "off": {
+     "buy_share": 0.553,
+     "log_sd": 0.826,
+     "minutes": 2233,
+     "orders_per_minute": 0.017,
+     "same_side_next": 0.595,
+     "usd_median": 5.07,
+     "usd_p90": 38.18,
+     "usd_p99": 102.34,
+     "usd_per_hour": 14.6,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.719,
+     "log_sd": 2.92,
+     "minutes": 780,
+     "orders_per_minute": 0.041,
+     "same_side_next": 0.742,
+     "usd_median": 300.73,
+     "usd_p90": 10207.55,
+     "usd_p99": 53203.42,
+     "usd_per_hour": 11335.6,
+     "within_1s_share": 0.032
+    },
+    "weekend": {
+     "buy_share": 0.333,
+     "log_sd": 0.237,
+     "minutes": 1395,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 0.0,
+     "usd_median": 5.06,
+     "usd_p90": 8.36,
+     "usd_p99": 8.36,
+     "usd_per_hour": 0.8,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4019,
+   "pinger_orders": 3946,
+   "pinger_share": 0.982
+  },
+  "CRWV": {
+   "flow": {
+    "off": {
+     "buy_share": 0.506,
+     "log_sd": 2.848,
+     "minutes": 2233,
+     "orders_per_minute": 0.0345,
+     "same_side_next": 0.553,
+     "usd_median": 1001.71,
+     "usd_p90": 7792.35,
+     "usd_p99": 14712.92,
+     "usd_per_hour": 4841.0,
+     "within_1s_share": 0.105
+    },
+    "regular": {
+     "buy_share": 0.5,
+     "log_sd": 1.887,
+     "minutes": 780,
+     "orders_per_minute": 0.0282,
+     "same_side_next": 0.476,
+     "usd_median": 993.94,
+     "usd_p90": 1012.81,
+     "usd_p99": 1309.51,
+     "usd_per_hour": 1327.6,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 910.15,
+     "usd_p90": 910.15,
+     "usd_p99": 910.15,
+     "usd_per_hour": 39.1,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 7,
+   "orders": 4043,
+   "pinger_orders": 3943,
+   "pinger_share": 0.975
+  },
+  "CSCO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.8,
+     "log_sd": 1.838,
+     "minutes": 2233,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 0.5,
+     "usd_median": 298.0,
+     "usd_p90": 304.72,
+     "usd_p99": 304.72,
+     "usd_per_hour": 24.7,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.429,
+     "log_sd": 1.83,
+     "minutes": 780,
+     "orders_per_minute": 0.009,
+     "same_side_next": 0.5,
+     "usd_median": 1000.56,
+     "usd_p90": 2678.62,
+     "usd_p99": 2678.62,
+     "usd_per_hour": 589.3,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3892,
+   "pinger_orders": 3880,
+   "pinger_share": 0.997
+  },
+  "DELL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.54,
+     "log_sd": 2.465,
+     "minutes": 2233,
+     "orders_per_minute": 0.0887,
+     "same_side_next": 0.508,
+     "usd_median": 998.44,
+     "usd_p90": 3001.94,
+     "usd_p99": 9881.16,
+     "usd_per_hour": 7309.6,
+     "within_1s_share": 0.127
+    },
+    "regular": {
+     "buy_share": 0.51,
+     "log_sd": 2.624,
+     "minutes": 780,
+     "orders_per_minute": 0.1282,
+     "same_side_next": 0.576,
+     "usd_median": 1003.02,
+     "usd_p90": 6074.28,
+     "usd_p99": 23555.99,
+     "usd_per_hour": 20624.7,
+     "within_1s_share": 0.111
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 7,
+   "orders": 4232,
+   "pinger_orders": 3934,
+   "pinger_share": 0.93
+  },
+  "DOGE": {
+   "flow": {
+    "off": {
+     "buy_share": 0.5,
+     "log_sd": 2.157,
+     "minutes": 2233,
+     "orders_per_minute": 0.0313,
+     "same_side_next": 0.536,
+     "usd_median": 398.97,
+     "usd_p90": 2101.78,
+     "usd_p99": 23733.37,
+     "usd_per_hour": 2283.9,
+     "within_1s_share": 0.101
+    },
+    "regular": {
+     "buy_share": 0.455,
+     "log_sd": 1.201,
+     "minutes": 780,
+     "orders_per_minute": 0.0705,
+     "same_side_next": 0.704,
+     "usd_median": 399.39,
+     "usd_p90": 1578.94,
+     "usd_p99": 3999.17,
+     "usd_per_hour": 3449.4,
+     "within_1s_share": 0.333
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0014,
+     "same_side_next": 0.0,
+     "usd_median": 400.08,
+     "usd_p90": 400.08,
+     "usd_p99": 400.08,
+     "usd_per_hour": 34.3,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 1,
+   "orders": 4011,
+   "pinger_orders": 3884,
+   "pinger_share": 0.968
+  },
+  "DRV": {
+   "flow": {
+    "off": {
+     "buy_share": 0.514,
+     "log_sd": 0.882,
+     "minutes": 2233,
+     "orders_per_minute": 0.0654,
+     "same_side_next": 0.724,
+     "usd_median": 39.45,
+     "usd_p90": 40.02,
+     "usd_p99": 40.33,
+     "usd_per_hour": 99.2,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.242,
+     "log_sd": 1.038,
+     "minutes": 780,
+     "orders_per_minute": 0.0423,
+     "same_side_next": 0.75,
+     "usd_median": 30.59,
+     "usd_p90": 40.08,
+     "usd_p99": 112.07,
+     "usd_per_hour": 70.5,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.913,
+     "log_sd": 0.952,
+     "minutes": 1395,
+     "orders_per_minute": 0.0165,
+     "same_side_next": 0.864,
+     "usd_median": 39.7,
+     "usd_p90": 40.06,
+     "usd_p99": 290.18,
+     "usd_per_hour": 39.2,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4481,
+   "pinger_orders": 4279,
+   "pinger_share": 0.955
+  },
+  "ENA": {
+   "flow": {
+    "off": {
+     "buy_share": 0.52,
+     "log_sd": 1.249,
+     "minutes": 2233,
+     "orders_per_minute": 0.0672,
+     "same_side_next": 0.557,
+     "usd_median": 407.14,
+     "usd_p90": 1686.27,
+     "usd_p99": 4603.03,
+     "usd_per_hour": 2749.3,
+     "within_1s_share": 0.148
+    },
+    "regular": {
+     "buy_share": 0.507,
+     "log_sd": 1.123,
+     "minutes": 780,
+     "orders_per_minute": 0.0936,
+     "same_side_next": 0.569,
+     "usd_median": 396.07,
+     "usd_p90": 1597.53,
+     "usd_p99": 7967.38,
+     "usd_per_hour": 4683.2,
+     "within_1s_share": 0.181
+    },
+    "weekend": {
+     "buy_share": 0.562,
+     "log_sd": 1.344,
+     "minutes": 1395,
+     "orders_per_minute": 0.0115,
+     "same_side_next": 0.467,
+     "usd_median": 592.01,
+     "usd_p90": 1824.49,
+     "usd_p99": 1884.71,
+     "usd_per_hour": 572.3,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4202,
+   "pinger_orders": 3963,
+   "pinger_share": 0.943
+  },
+  "ETH": {
+   "flow": {
+    "off": {
+     "buy_share": 0.503,
+     "log_sd": 2.059,
+     "minutes": 2233,
+     "orders_per_minute": 1.446,
+     "same_side_next": 0.275,
+     "usd_median": 1623.45,
+     "usd_p90": 1791.0,
+     "usd_p99": 8499.58,
+     "usd_per_hour": 130707.2,
+     "within_1s_share": 0.195
+    },
+    "regular": {
+     "buy_share": 0.483,
+     "log_sd": 2.032,
+     "minutes": 780,
+     "orders_per_minute": 1.4974,
+     "same_side_next": 0.27,
+     "usd_median": 845.41,
+     "usd_p90": 1783.0,
+     "usd_p99": 11999.77,
+     "usd_per_hour": 131723.7,
+     "within_1s_share": 0.249
+    },
+    "weekend": {
+     "buy_share": 0.506,
+     "log_sd": 1.524,
+     "minutes": 1395,
+     "orders_per_minute": 2.0516,
+     "same_side_next": 0.249,
+     "usd_median": 859.6,
+     "usd_p90": 1717.3,
+     "usd_p99": 5192.9,
+     "usd_per_hour": 146340.5,
+     "within_1s_share": 0.215
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": -0.3,
+     "n": 2719,
+     "p90_bps": 4.67
+    },
+    "1000-10000": {
+     "median_bps": 0.88,
+     "n": 3502,
+     "p90_bps": 6.95
+    },
+    "10000-inf": {
+     "median_bps": 2.97,
+     "n": 63,
+     "p90_bps": 32.11
+    },
+    "5-100": {
+     "median_bps": 0.58,
+     "n": 975,
+     "p90_bps": 10.77
+    }
+   },
+   "jumps": 0,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": -0.093,
+      "low": -0.574,
+      "mean": -0.351,
+      "n": 2719
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 0.075,
+       "low": -0.477,
+       "mean": -0.189,
+       "n": 2719
+      },
+      "1s": {
+       "high": -0.108,
+       "low": -0.482,
+       "mean": -0.314,
+       "n": 2719
+      },
+      "300s": {
+       "high": 1.002,
+       "low": -1.69,
+       "mean": -0.341,
+       "n": 2719
+      },
+      "60s": {
+       "high": 0.274,
+       "low": -0.88,
+       "mean": -0.269,
+       "n": 2719
+      }
+     },
+     "orders": 2719
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 1.541,
+      "low": 1.104,
+      "mean": 1.307,
+      "n": 3502
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 1.634,
+       "low": 1.126,
+       "mean": 1.367,
+       "n": 3502
+      },
+      "1s": {
+       "high": 0.776,
+       "low": 0.439,
+       "mean": 0.612,
+       "n": 3502
+      },
+      "300s": {
+       "high": 3.423,
+       "low": 0.618,
+       "mean": 2.062,
+       "n": 3502
+      },
+      "60s": {
+       "high": 2.403,
+       "low": 1.369,
+       "mean": 1.865,
+       "n": 3502
+      }
+     },
+     "orders": 3502
+    },
+    "10000-inf": {
+     "cost_bps": {
+      "high": 10.35,
+      "low": 2.677,
+      "mean": 6.227,
+      "n": 63
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 20.315,
+       "low": 7.845,
+       "mean": 14.057,
+       "n": 63
+      },
+      "1s": {
+       "high": 10.737,
+       "low": 3.375,
+       "mean": 6.791,
+       "n": 63
+      },
+      "300s": {
+       "high": 46.075,
+       "low": 7.479,
+       "mean": 26.461,
+       "n": 63
+      },
+      "60s": {
+       "high": 25.665,
+       "low": 4.353,
+       "mean": 14.598,
+       "n": 63
+      }
+     },
+     "orders": 63
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 1.44,
+      "low": 0.315,
+      "mean": 0.862,
+      "n": 975
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 0.187,
+       "low": -0.659,
+       "mean": -0.215,
+       "n": 974
+      },
+      "1s": {
+       "high": 0.26,
+       "low": -0.394,
+       "mean": -0.037,
+       "n": 974
+      },
+      "300s": {
+       "high": 1.498,
+       "low": -1.76,
+       "mean": -0.141,
+       "n": 973
+      },
+      "60s": {
+       "high": 0.795,
+       "low": -0.814,
+       "mean": 0.009,
+       "n": 973
+      }
+     },
+     "orders": 975
+    }
+   },
+   "orders": 11174,
+   "pinger_orders": 3915,
+   "pinger_share": 0.35
+  },
+  "EURUSD": {
+   "flow": {
+    "off": {
+     "buy_share": 0.493,
+     "log_sd": 1.706,
+     "minutes": 2233,
+     "orders_per_minute": 0.1979,
+     "same_side_next": 0.546,
+     "usd_median": 499.94,
+     "usd_p90": 10909.18,
+     "usd_p99": 10985.42,
+     "usd_per_hour": 29612.2,
+     "within_1s_share": 0.095
+    },
+    "regular": {
+     "buy_share": 0.541,
+     "log_sd": 1.549,
+     "minutes": 780,
+     "orders_per_minute": 0.1731,
+     "same_side_next": 0.575,
+     "usd_median": 499.93,
+     "usd_p90": 845.65,
+     "usd_p99": 30680.23,
+     "usd_per_hour": 14467.9,
+     "within_1s_share": 0.015
+    },
+    "weekend": {
+     "buy_share": 0.2,
+     "log_sd": 2.172,
+     "minutes": 1395,
+     "orders_per_minute": 0.0036,
+     "same_side_next": 0.5,
+     "usd_median": 499.99,
+     "usd_p90": 10975.23,
+     "usd_p99": 10975.23,
+     "usd_per_hour": 537.1,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4458,
+   "pinger_orders": 3876,
+   "pinger_share": 0.869
+  },
+  "FARTCOIN": {
+   "flow": {
+    "off": {
+     "buy_share": 0.512,
+     "log_sd": 1.249,
+     "minutes": 2233,
+     "orders_per_minute": 0.1652,
+     "same_side_next": 0.448,
+     "usd_median": 399.7,
+     "usd_p90": 413.45,
+     "usd_p99": 1397.12,
+     "usd_per_hour": 3590.4,
+     "within_1s_share": 0.03
+    },
+    "regular": {
+     "buy_share": 0.491,
+     "log_sd": 0.948,
+     "minutes": 780,
+     "orders_per_minute": 0.4103,
+     "same_side_next": 0.461,
+     "usd_median": 397.69,
+     "usd_p90": 401.44,
+     "usd_p99": 3633.71,
+     "usd_per_hour": 11487.9,
+     "within_1s_share": 0.044
+    },
+    "weekend": {
+     "buy_share": 0.478,
+     "log_sd": 0.674,
+     "minutes": 1395,
+     "orders_per_minute": 0.0495,
+     "same_side_next": 0.412,
+     "usd_median": 405.14,
+     "usd_p90": 503.74,
+     "usd_p99": 1178.09,
+     "usd_per_hour": 1231.8,
+     "within_1s_share": 0.015
+    }
+   },
+   "jumps": 1,
+   "orders": 5640,
+   "pinger_orders": 4882,
+   "pinger_share": 0.866
+  },
+  "FET": {
+   "flow": {
+    "off": {
+     "buy_share": 0.533,
+     "log_sd": 2.249,
+     "minutes": 2233,
+     "orders_per_minute": 0.0336,
+     "same_side_next": 0.459,
+     "usd_median": 397.72,
+     "usd_p90": 1303.93,
+     "usd_p99": 4110.64,
+     "usd_per_hour": 917.4,
+     "within_1s_share": 0.081
+    },
+    "regular": {
+     "buy_share": 0.471,
+     "log_sd": 2.089,
+     "minutes": 780,
+     "orders_per_minute": 0.0218,
+     "same_side_next": 0.5,
+     "usd_median": 393.5,
+     "usd_p90": 400.63,
+     "usd_p99": 401.39,
+     "usd_per_hour": 338.1,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.556,
+     "log_sd": 1.879,
+     "minutes": 1395,
+     "orders_per_minute": 0.0065,
+     "same_side_next": 0.875,
+     "usd_median": 399.82,
+     "usd_p90": 799.64,
+     "usd_p99": 799.64,
+     "usd_per_hour": 111.1,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 1,
+   "orders": 4189,
+   "pinger_orders": 4088,
+   "pinger_share": 0.976
+  },
+  "FIL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.105,
+     "log_sd": 0.905,
+     "minutes": 2233,
+     "orders_per_minute": 0.017,
+     "same_side_next": 0.784,
+     "usd_median": 80.05,
+     "usd_p90": 196.07,
+     "usd_p99": 1461.54,
+     "usd_per_hour": 155.3,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.065,
+     "log_sd": 0.727,
+     "minutes": 780,
+     "orders_per_minute": 0.059,
+     "same_side_next": 0.911,
+     "usd_median": 74.61,
+     "usd_p90": 94.69,
+     "usd_p99": 198.14,
+     "usd_per_hour": 262.6,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.333,
+     "log_sd": 1.741,
+     "minutes": 1395,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 0.5,
+     "usd_median": 200.99,
+     "usd_p90": 200.99,
+     "usd_p99": 200.99,
+     "usd_per_hour": 17.5,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4708,
+   "pinger_orders": 4621,
+   "pinger_share": 0.982
+  },
+  "GBPUSD": {
+   "flow": {
+    "off": {
+     "buy_share": 0.625,
+     "log_sd": 1.651,
+     "minutes": 2233,
+     "orders_per_minute": 0.0036,
+     "same_side_next": 0.286,
+     "usd_median": 330.9,
+     "usd_p90": 2627.2,
+     "usd_p99": 2627.2,
+     "usd_per_hour": 186.7,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.062,
+     "log_sd": 1.256,
+     "minutes": 780,
+     "orders_per_minute": 0.0205,
+     "same_side_next": 0.867,
+     "usd_median": 3937.44,
+     "usd_p90": 3938.55,
+     "usd_p99": 3938.73,
+     "usd_per_hour": 4052.3,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3886,
+   "pinger_orders": 3862,
+   "pinger_share": 0.994
+  },
+  "GOLD": {
+   "flow": {
+    "off": {
+     "buy_share": 0.485,
+     "log_sd": 2.022,
+     "minutes": 2233,
+     "orders_per_minute": 0.073,
+     "same_side_next": 0.463,
+     "usd_median": 87.19,
+     "usd_p90": 1575.0,
+     "usd_p99": 11621.64,
+     "usd_per_hour": 2366.3,
+     "within_1s_share": 0.074
+    },
+    "regular": {
+     "buy_share": 0.593,
+     "log_sd": 2.361,
+     "minutes": 780,
+     "orders_per_minute": 0.1167,
+     "same_side_next": 0.522,
+     "usd_median": 110.61,
+     "usd_p90": 2175.4,
+     "usd_p99": 28081.18,
+     "usd_per_hour": 6877.6,
+     "within_1s_share": 0.067
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": 3.029,
+     "minutes": 1395,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 1.0,
+     "usd_median": 410.37,
+     "usd_p90": 17837.79,
+     "usd_p99": 17837.79,
+     "usd_per_hour": 785.3,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4129,
+   "pinger_orders": 3872,
+   "pinger_share": 0.938
+  },
+  "GOOGL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.538,
+     "log_sd": 2.093,
+     "minutes": 2233,
+     "orders_per_minute": 0.0882,
+     "same_side_next": 0.781,
+     "usd_median": 362.58,
+     "usd_p90": 853.83,
+     "usd_p99": 62027.44,
+     "usd_per_hour": 9789.6,
+     "within_1s_share": 0.112
+    },
+    "regular": {
+     "buy_share": 0.6,
+     "log_sd": 2.522,
+     "minutes": 780,
+     "orders_per_minute": 0.0321,
+     "same_side_next": 0.583,
+     "usd_median": 105.64,
+     "usd_p90": 2380.89,
+     "usd_p99": 6130.08,
+     "usd_per_hour": 1380.4,
+     "within_1s_share": 0.083
+    },
+    "weekend": {
+     "buy_share": 0.143,
+     "log_sd": 1.303,
+     "minutes": 1395,
+     "orders_per_minute": 0.01,
+     "same_side_next": 0.846,
+     "usd_median": 321.1,
+     "usd_p90": 538.98,
+     "usd_p99": 539.37,
+     "usd_per_hour": 182.3,
+     "within_1s_share": 0.077
+    }
+   },
+   "jumps": 0,
+   "orders": 4171,
+   "pinger_orders": 3935,
+   "pinger_share": 0.943
+  },
+  "HOOD": {
+   "flow": {
+    "off": {
+     "buy_share": 0.444,
+     "log_sd": 2.081,
+     "minutes": 2233,
+     "orders_per_minute": 0.0161,
+     "same_side_next": 0.486,
+     "usd_median": 1004.96,
+     "usd_p90": 5981.89,
+     "usd_p99": 14152.19,
+     "usd_per_hour": 2018.4,
+     "within_1s_share": 0.2
+    },
+    "regular": {
+     "buy_share": 0.468,
+     "log_sd": 1.5,
+     "minutes": 780,
+     "orders_per_minute": 0.0603,
+     "same_side_next": 0.261,
+     "usd_median": 687.2,
+     "usd_p90": 1000.13,
+     "usd_p99": 2001.77,
+     "usd_per_hour": 2602.0,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0014,
+     "same_side_next": 0.0,
+     "usd_median": 5.01,
+     "usd_p90": 5.01,
+     "usd_p99": 5.01,
+     "usd_per_hour": 0.4,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3999,
+   "pinger_orders": 3914,
+   "pinger_share": 0.979
+  },
+  "HYPE": {
+   "flow": {
+    "off": {
+     "buy_share": 0.459,
+     "log_sd": 1.889,
+     "minutes": 2233,
+     "orders_per_minute": 0.4689,
+     "same_side_next": 0.713,
+     "usd_median": 342.61,
+     "usd_p90": 1998.37,
+     "usd_p99": 9732.65,
+     "usd_per_hour": 24689.5,
+     "within_1s_share": 0.236
+    },
+    "regular": {
+     "buy_share": 0.446,
+     "log_sd": 1.608,
+     "minutes": 780,
+     "orders_per_minute": 0.4423,
+     "same_side_next": 0.538,
+     "usd_median": 643.59,
+     "usd_p90": 3385.41,
+     "usd_p99": 11097.79,
+     "usd_per_hour": 38435.8,
+     "within_1s_share": 0.212
+    },
+    "weekend": {
+     "buy_share": 0.664,
+     "log_sd": 2.268,
+     "minutes": 1395,
+     "orders_per_minute": 0.0896,
+     "same_side_next": 0.661,
+     "usd_median": 407.11,
+     "usd_p90": 2102.44,
+     "usd_p99": 24995.47,
+     "usd_per_hour": 6248.8,
+     "within_1s_share": 0.242
+    }
+   },
+   "jumps": 0,
+   "orders": 5352,
+   "pinger_orders": 3835,
+   "pinger_share": 0.717
+  },
+  "IBM": {
+   "flow": {
+    "off": {
+     "buy_share": 0.5,
+     "log_sd": 0.003,
+     "minutes": 2233,
+     "orders_per_minute": 0.0116,
+     "same_side_next": 0.48,
+     "usd_median": 5.02,
+     "usd_p90": 5.05,
+     "usd_p99": 5.07,
+     "usd_per_hour": 3.5,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 780,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    },
+    "weekend": {
+     "buy_share": 0.429,
+     "log_sd": 0.0,
+     "minutes": 1395,
+     "orders_per_minute": 0.005,
+     "same_side_next": 0.333,
+     "usd_median": 5.02,
+     "usd_p90": 5.03,
+     "usd_p99": 5.03,
+     "usd_per_hour": 1.5,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3872,
+   "pinger_orders": 3839,
+   "pinger_share": 0.991
+  },
+  "INTC": {
+   "flow": {
+    "off": {
+     "buy_share": 0.548,
+     "log_sd": 2.369,
+     "minutes": 2233,
+     "orders_per_minute": 0.0327,
+     "same_side_next": 0.569,
+     "usd_median": 557.3,
+     "usd_p90": 1016.5,
+     "usd_p99": 3091.65,
+     "usd_per_hour": 1135.0,
+     "within_1s_share": 0.056
+    },
+    "regular": {
+     "buy_share": 0.495,
+     "log_sd": 1.046,
+     "minutes": 780,
+     "orders_per_minute": 0.2513,
+     "same_side_next": 0.574,
+     "usd_median": 990.91,
+     "usd_p90": 1972.7,
+     "usd_p99": 26741.48,
+     "usd_per_hour": 20997.5,
+     "within_1s_share": 0.072
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 5.02,
+     "usd_p90": 5.02,
+     "usd_p99": 5.02,
+     "usd_per_hour": 0.2,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 1,
+   "orders": 4201,
+   "pinger_orders": 3931,
+   "pinger_share": 0.936
+  },
+  "IREN": {
+   "flow": {
+    "off": {
+     "buy_share": 0.493,
+     "log_sd": 2.829,
+     "minutes": 2233,
+     "orders_per_minute": 0.0336,
+     "same_side_next": 0.459,
+     "usd_median": 42.97,
+     "usd_p90": 9258.79,
+     "usd_p99": 25646.38,
+     "usd_per_hour": 4927.3,
+     "within_1s_share": 0.041
+    },
+    "regular": {
+     "buy_share": 0.347,
+     "log_sd": 2.048,
+     "minutes": 780,
+     "orders_per_minute": 0.1256,
+     "same_side_next": 0.577,
+     "usd_median": 300.61,
+     "usd_p90": 8920.29,
+     "usd_p99": 30872.23,
+     "usd_per_hour": 19751.3,
+     "within_1s_share": 0.031
+    },
+    "weekend": {
+     "buy_share": 0.714,
+     "log_sd": 2.528,
+     "minutes": 1395,
+     "orders_per_minute": 0.005,
+     "same_side_next": 0.333,
+     "usd_median": 12.9,
+     "usd_p90": 4692.4,
+     "usd_p99": 4692.4,
+     "usd_per_hour": 228.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 6,
+   "orders": 4101,
+   "pinger_orders": 3921,
+   "pinger_share": 0.956
+  },
+  "JTO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.728,
+     "log_sd": 1.396,
+     "minutes": 2233,
+     "orders_per_minute": 0.0676,
+     "same_side_next": 0.693,
+     "usd_median": 87.1,
+     "usd_p90": 435.09,
+     "usd_p99": 3350.39,
+     "usd_per_hour": 1113.8,
+     "within_1s_share": 0.047
+    },
+    "regular": {
+     "buy_share": 0.464,
+     "log_sd": 1.382,
+     "minutes": 780,
+     "orders_per_minute": 0.0359,
+     "same_side_next": 0.444,
+     "usd_median": 387.26,
+     "usd_p90": 499.08,
+     "usd_p99": 5857.08,
+     "usd_per_hour": 1065.6,
+     "within_1s_share": 0.111
+    },
+    "weekend": {
+     "buy_share": 0.6,
+     "log_sd": 1.128,
+     "minutes": 1395,
+     "orders_per_minute": 0.086,
+     "same_side_next": 0.588,
+     "usd_median": 391.61,
+     "usd_p90": 893.36,
+     "usd_p99": 2404.49,
+     "usd_per_hour": 2167.8,
+     "within_1s_share": 0.05
+    }
+   },
+   "jumps": 0,
+   "orders": 5072,
+   "pinger_orders": 4773,
+   "pinger_share": 0.941
+  },
+  "JUP": {
+   "flow": {
+    "off": {
+     "buy_share": 0.487,
+     "log_sd": 1.444,
+     "minutes": 2233,
+     "orders_per_minute": 0.1841,
+     "same_side_next": 0.461,
+     "usd_median": 399.9,
+     "usd_p90": 1691.43,
+     "usd_p99": 9872.22,
+     "usd_per_hour": 10095.7,
+     "within_1s_share": 0.061
+    },
+    "regular": {
+     "buy_share": 0.574,
+     "log_sd": 1.443,
+     "minutes": 780,
+     "orders_per_minute": 0.1205,
+     "same_side_next": 0.441,
+     "usd_median": 398.92,
+     "usd_p90": 1604.97,
+     "usd_p99": 20171.85,
+     "usd_per_hour": 6845.7,
+     "within_1s_share": 0.032
+    },
+    "weekend": {
+     "buy_share": 0.535,
+     "log_sd": 1.508,
+     "minutes": 1395,
+     "orders_per_minute": 0.0308,
+     "same_side_next": 0.524,
+     "usd_median": 403.63,
+     "usd_p90": 4193.75,
+     "usd_p99": 20907.01,
+     "usd_per_hour": 3417.3,
+     "within_1s_share": 0.071
+    }
+   },
+   "jumps": 0,
+   "orders": 4484,
+   "pinger_orders": 3936,
+   "pinger_share": 0.878
+  },
+  "KLAC": {
+   "flow": {
+    "off": {
+     "buy_share": 0.692,
+     "log_sd": 0.292,
+     "minutes": 2233,
+     "orders_per_minute": 0.0058,
+     "same_side_next": 0.5,
+     "usd_median": 5.04,
+     "usd_p90": 9.8,
+     "usd_p99": 9.97,
+     "usd_per_hour": 2.3,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.5,
+     "log_sd": 0.349,
+     "minutes": 780,
+     "orders_per_minute": 0.0179,
+     "same_side_next": 0.462,
+     "usd_median": 9.94,
+     "usd_p90": 10.05,
+     "usd_p99": 19.67,
+     "usd_per_hour": 10.2,
+     "within_1s_share": 0.231
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3903,
+   "pinger_orders": 3876,
+   "pinger_share": 0.993
+  },
+  "LINK": {
+   "flow": {
+    "off": {
+     "buy_share": 0.481,
+     "log_sd": 2.421,
+     "minutes": 2233,
+     "orders_per_minute": 0.0363,
+     "same_side_next": 0.463,
+     "usd_median": 5.37,
+     "usd_p90": 1622.93,
+     "usd_p99": 4341.72,
+     "usd_per_hour": 884.2,
+     "within_1s_share": 0.062
+    },
+    "regular": {
+     "buy_share": 0.14,
+     "log_sd": 1.581,
+     "minutes": 780,
+     "orders_per_minute": 0.1462,
+     "same_side_next": 0.77,
+     "usd_median": 66.97,
+     "usd_p90": 829.58,
+     "usd_p99": 2011.42,
+     "usd_per_hour": 2492.6,
+     "within_1s_share": 0.088
+    },
+    "weekend": {
+     "buy_share": 0.542,
+     "log_sd": 0.218,
+     "minutes": 1395,
+     "orders_per_minute": 0.0172,
+     "same_side_next": 0.478,
+     "usd_median": 5.29,
+     "usd_p90": 5.3,
+     "usd_p99": 15.76,
+     "usd_per_hour": 5.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4010,
+   "pinger_orders": 3791,
+   "pinger_share": 0.945
+  },
+  "LIT": {
+   "flow": {
+    "off": {
+     "buy_share": 0.41,
+     "log_sd": 1.519,
+     "minutes": 2233,
+     "orders_per_minute": 0.1585,
+     "same_side_next": 0.612,
+     "usd_median": 399.75,
+     "usd_p90": 1597.91,
+     "usd_p99": 3998.02,
+     "usd_per_hour": 5718.9,
+     "within_1s_share": 0.037
+    },
+    "regular": {
+     "buy_share": 0.404,
+     "log_sd": 1.573,
+     "minutes": 780,
+     "orders_per_minute": 0.2,
+     "same_side_next": 0.645,
+     "usd_median": 392.34,
+     "usd_p90": 1201.28,
+     "usd_p99": 10115.53,
+     "usd_per_hour": 7382.7,
+     "within_1s_share": 0.019
+    },
+    "weekend": {
+     "buy_share": 0.474,
+     "log_sd": 0.529,
+     "minutes": 1395,
+     "orders_per_minute": 0.0136,
+     "same_side_next": 0.556,
+     "usd_median": 402.84,
+     "usd_p90": 1599.27,
+     "usd_p99": 1607.62,
+     "usd_per_hour": 495.5,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 2,
+   "orders": 4460,
+   "pinger_orders": 3931,
+   "pinger_share": 0.881
+  },
+  "LLY": {
+   "flow": {
+    "off": {
+     "buy_share": 0.455,
+     "log_sd": 1.204,
+     "minutes": 2233,
+     "orders_per_minute": 0.0049,
+     "same_side_next": 0.5,
+     "usd_median": 5.02,
+     "usd_p90": 5.03,
+     "usd_p99": 330.36,
+     "usd_per_hour": 10.2,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.8,
+     "log_sd": 1.618,
+     "minutes": 780,
+     "orders_per_minute": 0.0064,
+     "same_side_next": 0.5,
+     "usd_median": 5.05,
+     "usd_p90": 300.13,
+     "usd_p99": 300.13,
+     "usd_per_hour": 26.7,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 5.02,
+     "usd_p90": 5.02,
+     "usd_p99": 5.02,
+     "usd_per_hour": 0.2,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3891,
+   "pinger_orders": 3874,
+   "pinger_share": 0.996
+  },
+  "LTC": {
+   "flow": {
+    "off": {
+     "buy_share": 0.59,
+     "log_sd": 2.14,
+     "minutes": 2233,
+     "orders_per_minute": 0.0273,
+     "same_side_next": 0.533,
+     "usd_median": 401.0,
+     "usd_p90": 1655.87,
+     "usd_p99": 4087.36,
+     "usd_per_hour": 1123.9,
+     "within_1s_share": 0.05
+    },
+    "regular": {
+     "buy_share": 0.469,
+     "log_sd": 2.187,
+     "minutes": 780,
+     "orders_per_minute": 0.041,
+     "same_side_next": 0.581,
+     "usd_median": 199.58,
+     "usd_p90": 398.98,
+     "usd_p99": 1584.04,
+     "usd_per_hour": 636.4,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0014,
+     "same_side_next": 0.0,
+     "usd_median": 407.73,
+     "usd_p90": 407.73,
+     "usd_p99": 407.73,
+     "usd_per_hour": 35.0,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3959,
+   "pinger_orders": 3864,
+   "pinger_share": 0.976
+  },
+  "MEGA": {
+   "flow": {
+    "off": {
+     "buy_share": 0.357,
+     "log_sd": 1.714,
+     "minutes": 2233,
+     "orders_per_minute": 0.0251,
+     "same_side_next": 0.709,
+     "usd_median": 103.55,
+     "usd_p90": 1409.17,
+     "usd_p99": 4018.39,
+     "usd_per_hour": 722.5,
+     "within_1s_share": 0.036
+    },
+    "regular": {
+     "buy_share": 0.412,
+     "log_sd": 2.22,
+     "minutes": 780,
+     "orders_per_minute": 0.0218,
+     "same_side_next": 0.438,
+     "usd_median": 199.6,
+     "usd_p90": 6161.95,
+     "usd_p99": 19620.43,
+     "usd_per_hour": 3604.1,
+     "within_1s_share": 0.188
+    },
+    "weekend": {
+     "buy_share": 0.2,
+     "log_sd": 0.991,
+     "minutes": 1395,
+     "orders_per_minute": 0.0143,
+     "same_side_next": 0.632,
+     "usd_median": 197.65,
+     "usd_p90": 1133.33,
+     "usd_p99": 1331.29,
+     "usd_per_hour": 208.1,
+     "within_1s_share": 0.0
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": 15.48,
+     "n": 41,
+     "p90_bps": 43.31
+    },
+    "1000-10000": {
+     "median_bps": 50.27,
+     "n": 18,
+     "p90_bps": 139.47
+    },
+    "5-100": {
+     "median_bps": 18.68,
+     "n": 33,
+     "p90_bps": 28.71
+    }
+   },
+   "jumps": 0,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 25.279,
+      "low": 9.931,
+      "mean": 17.762,
+      "n": 41
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 7.123,
+       "low": -2.936,
+       "mean": 2.281,
+       "n": 41
+      },
+      "1s": {
+       "high": 3.057,
+       "low": -4.229,
+       "mean": -0.632,
+       "n": 41
+      },
+      "300s": {
+       "high": 20.722,
+       "low": 0.85,
+       "mean": 10.306,
+       "n": 41
+      },
+      "60s": {
+       "high": 12.197,
+       "low": -1.815,
+       "mean": 5.208,
+       "n": 41
+      }
+     },
+     "orders": 41
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 93.255,
+      "low": 49.378,
+      "mean": 68.568,
+      "n": 18
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 42.91,
+       "low": 12.4,
+       "mean": 27.824,
+       "n": 18
+      },
+      "1s": {
+       "high": 26.534,
+       "low": 7.893,
+       "mean": 16.778,
+       "n": 18
+      },
+      "300s": {
+       "high": 46.788,
+       "low": 6.665,
+       "mean": 25.235,
+       "n": 18
+      },
+      "60s": {
+       "high": 53.509,
+       "low": 9.622,
+       "mean": 31.265,
+       "n": 18
+      }
+     },
+     "orders": 18
+    },
+    "10000-inf": {
+     "cost_bps": null,
+     "markout_bps": {
+      "10s": null,
+      "1s": null,
+      "300s": null,
+      "60s": null
+     },
+     "orders": 1
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 18.057,
+      "low": 1.81,
+      "mean": 10.762,
+      "n": 33
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 11.753,
+       "low": -0.718,
+       "mean": 5.523,
+       "n": 33
+      },
+      "1s": {
+       "high": 6.11,
+       "low": -4.44,
+       "mean": 1.414,
+       "n": 33
+      },
+      "300s": {
+       "high": 15.31,
+       "low": -18.932,
+       "mean": 0.862,
+       "n": 33
+      },
+      "60s": {
+       "high": 18.612,
+       "low": 0.05,
+       "mean": 9.822,
+       "n": 33
+      }
+     },
+     "orders": 33
+    }
+   },
+   "orders": 4721,
+   "pinger_orders": 4628,
+   "pinger_share": 0.98
+  },
+  "MET": {
+   "flow": {
+    "off": {
+     "buy_share": 0.733,
+     "log_sd": 1.704,
+     "minutes": 2233,
+     "orders_per_minute": 0.0202,
+     "same_side_next": 0.636,
+     "usd_median": 51.61,
+     "usd_p90": 338.54,
+     "usd_p99": 1573.78,
+     "usd_per_hour": 154.1,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.5,
+     "log_sd": 1.908,
+     "minutes": 780,
+     "orders_per_minute": 0.0359,
+     "same_side_next": 0.37,
+     "usd_median": 50.4,
+     "usd_p90": 487.95,
+     "usd_p99": 2859.72,
+     "usd_per_hour": 429.7,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.75,
+     "log_sd": 0.001,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.333,
+     "usd_median": 5.05,
+     "usd_p90": 5.06,
+     "usd_p99": 5.06,
+     "usd_per_hour": 0.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3936,
+   "pinger_orders": 3859,
+   "pinger_share": 0.98
+  },
+  "META": {
+   "flow": {
+    "off": {
+     "buy_share": 0.539,
+     "log_sd": 1.837,
+     "minutes": 2233,
+     "orders_per_minute": 0.0748,
+     "same_side_next": 0.753,
+     "usd_median": 237.71,
+     "usd_p90": 679.28,
+     "usd_p99": 5126.22,
+     "usd_per_hour": 2306.5,
+     "within_1s_share": 0.193
+    },
+    "regular": {
+     "buy_share": 0.25,
+     "log_sd": 1.594,
+     "minutes": 780,
+     "orders_per_minute": 0.0205,
+     "same_side_next": 0.533,
+     "usd_median": 1004.12,
+     "usd_p90": 5993.05,
+     "usd_p99": 6988.75,
+     "usd_per_hour": 2153.0,
+     "within_1s_share": 0.133
+    },
+    "weekend": {
+     "buy_share": 0.483,
+     "log_sd": 1.952,
+     "minutes": 1395,
+     "orders_per_minute": 0.0208,
+     "same_side_next": 0.321,
+     "usd_median": 5.17,
+     "usd_p90": 687.88,
+     "usd_p99": 740.72,
+     "usd_per_hour": 185.2,
+     "within_1s_share": 0.036
+    }
+   },
+   "jumps": 0,
+   "orders": 4159,
+   "pinger_orders": 3947,
+   "pinger_share": 0.949
+  },
+  "METADAO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.726,
+     "log_sd": 0.518,
+     "minutes": 2233,
+     "orders_per_minute": 0.0376,
+     "same_side_next": 0.627,
+     "usd_median": 5.14,
+     "usd_p90": 10.01,
+     "usd_p99": 55.65,
+     "usd_per_hour": 20.7,
+     "within_1s_share": 0.06
+    },
+    "regular": {
+     "buy_share": 0.556,
+     "log_sd": 0.432,
+     "minutes": 780,
+     "orders_per_minute": 0.0115,
+     "same_side_next": 0.625,
+     "usd_median": 5.09,
+     "usd_p90": 20.07,
+     "usd_p99": 20.07,
+     "usd_per_hour": 4.7,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": 0.005,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.667,
+     "usd_median": 5.08,
+     "usd_p90": 5.13,
+     "usd_p99": 5.13,
+     "usd_per_hour": 0.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3933,
+   "pinger_orders": 3836,
+   "pinger_share": 0.975
+  },
+  "MON": {
+   "flow": {
+    "off": {
+     "buy_share": 0.513,
+     "log_sd": 1.237,
+     "minutes": 2233,
+     "orders_per_minute": 0.5289,
+     "same_side_next": 0.524,
+     "usd_median": 400.18,
+     "usd_p90": 1600.72,
+     "usd_p99": 12455.16,
+     "usd_per_hour": 29871.7,
+     "within_1s_share": 0.064
+    },
+    "regular": {
+     "buy_share": 0.486,
+     "log_sd": 1.446,
+     "minutes": 780,
+     "orders_per_minute": 0.6205,
+     "same_side_next": 0.526,
+     "usd_median": 400.11,
+     "usd_p90": 1499.66,
+     "usd_p99": 10630.9,
+     "usd_per_hour": 41220.0,
+     "within_1s_share": 0.052
+    },
+    "weekend": {
+     "buy_share": 0.421,
+     "log_sd": 0.521,
+     "minutes": 1395,
+     "orders_per_minute": 0.0136,
+     "same_side_next": 0.333,
+     "usd_median": 399.39,
+     "usd_p90": 401.16,
+     "usd_p99": 618.98,
+     "usd_per_hour": 296.8,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 11,
+   "orders": 5802,
+   "pinger_orders": 4118,
+   "pinger_share": 0.71
+  },
+  "MORPHO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.504,
+     "log_sd": 2.21,
+     "minutes": 2233,
+     "orders_per_minute": 0.0578,
+     "same_side_next": 0.523,
+     "usd_median": 401.19,
+     "usd_p90": 2288.07,
+     "usd_p99": 6073.3,
+     "usd_per_hour": 2886.2,
+     "within_1s_share": 0.164
+    },
+    "regular": {
+     "buy_share": 0.525,
+     "log_sd": 1.92,
+     "minutes": 780,
+     "orders_per_minute": 0.1026,
+     "same_side_next": 0.519,
+     "usd_median": 402.14,
+     "usd_p90": 3983.54,
+     "usd_p99": 15417.52,
+     "usd_per_hour": 6958.3,
+     "within_1s_share": 0.089
+    },
+    "weekend": {
+     "buy_share": 0.667,
+     "log_sd": 0.003,
+     "minutes": 1395,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 0.5,
+     "usd_median": 5.05,
+     "usd_p90": 5.06,
+     "usd_p99": 5.06,
+     "usd_per_hour": 0.7,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 5,
+   "orders": 4159,
+   "pinger_orders": 3947,
+   "pinger_share": 0.949
+  },
+  "MRNA": {
+   "flow": {
+    "off": {
+     "buy_share": 0.431,
+     "log_sd": 2.137,
+     "minutes": 2233,
+     "orders_per_minute": 0.0228,
+     "same_side_next": 0.42,
+     "usd_median": 7.84,
+     "usd_p90": 301.18,
+     "usd_p99": 2713.54,
+     "usd_per_hour": 335.9,
+     "within_1s_share": 0.02
+    },
+    "regular": {
+     "buy_share": 0.718,
+     "log_sd": 2.044,
+     "minutes": 780,
+     "orders_per_minute": 0.05,
+     "same_side_next": 0.553,
+     "usd_median": 115.64,
+     "usd_p90": 2639.55,
+     "usd_p99": 2997.61,
+     "usd_per_hour": 1311.9,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.25,
+     "log_sd": 0.899,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.333,
+     "usd_median": 5.08,
+     "usd_p90": 40.38,
+     "usd_p99": 40.38,
+     "usd_per_hour": 2.4,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3980,
+   "pinger_orders": 3886,
+   "pinger_share": 0.976
+  },
+  "MRVL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.47,
+     "log_sd": 2.255,
+     "minutes": 2233,
+     "orders_per_minute": 0.0372,
+     "same_side_next": 0.512,
+     "usd_median": 299.61,
+     "usd_p90": 2094.43,
+     "usd_p99": 10157.4,
+     "usd_per_hour": 1379.4,
+     "within_1s_share": 0.073
+    },
+    "regular": {
+     "buy_share": 0.492,
+     "log_sd": 1.333,
+     "minutes": 780,
+     "orders_per_minute": 0.0808,
+     "same_side_next": 0.339,
+     "usd_median": 299.9,
+     "usd_p90": 450.49,
+     "usd_p99": 2001.04,
+     "usd_per_hour": 1622.5,
+     "within_1s_share": 0.032
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 1,
+   "orders": 4099,
+   "pinger_orders": 3953,
+   "pinger_share": 0.964
+  },
+  "MSFT": {
+   "flow": {
+    "off": {
+     "buy_share": 0.571,
+     "log_sd": 2.645,
+     "minutes": 2233,
+     "orders_per_minute": 0.0094,
+     "same_side_next": 0.45,
+     "usd_median": 10.11,
+     "usd_p90": 2493.54,
+     "usd_p99": 2973.19,
+     "usd_per_hour": 348.6,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.364,
+     "log_sd": 3.52,
+     "minutes": 780,
+     "orders_per_minute": 0.0282,
+     "same_side_next": 0.667,
+     "usd_median": 994.78,
+     "usd_p90": 11018.31,
+     "usd_p99": 17035.43,
+     "usd_per_hour": 6844.3,
+     "within_1s_share": 0.095
+    },
+    "weekend": {
+     "buy_share": 0.636,
+     "log_sd": 1.851,
+     "minutes": 1395,
+     "orders_per_minute": 0.0079,
+     "same_side_next": 0.8,
+     "usd_median": 5.0,
+     "usd_p90": 5.0,
+     "usd_p99": 3131.24,
+     "usd_per_hour": 136.8,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3894,
+   "pinger_orders": 3840,
+   "pinger_share": 0.986
+  },
+  "MSTR": {
+   "flow": {
+    "off": {
+     "buy_share": 0.455,
+     "log_sd": 2.38,
+     "minutes": 2233,
+     "orders_per_minute": 0.0739,
+     "same_side_next": 0.439,
+     "usd_median": 5.1,
+     "usd_p90": 1004.3,
+     "usd_p99": 7437.53,
+     "usd_per_hour": 1902.7,
+     "within_1s_share": 0.03
+    },
+    "regular": {
+     "buy_share": 0.49,
+     "log_sd": 2.194,
+     "minutes": 780,
+     "orders_per_minute": 0.2462,
+     "same_side_next": 0.545,
+     "usd_median": 696.14,
+     "usd_p90": 1960.13,
+     "usd_p99": 13172.41,
+     "usd_per_hour": 17483.9,
+     "within_1s_share": 0.031
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 35.55,
+     "usd_p90": 35.55,
+     "usd_p99": 35.55,
+     "usd_per_hour": 1.5,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 4141,
+   "pinger_orders": 3783,
+   "pinger_share": 0.914
+  },
+  "MU": {
+   "flow": {
+    "off": {
+     "buy_share": 0.541,
+     "log_sd": 2.157,
+     "minutes": 2233,
+     "orders_per_minute": 0.0654,
+     "same_side_next": 0.6,
+     "usd_median": 986.82,
+     "usd_p90": 5532.57,
+     "usd_p99": 10089.25,
+     "usd_per_hour": 6204.1,
+     "within_1s_share": 0.09
+    },
+    "regular": {
+     "buy_share": 0.481,
+     "log_sd": 0.7,
+     "minutes": 780,
+     "orders_per_minute": 0.3115,
+     "same_side_next": 0.438,
+     "usd_median": 999.28,
+     "usd_p90": 1009.36,
+     "usd_p99": 3276.04,
+     "usd_per_hour": 19565.7,
+     "within_1s_share": 0.017
+    },
+    "weekend": {
+     "buy_share": 0.333,
+     "log_sd": 2.194,
+     "minutes": 1395,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 0.5,
+     "usd_median": 5.01,
+     "usd_p90": 525.32,
+     "usd_p99": 525.32,
+     "usd_per_hour": 23.0,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 5,
+   "orders": 4296,
+   "pinger_orders": 3904,
+   "pinger_share": 0.909
+  },
+  "NBIS": {
+   "flow": {
+    "off": {
+     "buy_share": 0.571,
+     "log_sd": 2.808,
+     "minutes": 2233,
+     "orders_per_minute": 0.0439,
+     "same_side_next": 0.577,
+     "usd_median": 996.43,
+     "usd_p90": 5997.04,
+     "usd_p99": 11135.2,
+     "usd_per_hour": 5151.4,
+     "within_1s_share": 0.072
+    },
+    "regular": {
+     "buy_share": 0.378,
+     "log_sd": 1.817,
+     "minutes": 780,
+     "orders_per_minute": 0.1154,
+     "same_side_next": 0.562,
+     "usd_median": 300.99,
+     "usd_p90": 1003.6,
+     "usd_p99": 5978.24,
+     "usd_per_hour": 4555.5,
+     "within_1s_share": 0.045
+    },
+    "weekend": {
+     "buy_share": 0.625,
+     "log_sd": 2.408,
+     "minutes": 1395,
+     "orders_per_minute": 0.0057,
+     "same_side_next": 0.714,
+     "usd_median": 1010.62,
+     "usd_p90": 4280.76,
+     "usd_p99": 4280.76,
+     "usd_per_hour": 369.5,
+     "within_1s_share": 0.143
+    }
+   },
+   "jumps": 7,
+   "orders": 4149,
+   "pinger_orders": 3953,
+   "pinger_share": 0.953
+  },
+  "NEAR": {
+   "flow": {
+    "off": {
+     "buy_share": 0.529,
+     "log_sd": 2.232,
+     "minutes": 2233,
+     "orders_per_minute": 0.2414,
+     "same_side_next": 0.472,
+     "usd_median": 6.0,
+     "usd_p90": 995.04,
+     "usd_p99": 5266.0,
+     "usd_per_hour": 5699.2,
+     "within_1s_share": 0.024
+    },
+    "regular": {
+     "buy_share": 0.517,
+     "log_sd": 2.327,
+     "minutes": 780,
+     "orders_per_minute": 0.2577,
+     "same_side_next": 0.51,
+     "usd_median": 6.27,
+     "usd_p90": 938.97,
+     "usd_p99": 4103.03,
+     "usd_per_hour": 5920.3,
+     "within_1s_share": 0.055
+    },
+    "weekend": {
+     "buy_share": 0.486,
+     "log_sd": 1.642,
+     "minutes": 1395,
+     "orders_per_minute": 0.0502,
+     "same_side_next": 0.464,
+     "usd_median": 6.0,
+     "usd_p90": 400.03,
+     "usd_p99": 1300.21,
+     "usd_per_hour": 275.3,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4191,
+   "pinger_orders": 3381,
+   "pinger_share": 0.807
+  },
+  "NET": {
+   "flow": {
+    "off": {
+     "buy_share": 0.684,
+     "log_sd": 1.921,
+     "minutes": 2233,
+     "orders_per_minute": 0.0085,
+     "same_side_next": 0.389,
+     "usd_median": 5.12,
+     "usd_p90": 2982.53,
+     "usd_p99": 2995.21,
+     "usd_per_hour": 163.7,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.364,
+     "log_sd": 2.209,
+     "minutes": 780,
+     "orders_per_minute": 0.0141,
+     "same_side_next": 0.7,
+     "usd_median": 8.86,
+     "usd_p90": 2034.64,
+     "usd_p99": 2073.46,
+     "usd_per_hour": 321.1,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.6,
+     "log_sd": 0.003,
+     "minutes": 1395,
+     "orders_per_minute": 0.0036,
+     "same_side_next": 0.75,
+     "usd_median": 5.1,
+     "usd_p90": 5.11,
+     "usd_p99": 5.11,
+     "usd_per_hour": 1.1,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3915,
+   "pinger_orders": 3880,
+   "pinger_share": 0.991
+  },
+  "NFLX": {
+   "flow": {
+    "off": {
+     "buy_share": 0.513,
+     "log_sd": 1.636,
+     "minutes": 2233,
+     "orders_per_minute": 0.0175,
+     "same_side_next": 0.316,
+     "usd_median": 5.2,
+     "usd_p90": 138.89,
+     "usd_p99": 2028.75,
+     "usd_per_hour": 146.4,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.526,
+     "log_sd": 2.559,
+     "minutes": 780,
+     "orders_per_minute": 0.0244,
+     "same_side_next": 0.278,
+     "usd_median": 990.92,
+     "usd_p90": 1996.16,
+     "usd_p99": 2002.62,
+     "usd_per_hour": 1049.0,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": 0.0,
+     "minutes": 1395,
+     "orders_per_minute": 0.0086,
+     "same_side_next": 0.545,
+     "usd_median": 5.16,
+     "usd_p90": 5.16,
+     "usd_p99": 5.16,
+     "usd_per_hour": 2.7,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3915,
+   "pinger_orders": 3845,
+   "pinger_share": 0.982
+  },
+  "NVDA": {
+   "flow": {
+    "off": {
+     "buy_share": 0.486,
+     "log_sd": 2.191,
+     "minutes": 2233,
+     "orders_per_minute": 0.2902,
+     "same_side_next": 0.59,
+     "usd_median": 787.4,
+     "usd_p90": 6004.5,
+     "usd_p99": 49589.61,
+     "usd_per_hour": 59254.8,
+     "within_1s_share": 0.077
+    },
+    "regular": {
+     "buy_share": 0.464,
+     "log_sd": 2.047,
+     "minutes": 780,
+     "orders_per_minute": 0.991,
+     "same_side_next": 0.571,
+     "usd_median": 1000.1,
+     "usd_p90": 9897.7,
+     "usd_p99": 74045.41,
+     "usd_per_hour": 290408.2,
+     "within_1s_share": 0.136
+    },
+    "weekend": {
+     "buy_share": 0.594,
+     "log_sd": 2.431,
+     "minutes": 1395,
+     "orders_per_minute": 0.0229,
+     "same_side_next": 0.452,
+     "usd_median": 88.04,
+     "usd_p90": 3780.86,
+     "usd_p99": 10003.17,
+     "usd_per_hour": 1655.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": 5.56,
+     "n": 498,
+     "p90_bps": 35.79
+    },
+    "1000-10000": {
+     "median_bps": 6.91,
+     "n": 543,
+     "p90_bps": 31.94
+    },
+    "10000-inf": {
+     "median_bps": 9.41,
+     "n": 121,
+     "p90_bps": 51.5
+    },
+    "5-100": {
+     "median_bps": 4.29,
+     "n": 291,
+     "p90_bps": 30.53
+    }
+   },
+   "jumps": 9,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 11.663,
+      "low": 5.975,
+      "mean": 8.885,
+      "n": 498
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 7.01,
+       "low": 0.665,
+       "mean": 3.627,
+       "n": 498
+      },
+      "1s": {
+       "high": 3.457,
+       "low": 0.026,
+       "mean": 1.796,
+       "n": 498
+      },
+      "300s": {
+       "high": 22.645,
+       "low": -3.067,
+       "mean": 9.905,
+       "n": 498
+      },
+      "60s": {
+       "high": 15.63,
+       "low": 2.24,
+       "mean": 8.149,
+       "n": 498
+      }
+     },
+     "orders": 498
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 11.554,
+      "low": 5.436,
+      "mean": 8.604,
+      "n": 543
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 7.695,
+       "low": -0.688,
+       "mean": 3.702,
+       "n": 543
+      },
+      "1s": {
+       "high": 3.184,
+       "low": -0.344,
+       "mean": 1.396,
+       "n": 543
+      },
+      "300s": {
+       "high": 14.8,
+       "low": -14.679,
+       "mean": -1.359,
+       "n": 543
+      },
+      "60s": {
+       "high": 20.123,
+       "low": 3.15,
+       "mean": 11.59,
+       "n": 543
+      }
+     },
+     "orders": 543
+    },
+    "10000-inf": {
+     "cost_bps": {
+      "high": 18.033,
+      "low": 8.902,
+      "mean": 13.21,
+      "n": 121
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 12.962,
+       "low": 1.876,
+       "mean": 7.049,
+       "n": 121
+      },
+      "1s": {
+       "high": 5.87,
+       "low": -0.957,
+       "mean": 2.817,
+       "n": 121
+      },
+      "300s": {
+       "high": 46.158,
+       "low": -20.256,
+       "mean": 14.376,
+       "n": 121
+      },
+      "60s": {
+       "high": 20.8,
+       "low": -16.211,
+       "mean": 5.635,
+       "n": 121
+      }
+     },
+     "orders": 121
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 7.502,
+      "low": -0.088,
+      "mean": 3.817,
+      "n": 291
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 3.071,
+       "low": -4.257,
+       "mean": -0.392,
+       "n": 291
+      },
+      "1s": {
+       "high": 1.337,
+       "low": -4.379,
+       "mean": -1.192,
+       "n": 291
+      },
+      "300s": {
+       "high": 26.844,
+       "low": -9.092,
+       "mean": 7.871,
+       "n": 290
+      },
+      "60s": {
+       "high": 7.204,
+       "low": -8.565,
+       "mean": 0.417,
+       "n": 291
+      }
+     },
+     "orders": 291
+    }
+   },
+   "orders": 5461,
+   "pinger_orders": 4008,
+   "pinger_share": 0.734
+  },
+  "ONDO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.433,
+     "log_sd": 2.014,
+     "minutes": 2233,
+     "orders_per_minute": 0.0269,
+     "same_side_next": 0.542,
+     "usd_median": 197.57,
+     "usd_p90": 861.13,
+     "usd_p99": 3352.79,
+     "usd_per_hour": 442.1,
+     "within_1s_share": 0.051
+    },
+    "regular": {
+     "buy_share": 0.455,
+     "log_sd": 1.839,
+     "minutes": 780,
+     "orders_per_minute": 0.0564,
+     "same_side_next": 0.535,
+     "usd_median": 196.05,
+     "usd_p90": 968.56,
+     "usd_p99": 1994.76,
+     "usd_per_hour": 1077.4,
+     "within_1s_share": 0.186
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": 0.002,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.667,
+     "usd_median": 5.11,
+     "usd_p90": 5.13,
+     "usd_p99": 5.13,
+     "usd_per_hour": 0.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3965,
+   "pinger_orders": 3857,
+   "pinger_share": 0.973
+  },
+  "OPEN": {
+   "flow": {
+    "off": {
+     "buy_share": 0.0,
+     "log_sd": 0.323,
+     "minutes": 2233,
+     "orders_per_minute": 0.0013,
+     "same_side_next": 1.0,
+     "usd_median": 9.84,
+     "usd_p90": 10.04,
+     "usd_p99": 10.04,
+     "usd_per_hour": 0.7,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.667,
+     "log_sd": 1.348,
+     "minutes": 780,
+     "orders_per_minute": 0.0115,
+     "same_side_next": 0.25,
+     "usd_median": 7.5,
+     "usd_p90": 166.56,
+     "usd_p99": 166.56,
+     "usd_per_hour": 30.6,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3623,
+   "pinger_orders": 3611,
+   "pinger_share": 0.997
+  },
+  "ORCA": {
+   "flow": {
+    "off": {
+     "buy_share": 0.601,
+     "log_sd": 0.832,
+     "minutes": 2233,
+     "orders_per_minute": 0.1043,
+     "same_side_next": 0.681,
+     "usd_median": 59.98,
+     "usd_p90": 60.67,
+     "usd_p99": 399.66,
+     "usd_per_hour": 363.0,
+     "within_1s_share": 0.026
+    },
+    "regular": {
+     "buy_share": 0.55,
+     "log_sd": 1.012,
+     "minutes": 780,
+     "orders_per_minute": 0.0513,
+     "same_side_next": 0.615,
+     "usd_median": 60.06,
+     "usd_p90": 65.2,
+     "usd_p99": 396.55,
+     "usd_per_hour": 195.2,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.455,
+     "log_sd": 0.927,
+     "minutes": 1395,
+     "orders_per_minute": 0.0079,
+     "same_side_next": 0.3,
+     "usd_median": 54.83,
+     "usd_p90": 60.13,
+     "usd_p99": 60.15,
+     "usd_per_hour": 17.4,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4262,
+   "pinger_orders": 3978,
+   "pinger_share": 0.933
+  },
+  "ORCL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.455,
+     "log_sd": 3.173,
+     "minutes": 2233,
+     "orders_per_minute": 0.0148,
+     "same_side_next": 0.781,
+     "usd_median": 6.0,
+     "usd_p90": 4699.0,
+     "usd_p99": 9995.87,
+     "usd_per_hour": 1449.6,
+     "within_1s_share": 0.094
+    },
+    "regular": {
+     "buy_share": 0.545,
+     "log_sd": 2.281,
+     "minutes": 780,
+     "orders_per_minute": 0.0282,
+     "same_side_next": 0.333,
+     "usd_median": 7.47,
+     "usd_p90": 999.88,
+     "usd_p99": 3967.77,
+     "usd_per_hour": 631.1,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 2,
+   "orders": 3946,
+   "pinger_orders": 3891,
+   "pinger_share": 0.986
+  },
+  "ORE": {
+   "flow": {
+    "off": {
+     "buy_share": 0.333,
+     "log_sd": 1.301,
+     "minutes": 2233,
+     "orders_per_minute": 0.004,
+     "same_side_next": 0.75,
+     "usd_median": 5.02,
+     "usd_p90": 323.8,
+     "usd_p99": 323.8,
+     "usd_per_hour": 9.9,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.75,
+     "log_sd": 1.191,
+     "minutes": 780,
+     "orders_per_minute": 0.0051,
+     "same_side_next": 0.333,
+     "usd_median": 31.84,
+     "usd_p90": 145.03,
+     "usd_p99": 145.03,
+     "usd_per_hour": 16.4,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0014,
+     "same_side_next": 1.0,
+     "usd_median": 5.02,
+     "usd_p90": 5.02,
+     "usd_p99": 5.02,
+     "usd_per_hour": 0.4,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3894,
+   "pinger_orders": 3879,
+   "pinger_share": 0.996
+  },
+  "PANW": {
+   "flow": {
+    "off": {
+     "buy_share": 0.034,
+     "log_sd": 0.707,
+     "minutes": 2233,
+     "orders_per_minute": 0.0394,
+     "same_side_next": 0.943,
+     "usd_median": 7.08,
+     "usd_p90": 7.08,
+     "usd_p99": 353.67,
+     "usd_per_hour": 43.6,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.6,
+     "log_sd": 0.452,
+     "minutes": 780,
+     "orders_per_minute": 0.0128,
+     "same_side_next": 0.222,
+     "usd_median": 7.14,
+     "usd_p90": 22.43,
+     "usd_p99": 22.43,
+     "usd_per_hour": 6.7,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": 0.0,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.0,
+     "usd_median": 5.13,
+     "usd_p90": 5.13,
+     "usd_p99": 5.13,
+     "usd_per_hour": 0.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3982,
+   "pinger_orders": 3880,
+   "pinger_share": 0.974
+  },
+  "PLTR": {
+   "flow": {
+    "off": {
+     "buy_share": 0.714,
+     "log_sd": 3.174,
+     "minutes": 2233,
+     "orders_per_minute": 0.0031,
+     "same_side_next": 0.833,
+     "usd_median": 12.02,
+     "usd_p90": 10032.41,
+     "usd_p99": 10032.41,
+     "usd_per_hour": 539.2,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.455,
+     "log_sd": 2.077,
+     "minutes": 780,
+     "orders_per_minute": 0.0141,
+     "same_side_next": 0.6,
+     "usd_median": 5.05,
+     "usd_p90": 1152.46,
+     "usd_p99": 1156.58,
+     "usd_per_hour": 183.5,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.333,
+     "log_sd": 0.0,
+     "minutes": 1395,
+     "orders_per_minute": 0.0022,
+     "same_side_next": 0.0,
+     "usd_median": 5.02,
+     "usd_p90": 5.02,
+     "usd_p99": 5.02,
+     "usd_per_hour": 0.6,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3914,
+   "pinger_orders": 3893,
+   "pinger_share": 0.995
+  },
+  "PONS": {
+   "flow": {
+    "off": {
+     "buy_share": 0.509,
+     "log_sd": 0.668,
+     "minutes": 2233,
+     "orders_per_minute": 0.3027,
+     "same_side_next": 0.421,
+     "usd_median": 199.96,
+     "usd_p90": 798.15,
+     "usd_p99": 1402.07,
+     "usd_per_hour": 5181.1,
+     "within_1s_share": 0.025
+    },
+    "regular": {
+     "buy_share": 0.477,
+     "log_sd": 0.732,
+     "minutes": 780,
+     "orders_per_minute": 0.4192,
+     "same_side_next": 0.387,
+     "usd_median": 199.93,
+     "usd_p90": 797.36,
+     "usd_p99": 1604.89,
+     "usd_per_hour": 7553.6,
+     "within_1s_share": 0.04
+    },
+    "weekend": {
+     "buy_share": 0.6,
+     "log_sd": 1.336,
+     "minutes": 1395,
+     "orders_per_minute": 0.0394,
+     "same_side_next": 0.5,
+     "usd_median": 200.11,
+     "usd_p90": 1403.87,
+     "usd_p99": 21467.42,
+     "usd_per_hour": 2459.4,
+     "within_1s_share": 0.111
+    }
+   },
+   "jumps": 0,
+   "orders": 5001,
+   "pinger_orders": 3943,
+   "pinger_share": 0.788
+  },
+  "PUMP": {
+   "flow": {
+    "off": {
+     "buy_share": 0.562,
+     "log_sd": 1.692,
+     "minutes": 2233,
+     "orders_per_minute": 0.086,
+     "same_side_next": 0.55,
+     "usd_median": 399.61,
+     "usd_p90": 1497.79,
+     "usd_p99": 4002.58,
+     "usd_per_hour": 2548.3,
+     "within_1s_share": 0.073
+    },
+    "regular": {
+     "buy_share": 0.431,
+     "log_sd": 1.79,
+     "minutes": 780,
+     "orders_per_minute": 0.0744,
+     "same_side_next": 0.544,
+     "usd_median": 398.21,
+     "usd_p90": 406.96,
+     "usd_p99": 1621.0,
+     "usd_per_hour": 1391.1,
+     "within_1s_share": 0.035
+    },
+    "weekend": {
+     "buy_share": 0.366,
+     "log_sd": 0.877,
+     "minutes": 1395,
+     "orders_per_minute": 0.0294,
+     "same_side_next": 0.675,
+     "usd_median": 397.61,
+     "usd_p90": 1193.26,
+     "usd_p99": 2111.85,
+     "usd_per_hour": 946.6,
+     "within_1s_share": 0.025
+    }
+   },
+   "jumps": 0,
+   "orders": 4166,
+   "pinger_orders": 3875,
+   "pinger_share": 0.93
+  },
+  "QCOM": {
+   "flow": {
+    "off": {
+     "buy_share": 0.308,
+     "log_sd": 2.517,
+     "minutes": 2233,
+     "orders_per_minute": 0.0058,
+     "same_side_next": 0.667,
+     "usd_median": 930.38,
+     "usd_p90": 1001.77,
+     "usd_p99": 5994.86,
+     "usd_per_hour": 322.0,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.2,
+     "log_sd": 0.257,
+     "minutes": 780,
+     "orders_per_minute": 0.0064,
+     "same_side_next": 0.5,
+     "usd_median": 5.05,
+     "usd_p90": 9.56,
+     "usd_p99": 9.56,
+     "usd_per_hour": 2.3,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3925,
+   "pinger_orders": 3907,
+   "pinger_share": 0.995
+  },
+  "QQQ": {
+   "flow": {
+    "off": {
+     "buy_share": 0.492,
+     "log_sd": 2.459,
+     "minutes": 2233,
+     "orders_per_minute": 0.223,
+     "same_side_next": 0.841,
+     "usd_median": 10.05,
+     "usd_p90": 1500.49,
+     "usd_p99": 8180.39,
+     "usd_per_hour": 8781.2,
+     "within_1s_share": 0.068
+    },
+    "regular": {
+     "buy_share": 0.5,
+     "log_sd": 2.866,
+     "minutes": 780,
+     "orders_per_minute": 0.1821,
+     "same_side_next": 0.716,
+     "usd_median": 9.78,
+     "usd_p90": 6960.7,
+     "usd_p99": 10299.47,
+     "usd_per_hour": 15992.9,
+     "within_1s_share": 0.106
+    },
+    "weekend": {
+     "buy_share": 0.74,
+     "log_sd": 0.696,
+     "minutes": 1395,
+     "orders_per_minute": 0.0552,
+     "same_side_next": 0.711,
+     "usd_median": 10.0,
+     "usd_p90": 10.02,
+     "usd_p99": 946.16,
+     "usd_per_hour": 69.5,
+     "within_1s_share": 0.013
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": 3.41,
+     "n": 17,
+     "p90_bps": 21.55
+    },
+    "1000-10000": {
+     "median_bps": 1.25,
+     "n": 185,
+     "p90_bps": 5.17
+    },
+    "5-100": {
+     "median_bps": 1.33,
+     "n": 509,
+     "p90_bps": 5.73
+    }
+   },
+   "jumps": 0,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 9.573,
+      "low": 2.308,
+      "mean": 5.673,
+      "n": 17
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 6.812,
+       "low": 1.234,
+       "mean": 3.73,
+       "n": 17
+      },
+      "1s": {
+       "high": 6.57,
+       "low": 1.073,
+       "mean": 3.47,
+       "n": 17
+      },
+      "300s": {
+       "high": 9.458,
+       "low": -8.121,
+       "mean": 0.149,
+       "n": 17
+      },
+      "60s": {
+       "high": 7.294,
+       "low": 1.613,
+       "mean": 4.314,
+       "n": 17
+      }
+     },
+     "orders": 17
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 2.742,
+      "low": 0.916,
+      "mean": 1.724,
+      "n": 185
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 1.014,
+       "low": -0.115,
+       "mean": 0.433,
+       "n": 185
+      },
+      "1s": {
+       "high": 1.07,
+       "low": 0.086,
+       "mean": 0.545,
+       "n": 185
+      },
+      "300s": {
+       "high": 0.13,
+       "low": -3.981,
+       "mean": -1.964,
+       "n": 185
+      },
+      "60s": {
+       "high": 2.931,
+       "low": 0.577,
+       "mean": 1.738,
+       "n": 185
+      }
+     },
+     "orders": 185
+    },
+    "10000-inf": {
+     "cost_bps": null,
+     "markout_bps": {
+      "10s": null,
+      "1s": null,
+      "300s": null,
+      "60s": null
+     },
+     "orders": 6
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 1.477,
+      "low": 0.738,
+      "mean": 1.102,
+      "n": 509
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 0.21,
+       "low": -0.208,
+       "mean": -0.002,
+       "n": 509
+      },
+      "1s": {
+       "high": 0.166,
+       "low": -0.277,
+       "mean": -0.049,
+       "n": 509
+      },
+      "300s": {
+       "high": 1.313,
+       "low": -1.292,
+       "mean": -0.034,
+       "n": 509
+      },
+      "60s": {
+       "high": 0.785,
+       "low": 0.072,
+       "mean": 0.432,
+       "n": 509
+      }
+     },
+     "orders": 509
+    }
+   },
+   "orders": 4441,
+   "pinger_orders": 3724,
+   "pinger_share": 0.839
+  },
+  "RAY": {
+   "flow": {
+    "off": {
+     "buy_share": 0.419,
+     "log_sd": 1.468,
+     "minutes": 2233,
+     "orders_per_minute": 0.0139,
+     "same_side_next": 0.4,
+     "usd_median": 58.89,
+     "usd_p90": 157.37,
+     "usd_p99": 371.12,
+     "usd_per_hour": 56.3,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.333,
+     "log_sd": 1.388,
+     "minutes": 780,
+     "orders_per_minute": 0.0115,
+     "same_side_next": 0.5,
+     "usd_median": 59.02,
+     "usd_p90": 332.62,
+     "usd_p99": 332.62,
+     "usd_per_hour": 49.9,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0014,
+     "same_side_next": 0.0,
+     "usd_median": 60.59,
+     "usd_p90": 60.59,
+     "usd_p99": 60.59,
+     "usd_per_hour": 5.2,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3973,
+   "pinger_orders": 3931,
+   "pinger_share": 0.989
+  },
+  "RENDER": {
+   "flow": {
+    "off": {
+     "buy_share": 0.76,
+     "log_sd": 1.545,
+     "minutes": 2233,
+     "orders_per_minute": 0.1361,
+     "same_side_next": 0.746,
+     "usd_median": 82.64,
+     "usd_p90": 1397.96,
+     "usd_p99": 3201.46,
+     "usd_per_hour": 2942.8,
+     "within_1s_share": 0.053
+    },
+    "regular": {
+     "buy_share": 0.763,
+     "log_sd": 1.698,
+     "minutes": 780,
+     "orders_per_minute": 0.1731,
+     "same_side_next": 0.746,
+     "usd_median": 79.76,
+     "usd_p90": 1544.74,
+     "usd_p99": 4102.56,
+     "usd_per_hour": 4435.0,
+     "within_1s_share": 0.045
+    },
+    "weekend": {
+     "buy_share": 0.385,
+     "log_sd": 0.888,
+     "minutes": 1395,
+     "orders_per_minute": 0.0186,
+     "same_side_next": 0.36,
+     "usd_median": 404.34,
+     "usd_p90": 2518.96,
+     "usd_p99": 4136.92,
+     "usd_per_hour": 1058.3,
+     "within_1s_share": 0.04
+    }
+   },
+   "jumps": 0,
+   "orders": 4524,
+   "pinger_orders": 4059,
+   "pinger_share": 0.897
+  },
+  "SILVER": {
+   "flow": {
+    "off": {
+     "buy_share": 0.482,
+     "log_sd": 1.917,
+     "minutes": 2233,
+     "orders_per_minute": 0.1617,
+     "same_side_next": 0.531,
+     "usd_median": 198.97,
+     "usd_p90": 399.35,
+     "usd_p99": 2794.42,
+     "usd_per_hour": 3761.8,
+     "within_1s_share": 0.197
+    },
+    "regular": {
+     "buy_share": 0.496,
+     "log_sd": 0.88,
+     "minutes": 780,
+     "orders_per_minute": 0.8846,
+     "same_side_next": 0.372,
+     "usd_median": 266.25,
+     "usd_p90": 268.79,
+     "usd_p99": 1249.41,
+     "usd_per_hour": 16801.9,
+     "within_1s_share": 0.055
+    },
+    "weekend": {
+     "buy_share": 0.591,
+     "log_sd": 2.364,
+     "minutes": 1395,
+     "orders_per_minute": 0.0315,
+     "same_side_next": 0.512,
+     "usd_median": 299.16,
+     "usd_p90": 2699.76,
+     "usd_p99": 22199.78,
+     "usd_per_hour": 4433.1,
+     "within_1s_share": 0.209
+    }
+   },
+   "jumps": 0,
+   "orders": 4903,
+   "pinger_orders": 3808,
+   "pinger_share": 0.777
+  },
+  "SKHY": {
+   "flow": {
+    "off": {
+     "buy_share": 0.5,
+     "log_sd": 2.596,
+     "minutes": 2233,
+     "orders_per_minute": 0.0188,
+     "same_side_next": 0.585,
+     "usd_median": 117.72,
+     "usd_p90": 3002.18,
+     "usd_p99": 14052.54,
+     "usd_per_hour": 1425.8,
+     "within_1s_share": 0.024
+    },
+    "regular": {
+     "buy_share": 0.452,
+     "log_sd": 2.113,
+     "minutes": 780,
+     "orders_per_minute": 0.0397,
+     "same_side_next": 0.6,
+     "usd_median": 250.6,
+     "usd_p90": 1252.93,
+     "usd_p99": 6680.33,
+     "usd_per_hour": 2336.5,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 4003,
+   "pinger_orders": 3930,
+   "pinger_share": 0.982
+  },
+  "SKR": {
+   "flow": {
+    "off": {
+     "buy_share": 0.6,
+     "log_sd": 1.195,
+     "minutes": 2233,
+     "orders_per_minute": 0.0067,
+     "same_side_next": 0.357,
+     "usd_median": 24.26,
+     "usd_p90": 139.69,
+     "usd_p99": 140.27,
+     "usd_per_hour": 18.8,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.556,
+     "log_sd": 1.735,
+     "minutes": 780,
+     "orders_per_minute": 0.0115,
+     "same_side_next": 0.25,
+     "usd_median": 7.99,
+     "usd_p90": 1956.31,
+     "usd_p99": 1956.31,
+     "usd_per_hour": 157.9,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0014,
+     "same_side_next": 0.0,
+     "usd_median": 33.54,
+     "usd_p90": 33.54,
+     "usd_p99": 33.54,
+     "usd_per_hour": 2.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3927,
+   "pinger_orders": 3901,
+   "pinger_share": 0.993
+  },
+  "SNDK": {
+   "flow": {
+    "off": {
+     "buy_share": 0.429,
+     "log_sd": 2.511,
+     "minutes": 2233,
+     "orders_per_minute": 0.0784,
+     "same_side_next": 0.489,
+     "usd_median": 5.12,
+     "usd_p90": 1002.35,
+     "usd_p99": 6005.21,
+     "usd_per_hour": 2362.0,
+     "within_1s_share": 0.017
+    },
+    "regular": {
+     "buy_share": 0.486,
+     "log_sd": 1.622,
+     "minutes": 780,
+     "orders_per_minute": 0.2295,
+     "same_side_next": 0.449,
+     "usd_median": 979.68,
+     "usd_p90": 1013.43,
+     "usd_p99": 6053.49,
+     "usd_per_hour": 13280.7,
+     "within_1s_share": 0.034
+    },
+    "weekend": {
+     "buy_share": 0.542,
+     "log_sd": 1.132,
+     "minutes": 1395,
+     "orders_per_minute": 0.0172,
+     "same_side_next": 0.435,
+     "usd_median": 5.01,
+     "usd_p90": 5.04,
+     "usd_p99": 773.67,
+     "usd_per_hour": 41.6,
+     "within_1s_share": 0.0
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": 1.96,
+     "n": 152,
+     "p90_bps": 54.35
+    },
+    "1000-10000": {
+     "median_bps": 0.56,
+     "n": 50,
+     "p90_bps": 71.97
+    },
+    "5-100": {
+     "median_bps": 4.79,
+     "n": 176,
+     "p90_bps": 27.73
+    }
+   },
+   "jumps": 2,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 10.98,
+      "low": -4.033,
+      "mean": 3.458,
+      "n": 152
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 7.072,
+       "low": -2.712,
+       "mean": 1.861,
+       "n": 152
+      },
+      "1s": {
+       "high": 3.626,
+       "low": -3.858,
+       "mean": -0.19,
+       "n": 152
+      },
+      "300s": {
+       "high": 22.619,
+       "low": -23.12,
+       "mean": -1.174,
+       "n": 151
+      },
+      "60s": {
+       "high": 11.886,
+       "low": -4.996,
+       "mean": 2.793,
+       "n": 152
+      }
+     },
+     "orders": 152
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 13.86,
+      "low": -8.363,
+      "mean": 2.294,
+      "n": 50
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 10.338,
+       "low": -9.382,
+       "mean": 0.824,
+       "n": 50
+      },
+      "1s": {
+       "high": 4.076,
+       "low": -11.11,
+       "mean": -3.459,
+       "n": 50
+      },
+      "300s": {
+       "high": 68.877,
+       "low": -39.935,
+       "mean": 18.562,
+       "n": 50
+      },
+      "60s": {
+       "high": 19.84,
+       "low": -11.932,
+       "mean": 3.748,
+       "n": 50
+      }
+     },
+     "orders": 50
+    },
+    "10000-inf": {
+     "cost_bps": null,
+     "markout_bps": {
+      "10s": null,
+      "1s": null,
+      "300s": null,
+      "60s": null
+     },
+     "orders": 0
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 8.589,
+      "low": 2.947,
+      "mean": 5.874,
+      "n": 176
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 2.269,
+       "low": -0.38,
+       "mean": 0.853,
+       "n": 176
+      },
+      "1s": {
+       "high": 1.898,
+       "low": -0.752,
+       "mean": 0.63,
+       "n": 176
+      },
+      "300s": {
+       "high": 6.792,
+       "low": -5.93,
+       "mean": 0.005,
+       "n": 176
+      },
+      "60s": {
+       "high": 2.608,
+       "low": -3.134,
+       "mean": -0.207,
+       "n": 176
+      }
+     },
+     "orders": 176
+    }
+   },
+   "orders": 4123,
+   "pinger_orders": 3745,
+   "pinger_share": 0.908
+  },
+  "SOL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.511,
+     "log_sd": 1.686,
+     "minutes": 2233,
+     "orders_per_minute": 1.335,
+     "same_side_next": 0.756,
+     "usd_median": 534.75,
+     "usd_p90": 1850.1,
+     "usd_p99": 13283.79,
+     "usd_per_hour": 117621.9,
+     "within_1s_share": 0.236
+    },
+    "regular": {
+     "buy_share": 0.461,
+     "log_sd": 2.096,
+     "minutes": 780,
+     "orders_per_minute": 0.9872,
+     "same_side_next": 0.562,
+     "usd_median": 511.98,
+     "usd_p90": 7002.25,
+     "usd_p99": 62677.16,
+     "usd_per_hour": 212813.0,
+     "within_1s_share": 0.131
+    },
+    "weekend": {
+     "buy_share": 0.599,
+     "log_sd": 1.336,
+     "minutes": 1395,
+     "orders_per_minute": 2.6323,
+     "same_side_next": 0.844,
+     "usd_median": 509.71,
+     "usd_p90": 1562.61,
+     "usd_p99": 11969.88,
+     "usd_per_hour": 173509.5,
+     "within_1s_share": 0.265
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": 1.42,
+     "n": 3322,
+     "p90_bps": 7.82
+    },
+    "1000-10000": {
+     "median_bps": 1.4,
+     "n": 2504,
+     "p90_bps": 9.39
+    },
+    "10000-inf": {
+     "median_bps": 4.37,
+     "n": 147,
+     "p90_bps": 20.32
+    },
+    "5-100": {
+     "median_bps": 2.13,
+     "n": 1449,
+     "p90_bps": 12.46
+    }
+   },
+   "jumps": 1,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 1.992,
+      "low": 1.568,
+      "mean": 1.775,
+      "n": 3322
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 0.655,
+       "low": 0.322,
+       "mean": 0.499,
+       "n": 3322
+      },
+      "1s": {
+       "high": 0.342,
+       "low": 0.124,
+       "mean": 0.229,
+       "n": 3322
+      },
+      "300s": {
+       "high": 1.133,
+       "low": -0.626,
+       "mean": 0.275,
+       "n": 3322
+      },
+      "60s": {
+       "high": 1.76,
+       "low": 0.764,
+       "mean": 1.29,
+       "n": 3322
+      }
+     },
+     "orders": 3323
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 1.814,
+      "low": 1.195,
+      "mean": 1.517,
+      "n": 2504
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 1.179,
+       "low": 0.462,
+       "mean": 0.814,
+       "n": 2504
+      },
+      "1s": {
+       "high": 0.302,
+       "low": -0.07,
+       "mean": 0.104,
+       "n": 2504
+      },
+      "300s": {
+       "high": 2.494,
+       "low": -0.691,
+       "mean": 0.859,
+       "n": 2504
+      },
+      "60s": {
+       "high": 1.545,
+       "low": -0.064,
+       "mean": 0.752,
+       "n": 2504
+      }
+     },
+     "orders": 2504
+    },
+    "10000-inf": {
+     "cost_bps": {
+      "high": 6.579,
+      "low": 3.2,
+      "mean": 4.947,
+      "n": 147
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 7.37,
+       "low": 2.15,
+       "mean": 4.508,
+       "n": 147
+      },
+      "1s": {
+       "high": 3.064,
+       "low": 0.713,
+       "mean": 1.852,
+       "n": 147
+      },
+      "300s": {
+       "high": 30.407,
+       "low": -1.944,
+       "mean": 14.48,
+       "n": 147
+      },
+      "60s": {
+       "high": 15.57,
+       "low": 1.656,
+       "mean": 8.221,
+       "n": 147
+      }
+     },
+     "orders": 147
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 3.449,
+      "low": 2.597,
+      "mean": 3.024,
+      "n": 1449
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 1.381,
+       "low": 0.578,
+       "mean": 0.973,
+       "n": 1449
+      },
+      "1s": {
+       "high": 0.981,
+       "low": 0.425,
+       "mean": 0.669,
+       "n": 1449
+      },
+      "300s": {
+       "high": 2.827,
+       "low": -0.873,
+       "mean": 0.936,
+       "n": 1449
+      },
+      "60s": {
+       "high": 2.587,
+       "low": 0.73,
+       "mean": 1.723,
+       "n": 1449
+      }
+     },
+     "orders": 1449
+    }
+   },
+   "orders": 12557,
+   "pinger_orders": 5134,
+   "pinger_share": 0.409
+  },
+  "SPCX": {
+   "flow": {
+    "off": {
+     "buy_share": 0.517,
+     "log_sd": 1.53,
+     "minutes": 2233,
+     "orders_per_minute": 0.0936,
+     "same_side_next": 0.538,
+     "usd_median": 917.81,
+     "usd_p90": 3287.14,
+     "usd_p99": 4575.09,
+     "usd_per_hour": 6598.5,
+     "within_1s_share": 0.053
+    },
+    "regular": {
+     "buy_share": 0.523,
+     "log_sd": 1.315,
+     "minutes": 780,
+     "orders_per_minute": 0.3333,
+     "same_side_next": 0.467,
+     "usd_median": 1000.5,
+     "usd_p90": 3483.1,
+     "usd_p99": 9548.22,
+     "usd_per_hour": 30844.9,
+     "within_1s_share": 0.12
+    },
+    "weekend": {
+     "buy_share": 0.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 264.86,
+     "usd_p90": 264.86,
+     "usd_p99": 264.86,
+     "usd_per_hour": 11.4,
+     "within_1s_share": null
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": 1.18,
+     "n": 188,
+     "p90_bps": 17.43
+    },
+    "1000-10000": {
+     "median_bps": -0.87,
+     "n": 229,
+     "p90_bps": 15.53
+    },
+    "5-100": {
+     "median_bps": 4.18,
+     "n": 52,
+     "p90_bps": 23.27
+    }
+   },
+   "jumps": 0,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 3.294,
+      "low": -1.74,
+      "mean": 0.704,
+      "n": 188
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 1.759,
+       "low": -1.588,
+       "mean": 0.01,
+       "n": 188
+      },
+      "1s": {
+       "high": 1.026,
+       "low": -1.772,
+       "mean": -0.453,
+       "n": 188
+      },
+      "300s": {
+       "high": 11.612,
+       "low": -3.091,
+       "mean": 3.873,
+       "n": 188
+      },
+      "60s": {
+       "high": 5.012,
+       "low": -2.828,
+       "mean": 1.078,
+       "n": 188
+      }
+     },
+     "orders": 188
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": -0.074,
+      "low": -4.805,
+      "mean": -2.097,
+      "n": 229
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 1.556,
+       "low": -2.528,
+       "mean": -0.537,
+       "n": 229
+      },
+      "1s": {
+       "high": 0.478,
+       "low": -2.752,
+       "mean": -1.109,
+       "n": 229
+      },
+      "300s": {
+       "high": 8.831,
+       "low": -6.184,
+       "mean": 1.326,
+       "n": 229
+      },
+      "60s": {
+       "high": 4.14,
+       "low": -3.111,
+       "mean": 0.779,
+       "n": 229
+      }
+     },
+     "orders": 229
+    },
+    "10000-inf": {
+     "cost_bps": null,
+     "markout_bps": {
+      "10s": null,
+      "1s": null,
+      "300s": null,
+      "60s": null
+     },
+     "orders": 1
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 9.97,
+      "low": 1.703,
+      "mean": 6.196,
+      "n": 52
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 5.991,
+       "low": 0.797,
+       "mean": 3.189,
+       "n": 52
+      },
+      "1s": {
+       "high": 4.421,
+       "low": 0.957,
+       "mean": 2.605,
+       "n": 52
+      },
+      "300s": {
+       "high": 15.1,
+       "low": 0.647,
+       "mean": 7.77,
+       "n": 51
+      },
+      "60s": {
+       "high": 10.263,
+       "low": 0.518,
+       "mean": 4.887,
+       "n": 51
+      }
+     },
+     "orders": 52
+    }
+   },
+   "orders": 4384,
+   "pinger_orders": 3914,
+   "pinger_share": 0.893
+  },
+  "SPY": {
+   "flow": {
+    "off": {
+     "buy_share": 0.416,
+     "log_sd": 1.392,
+     "minutes": 2233,
+     "orders_per_minute": 0.0667,
+     "same_side_next": 0.561,
+     "usd_median": 5.07,
+     "usd_p90": 10.14,
+     "usd_p99": 9755.49,
+     "usd_per_hour": 708.3,
+     "within_1s_share": 0.02
+    },
+    "regular": {
+     "buy_share": 0.398,
+     "log_sd": 2.501,
+     "minutes": 780,
+     "orders_per_minute": 0.1256,
+     "same_side_next": 0.567,
+     "usd_median": 5.07,
+     "usd_p90": 1014.47,
+     "usd_p99": 13478.24,
+     "usd_per_hour": 6770.9,
+     "within_1s_share": 0.041
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": 0.687,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 1.0,
+     "usd_median": 463.61,
+     "usd_p90": 946.31,
+     "usd_p99": 946.31,
+     "usd_per_hour": 85.7,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3968,
+   "pinger_orders": 3717,
+   "pinger_share": 0.937
+  },
+  "STONK": {
+   "flow": {
+    "off": {
+     "buy_share": 0.619,
+     "log_sd": 1.658,
+     "minutes": 2233,
+     "orders_per_minute": 0.0188,
+     "same_side_next": 0.659,
+     "usd_median": 88.64,
+     "usd_p90": 457.13,
+     "usd_p99": 1612.1,
+     "usd_per_hour": 225.2,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.571,
+     "log_sd": 1.296,
+     "minutes": 780,
+     "orders_per_minute": 0.0179,
+     "same_side_next": 0.615,
+     "usd_median": 16.7,
+     "usd_p90": 116.37,
+     "usd_p99": 494.08,
+     "usd_per_hour": 73.1,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0014,
+     "same_side_next": 1.0,
+     "usd_median": 5.01,
+     "usd_p90": 5.01,
+     "usd_p99": 5.01,
+     "usd_per_hour": 0.4,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 3937,
+   "pinger_orders": 3879,
+   "pinger_share": 0.985
+  },
+  "SUI": {
+   "flow": {
+    "off": {
+     "buy_share": 0.45,
+     "log_sd": 2.159,
+     "minutes": 2233,
+     "orders_per_minute": 0.0627,
+     "same_side_next": 0.511,
+     "usd_median": 399.82,
+     "usd_p90": 1607.83,
+     "usd_p99": 8002.97,
+     "usd_per_hour": 2475.0,
+     "within_1s_share": 0.079
+    },
+    "regular": {
+     "buy_share": 0.507,
+     "log_sd": 2.377,
+     "minutes": 780,
+     "orders_per_minute": 0.0885,
+     "same_side_next": 0.412,
+     "usd_median": 394.01,
+     "usd_p90": 1596.61,
+     "usd_p99": 7232.61,
+     "usd_per_hour": 3143.2,
+     "within_1s_share": 0.088
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": 1.94,
+     "minutes": 1395,
+     "orders_per_minute": 0.0129,
+     "same_side_next": 0.588,
+     "usd_median": 5.26,
+     "usd_p90": 400.19,
+     "usd_p99": 400.35,
+     "usd_per_hour": 88.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 1,
+   "orders": 4056,
+   "pinger_orders": 3829,
+   "pinger_share": 0.944
+  },
+  "TAO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.55,
+     "log_sd": 2.033,
+     "minutes": 2233,
+     "orders_per_minute": 0.009,
+     "same_side_next": 0.526,
+     "usd_median": 400.48,
+     "usd_p90": 1568.15,
+     "usd_p99": 2393.98,
+     "usd_per_hour": 292.5,
+     "within_1s_share": 0.053
+    },
+    "regular": {
+     "buy_share": 0.679,
+     "log_sd": 2.284,
+     "minutes": 780,
+     "orders_per_minute": 0.0359,
+     "same_side_next": 0.593,
+     "usd_median": 396.18,
+     "usd_p90": 2502.45,
+     "usd_p99": 4094.07,
+     "usd_per_hour": 1602.6,
+     "within_1s_share": 0.037
+    },
+    "weekend": {
+     "buy_share": 0.4,
+     "log_sd": 2.145,
+     "minutes": 1395,
+     "orders_per_minute": 0.0072,
+     "same_side_next": 0.444,
+     "usd_median": 399.9,
+     "usd_p90": 400.43,
+     "usd_p99": 400.43,
+     "usd_per_hour": 104.1,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4691,
+   "pinger_orders": 4633,
+   "pinger_share": 0.988
+  },
+  "TLT": {
+   "flow": {
+    "off": {
+     "buy_share": 0.667,
+     "log_sd": 2.529,
+     "minutes": 2233,
+     "orders_per_minute": 0.0013,
+     "same_side_next": 0.5,
+     "usd_median": 8.95,
+     "usd_p90": 1620.58,
+     "usd_p99": 1620.58,
+     "usd_per_hour": 44.0,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.0,
+     "log_sd": null,
+     "minutes": 780,
+     "orders_per_minute": 0.0013,
+     "same_side_next": null,
+     "usd_median": 18984.97,
+     "usd_p90": 18984.97,
+     "usd_p99": 18984.97,
+     "usd_per_hour": 1460.4,
+     "within_1s_share": null
+    },
+    "weekend": {
+     "buy_share": 1.0,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0007,
+     "same_side_next": null,
+     "usd_median": 157.02,
+     "usd_p90": 157.02,
+     "usd_p99": 157.02,
+     "usd_per_hour": 6.8,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 4171,
+   "pinger_orders": 4166,
+   "pinger_share": 0.999
+  },
+  "TRX": {
+   "flow": {
+    "off": {
+     "buy_share": 0.455,
+     "log_sd": 1.266,
+     "minutes": 2233,
+     "orders_per_minute": 0.0148,
+     "same_side_next": 0.469,
+     "usd_median": 401.11,
+     "usd_p90": 4694.32,
+     "usd_p99": 10507.24,
+     "usd_per_hour": 1251.7,
+     "within_1s_share": 0.188
+    },
+    "regular": {
+     "buy_share": 0.389,
+     "log_sd": 1.325,
+     "minutes": 780,
+     "orders_per_minute": 0.0231,
+     "same_side_next": 0.529,
+     "usd_median": 408.2,
+     "usd_p90": 1599.29,
+     "usd_p99": 10340.8,
+     "usd_per_hour": 1408.5,
+     "within_1s_share": 0.059
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3940,
+   "pinger_orders": 3889,
+   "pinger_share": 0.987
+  },
+  "TSLA": {
+   "flow": {
+    "off": {
+     "buy_share": 0.466,
+     "log_sd": 1.982,
+     "minutes": 2233,
+     "orders_per_minute": 0.0519,
+     "same_side_next": 0.4,
+     "usd_median": 5.05,
+     "usd_p90": 917.05,
+     "usd_p99": 3389.76,
+     "usd_per_hour": 706.0,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.267,
+     "log_sd": 1.86,
+     "minutes": 780,
+     "orders_per_minute": 0.1679,
+     "same_side_next": 0.692,
+     "usd_median": 196.31,
+     "usd_p90": 979.5,
+     "usd_p99": 11572.58,
+     "usd_per_hour": 8600.4,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.412,
+     "log_sd": 1.383,
+     "minutes": 1395,
+     "orders_per_minute": 0.0122,
+     "same_side_next": 0.438,
+     "usd_median": 5.03,
+     "usd_p90": 5.04,
+     "usd_p99": 1797.79,
+     "usd_per_hour": 80.8,
+     "within_1s_share": 0.0
+    }
+   },
+   "impact": {
+    "100-1000": {
+     "median_bps": 3.19,
+     "n": 110,
+     "p90_bps": 23.56
+    },
+    "1000-10000": {
+     "median_bps": 17.39,
+     "n": 17,
+     "p90_bps": 25.97
+    },
+    "5-100": {
+     "median_bps": 2.78,
+     "n": 135,
+     "p90_bps": 13.78
+    }
+   },
+   "jumps": 0,
+   "markouts": {
+    "100-1000": {
+     "cost_bps": {
+      "high": 8.143,
+      "low": 2.338,
+      "mean": 5.217,
+      "n": 110
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 4.172,
+       "low": -0.564,
+       "mean": 1.753,
+       "n": 110
+      },
+      "1s": {
+       "high": 3.293,
+       "low": -0.764,
+       "mean": 1.072,
+       "n": 110
+      },
+      "300s": {
+       "high": 9.278,
+       "low": -6.796,
+       "mean": 0.379,
+       "n": 110
+      },
+      "60s": {
+       "high": 4.141,
+       "low": -2.583,
+       "mean": 1.128,
+       "n": 110
+      }
+     },
+     "orders": 110
+    },
+    "1000-10000": {
+     "cost_bps": {
+      "high": 16.122,
+      "low": -9.404,
+      "mean": 4.709,
+      "n": 17
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 20.706,
+       "low": -3.239,
+       "mean": 8.538,
+       "n": 17
+      },
+      "1s": {
+       "high": 8.979,
+       "low": -5.509,
+       "mean": 1.635,
+       "n": 17
+      },
+      "300s": {
+       "high": 77.798,
+       "low": -47.767,
+       "mean": 16.509,
+       "n": 17
+      },
+      "60s": {
+       "high": 32.725,
+       "low": -20.002,
+       "mean": 8.835,
+       "n": 17
+      }
+     },
+     "orders": 17
+    },
+    "10000-inf": {
+     "cost_bps": null,
+     "markout_bps": {
+      "10s": null,
+      "1s": null,
+      "300s": null,
+      "60s": null
+     },
+     "orders": 2
+    },
+    "5-100": {
+     "cost_bps": {
+      "high": 4.073,
+      "low": 0.489,
+      "mean": 2.346,
+      "n": 135
+     },
+     "markout_bps": {
+      "10s": {
+       "high": 0.345,
+       "low": -1.27,
+       "mean": -0.488,
+       "n": 135
+      },
+      "1s": {
+       "high": 0.266,
+       "low": -1.41,
+       "mean": -0.573,
+       "n": 135
+      },
+      "300s": {
+       "high": 1.373,
+       "low": -4.586,
+       "mean": -1.576,
+       "n": 135
+      },
+      "60s": {
+       "high": 0.128,
+       "low": -3.236,
+       "mean": -1.367,
+       "n": 135
+      }
+     },
+     "orders": 135
+    }
+   },
+   "orders": 4051,
+   "pinger_orders": 3787,
+   "pinger_share": 0.935
+  },
+  "TSM": {
+   "flow": {
+    "off": {
+     "buy_share": 0.489,
+     "log_sd": 2.347,
+     "minutes": 2233,
+     "orders_per_minute": 0.021,
+     "same_side_next": 0.348,
+     "usd_median": 5.1,
+     "usd_p90": 2958.99,
+     "usd_p99": 3000.99,
+     "usd_per_hour": 540.7,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.529,
+     "log_sd": 2.591,
+     "minutes": 780,
+     "orders_per_minute": 0.0218,
+     "same_side_next": 0.688,
+     "usd_median": 9.61,
+     "usd_p90": 3803.87,
+     "usd_p99": 3807.57,
+     "usd_per_hour": 965.3,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3936,
+   "pinger_orders": 3872,
+   "pinger_share": 0.984
+  },
+  "TXN": {
+   "flow": {
+    "off": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 2233,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    },
+    "regular": {
+     "buy_share": 0.5,
+     "log_sd": 0.235,
+     "minutes": 780,
+     "orders_per_minute": 0.0077,
+     "same_side_next": 0.0,
+     "usd_median": 5.03,
+     "usd_p90": 9.43,
+     "usd_p99": 9.43,
+     "usd_per_hour": 2.7,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3701,
+   "pinger_orders": 3695,
+   "pinger_share": 0.998
+  },
+  "UNI": {
+   "flow": {
+    "off": {
+     "buy_share": 0.538,
+     "log_sd": 1.642,
+     "minutes": 2233,
+     "orders_per_minute": 0.0649,
+     "same_side_next": 0.597,
+     "usd_median": 408.44,
+     "usd_p90": 1776.33,
+     "usd_p99": 4180.8,
+     "usd_per_hour": 3394.8,
+     "within_1s_share": 0.111
+    },
+    "regular": {
+     "buy_share": 0.618,
+     "log_sd": 2.141,
+     "minutes": 780,
+     "orders_per_minute": 0.0705,
+     "same_side_next": 0.5,
+     "usd_median": 399.48,
+     "usd_p90": 1645.72,
+     "usd_p99": 3998.38,
+     "usd_per_hour": 2787.1,
+     "within_1s_share": 0.167
+    },
+    "weekend": {
+     "buy_share": 0.385,
+     "log_sd": 2.115,
+     "minutes": 1395,
+     "orders_per_minute": 0.0093,
+     "same_side_next": 0.583,
+     "usd_median": 5.18,
+     "usd_p90": 400.1,
+     "usd_p99": 400.37,
+     "usd_per_hour": 87.5,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4064,
+   "pinger_orders": 3851,
+   "pinger_share": 0.948
+  },
+  "USDJPY": {
+   "flow": {
+    "off": {
+     "buy_share": 0.6,
+     "log_sd": 2.562,
+     "minutes": 2233,
+     "orders_per_minute": 0.0067,
+     "same_side_next": 0.5,
+     "usd_median": 904.26,
+     "usd_p90": 8827.46,
+     "usd_p99": 32631.46,
+     "usd_per_hour": 2062.0,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.545,
+     "log_sd": 2.684,
+     "minutes": 780,
+     "orders_per_minute": 0.0141,
+     "same_side_next": 0.4,
+     "usd_median": 163.97,
+     "usd_p90": 48382.03,
+     "usd_p99": 48400.43,
+     "usd_per_hour": 7607.0,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3906,
+   "pinger_orders": 3880,
+   "pinger_share": 0.993
+  },
+  "VIRTUAL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.823,
+     "log_sd": 1.396,
+     "minutes": 2233,
+     "orders_per_minute": 0.0909,
+     "same_side_next": 0.762,
+     "usd_median": 77.26,
+     "usd_p90": 404.9,
+     "usd_p99": 1397.89,
+     "usd_per_hour": 1031.1,
+     "within_1s_share": 0.015
+    },
+    "regular": {
+     "buy_share": 0.472,
+     "log_sd": 1.795,
+     "minutes": 780,
+     "orders_per_minute": 0.0462,
+     "same_side_next": 0.486,
+     "usd_median": 382.69,
+     "usd_p90": 500.98,
+     "usd_p99": 1397.45,
+     "usd_per_hour": 971.6,
+     "within_1s_share": 0.029
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": 0.372,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.667,
+     "usd_median": 407.32,
+     "usd_p90": 407.59,
+     "usd_p99": 407.59,
+     "usd_per_hour": 51.7,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 1,
+   "orders": 4099,
+   "pinger_orders": 3856,
+   "pinger_share": 0.941
+  },
+  "VVV": {
+   "flow": {
+    "off": {
+     "buy_share": 0.492,
+     "log_sd": 1.169,
+     "minutes": 2233,
+     "orders_per_minute": 0.4456,
+     "same_side_next": 0.659,
+     "usd_median": 201.5,
+     "usd_p90": 1411.38,
+     "usd_p99": 6853.52,
+     "usd_per_hour": 16958.9,
+     "within_1s_share": 0.165
+    },
+    "regular": {
+     "buy_share": 0.516,
+     "log_sd": 1.148,
+     "minutes": 780,
+     "orders_per_minute": 0.4744,
+     "same_side_next": 0.593,
+     "usd_median": 201.4,
+     "usd_p90": 1439.28,
+     "usd_p99": 4211.11,
+     "usd_per_hour": 19466.5,
+     "within_1s_share": 0.182
+    },
+    "weekend": {
+     "buy_share": 0.353,
+     "log_sd": 1.385,
+     "minutes": 1395,
+     "orders_per_minute": 0.0996,
+     "same_side_next": 0.63,
+     "usd_median": 204.86,
+     "usd_p90": 2803.53,
+     "usd_p99": 13025.27,
+     "usd_per_hour": 8346.6,
+     "within_1s_share": 0.167
+    }
+   },
+   "jumps": 2,
+   "orders": 5448,
+   "pinger_orders": 3944,
+   "pinger_share": 0.724
+  },
+  "WLD": {
+   "flow": {
+    "off": {
+     "buy_share": 0.5,
+     "log_sd": 1.581,
+     "minutes": 2233,
+     "orders_per_minute": 0.0331,
+     "same_side_next": 0.342,
+     "usd_median": 402.44,
+     "usd_p90": 440.73,
+     "usd_p99": 1652.76,
+     "usd_per_hour": 836.4,
+     "within_1s_share": 0.041
+    },
+    "regular": {
+     "buy_share": 0.407,
+     "log_sd": 1.319,
+     "minutes": 780,
+     "orders_per_minute": 0.1038,
+     "same_side_next": 0.537,
+     "usd_median": 407.96,
+     "usd_p90": 1582.88,
+     "usd_p99": 3226.98,
+     "usd_per_hour": 3704.1,
+     "within_1s_share": 0.175
+    },
+    "weekend": {
+     "buy_share": 0.559,
+     "log_sd": 1.676,
+     "minutes": 1395,
+     "orders_per_minute": 0.0244,
+     "same_side_next": 0.364,
+     "usd_median": 402.44,
+     "usd_p90": 408.02,
+     "usd_p99": 1634.16,
+     "usd_per_hour": 488.9,
+     "within_1s_share": 0.061
+    }
+   },
+   "jumps": 1,
+   "orders": 4057,
+   "pinger_orders": 3868,
+   "pinger_share": 0.953
+  },
+  "WTIOIL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.505,
+     "log_sd": 1.174,
+     "minutes": 2233,
+     "orders_per_minute": 0.1285,
+     "same_side_next": 0.297,
+     "usd_median": 244.78,
+     "usd_p90": 247.76,
+     "usd_p99": 2494.16,
+     "usd_per_hour": 1986.9,
+     "within_1s_share": 0.003
+    },
+    "regular": {
+     "buy_share": 0.494,
+     "log_sd": 0.234,
+     "minutes": 780,
+     "orders_per_minute": 0.4077,
+     "same_side_next": 0.315,
+     "usd_median": 240.99,
+     "usd_p90": 244.48,
+     "usd_p99": 895.86,
+     "usd_per_hour": 6263.2,
+     "within_1s_share": 0.003
+    },
+    "weekend": {
+     "buy_share": 0.571,
+     "log_sd": 0.618,
+     "minutes": 1395,
+     "orders_per_minute": 0.0301,
+     "same_side_next": 0.39,
+     "usd_median": 5.04,
+     "usd_p90": 5.05,
+     "usd_p99": 289.97,
+     "usd_per_hour": 21.4,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4458,
+   "pinger_orders": 3811,
+   "pinger_share": 0.855
+  },
+  "XLM": {
+   "flow": {
+    "off": {
+     "buy_share": 0.48,
+     "log_sd": 2.349,
+     "minutes": 2233,
+     "orders_per_minute": 0.0112,
+     "same_side_next": 0.417,
+     "usd_median": 393.09,
+     "usd_p90": 1315.24,
+     "usd_p99": 7582.67,
+     "usd_per_hour": 557.7,
+     "within_1s_share": 0.083
+    },
+    "regular": {
+     "buy_share": 0.583,
+     "log_sd": 1.839,
+     "minutes": 780,
+     "orders_per_minute": 0.0154,
+     "same_side_next": 0.364,
+     "usd_median": 368.0,
+     "usd_p90": 395.53,
+     "usd_p99": 397.47,
+     "usd_per_hour": 190.4,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": null,
+     "log_sd": null,
+     "minutes": 1395,
+     "orders_per_minute": 0.0,
+     "same_side_next": null,
+     "usd_median": null,
+     "usd_p90": null,
+     "usd_p99": null,
+     "usd_per_hour": 0.0,
+     "within_1s_share": null
+    }
+   },
+   "jumps": 0,
+   "orders": 3942,
+   "pinger_orders": 3905,
+   "pinger_share": 0.991
+  },
+  "XPL": {
+   "flow": {
+    "off": {
+     "buy_share": 0.502,
+     "log_sd": 0.921,
+     "minutes": 2233,
+     "orders_per_minute": 0.107,
+     "same_side_next": 0.508,
+     "usd_median": 403.02,
+     "usd_p90": 905.18,
+     "usd_p99": 3724.48,
+     "usd_per_hour": 3237.0,
+     "within_1s_share": 0.147
+    },
+    "regular": {
+     "buy_share": 0.738,
+     "log_sd": 1.238,
+     "minutes": 780,
+     "orders_per_minute": 0.1077,
+     "same_side_next": 0.759,
+     "usd_median": 90.23,
+     "usd_p90": 400.32,
+     "usd_p99": 4058.6,
+     "usd_per_hour": 1967.8,
+     "within_1s_share": 0.048
+    },
+    "weekend": {
+     "buy_share": 0.513,
+     "log_sd": 0.934,
+     "minutes": 1395,
+     "orders_per_minute": 0.0824,
+     "same_side_next": 0.561,
+     "usd_median": 397.91,
+     "usd_p90": 1554.6,
+     "usd_p99": 4107.51,
+     "usd_per_hour": 2888.5,
+     "within_1s_share": 0.14
+    }
+   },
+   "jumps": 2,
+   "orders": 5058,
+   "pinger_orders": 4620,
+   "pinger_share": 0.913
+  },
+  "XRP": {
+   "flow": {
+    "off": {
+     "buy_share": 0.581,
+     "log_sd": 1.949,
+     "minutes": 2233,
+     "orders_per_minute": 0.0139,
+     "same_side_next": 0.4,
+     "usd_median": 15.36,
+     "usd_p90": 401.02,
+     "usd_p99": 2396.01,
+     "usd_per_hour": 192.3,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.308,
+     "log_sd": 1.438,
+     "minutes": 780,
+     "orders_per_minute": 0.0167,
+     "same_side_next": 0.5,
+     "usd_median": 67.81,
+     "usd_p90": 396.83,
+     "usd_p99": 398.86,
+     "usd_per_hour": 180.9,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.556,
+     "log_sd": 2.43,
+     "minutes": 1395,
+     "orders_per_minute": 0.0065,
+     "same_side_next": 0.625,
+     "usd_median": 1425.69,
+     "usd_p90": 2648.13,
+     "usd_p99": 2648.13,
+     "usd_per_hour": 457.9,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4758,
+   "pinger_orders": 4705,
+   "pinger_share": 0.989
+  },
+  "ZEC": {
+   "flow": {
+    "off": {
+     "buy_share": 0.497,
+     "log_sd": 1.592,
+     "minutes": 2233,
+     "orders_per_minute": 1.3403,
+     "same_side_next": 0.488,
+     "usd_median": 7.84,
+     "usd_p90": 148.29,
+     "usd_p99": 5003.21,
+     "usd_per_hour": 21665.3,
+     "within_1s_share": 0.023
+    },
+    "regular": {
+     "buy_share": 0.499,
+     "log_sd": 1.821,
+     "minutes": 780,
+     "orders_per_minute": 1.3974,
+     "same_side_next": 0.516,
+     "usd_median": 8.04,
+     "usd_p90": 945.62,
+     "usd_p99": 17474.96,
+     "usd_per_hour": 42061.2,
+     "within_1s_share": 0.016
+    },
+    "weekend": {
+     "buy_share": 0.511,
+     "log_sd": 1.01,
+     "minutes": 1395,
+     "orders_per_minute": 0.3047,
+     "same_side_next": 0.479,
+     "usd_median": 7.91,
+     "usd_p90": 7.97,
+     "usd_p99": 1893.69,
+     "usd_per_hour": 1604.6,
+     "within_1s_share": 0.005
+    }
+   },
+   "jumps": 1,
+   "orders": 4508,
+   "pinger_orders": 0,
+   "pinger_share": 0.0
+  },
+  "ZRO": {
+   "flow": {
+    "off": {
+     "buy_share": 0.618,
+     "log_sd": 1.851,
+     "minutes": 2233,
+     "orders_per_minute": 0.1361,
+     "same_side_next": 0.673,
+     "usd_median": 392.74,
+     "usd_p90": 1496.76,
+     "usd_p99": 12788.42,
+     "usd_per_hour": 5999.2,
+     "within_1s_share": 0.063
+    },
+    "regular": {
+     "buy_share": 0.552,
+     "log_sd": 1.659,
+     "minutes": 780,
+     "orders_per_minute": 0.1231,
+     "same_side_next": 0.653,
+     "usd_median": 405.05,
+     "usd_p90": 1608.37,
+     "usd_p99": 10956.66,
+     "usd_per_hour": 5924.7,
+     "within_1s_share": 0.095
+    },
+    "weekend": {
+     "buy_share": 0.5,
+     "log_sd": 0.786,
+     "minutes": 1395,
+     "orders_per_minute": 0.0029,
+     "same_side_next": 0.0,
+     "usd_median": 12.29,
+     "usd_p90": 45.31,
+     "usd_p99": 45.31,
+     "usd_per_hour": 3.2,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 1,
+   "orders": 4501,
+   "pinger_orders": 4097,
+   "pinger_share": 0.91
+  },
+  "kBONK": {
+   "flow": {
+    "off": {
+     "buy_share": 0.447,
+     "log_sd": 1.788,
+     "minutes": 2233,
+     "orders_per_minute": 0.0381,
+     "same_side_next": 0.702,
+     "usd_median": 199.82,
+     "usd_p90": 217.28,
+     "usd_p99": 4402.66,
+     "usd_per_hour": 595.2,
+     "within_1s_share": 0.071
+    },
+    "regular": {
+     "buy_share": 0.524,
+     "log_sd": 1.492,
+     "minutes": 780,
+     "orders_per_minute": 0.0538,
+     "same_side_next": 0.561,
+     "usd_median": 192.15,
+     "usd_p90": 405.43,
+     "usd_p99": 1039.74,
+     "usd_per_hour": 651.8,
+     "within_1s_share": 0.024
+    },
+    "weekend": {
+     "buy_share": 0.481,
+     "log_sd": 1.58,
+     "minutes": 1395,
+     "orders_per_minute": 0.0194,
+     "same_side_next": 0.577,
+     "usd_median": 200.56,
+     "usd_p90": 206.88,
+     "usd_p99": 1438.65,
+     "usd_per_hour": 289.2,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4796,
+   "pinger_orders": 4642,
+   "pinger_share": 0.968
+  },
+  "kPEPE": {
+   "flow": {
+    "off": {
+     "buy_share": 0.538,
+     "log_sd": 1.615,
+     "minutes": 2233,
+     "orders_per_minute": 0.0524,
+     "same_side_next": 0.491,
+     "usd_median": 200.71,
+     "usd_p90": 1207.33,
+     "usd_p99": 1443.14,
+     "usd_per_hour": 1186.9,
+     "within_1s_share": 0.121
+    },
+    "regular": {
+     "buy_share": 0.493,
+     "log_sd": 1.608,
+     "minutes": 780,
+     "orders_per_minute": 0.091,
+     "same_side_next": 0.457,
+     "usd_median": 199.23,
+     "usd_p90": 1005.36,
+     "usd_p99": 1407.83,
+     "usd_per_hour": 1660.4,
+     "within_1s_share": 0.114
+    },
+    "weekend": {
+     "buy_share": 0.514,
+     "log_sd": 2.057,
+     "minutes": 1395,
+     "orders_per_minute": 0.0265,
+     "same_side_next": 0.444,
+     "usd_median": 5.14,
+     "usd_p90": 199.99,
+     "usd_p99": 9738.1,
+     "usd_per_hour": 577.2,
+     "within_1s_share": 0.056
+    }
+   },
+   "jumps": 1,
+   "orders": 4788,
+   "pinger_orders": 4563,
+   "pinger_share": 0.953
+  },
+  "kSHIB": {
+   "flow": {
+    "off": {
+     "buy_share": 0.521,
+     "log_sd": 1.59,
+     "minutes": 2233,
+     "orders_per_minute": 0.0327,
+     "same_side_next": 0.514,
+     "usd_median": 5.07,
+     "usd_p90": 199.84,
+     "usd_p99": 2089.88,
+     "usd_per_hour": 154.4,
+     "within_1s_share": 0.0
+    },
+    "regular": {
+     "buy_share": 0.364,
+     "log_sd": 1.521,
+     "minutes": 780,
+     "orders_per_minute": 0.0141,
+     "same_side_next": 0.5,
+     "usd_median": 5.07,
+     "usd_p90": 211.43,
+     "usd_p99": 212.15,
+     "usd_per_hour": 40.9,
+     "within_1s_share": 0.0
+    },
+    "weekend": {
+     "buy_share": 0.594,
+     "log_sd": 1.221,
+     "minutes": 1395,
+     "orders_per_minute": 0.0229,
+     "same_side_next": 0.645,
+     "usd_median": 5.03,
+     "usd_p90": 200.94,
+     "usd_p99": 203.78,
+     "usd_per_hour": 40.8,
+     "within_1s_share": 0.0
+    }
+   },
+   "jumps": 0,
+   "orders": 4623,
+   "pinger_orders": 4507,
+   "pinger_share": 0.975
+  }
+ },
+ "markets_studied": [
+  "ANT",
+  "BTC",
+  "ETH",
+  "MEGA",
+  "NVDA",
+  "QQQ",
+  "SNDK",
+  "SOL",
+  "SPCX",
+  "TSLA"
+ ],
+ "rules": {
+  "jump_pct_min": 1.5,
+  "jump_usd_min": 2000.0,
+  "order": "fills in one slot on one side",
+  "pinger_usd_max": 5.0,
+  "price": "mid of the last buy and last sell print, each under 5 minutes old",
+  "sessions": "US winter time in UTC: regular 14:30-21:00 weekdays; weekend Fri 22:00 to Sun 23:00"
+ },
+ "study": "phoenix-tape",
+ "tape": {
+  "bytes": 6005428,
+  "days": 3.06,
+  "from_ms": 1795304758077,
+  "minutes_by_session": {
+   "off": 2233,
+   "regular": 780,
+   "weekend": 1395
+  },
+  "sha256": "dc2b18d77d9dc5bc5f7a2dab9a4a8ee4d09b0b94a5209852c297165e70b5a3b2",
+  "source": "luthor history.sqlite on mtx-alpha, Phoenix trades read from the validator",
+  "to_ms": 1795569128706
+ },
+ "version": 1
+}
