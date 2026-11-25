@@ -5,6 +5,8 @@ backrun-sol-usdc-informed mtx-bot-backrun-sol-usdc-informed mtx-backrun-sol-usdc
 backrun-thin-pools mtx-bot-backrun-thin-pools mtx-backrun-thin-pools bench/tasks/backrun-thin-pools/reference component
 backrun-thin-pools-informed mtx-bot-backrun-thin-pools-informed mtx-backrun-thin-pools-informed bench/tasks/backrun-thin-pools/checks/bots/informed component
 flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
+funding-carry-sol mtx-bot-carry-sol mtx-carry-sol bench/tasks/funding-carry-sol/reference
+funding-carry-sol-informed mtx-bot-carry-sol-informed mtx-carry-sol-informed bench/tasks/funding-carry-sol/checks/bots/informed
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 liquidation-flash mtx-bot-liquidation-flash mtx-liquidation-flash bench/tasks/liquidation-flash/reference component
 liquidation-flash-informed mtx-bot-liquidation-flash-informed mtx-liquidation-flash-informed bench/tasks/liquidation-flash/checks/bots/informed component
