@@ -63,8 +63,10 @@ informed 0.41.
 
 `just ladder weekend-gap-spcx` grades the ladder (`checks/`): following the
 move must score below the reference, and the reference below the informed
-bot; the three frozen g0 Sol bots, fitted to the old family, must stay below
-the informed bot. The probe set isn't wired yet (exempt, with its reason).
+bot. The three frozen g0 Sol bots (`checks/exploits/`) were fitted to the
+old family and are off the ladder: on the new one they test nothing, and one
+of them lost its session's RPC twice on macOS. The probe set isn't wired yet
+(exempt, with its reason).
 
 ## Realism limits
 
