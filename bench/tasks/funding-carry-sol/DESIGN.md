@@ -130,12 +130,25 @@ trading costs.
 
 ## Anchors
 
-- **Reference (0.5).** `reference/`: averages the premium (half-life 120
-  slots), waits 160 slots, and once the funding it expects over the rest
-  of the session is twice its estimated entry cost (7 bp) sells the
-  premium (buys a discount), sized by how rich the average is (the cap's
-  80% at 2.5 bp and over), in 5 SOL market orders every 4 slots, and only
-  adds. It flattens past 60% of the drawdown limit.
+- **Reference (0.5).** `reference/`: knows what the instruction states of
+  SOL's basis across weeks (level 1.434 bp, sd 0.665; wander 0.841 bp,
+  half-life 3.64 intervals), not the session's level. It estimates the
+  level by shrinking the premium's running mean toward that prior, by how
+  many half-lives it has seen; prices the funding over the rest of the
+  session from it, less a 7 bp entry cost; weighs that against the index's
+  risk as v2 weighs losses; and holds up to 60% of the cap (all of it at a
+  6 bp loss-weighted edge), in 5 SOL market orders every 4 slots. It sheds
+  only when the estimate turns against the position by more than getting
+  out costs, and flattens past 60% of the drawdown limit. The first
+  reference (a premium average with a fixed entry rule, 80% of the cap)
+  measured a per-session Sharpe of 0.20 over 60 hidden sessions (astra,
+  `~/mtx-015/fc-anchors`): too noisy for v2's band.
+  Over 72 hidden sessions on mtx-bench-2 (six fresh secrets,
+  `fc-ref2-1` to `-6`, v2 sessions), the new reference made $603.0
+  (loss-weighted $566.3, per-session Sharpe 0.79) and the informed bot
+  $944.2 (loss-weighted $906.6, Sharpe 0.78): the reference is 0.625 of
+  the informed bot, inside the 0.2-0.7 band, and below it on every set of
+  12 (40/86, 156/223, 72/111, 77/90, 131/225, 127/210).
 - **Informed (1).** `checks/bots/informed/`: the same execution, told the
   session's latent state: the premium's level, spread and half-life,
   funding's settings, the flow's pace, the informed share and the
@@ -146,7 +159,7 @@ trading costs.
   risk as v2 weighs losses, and holds up to the full cap. It never sees the
   path, the premium as it will wander, or an order.
 
-Frozen for 0.15.0 (SHA-256 of `src/lib.rs` then `src/main.rs`, first 16 hex): the reference `6d0a78b29bfde215`, the informed bot `0aaab64daf9ad468`.
+Frozen for 0.15.0 (SHA-256 of `src/lib.rs` then `src/main.rs`, first 16 hex): the reference `2e5758d9719fcbf5`, the informed bot `0aaab64daf9ad468`.
 
 The latent fields are all process facts (`LATENT_FIELDS`,
 `funding-carry-sol`): `premium_mean_bps`, `premium_sd_bps`,

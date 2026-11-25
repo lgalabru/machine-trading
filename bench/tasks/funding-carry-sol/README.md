@@ -11,7 +11,7 @@ bot's own price impact.
 | Sessions | 72 hidden per grade (36 with the premium's level under its measured mean, 36 at or over it); 6 practice |
 | Mandate | 125 SOL position cap (about 1× collateral); $1,000 loss limit |
 | Score | Scoring v2: 0 for doing nothing, 0.5 for the reference, 1 for the informed bot |
-| Reference | Averages the premium, and once the funding it expects over the rest of the session is twice its entry cost, sells the premium in 5 SOL slices, sized by how rich it is, and holds |
+| Reference | Estimates the session's premium level from what it has seen and the stated prior, prices the funding over the rest of the session against the entry cost and the index's risk, sells the premium in 5 SOL slices up to 60% of the cap, and holds |
 | Anchors | The reference (0.5); the informed bot (1) is told the premium's level, spread and half-life, funding's settings and the flow's and arbitrageur's pace, never the path or an order |
 
 How every task is scored, and how risk is enforced, is in the
@@ -66,12 +66,11 @@ than a tenth of the pinger's orders fail voids the grade.
 
 ## Baselines
 
-On one development set of 12 sessions (a throwaway secret, v2
-sessions): the reference made +$57.64 (per-session Sharpe 0.38), the
-informed bot +$143.15; weighted as v2 weighs losses the reference is 0.37
-of the informed bot. Doing nothing makes $0. The ladder
-(`just ladder funding-carry-sol`) and `mtx gates funding-carry-sol` are
-still to run on a machine that can hold them.
+Over 72 hidden sessions (six fresh secrets, v2 sessions, on Linux): the
+reference made +$603 (per-session Sharpe 0.79), the informed bot +$944;
+weighted as v2 weighs losses the reference is 0.625 of the informed bot,
+and below it on every set of 12. Doing nothing makes $0. The full ladder
+and `mtx gates funding-carry-sol` are still to run.
 
 ## Realism limits
 
