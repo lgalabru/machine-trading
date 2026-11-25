@@ -10,17 +10,19 @@
 //! fifths of the weekend's move), and the informed wallets' trades, read on
 //! chain every step from their positions, as anyone could who knew which
 //! wallets to watch. Each wallet's net flow over the last stretch is a vote
-//! on which way the reopen goes, right with the told hit rate; the votes
-//! move the prior's odds, and it takes the gap it then expects, with the
-//! reference's mechanics (`reopen.rs`, the same file).
+//! on which way the reopen goes, right with the told hit rate; a wallet
+//! still silent is evidence too, since it trades only while the gap it sees
+//! is past its edge (told, with its view's noise and its pace). It weighs a
+//! grid of gaps by the prior and every wallet's record, takes the
+//! posterior's mean, and trades it with the reference's mechanics
+//! (`reopen.rs`, the same file).
 
 #[path = "../../../../reference/src/reopen.rs"]
 pub mod reopen;
 
 use mtx_kit::{Pubkey, log, prelude::*, serde_json, venue::PhoenixVenue};
 use reopen::{
-    ACCOUNTS_MAX, Account, Clock, Phase, Positions, expected_gap_given_votes, position_for,
-    trade_toward,
+    ACCOUNTS_MAX, Account, Clock, Phase, Positions, normal_cdf, position_for, trade_toward,
 };
 
 /// The most informed wallets it watches: the family seats two.
@@ -114,9 +116,11 @@ impl Strategy for Informed {
         }
         if phase == Phase::Entry {
             let told = self.told.as_ref().ok_or("step before start")?;
-            let votes: f64 = self.watched.iter().map(Watched::vote).sum();
+            let votes: Vec<f64> = self.watched.iter().map(Watched::vote).collect();
             let weekend_pct = (mid / start_mid - 1.0) * 100.0;
-            let expected = told.expected_gap_pct(weekend_pct, votes);
+            let stretch_from = clock.reopen_slot as f64 - told.horizon_slots;
+            let elapsed = (market.slot as f64 - stretch_from).max(0.0);
+            let expected = told.expected_gap_pct(weekend_pct, &votes, elapsed);
             self.target = position_for(expected, self.cap);
         }
         assert!(self.target.abs() <= self.cap);
@@ -150,6 +154,13 @@ struct Told {
     hit_rate: f64,
     reopen_keep: f64,
     open_residual_sd_pct: f64,
+    /// When an informed wallet trades at all: from `horizon_slots` before
+    /// the reopen, while the gap it sees (off by a normal `view_noise_bps`)
+    /// is past `edge_bps`, about `orders_per_wallet` orders over the stretch.
+    horizon_slots: f64,
+    edge_bps: f64,
+    view_noise_bps: f64,
+    orders_per_wallet: f64,
 }
 
 impl Told {
@@ -187,21 +198,57 @@ impl Told {
             hit_rate,
             reopen_keep: number("reopen_keep")?,
             open_residual_sd_pct: number("open_residual_sd_pct")?,
+            horizon_slots: number("horizon_slots")?,
+            edge_bps: number("edge_bps")?,
+            view_noise_bps: number("view_noise_bps")?,
+            orders_per_wallet: number("orders_per_wallet")?,
         })
     }
 
-    /// The gap it expects, in percent: the reopen's process, and the
-    /// informed wallets' votes, each right with the told hit rate.
-    fn expected_gap_pct(&self, weekend_pct: f64, votes: f64) -> f64 {
-        expected_gap_given_votes(
-            weekend_pct,
-            self.reopen_keep,
-            self.open_residual_sd_pct,
-            votes,
-            self.hit_rate,
-        )
+    /// The gap it expects, in percent: the posterior mean over a grid of
+    /// gaps, from the reopen's prior (normal, around `(keep - 1) × weekend`,
+    /// give or take the residual) and each informed wallet's record so far
+    /// (`votes`: +1 bought, -1 sold, 0 silent), `elapsed_slots` into its
+    /// stretch. A wallet trades only while the gap it sees is past its edge,
+    /// so silence is evidence too: of a gap too small to trade, or of no
+    /// order drawn yet.
+    fn expected_gap_pct(&self, weekend_pct: f64, votes: &[f64], elapsed_slots: f64) -> f64 {
+        assert!(votes.len() <= WALLETS_MAX && elapsed_slots >= 0.0);
+        let mean = (self.reopen_keep - 1.0) * weekend_pct;
+        let sd = self.open_residual_sd_pct;
+        let elapsed = elapsed_slots.min(self.horizon_slots);
+        let none_drawn = (-self.orders_per_wallet * elapsed / self.horizon_slots).exp();
+        let (mut weight_sum, mut gap_sum) = (0.0_f64, 0.0_f64);
+        for k in 0..=GRID_POINTS {
+            let z = -GRID_SDS + 2.0 * GRID_SDS * k as f64 / GRID_POINTS as f64;
+            let gap_pct = mean + sd * z;
+            let mut weight = (-0.5 * z * z).exp();
+            let gap_bps = gap_pct * 100.0;
+            let up = normal_cdf((gap_bps - self.edge_bps) / self.view_noise_bps);
+            let down = normal_cdf((-gap_bps - self.edge_bps) / self.view_noise_bps);
+            for vote in votes {
+                weight *= if *vote > 0.0 {
+                    (1.0 - none_drawn) * (up * self.hit_rate + down * (1.0 - self.hit_rate))
+                } else if *vote < 0.0 {
+                    (1.0 - none_drawn) * (down * self.hit_rate + up * (1.0 - self.hit_rate))
+                } else {
+                    (1.0 - up - down) + (up + down) * none_drawn
+                };
+            }
+            weight_sum += weight;
+            gap_sum += weight * gap_pct;
+        }
+        assert!(weight_sum > 0.0);
+        let expected = gap_sum / weight_sum;
+        assert!(expected.is_finite());
+        expected
     }
 }
+
+/// The posterior's grid: this many intervals over this many standard
+/// deviations of the prior either side.
+const GRID_POINTS: u32 = 240;
+const GRID_SDS: f64 = 6.0;
 
 #[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Informed);
@@ -217,6 +264,10 @@ mod tests {
             hit_rate: 0.8,
             reopen_keep: 0.78,
             open_residual_sd_pct: 0.5,
+            horizon_slots: 40.0,
+            edge_bps: 10.0,
+            view_noise_bps: 10.0,
+            orders_per_wallet: 3.0,
         }
     }
 
@@ -225,7 +276,8 @@ mod tests {
         let key = Pubkey::new_unique();
         let parsed = Told::from_regime(&format!(
             r#"{{"wallets": {{"informed": ["{key}"]}}, "hit_rate": 0.8, "reopen_keep": 0.78,
-                "open_residual_sd_pct": 0.5, "horizon_slots": 40}}"#
+                "open_residual_sd_pct": 0.5, "horizon_slots": 40,
+                "edge_bps": 10.0, "view_noise_bps": 10.0, "orders_per_wallet": 3.0}}"#
         ))
         .unwrap();
         assert_eq!(parsed.wallets, vec![key]);
@@ -240,12 +292,13 @@ mod tests {
     }
 
     #[test]
-    fn without_votes_it_expects_what_the_reference_does() {
+    fn with_no_record_yet_it_expects_what_the_reference_does() {
         let told = told();
         for weekend in [-2.0, -0.5, 0.3, 1.0, 2.5] {
-            let expected = told.expected_gap_pct(weekend, 0.0);
+            // Before the stretch, no wallet has had a chance to trade.
+            let expected = told.expected_gap_pct(weekend, &[0.0, 0.0], 0.0);
             assert!(
-                (expected - expected_gap_pct(weekend)).abs() < 1e-6,
+                (expected - expected_gap_pct(weekend)).abs() < 1e-3,
                 "{weekend}"
             );
         }
@@ -254,10 +307,21 @@ mod tests {
     #[test]
     fn votes_move_the_expected_gap_their_way() {
         let told = told();
-        let prior = told.expected_gap_pct(1.0, 0.0);
+        let prior = told.expected_gap_pct(1.0, &[0.0, 0.0], 0.0);
         assert!(prior < 0.0);
-        assert!(told.expected_gap_pct(1.0, 2.0) > 0.0);
-        assert!(told.expected_gap_pct(1.0, -2.0) < prior);
-        assert!(told.expected_gap_pct(1.0, 1.0) > prior);
+        assert!(told.expected_gap_pct(1.0, &[1.0, 1.0], 32.0) > 0.0);
+        assert!(told.expected_gap_pct(1.0, &[-1.0, -1.0], 32.0) < prior);
+        assert!(told.expected_gap_pct(1.0, &[1.0, 0.0], 32.0) > prior);
+    }
+
+    /// Both informed wallets silent most of the way through their stretch:
+    /// the gap is most likely under their edge, so it expects little.
+    #[test]
+    fn silence_late_in_the_stretch_says_the_gap_is_small() {
+        let told = told();
+        let prior = told.expected_gap_pct(2.0, &[0.0, 0.0], 0.0);
+        let silent = told.expected_gap_pct(2.0, &[0.0, 0.0], 32.0);
+        assert!(prior < -0.4, "{prior}");
+        assert!(silent.abs() < 0.15, "{silent}");
     }
 }

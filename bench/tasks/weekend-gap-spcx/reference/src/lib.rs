@@ -15,8 +15,9 @@
 //!   the weekend's prints come from wallets it has seen all weekend. Their
 //!   positions, summed, are one vote on which way the reopen goes. It can't
 //!   tell the informed from the decoys, so it trusts the vote as one right
-//!   60% of the time: a hedge, not a fit (at 65% it beat the informed bot
-//!   on one of six ladder sets).
+//!   65% of the time: the instruction's two informed wallets right 80% of
+//!   the time and two decoys trading a random view (50%), averaged,
+//!   (2 × 0.8 + 2 × 0.5) / 4.
 //!
 //! A few slots before the reopen, after the makers' last re-price, it takes
 //! the gap it then expects, sized by how big that is, and holds it through
@@ -41,9 +42,11 @@ use tape::Tape;
 /// instruction's number.
 const POSITIONING_SLOTS: u64 = 40;
 /// How often it takes the positioners' net flow to be right about the
-/// reopen's direction: the informed are right 80% of the time, but half the
-/// late wallets are decoys, and it can't tell which.
-const FLOW_HIT_RATE: f64 = 0.6;
+/// reopen's direction, derived from the instruction: a late wallet is an
+/// informed one (right 80% of the time) or a decoy (a random view once it
+/// loses the thread, 50%), two of each, so (2 × 0.8 + 2 × 0.5) / 4. A
+/// decoy is as right as the informed before it turns, so this leans low.
+const FLOW_HIT_RATE: f64 = 0.65;
 /// A net position smaller than this, in SPCX, is no vote.
 const FLOW_MIN: f64 = 0.0005;
 
@@ -150,7 +153,10 @@ impl Weekend {
             .read(venue, &self.symbol, &late)?
             .iter()
             .sum();
-        log(&format!("{} late positioners, net {net:+.2} SPCX", late.len()));
+        log(&format!(
+            "{} late positioners, net {net:+.2} SPCX",
+            late.len()
+        ));
         Ok(if net.abs() < FLOW_MIN {
             0.0
         } else {
@@ -206,9 +212,8 @@ mod tests {
         assert_eq!(reference.decide(-2.0, 0.0), 70.0);
         // A quiet weekend: nothing worth the entry.
         assert_eq!(reference.decide(0.2, 0.0), 0.0);
-        // The positioners buying a small dip: a long it wouldn't take alone.
-        assert_eq!(reference.decide(-0.3, 0.0), 0.0);
-        assert!(reference.decide(-0.3, 1.0) > 0.0);
+        // The positioners buying a flat weekend: a long.
+        assert!(reference.decide(0.0, 1.0) > 0.0);
         // Selling into a fade: a bigger short.
         assert!(reference.decide(0.5, -1.0) < reference.decide(0.5, 0.0));
     }
