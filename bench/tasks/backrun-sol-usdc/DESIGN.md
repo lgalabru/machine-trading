@@ -312,3 +312,20 @@ models should come from composition and sizing first, bidding second.
   every rival; a `min-tip` rung and its rule (`min-tip < reference`).
   Then, the same version (2026-11-23): `fixed-clip` tips the reference's
   share, from the reference's own constant ("Calibration").
+- **0.15.0** (2026-11-25): unchanged but for its instruction, grounded
+  by the week-long study and checked against mainnet's own scout (RFD
+  0007, 2026-11-25). From 2026-11-23 21:47 to 2026-11-25 06:10 UTC, luthor's
+  arbitrage scout on mtx-alpha saw one chunk-sized gap on these two pools
+  (a sale of about 380 SOL into Raydium, a 48.5 bp move, a cycle of
+  0.61 SOL at its best size, 0.38 SOL still open a slot on) and six of
+  0.002 to 0.05 SOL behind moves of 10 to 20 bp, every one gone within
+  three slots: per event what the family draws (gaps of about 30 to 60 bp,
+  cycles of 0.33 to 1.93 SOL, a searcher at the trigger's slot in 95% of
+  sessions). The departure is the rate: 88% of sessions sit inside a burst
+  that mainnet holds for minutes a week (21 backruns on the pair among the
+  week's 200 most profitable arbitrages; in a window of large sell orders,
+  20 gaps in 17 minutes). The scout reads a write a slot after it
+  lands, so it can't see gaps closed inside their block, and one calm day
+  measures no burst rate: the family and the anchors stay, and the
+  instruction states the departure beside these numbers. Rewards compare
+  with 0.14.0's.
