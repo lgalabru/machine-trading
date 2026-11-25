@@ -3219,10 +3219,12 @@ mod tests {
             assert!(root.join(&snapshot).is_dir(), "{snapshot}");
             // The Kamino and backrun tasks trade the atomic-arb snapshot
             // (its main market and SOL/USDC pools), the thin-pools task its
-            // ten pools; the perp tasks Phoenix's SPCX.
+            // ten pools; market making Phoenix's ANT; the other perp tasks
+            // Phoenix's SPCX.
             let want = match task.dir.as_str() {
                 "liquidation-flash" | "backrun-sol-usdc" => "snapshots/atomic-arb-2026-11-21",
                 "backrun-thin-pools" => "snapshots/thin-pools-2026-11-21",
+                "market-making-ant" => "snapshots/phoenix-ant-2026-11-25",
                 _ => "snapshots/phoenix-spcx-2026-10-29",
             };
             assert_eq!(snapshot, want, "{}", task.dir);
