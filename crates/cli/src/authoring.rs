@@ -50,6 +50,14 @@ impl Base {
     /// draws until its own exists.
     fn generator(self) -> &'static str {
         match self {
+            Base::Shocks => "flash-crash-mainnet",
+            Base::Making => "market-making",
+        }
+    }
+    /// The name the image builds the base's anchors under (its task.toml's
+    /// `anchor`, else its generator), which its verifier runs.
+    fn anchor(self) -> &'static str {
+        match self {
             Base::Shocks => "flash-crash",
             Base::Making => "market-making",
         }
@@ -303,8 +311,14 @@ pub fn scaffold(root: &Path, spec: &TaskSpec) -> Result<Value> {
         &format!("{family}-informed"),
     )
     .replace(
-        &format!("--reference /opt/mtx/anchors/{} ", base.generator()),
+        &format!("--reference /opt/mtx/anchors/{} ", base.anchor()),
         &format!("--reference /opt/mtx/anchors/{family} "),
+    )
+    // A base already scored by v2 runs its own informed bot: this task's
+    // is its own.
+    .replace(
+        &format!("--informed /opt/mtx/anchors/{}-informed ", base.anchor()),
+        &format!("--informed /opt/mtx/anchors/{family}-informed "),
     );
     let test = test.replacen(
         "set -euo pipefail\n",
@@ -1662,11 +1676,14 @@ mod tests {
         let toml = read(&task.join("task.toml"));
         std::fs::write(
             task.join("task.toml"),
-            toml.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\""),
+            toml.replace(
+                "generator = \"flash-crash-mainnet\"",
+                "generator = \"weekend-gap\"",
+            ),
         )
         .unwrap();
         let test = read(&task.join("tests/test.sh"))
-            .replace("--draw flash-crash", "--draw weekend-gap")
+            .replace("--draw flash-crash-mainnet", "--draw weekend-gap")
             .replace("TODO(family)", "note");
         std::fs::write(task.join("tests/test.sh"), test).unwrap();
         let steps = status(&root, "funding-squeeze-spcx").unwrap();
@@ -1860,7 +1877,7 @@ mod tests {
             vec![format!("bench/tasks/{name}/checks/bots/informed")]
         );
         let ladder: Value = serde_json::from_str(&read(&task.join("checks/ladder.json"))).unwrap();
-        assert_eq!(ladder["family"], "flash-crash");
+        assert_eq!(ladder["family"], "flash-crash-mainnet");
         assert_eq!(
             ladder["anchors"],
             json!({ "reference": "reference", "informed": "informed" })
@@ -2100,7 +2117,7 @@ mod tests {
 
     #[test]
     fn a_v1_task_has_no_v2_steps() {
-        let steps = status(&repo_root(), "flash-crash-spcx").unwrap();
+        let steps = status(&repo_root(), "weekend-gap-spcx").unwrap();
         for id in ["anchors", "scoring", "probes"] {
             assert!(steps.iter().all(|s| s.id != id), "{id}");
         }
