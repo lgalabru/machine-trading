@@ -1293,7 +1293,8 @@ pub struct ShockFamily {
 /// (`Generator::params`). Written by hand so that a family that uses none of
 /// the levers 0.15.0 added (quiet sessions, Pareto legs, extensions by
 /// share, a small-move mix, takers, impact) prints exactly as the derived
-/// text did before them: flash-crash-spcx's fingerprint doesn't move.
+/// text did before them: the `flash-crash` generator's parameters, and
+/// any fingerprint that holds them, don't move.
 impl std::fmt::Debug for ShockFamily {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut out = f.debug_struct("ShockFamily");
@@ -2692,8 +2693,7 @@ mod tests {
             assert_eq!(back, scenario);
         }
         // The old family is untouched: no takers, no impact, no quiet draw,
-        // and its parameters print as they did (flash-crash-spcx's
-        // fingerprint holds them).
+        // and its parameters print as they did (a fingerprint holds them).
         let (old, shape) = ShockFamily::spcx().draw("o", 1);
         assert!(old.actors.is_none() && old.impact.is_none() && !shape.quiet);
         let text = format!("{:?}", ShockFamily::spcx());

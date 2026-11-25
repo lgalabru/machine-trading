@@ -111,7 +111,7 @@ To run one task outside a batch, start the proxy yourself:
 export MTX_PROXY_SECRET="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
 python3 -I bench/harness/key_proxy.py --host "$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)" kimi-k3 > /tmp/proxy.url &
 MTX_PROXY_TOKEN="$(python3 -I bench/harness/models.py token kimi-k3)" \
-env -u OPENROUTER_API_KEY -u MTX_PROXY_SECRET PYTHONPATH=bench/harness harbor run -p bench/tasks/flash-crash-spcx -a mtx_hermes:Hermes \
+env -u OPENROUTER_API_KEY -u MTX_PROXY_SECRET PYTHONPATH=bench/harness harbor run -p bench/tasks/flash-crash-nvda -a mtx_hermes:Hermes \
   $(python3 -I bench/harness/models.py args kimi-k3 "$(cat /tmp/proxy.url)") --effort high --ak version=v0.23.1 -k 1 -n 1
 ```
 
@@ -138,7 +138,7 @@ behind a real proxy).
 ## The harness check
 
 ```sh
-just hermes-check flash-crash-spcx          # every route; or: just hermes-check flash-crash-spcx openai
+just hermes-check flash-crash-nvda          # every route; or: just hermes-check flash-crash-nvda openai
 ```
 
 First the proxy under attack (`proxy_attacks.py`): another route's

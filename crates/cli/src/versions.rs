@@ -588,7 +588,7 @@ pub(crate) mod tests {
 
         #[test]
         fn the_fingerprint_moves_with_what_a_task_measures_and_not_with_wording() {
-            let task = "flash-crash-spcx";
+            let task = "flash-crash-nvda";
             let root = scratch(task);
             let base = fingerprint(&root, task, &disk(&root)).unwrap();
             assert_eq!(base.len(), 64);
@@ -629,12 +629,15 @@ pub(crate) mod tests {
 
         #[test]
         fn the_scenario_family_is_in_the_fingerprint() {
-            let task = "flash-crash-spcx";
+            let task = "flash-crash-nvda";
             let root = scratch(task);
             let a = fingerprint(&root, task, &disk(&root)).unwrap();
             // Another family under the same folder: only the generator differs.
             let b = with(&root, task, "task.toml", &|t| {
-                t.replace("generator = \"flash-crash\"", "generator = \"weekend-gap\"")
+                t.replace(
+                    "generator = \"flash-crash-nvda\"",
+                    "generator = \"weekend-gap\"",
+                )
             });
             assert_ne!(a, b);
             std::fs::remove_dir_all(&root).unwrap();
@@ -642,7 +645,7 @@ pub(crate) mod tests {
 
         #[test]
         fn the_digest_file_counts_by_its_fields_not_its_comments() {
-            let task = "flash-crash-spcx";
+            let task = "flash-crash-nvda";
             let root = scratch(task);
             let path = root
                 .join("bench/tasks")
@@ -667,7 +670,7 @@ pub(crate) mod tests {
 
         #[test]
         fn the_whole_snapshot_the_anchor_digest_and_the_grader_version_are_in_the_fingerprint() {
-            let task = "flash-crash-spcx";
+            let task = "flash-crash-nvda";
             let root = scratch(task);
             let base = fingerprint(&root, task, &disk(&root)).unwrap();
             let toml =
@@ -699,7 +702,7 @@ pub(crate) mod tests {
 
         #[test]
         fn the_engines_source_is_not_in_the_fingerprint_but_its_behaviour_is() {
-            let task = "flash-crash-spcx";
+            let task = "flash-crash-nvda";
             let root = scratch(task);
             let base = fingerprint(&root, task, &disk(&root)).unwrap();
             // A doc comment in the kit, a comment in the grader, a new file in
@@ -727,7 +730,7 @@ pub(crate) mod tests {
 
         #[test]
         fn a_new_task_counts_before_it_is_added_and_ignored_files_never_do() {
-            let task = "flash-crash-spcx";
+            let task = "flash-crash-nvda";
             let root = scratch(task);
             std::fs::write(root.join(".gitignore"), "*.orig\nsurfnet.json\n").unwrap();
             track(&root);
@@ -759,7 +762,7 @@ pub(crate) mod tests {
             assert_eq!(draw_count("grader \\\n  --count 72 \\\n  --x"), 72);
             assert_eq!(draw_count("--count 9"), 9);
             assert_eq!(draw_count("no count here"), FAMILY_COUNT);
-            let task = "flash-crash-spcx";
+            let task = "flash-crash-nvda";
             let root = scratch(task);
             let a = fingerprint(&root, task, &disk(&root)).unwrap();
             let b = with(&root, task, "tests/test.sh", &|t| {

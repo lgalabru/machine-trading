@@ -106,7 +106,7 @@ async fn a_live_runtime_is_controlled_while_it_runs() {
         std::env::var("MTX_TEST_GEYSER_PLUGIN").expect("MTX_TEST_GEYSER_PLUGIN: the built plugin"),
     );
     let component =
-        mtx_grader::wasm::component_in(&root.join("bench/tasks/flash-crash-spcx/reference"))
+        mtx_grader::wasm::component_in(&root.join("bench/tasks/flash-crash-nvda/reference"))
             .expect("the built reference");
     let dir = std::env::temp_dir().join(format!("mtx-live-control-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

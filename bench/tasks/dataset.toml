@@ -25,10 +25,6 @@ name = "solana-foundation/flash-crash-nvda"
 digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [[tasks]]
-name = "solana-foundation/flash-crash-spcx"
-digest = "sha256:f7e3f93f8566f32a09fe539ccb66aa14bacafa523dce94a287aa8edcf85cd13b"
-
-[[tasks]]
 name = "solana-foundation/funding-carry-spcx"
 digest = "sha256:b52230e89f6fcc4aa43a7c9dd821d8b7d4264c508e75ade1761405cfa5e915d8"
 

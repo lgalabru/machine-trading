@@ -4,9 +4,9 @@ The agent's bot trades Phoenix's NVDA (NVIDIA) perpetual through crashes
 and squeezes at the odds mainnet's own tape measured, beside other takers,
 some of them informed, with its own trades moving the price. NVDA is where
 the shocks were: 9 of the tape's 93 jumps, among them 2026-11-23's +4%
-minute that went on to +16% in half an hour. The task continues
-`flash-crash-spcx` (0.1.0 to 0.14.0) on mainnet's numbers; that task is
-left as 0.14.0 shipped it.
+minute that went on to +16% in half an hour. Until 0.14.0 the task was
+`flash-crash-spcx`; 0.15.0 renamed it, as 0.11.0 renamed
+`phoenix-flash-crash`.
 
 | | |
 | --- | --- |
@@ -14,7 +14,7 @@ left as 0.14.0 shipped it.
 | Sessions | 72 hidden per grade (18 quiet; the shocks stratified by direction and aftermath); 6 practice. Each session is 80–180 s of market time. |
 | Mandate | 62 NVDA position cap (about 1× collateral at $160); $1,000 loss limit (10% of collateral) |
 | Bound | None: scored by v2 alone |
-| Reference | v2's 0.5. It rides a confirmed move at the full cap, with a trailing stop and a drawdown halt. |
+| Reference | v2's 0.5. It reads net taking off the book (who took, it can't tell) and rides the move it calls, or a confirmed move, at the full cap, with a trailing stop and a drawdown halt. |
 | Anchors | Scoring v2: 0.5 the reference; 1 the informed bot, told the informed takers' wallets, which holds the way their recent flow points |
 
 How every task is scored, and how risk is enforced, is in the
@@ -61,11 +61,12 @@ the scenario's price, not where trades pushed the book.
 
 ## Baselines
 
-Not yet in the strength band: on 72 NVDA sessions (six 12-session draws,
-2026-11-25) the reference made $6,343 ($4,881 weighted as v2 weighs losses,
-Sharpe 0.33) and the informed bot $33,706 ($33,487 weighted): 0.15 of it,
-under the band's 0.2. DESIGN.md says why and what we'd change. On the 6
-practice sessions, −$311.87 and $3,317.95. The full ladder hasn't run.
+On three fresh 72-session hidden sets (2026-11-25, Linux): the reference
+made $23,681, $19,153 and $24,092 ($23,425, $18,746 and $23,295 weighted as
+v2 weighs losses; Sharpe 0.85, 0.76 and 0.72) and the informed bot
+$37,375, $31,663 and $41,460: the reference is 0.63, 0.60 and 0.57 of the
+informed bot, inside the strength band on each, with no breach. On the 6
+practice sessions, $1,223.87 and $1,759.34.
 
 | Rung | What it is | Expected |
 | --- | --- | --- |
@@ -73,7 +74,7 @@ practice sessions, −$311.87 and $3,317.95. The full ladder hasn't run.
 | `blind-long`, `blind-short` | the full cap from the open | under the reference |
 | `dip-buyer` | the cap long once NVDA is 3% down, held | under the reference |
 | `momentum` | the cap the move's way once NVDA is 4% from the open, held | under the reference |
-| `reference` | rides a confirmed move with a trailing stop | 0.5 |
+| `reference` | reads the tape off the book, rides the move it calls or a confirmed one, with a trailing stop | 0.5 |
 | `informed` | told the informed takers' wallets | 1 |
 | exploit bots | 0.10.0 and 0.12.0's frozen flash-crash bots | below the informed bot, profitable in at most 75% of sessions |
 | probes | coin flips, martingale, limit-hugger, stop-lotto, levered references, breacher, honest blends | in their v2 bands |
