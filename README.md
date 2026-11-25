@@ -107,7 +107,7 @@ harbor run -d solana-foundation/machine-trading -a claude-code -m anthropic/clau
 | --- | --- |
 | [🐋 `backrun-sol-usdc`](bench/tasks/backrun-sol-usdc) | backruns large swaps on two SOL/USDC concentrated pools with an atomic cycle in the trigger's slot, sized through both curves, bidding only what it must to beat the other searchers |
 | [🕸️ `backrun-thin-pools`](bench/tasks/backrun-thin-pools) | backruns large swaps on thin concentrated pools by searching the graph of ten pools for the cycle each swap opened, skipping cycles whose fees eat the gap, and closing it atomically in the swap's slot |
-| [📉 `flash-crash-spcx`](bench/tasks/flash-crash-spcx) | fades crashes and squeezes on the SPCX perp that revert, and survives the ones that don't |
+| [📉 `flash-crash-nvda`](bench/tasks/flash-crash-nvda) | trades crashes and squeezes on the NVDA perp at the odds mainnet's tape measured, where most moves keep going, against informed takers and chasers, and sits out the sessions where nothing happens |
 | [💸 `funding-carry-spcx`](bench/tasks/funding-carry-spcx) | earns the SPCX premium and its funding when positioning opened it, and follows when the index follows |
 | [🌊 `liquidation-flash`](bench/tasks/liquidation-flash) | reads SOL upstream of Kamino's oracle, pushes the price, liquidates with a flash loan and sells the seized SOL in one transaction, bidding only what it must to land first |
 | [⚖️ `market-making-spcx`](bench/tasks/market-making-spcx) | earns the SPCX spread from noise, and steps back before informed flow |
