@@ -3,6 +3,9 @@
 //!
 //! What the measurements say, and what this family draws from them:
 //!
+//! Every number is in `calibration/weekend/spcx-reopens.20261120.json`
+//! (`calibration/fitter/weekend/reopens.py`) or the tape study.
+//!
 //! - **The weekend's move is the makers', not the takers'.** Over 21
 //!   weekends (Phoenix SPCX 1 m candles, 2026-06-12 to 2026-11-20, holiday
 //!   weekends left out) the book moved a median 0.86% between Friday's last
@@ -578,8 +581,9 @@ mod tests {
         }
     }
 
-    /// The weekend's moves are the measured ones: a median near 0.86% and a
-    /// p90 near 1.3% (21 weekends: 0.86% and 1.29%).
+    /// The weekend's moves are the measured ones: a median near 0.86%, and
+    /// a p90 between the 21 weekends' 1.3% (their 18th of 21) and 2.4% (the
+    /// 19th): `calibration/weekend/spcx-reopens.20261120.json`.
     #[test]
     fn weekend_moves_are_the_measured_ones() {
         let family = MeasuredWeekendFamily::mainnet();
