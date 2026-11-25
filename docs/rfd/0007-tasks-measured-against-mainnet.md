@@ -240,3 +240,36 @@ What each task becomes, to be settled as the work goes:
   `flash-crash-nvda`'s reference reads net taker flow off the book's
   drift from the index and lands at 0.57 to 0.63 of the informed bot
   over three hidden draws (Sharpe 0.72 to 0.85).
+
+- 2026-11-25: market-making leaves 0.15 (Ludo). It failed on both
+  measured markets, in opposite ways, and each failure is what mainnet
+  shows. On ANT, busy and informed, nobody earns: with the owner's
+  public-signal departure and ANT's measured volatility, the informed
+  bot made +$0.86 and the reference -$6.74 over 48 sessions; quotes a
+  move leaves behind are picked off whenever the arbitrageur beats the
+  bot's two-slot step, and the touch (2.7 bp) is narrower than one
+  index step (3 to 10 bp). On CBRS, thin and wide, everybody earns, so
+  skill doesn't separate: over 48 sessions the informed bot made $184,
+  the reference $106, a naive quoter $104 and a skew quoter $99. CBRS's
+  takers lose 7.6 bp a minute after they trade, so any quote inside the
+  competitor earns; racing a reactive competitor to its floor gives the
+  width away (reference +$6, informed -$66). One number in the ANT
+  version was never measured: the arbitrageur's speed, 1 to 2 slots,
+  borrowed from SOL's lead behind the exchanges. luthor will record
+  ANT's index against Phoenix's book at slot resolution, and
+  `market-making-ant` comes back in 0.16 on the measured lead.
+  `market-making-spcx` stays at 0.14.0 in the dataset meanwhile.
+- 2026-11-25: weekend-gap's positioners know more. Its informed bot
+  couldn't stay ahead of a reference that reads late wallets, because
+  the reopen's measured residual (0.50%) swamps what positioners right
+  80% of the time know. The positioners were already a stated
+  departure, so their hit rate goes to 95% and every measured number
+  stays. The reference's trust is derived, (2 × 0.95 + 2 × 0.5) / 4 =
+  72.5%, not tuned. Over 48 sessions: reference 0.373 of the informed
+  bot, Sharpe 0.31 and 0.62.
+- 2026-11-25: funding-carry-sol's reference prices the carry. It
+  starts from the funding study's prior on SOL's premium (mean 1.434
+  bp, sd 0.665, half-life 3.64 intervals), updates the session's level
+  as it watches, and holds while the funding left pays for getting in
+  and the index's risk. Over 72 fresh sessions: 0.625 of the informed
+  bot, Sharpe 0.79 (was 0.20).
