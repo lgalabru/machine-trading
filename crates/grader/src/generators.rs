@@ -103,22 +103,22 @@ pub const GENERATORS: &[Generator] = &[
         params: || format!("{:?}", ShockFamily::spcx()),
     },
     Generator {
-        name: "flash-crash-mainnet",
+        name: "flash-crash-nvda",
         practice_drawn: |prefix, count, seed| {
             shaped(
-                ShockFamily::mainnet().draw_set(prefix, count, seed),
+                ShockFamily::nvda().draw_set(prefix, count, seed),
                 false,
-                mainnet_shock_latent,
+                nvda_shock_latent,
             )
         },
         hidden: |count, seed, tell| {
             shaped(
-                ShockFamily::mainnet().draw_set("hidden", count, seed),
+                ShockFamily::nvda().draw_set("hidden", count, seed),
                 tell,
-                mainnet_shock_latent,
+                nvda_shock_latent,
             )
         },
-        params: || format!("{:?}", ShockFamily::mainnet()),
+        params: || format!("{:?}", ShockFamily::nvda()),
     },
     Generator {
         name: "market-making",
@@ -348,11 +348,11 @@ pub enum Knowable {
 /// as it starts.
 pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("*", crate::latent::ROSTER, Knowable::Identity),
-    ("flash-crash-mainnet", "horizon_slots", Knowable::Process),
-    ("flash-crash-mainnet", "hit_rate", Knowable::Process),
-    ("flash-crash-mainnet", "quiet_odds", Knowable::Process),
-    ("flash-crash-mainnet", "aftermath_odds", Knowable::Process),
-    ("flash-crash-mainnet", "impact", Knowable::Process),
+    ("flash-crash-nvda", "horizon_slots", Knowable::Process),
+    ("flash-crash-nvda", "hit_rate", Knowable::Process),
+    ("flash-crash-nvda", "quiet_odds", Knowable::Process),
+    ("flash-crash-nvda", "aftermath_odds", Knowable::Process),
+    ("flash-crash-nvda", "impact", Knowable::Process),
     ("funding-carry", "informed_share", Knowable::Process),
     ("funding-carry", "lag_slots", Knowable::Process),
     ("funding-carry", "hold_slots", Knowable::Process),
@@ -500,17 +500,14 @@ fn shock_latent(_: &Shape) -> Value {
 /// the session's own draws: whether it is quiet, the shock's direction,
 /// legs, size, timing or aftermath. Every session tells the same process;
 /// only the wallets differ.
-fn mainnet_shock_latent(_: &Shape) -> Value {
-    let family = ShockFamily::mainnet();
+fn nvda_shock_latent(_: &Shape) -> Value {
+    let family = ShockFamily::nvda();
     let informed = family
         .actors
         .as_ref()
         .and_then(|actors| actors.informed.first())
-        .expect("the mainnet family seats informed takers");
-    let impact = family
-        .impact
-        .as_ref()
-        .expect("the mainnet family has impact");
+        .expect("the NVDA family seats informed takers");
+    let impact = family.impact.as_ref().expect("the NVDA family has impact");
     let latent = crate::latent::Latent::new()
         .roster(&["informed"])
         .and_then(|l| l.process("horizon_slots", informed.horizon_slots))
@@ -535,7 +532,7 @@ fn mainnet_shock_latent(_: &Shape) -> Value {
                 }),
             )
         })
-        .expect("the mainnet family's latent fields are sound");
+        .expect("the NVDA family's latent fields are sound");
     serde_json::from_str(&latent.to_json()).expect("a latent is JSON")
 }
 
@@ -794,14 +791,14 @@ mod tests {
         }
     }
 
-    /// The mainnet shock family tells its informed bot who trades on
+    /// The NVDA shock family tells its informed bot who trades on
     /// information and the process, the same in every session, and nothing
     /// of the session's own draw: not whether it is quiet, nor the shock's
     /// direction, legs, size or aftermath.
     #[cfg(feature = "generators")]
     #[test]
-    fn the_mainnet_shock_latent_is_the_process_and_the_informed_wallets() {
-        let hidden = (generator("flash-crash-mainnet").unwrap().hidden)(24, 5, false).unwrap();
+    fn the_nvda_shock_latent_is_the_process_and_the_informed_wallets() {
+        let hidden = (generator("flash-crash-nvda").unwrap().hidden)(24, 5, false).unwrap();
         let first: Value = serde_json::from_str(&hidden.latent[0]).unwrap();
         assert!(hidden.latent.iter().all(|l| *l == hidden.latent[0]));
         assert_eq!(first["roster"], json!(["informed"]));
@@ -819,7 +816,7 @@ mod tests {
         }
         let classified: Vec<&str> = LATENT_FIELDS
             .iter()
-            .filter(|(family, ..)| *family == "flash-crash-mainnet")
+            .filter(|(family, ..)| *family == "flash-crash-nvda")
             .map(|(_, field, _)| *field)
             .collect();
         for field in first.as_object().unwrap().keys() {

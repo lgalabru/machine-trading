@@ -5452,7 +5452,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "mtx-bot-flash-crash-spcx-informed"
+name = "mtx-bot-flash-crash-nvda"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-flash-crash-nvda-dip-buyer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtx-kit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mtx-bot-flash-crash-nvda-informed"
 version = "0.1.0"
 dependencies = [
  "mtx-kit",

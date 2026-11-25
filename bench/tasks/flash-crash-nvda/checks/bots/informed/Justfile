@@ -9,7 +9,7 @@ build:
     wasm="$(cargo build --release --lib --target wasm32-wasip2 --message-format=json-render-diagnostics \
       | sed -n 's/.*"filenames":\["\([^"]*\.wasm\)".*/\1/p' | tail -1)"
     cp "$wasm" bot.wasm
-    exe="$(cargo build --release --bin mtx-flash-crash-spcx-informed --message-format=json-render-diagnostics \
+    exe="$(cargo build --release --bin mtx-flash-crash-nvda-informed --message-format=json-render-diagnostics \
       | sed -n 's/.*"executable":"\([^"]*\)".*/\1/p' | tail -1)"
     mkdir -p bin
     cp "$exe" bin/bot

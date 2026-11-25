@@ -1,0 +1,307 @@
+{
+  "actors": {
+    "chasers": [
+      {
+        "intensity_mult": 62.05232150851514,
+        "limit_bps": 50.0,
+        "lookback_slots": 40,
+        "size_mult": 1.0,
+        "trigger_bps": 100.0,
+        "wallets": 3
+      }
+    ],
+    "informed": [
+      {
+        "edge_bps": 40.0,
+        "hit_rate": 0.85,
+        "horizon_slots": 40,
+        "intensity_mult": 62.05232150851514,
+        "limit_bps": 50.0,
+        "size_mult": 1.0,
+        "view_noise_bps": 10.0,
+        "wallets": 3
+      }
+    ],
+    "noise": [
+      {
+        "flow_mult": 1.0,
+        "limit_bps": 50.0,
+        "size_mult": 1.0,
+        "wallets": 2
+      }
+    ],
+    "scale": {
+      "trade_size": 6.250625,
+      "trade_size_sigma": 2.05,
+      "trades_per_minute": 0.619375
+    }
+  },
+  "description": "NVDA practice session",
+  "duration_slots": 485,
+  "impact": {
+    "half_life_slots": 120.0,
+    "max_bps": 50.0,
+    "permanent_share": 0.5,
+    "probe": 6.250625
+  },
+  "informed_max_drawdown_usd": 80.25,
+  "informed_pnl_usd": 1033.21,
+  "mandate": {
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    },
+    "universe": [
+      {
+        "instrument": "phoenix:perp:NVDA",
+        "max_position": 62.0
+      }
+    ],
+    "version": "v0.1.0"
+  },
+  "name": "practice-3",
+  "path": [
+    {
+      "level_pct": 0.022,
+      "slot": 9
+    },
+    {
+      "level_pct": 0.021,
+      "slot": 18
+    },
+    {
+      "level_pct": -0.001,
+      "slot": 27
+    },
+    {
+      "level_pct": 0.003,
+      "slot": 35
+    },
+    {
+      "level_pct": 0.013,
+      "slot": 39
+    },
+    {
+      "level_pct": 0.03,
+      "slot": 44
+    },
+    {
+      "level_pct": 0.015,
+      "slot": 49
+    },
+    {
+      "level_pct": -0.012,
+      "slot": 56
+    },
+    {
+      "level_pct": -0.033,
+      "slot": 63
+    },
+    {
+      "level_pct": -0.008,
+      "slot": 73
+    },
+    {
+      "level_pct": 0.009,
+      "slot": 79
+    },
+    {
+      "level_pct": 1.45,
+      "slot": 90
+    },
+    {
+      "level_pct": 1.451,
+      "slot": 100
+    },
+    {
+      "level_pct": 1.468,
+      "slot": 112
+    },
+    {
+      "level_pct": 2.421,
+      "slot": 115
+    },
+    {
+      "level_pct": 2.41,
+      "slot": 129
+    },
+    {
+      "level_pct": 2.445,
+      "slot": 140
+    },
+    {
+      "level_pct": 2.453,
+      "slot": 145
+    },
+    {
+      "level_pct": 2.462,
+      "slot": 149
+    },
+    {
+      "level_pct": 2.45,
+      "slot": 156
+    },
+    {
+      "level_pct": 2.418,
+      "slot": 160
+    },
+    {
+      "level_pct": 2.401,
+      "slot": 166
+    },
+    {
+      "level_pct": 2.393,
+      "slot": 174
+    },
+    {
+      "level_pct": 0.614,
+      "slot": 181
+    },
+    {
+      "level_pct": -1.743,
+      "slot": 184
+    },
+    {
+      "level_pct": -1.747,
+      "slot": 192
+    },
+    {
+      "level_pct": -1.72,
+      "slot": 197
+    },
+    {
+      "level_pct": -1.725,
+      "slot": 207
+    },
+    {
+      "level_pct": -1.706,
+      "slot": 218
+    },
+    {
+      "level_pct": -1.729,
+      "slot": 228
+    },
+    {
+      "level_pct": -1.752,
+      "slot": 238
+    },
+    {
+      "level_pct": -1.764,
+      "slot": 243
+    },
+    {
+      "level_pct": -1.733,
+      "slot": 247
+    },
+    {
+      "level_pct": -3.269,
+      "slot": 250
+    },
+    {
+      "level_pct": -3.268,
+      "slot": 265
+    },
+    {
+      "level_pct": -2.46,
+      "slot": 270
+    },
+    {
+      "level_pct": -2.481,
+      "slot": 281
+    },
+    {
+      "level_pct": -3.256,
+      "slot": 288
+    },
+    {
+      "level_pct": -3.26,
+      "slot": 296
+    },
+    {
+      "level_pct": -3.257,
+      "slot": 308
+    },
+    {
+      "level_pct": -2.629,
+      "slot": 315
+    },
+    {
+      "level_pct": -2.637,
+      "slot": 322
+    },
+    {
+      "level_pct": -2.637,
+      "slot": 329
+    },
+    {
+      "level_pct": -2.623,
+      "slot": 340
+    },
+    {
+      "level_pct": -2.619,
+      "slot": 352
+    },
+    {
+      "level_pct": -2.652,
+      "slot": 356
+    },
+    {
+      "level_pct": -2.623,
+      "slot": 363
+    },
+    {
+      "level_pct": -2.655,
+      "slot": 372
+    },
+    {
+      "level_pct": -2.671,
+      "slot": 382
+    },
+    {
+      "level_pct": -2.648,
+      "slot": 391
+    },
+    {
+      "level_pct": -2.648,
+      "slot": 399
+    },
+    {
+      "level_pct": -2.647,
+      "slot": 404
+    },
+    {
+      "level_pct": -2.624,
+      "slot": 412
+    },
+    {
+      "level_pct": -1.917,
+      "slot": 417
+    },
+    {
+      "level_pct": -1.939,
+      "slot": 431
+    },
+    {
+      "level_pct": -1.528,
+      "slot": 434
+    },
+    {
+      "level_pct": -1.512,
+      "slot": 443
+    },
+    {
+      "level_pct": -1.501,
+      "slot": 455
+    },
+    {
+      "level_pct": -1.535,
+      "slot": 467
+    },
+    {
+      "level_pct": -1.56,
+      "slot": 476
+    }
+  ],
+  "reference_max_drawdown_usd": 332.8,
+  "reference_pnl_usd": -260.81,
+  "symbol": "NVDA"
+}

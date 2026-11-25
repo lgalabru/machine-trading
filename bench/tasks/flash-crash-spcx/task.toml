@@ -4,8 +4,8 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/flash-crash-spcx"
-version = "0.15.0"
-description = "Write a bot that trades Phoenix SPCX (SpaceX) perps through crashes and squeezes whose odds come from mainnet's tape, against other takers and its own price impact, on an offline copy of Solana mainnet."
+version = "0.14.0"
+description = "Write a bot that trades Phoenix SPCX (SpaceX) perps through flash crashes and squeezes, some of which never revert, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "phoenix", "perpetuals", "surfpool", "rust"]
 
 [[task.authors]]
@@ -20,24 +20,21 @@ snapshot = "phoenix-spcx-2026-10-29"
 
 [metadata.mtx]
 # What the repository's lists are written from (`mtx task sync`).
-generator = "flash-crash-mainnet"
-# The anchors keep the name the images and earlier releases built them under.
-anchor = "flash-crash"
+generator = "flash-crash"
 emoji = "📉"
 market = "Phoenix SPCX perp"
-summary = "trades crashes and squeezes on the SPCX perp at the odds mainnet's tape measured, where most moves keep going, against informed takers and chasers, and sits out the sessions where nothing happens"
-skill = "tells a shock from noise, rides the ones that keep going and cuts the ones that turn, and pays for every move it trades"
+summary = "fades crashes and squeezes on the SPCX perp that revert, and survives the ones that don't"
+skill = "fades crashes and squeezes that revert, and survives the ones that don't"
 # Lines only the answers hold, for `just leak-audit`.
-leak_needles = ["gives back 1.5% or 30% of the move from its extreme", "as anyone could who knew which accounts to watch"]
-headline = "v2"
+leak_needles = ["ride each move while it runs", "then fade it once it stops"]
 
 [verifier]
-# Seventy-two hidden sessions drawn from the batch's secret, graded with
-# the reference and then the informed bot on the same sessions first, four
-# sessions at a time each, then the bot's, four at a time. The world moves
-# only between the bot's turns, so a session takes as long as the bot
-# thinks: a minute or two for most bots, about four at worst. Every session
-# is graded, a breached one too (scoring v2).
+# Seventy-two hidden sessions drawn from the batch's secret, plus the
+# reference on the same sessions first: four of its sessions at a time,
+# and of the bot's as many as the memory holds (two in 6 GB). The
+# world moves only between the bot's turns, so a session takes as long as
+# the bot thinks: a minute or two for most bots, about four at worst. A
+# disqualified bot stops at its first breach.
 timeout_sec = 14400.0
 environment_mode = "separate"
 # The grader replays everything from the snapshot; it needs no network, and

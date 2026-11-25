@@ -21,6 +21,10 @@ name = "solana-foundation/backrun-thin-pools"
 digest = "sha256:2445c589859da4fb0f12ab023fb45548bb5c90379fc866909e7ebdf064a54c87"
 
 [[tasks]]
+name = "solana-foundation/flash-crash-nvda"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[[tasks]]
 name = "solana-foundation/flash-crash-spcx"
 digest = "sha256:f7e3f93f8566f32a09fe539ccb66aa14bacafa523dce94a287aa8edcf85cd13b"
 

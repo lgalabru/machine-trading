@@ -6,26 +6,28 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
 
 - **0.15.0** (draft). Every task's market measured against mainnet's
   Phoenix tape (RFD 0007, the study `phoenix-tape.20261125.fc443f1e`).
-  - **`flash-crash-spcx`: the odds mainnet measured, scored by v2.** On
-    the tape a jump of 1.5% or more went on by half of itself again 45% of
-    the time fifteen minutes on, and gave half back 31%; the task's shocks
-    reverted 65% and extended 15%, so fading paid by construction. Its
-    sessions now draw from `flash-crash-mainnet` (`ShockFamily::mainnet()`):
-    revert 31%, stall 24%, extend 45%; legs from a Pareto fitted to the 93
-    jumps' sizes (1.5 to 9.5%, median about 2%); small moves that mostly
-    don't give their move back (26% revert, 37% stall, 37% extend); a
-    quarter of the sessions quiet, with no shock. SPCX's takers trade
-    beside the bot (the actor library: noise at SPCX's measured pace,
-    informed takers who see about ten seconds ahead, chasers), and its
-    trades move the price (impact; a 70-SPCX take walks the snapshot's
-    book about 5 bp). Stated departures, in its instruction: shocks are far
-    more common than on mainnet, the aftermath plays within the session,
-    direction stays 50/50, and the flow around a move is what jumps carried
-    on all markets. The reference now rides a confirmed move with a
-    trailing stop (fading loses on these odds); an informed bot, told the
-    informed takers' wallets, is v2's 1. The regime oracle is gone from the
-    ladder (v2's informed bot is its 1), and rewards don't compare with
-    0.14.0's.
+  - **`flash-crash-nvda`, new: the shocks on the market where they were.**
+    `flash-crash-spcx` continues on NVDA, which carried 9 of the tape's 93
+    jumps (2026-11-23's leader among them); `flash-crash-spcx` itself is
+    left as 0.14.0 shipped it, so its pins don't move, and `mtx bench
+    review` lines the two up by their skill. On the tape a jump of 1.5% or
+    more went on by half of itself again 45% of the time fifteen minutes
+    on, and gave half back 31%; flash-crash-spcx's shocks reverted 65% and
+    extended 15%, so fading paid by construction. The new task draws from
+    `flash-crash-nvda` (`ShockFamily::nvda()`): revert 31%, stall 24%,
+    extend 45%; legs from a Pareto fitted to the 93 jumps' sizes (1.5 to
+    9.5%, median about 2%); small moves that mostly don't give their move
+    back (26% revert, 37% stall, 37% extend); a quarter of the sessions
+    quiet, with no shock; NVDA's wobble from its calibration. NVDA's takers
+    trade beside the bot (the actor library: noise at NVDA's measured pace,
+    informed takers who see about ten seconds ahead, chasers, at the flow
+    NVDA's jumps carried), and its trades move the price (impact). Stated
+    departures, in its instruction: shocks far more common than on
+    mainnet, the aftermath inside the session, direction 50/50, aftermath
+    odds and leg sizes pooled over all markets. Its reference rides a
+    confirmed move with a trailing stop (fading loses on these odds); an
+    informed bot, told the informed takers' wallets, is v2's 1. Its
+    snapshot is `phoenix-perps-2026-11-13`.
 - **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
   mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
   unchanged: their anchor digests did not move.
