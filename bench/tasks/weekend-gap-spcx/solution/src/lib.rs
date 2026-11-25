@@ -15,9 +15,9 @@
 //!   the weekend's prints come from wallets it has seen all weekend. Their
 //!   positions, summed, are one vote on which way the reopen goes. It can't
 //!   tell the informed from the decoys, so it trusts the vote as one right
-//!   65% of the time: the instruction's two informed wallets right 80% of
-//!   the time and two decoys trading a random view (50%), averaged,
-//!   (2 × 0.8 + 2 × 0.5) / 4.
+//!   72.5% of the time: the instruction's two informed wallets right 95%
+//!   of the time and two decoys trading a random view (50%), averaged,
+//!   (2 × 0.95 + 2 × 0.5) / 4.
 //!
 //! A few slots before the reopen, after the makers' last re-price, it takes
 //! the gap it then expects, sized by how big that is, and holds it through
@@ -43,10 +43,10 @@ use tape::Tape;
 const POSITIONING_SLOTS: u64 = 40;
 /// How often it takes the positioners' net flow to be right about the
 /// reopen's direction, derived from the instruction: a late wallet is an
-/// informed one (right 80% of the time) or a decoy (a random view once it
-/// loses the thread, 50%), two of each, so (2 × 0.8 + 2 × 0.5) / 4. A
+/// informed one (right 95% of the time) or a decoy (a random view once it
+/// loses the thread, 50%), two of each, so (2 × 0.95 + 2 × 0.5) / 4. A
 /// decoy is as right as the informed before it turns, so this leans low.
-const FLOW_HIT_RATE: f64 = 0.65;
+const FLOW_HIT_RATE: f64 = 0.725;
 /// A net position smaller than this, in SPCX, is no vote.
 const FLOW_MIN: f64 = 0.0005;
 

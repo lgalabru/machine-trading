@@ -44,7 +44,7 @@ Measured (sources in [DESIGN.md](DESIGN.md#where-every-number-comes-from)):
 
 Stated departures: time is compressed; direction is a coin flip (15 of 21
 went up); the weekend book's half-spread (0.4 to 5 bp) wasn't recorded; and
-two informed wallets (right 80% each) and two decoys position into the
+two informed wallets (right 95% each; 80% before the anchors' ladders) and two decoys position into the
 reopen in its last 40 slots, flow the tape never saw on SPCX.
 
 ## Scoring
