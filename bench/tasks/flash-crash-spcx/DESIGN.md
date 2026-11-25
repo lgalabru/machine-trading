@@ -4,129 +4,218 @@ Written to `skills/trading-task-design/references/design-record.md`. The
 README says what the task is; this says why it's built this way, and what
 each version learned.
 
+## Thesis (0.15.0)
+
+Until 0.14.0 the task's shocks reverted 65% of the time and extended 15%,
+so fading them paid by construction, and its bots made $15k to $27k over
+72 sessions. On mainnet the same family of strategies lost money (RFD
+0007). The tape luthor recorded on mainnet says why: a jump of 1.5% or
+more went on by half of itself again 45% of the time fifteen minutes on,
+and gave half of itself back 31%. 0.15.0 plays the market the tape
+measured, with the takers SPCX has and the impact a trade has, and scores
+by v2: 0 doing nothing, 0.5 the reference, 1 an informed bot told who
+trades on information.
+
+## What the tape measured
+
+The study is `phoenix-tape.20261125.fc443f1e`
+(`calibration/tape/`, written by `calibration/fitter/tape/study.py` from
+luthor's `history.sqlite`, SHA-256 `dc2b18d7…`): every Phoenix trade from
+2026-11-21 23:45 to 2026-11-25 01:12 UTC, 543,438 rows, 110 markets. A taker
+order is the fills of one slot on one side; orders under $5 (the pinger)
+are left out of flow. Every number the family uses, and where it departs:
+
+| Lever | The tape | The family (`ShockFamily::mainnet()`) |
+| --- | --- | --- |
+| Shock's aftermath, 15 min on | 93 jumps: revert 29 (31%), stall 22 (24%), extend 42 (45%); at 5 min 29/27/44%, at 30 min 28/16/56% | revert 0.31, stall 0.24, extend 0.45 |
+| What the classes mean | revert: back half or more; stall: less than half either way; extend: on half again or more | revert gives back 0.5 to 1.0 of the shock; stall moves −0.45 to +0.45 of it; extend goes on 0.5 to 1.0 of it, within 0.75 to 6% of the start (the upper bounds are defaults) |
+| Leg size | jumps (a 1-minute move of 1.5% or more, $2,000 of flow behind it): smallest 1.5%, median 2.0%, p90 4.2%, largest 9.5% | Pareto, exponent 2.0 (maximum likelihood on the 93: 2.03), truncated to 1.5 to 9.5%: median 2.1%, p90 4.3% |
+| Legs a shock | 93 jumps in 16 distinct hours: they cluster | one, then another with odds 0.35, up to three (kept from 0.14.0: not measured per shock) |
+| Small moves | 490 moves of 0.5 to 1.5% in 50 distinct hours, 5 min on: revert 26%, stall 37%, extend 38% (from the study's run as briefed; not yet in the committed file, which keeps only jumps) | half the quiet stretches carry one, 0.5 to 1.5%, held 1.5 to 10 s, then 26% give back 0.5 to 1.0, 37% −0.45 to +0.45, 37% go on 0.5 to 1.0 again (before: every fizzle gave back 40 to 100%) |
+| Direction | 57 of 93 went up, on one news day (2026-11-23) | **stated departure:** 50/50 |
+| How often | 93 jumps in 3.06 days over 110 markets, in 16 distinct hours; 70 outside US regular hours | **stated departure:** three in four sessions of 80 to 180 s carry a shock; a quarter are quiet |
+| When the aftermath lands | measured at 15 minutes | **stated departure:** it lands 8 to 35 s after the last leg, inside the session |
+| SPCX's takers | regular hours: 0.33 orders a minute, median $1,000, p90 $3,483, log-sd 1.3 (off hours 0.09 a minute) | noise at 0.33 a minute of 250 ms slots, median 7 SPCX ($1,000 at the snapshot's $143.11), sigma 1.3 (the library counts 0.4 s slots: the rate is written ×0.625) |
+| Flow around a move | a jump's minute carried a median $8,569 (93 jumps, all markets: SPCX had none) | **stated departure from SPCX's pace:** informed takers and chasers each send about 4.3 orders of $1,000 in their 40-slot window (intensity ×77 SPCX's pace while active) |
+| Who takes | on liquid markets the average taker is informed: 60 s on the mid has moved their way 1.3 bp (SOL) to 8–12 bp (NVDA), about what they paid; SPCX: too few orders to say | informed takers see the path 40 slots (10 s) ahead, take its way past 40 bp, right 85% of the time one view at a time (the library's default); chasers take after a 1% move in 40 slots |
+| Impact | SPCX's orders' worst fill against the mid: $100–1k median 1.2 bp, p90 17.4 bp; $1k–10k median −0.9 bp, p90 15.5 bp; NVDA $10k+ p90 51.5 bp | a 70-SPCX take ($10k, the cap) walks the snapshot's book about 5.5 bp; impact keeps the book where trades leave it, probe 7 SPCX (the median order), at most 50 bp |
+| Impact's persistence | not measured (luthor keeps no book) | **default:** the SPCX calibration's (`spcx.20261112.d1f48be2`, `book.impact`): half permanent, the rest halving every 30 s (120 slots) |
+| Horizon and lookback | NVDA's leader on 2026-11-23: followers repriced 4 to 88 s late (luthor RFD 0003) | **default:** 10 s |
+
+The brief that set 0.15.0 quotes SPCX's impact as "$100–1k median 0.75 bp,
+p90 10 bp; $1k–10k median 0.5 bp, p90 14 bp" and NVDA's $1k–10k as median
+2.5, p90 24; the committed study file says the numbers in the table. The
+family cites the file; the two agree that a $10k SPCX take costs about
+0 bp at the median and about 15 bp at p90, and the snapshot's 5.5 bp sits
+between them.
+
 ## Expert research
 
-- **Why it's a real expert task.** Flash crashes and squeezes on perp venues
-  are forced flow: liquidations and stop cascades push the mark past fair
-  value, then it reverts as the forced sellers (or buyers) run out. Desks
-  that provide liquidity into the shock and size for the shocks that keep
-  going earn the reversion; Kirilenko et al., *The Flash Crash* (2017), on
-  who traded the 2010 crash and how.
-- **The expert's method.** Wait for the shock to be unmistakable, fade it in
-  tranches as it deepens, cap the size so an extension can't breach the
-  loss limit, cut when the move goes far past where shocks usually turn, and
-  hold for the reversion rather than scalping it.
-- **Where non-experts go wrong.** Buying every dip (squeezes and extensions
-  punish it), betting a direction at the open, taking a full position on the
-  first wobble, sizing so one extension takes the session past its
-  drawdown limit, and closing too early to keep the reversion.
+- **Why it's a real expert task.** A jump on a thin perp is information
+  arriving: someone knows something, and the price goes on (momentum
+  traders' "time-series momentum" at short horizons; on 2026-11-23 the
+  shock that paid was NVDA's +1,585 bp that held 30 minutes, with the
+  followers repricing late). Some jumps are forced flow that reverts
+  (Kirilenko et al., *The Flash Crash*, 2017). A desk that trades shocks
+  has to tell which, size for the ones that turn, and leave alone the
+  stretches where nothing is happening.
+- **The expert's method.** Wait for a move to be unmistakable, above the
+  noise and the small moves, then trade with it at a size the loss limit
+  survives, with a stop where the moves that turn usually reach, and hold
+  the ones that keep going. Watch the tape: whoever is taking ahead of a
+  move, and whether their record says they knew.
+- **Where non-experts go wrong.** Fading every shock (45% keep going,
+  half of them by as much again); trading every wobble (a quarter of the
+  sessions have nothing in them, and every round trip pays fees and
+  impact); entering on the first small move; holding a position with no
+  stop; betting a direction at the open.
 
 ## The central decision
 
-When, which way, and how much to fade a shock whose aftermath is unknown.
+When, which way and how much to trade a move whose aftermath is unknown,
+in a market where the bot's own trades move the price.
 
 | Option | Why it looks defensible | Why it isn't |
 | --- | --- | --- |
-| Bet at the open | Shocks are coming | Crashes and squeezes are 50/50 |
-| Buy the dip | Most shocks revert | Half the shocks are squeezes, and 15% extend |
-| Ride the move | The first leg shows the direction | Most shocks revert |
-| Fade the first 1% | Earlier entry, more reversion | Wobble and fizzles are 0.4–2% and give most or all of it back |
-| Full size at once | More PnL when right | An extension breaches the drawdown limit |
+| Fade the shock | 0.14.0's answer; forced flow reverts | 45% extend, 31% revert |
+| Ride every move | Most moves keep going | Small moves and wobble cost a round trip each, and a quarter of the sessions are quiet |
+| Ride without a stop | Extensions pay | A revert gives back the whole leg |
+| Bet at the open | Shocks are coming | Crashes and squeezes are 50/50, and a quarter of sessions have none |
+| Follow the net flow | The takers are informed | Chasers and noise trade too: only each wallet's record tells who knew |
 
-**The calculation chain:** read the mark each turn → tell a shock from a
-fizzle (size, and whether it holds) → take the direction from the first
-real leg → size tranches by depth against the cap → set the stop where
-reverting shocks rarely reach → hold to the end.
+**The calculation chain:** read the mark each turn → tell a shock from
+the wobble and a small move (size, a single step) → take the move's
+direction → full size, a stop that grows with the move → hold what keeps
+going. Above it: read the takers' wallets on chain, and learn which
+take ahead of the moves.
 
-**What must be combined:** the instruction's ranges and odds, the live mark,
-and the session's end slot (`MTX_END_SLOT`), which since 0.8.0 is drawn
-before the path and says nothing about the shock.
-
-**Nothing warns the agent.** A bot that fades too early or too big still
-gets fills; its cost shows only in the valuation and the drawdown.
+**Nothing warns the agent.** A bot that trades every move gets fills, and
+pays for them only in the valuation.
 
 ## Variants
 
-| Regime | Best response |
+| Session | Best response |
 | --- | --- |
-| crash, revert (~32%) | long into the crash, in tranches, hold |
-| squeeze, revert (~32%) | short into the squeeze, hold |
-| stall (~20%) | small or no position: little reversion to earn |
-| extend (~15%) | stop out, or never enter beyond the usual depth |
-| fizzle only, or ends mid-shock | stay flat |
+| quiet (25%) | stay flat, or trade only what the informed flow says |
+| shock, extend (~34%) | ride it and hold |
+| shock, revert (~23%) | ride the leg if in before it, stop out, or flip with the informed |
+| shock, stall (~18%) | ride the leg, hold or cut: little either way |
+| ends mid-shock | hold what the move gave |
 
 | Habit | Fails in |
 | --- | --- |
-| buy the dip | squeezes, extensions |
-| bet at the open | half the sessions |
-| ride the move | reverts, the most common aftermath |
-| fade early | fizzles |
-| full size, no stop | extensions (drawdown breach) |
+| fade the shock | extensions, the commonest aftermath |
+| trade every move | quiet sessions, small moves |
+| no stop | reversions |
+| bet at the open | half the shocks, and every quiet session |
 
 ## Levers
 
 | Lever | What the market does | What a good bot does | How an honest trader sees it |
 | --- | --- | --- | --- |
-| mirrored direction | crashes and squeezes 50/50 | waits for the shock | the first real leg |
-| aftermath mix | revert 65%, stall 20%, extend 15% | sizes for the extension | the odds are in the instruction |
-| legs 0.6–8%, log-uniform, up to three | small legs as common as large | doesn't take the first small move as the shock | a move that holds past the wobble |
+| aftermath mix | extend 45%, revert 31%, stall 24% | rides, with a stop | the odds are in the instruction |
+| quiet sessions (25%) | nothing happens | stays flat | wobble and small moves only |
+| legs 1.5–9.5%, Pareto | most legs about 2% | a threshold above the small moves | a move that holds past the wobble |
+| small moves 0.5–1.5% | most don't give back | doesn't take them for shocks | — |
 | gaps (70% land at once) | no ramp to read the size from | doesn't extrapolate the first step | — |
-| fizzles (odds 0.5, 0.4–2%, give back 40–100%) | false starts | a threshold above fizzle size | they reverse within 1.5–10 s, by a share that varies |
-| duration drawn first (80–180 s), path cut at the end | the end slot dates nothing | holds to the end | — |
-| wobble (≤ ~0.25%) | noise between moves | a threshold above it | — |
-
-**Dropped:** fixed tails and equal steps (0.4.0: they dated the aftermath and
-gave the move's size away), disjoint ranges (0.4.0: Fable read "a leg under
-5% means another is coming"), legs of at least 3% that ramped (0.6.0: riding
-the first step paid ~6× the reference).
+| informed takers | trade 10 s ahead of every move | read which wallets are right | their takes on chain |
+| chasers | take after a 1% move | expects the book to have moved before it gets there | their takes on chain |
+| impact | the book stays where trades leave it | sizes in slices, doesn't churn | the book |
+| duration drawn first, path cut at the end | the end slot dates nothing | holds to the end | — |
 
 ## No tells
 
-- Every session can fizzle, wobble, gap or ramp; only the draws differ.
+- Every session can be quiet, fizzle, wobble, gap or ramp; only the draws
+  differ. Whether a session is quiet is drawn after its direction and
+  aftermath, which a quiet session draws and never plays, so its draws
+  look like any other's.
 - The session's length is drawn before, and independently of, its path.
-- Direction is drawn first, 50/50; the generator stratifies a set so each
-  direction and aftermath appears in proportion to its odds, and that's
-  disclosed.
+- The generator stratifies a set by quiet, direction and aftermath, in
+  proportion to their odds, and that's disclosed.
+- The actors' wallets come from the session's keyring (the grade's
+  secret), and the order they onboard in is drawn: an address says
+  nothing until its record does.
 
-## Detectability
+## The anchors
 
-Not yet measured as separations in standard deviations; the ladder stands in.
-The regime oracle's lead over the reference is the value of reading the
-regime better, and the reference's lead over the dip-buyer and momentum
-rungs is the value of reading it at all.
+- **The reference (0.5)** rides a confirmed move with a trailing stop: a
+  1.2% displacement from a 30-step calm mean, or a single 1.9% step,
+  starts a ride at the full cap; it stops out once the mark gives back
+  1.5% or 30% of the move from its extreme, whichever is more; it halts
+  past a $600 drawdown. Tuned on 600 draws of the family with a simulator
+  of the path (0.985 correlated with graded PnL on 72 sessions), checked on
+  600 others: $138 a session, Sharpe 0.42, profitable in half, deepest
+  drawdown $784. 0.14.0's reference (ride, then fade) makes −$18 a session
+  on the same draws.
+- **The informed bot (1)** is told the informed takers' wallets
+  (`roster: ["informed"]`, resolved to their authorities as the session
+  starts) and the process (`horizon_slots`, `hit_rate`, `quiet_odds`,
+  `aftermath_odds`, `impact`), never the session's draws. It reads each
+  informed wallet's position every step (`getMultipleAccounts` on their
+  trader accounts and Phoenix's trader arenas), takes each wallet's flow
+  over the last horizon as its view, and holds the full cap the way the
+  views' majority points, keeping its position while they are silent. Same
+  slices, step limit and halt as the reference (`rider.rs`, one file).
+- **Why direction, aftermath and quiet are not in the latent.** They are
+  the session's realised draws (docs/gates.md: a shock's direction, legs,
+  aftermath, size and timing are withheld). What the informed bot knows is
+  who knows, which a reader can learn from the chain.
 
 ## Fairness
 
 - Every correct path runs through standard RPC and `mtx-kit`: the
-  reference does.
-- The instruction's formulas are the grader's: the bound (cap × start mark ×
-  total variation), the reward clamp, the valuation at the mark, the cap and
-  drawdown sampled after every step.
-- Readings written out: "position" is long or short; "drawdown" is from the
-  running peak, at the mark, wallet USDC included; resting orders don't
-  count toward the cap until they fill.
-- **Penalty twins:** a position at the cap passes, one lot over it zeroes;
-  a non-standard but allowed method passes, a cheatcode zeroes; a send
-  outside the bot's turn is refused, not a violation.
-- **Fair failures to tell apart:** a bot that doesn't build or never answers
-  the hello scores near 0 for the contract, not for trading; reviews read
-  the bot log first.
+  reference and the informed bot do. The informed takers' trades are
+  ordinary Phoenix transactions any bot can read.
+- The instruction's numbers are the family's: every range, odds and pace
+  above, the impact, and each stated departure with the measured value
+  beside it.
+- Readings written out: the valuation and the drawdown are at the
+  scenario's price, not where trades pushed the book.
+- **Penalty twins:** a position at the cap passes, one lot over it is a
+  breach; a send outside the bot's turn is refused, not a violation.
 
 ## Failure modes, priced
 
 | Failure mode | How it's charged |
 | --- | --- |
-| fades a fizzle | the fizzle's reversal, round trip and fees |
-| bets the wrong direction | the shock's size × the position |
-| holds through an extension | the extension; past $1,000, zero |
-| closes early | the reversion it left |
-| breach (cap, market, drawdown, refused call, liquidatable) | zero for the whole grade |
+| fades a shock that extends | the extension × the position |
+| rides a small move | the round trip, fees and impact |
+| trades a quiet session | the round trips |
+| holds a revert | the leg it gives back |
+| breach (cap, market, drawdown, refused call, liquidatable) | v2's breach: at least the loss limit ×1.5 for the session, and 1.25 × the breach share off the score |
 
 ## Predictions
 
-The reference scores 1 by construction and ~0.04 reward. Frozen exploit bots
-1–3×. Frontier models after 0.8.0: between the dip-buyer and the regime
-oracle, with wide intervals; the 0.9.0 bench will say.
+The reference scores 0.5 by construction. Bots that read only the mark land
+near it; a bot that reads the takers' records can pass it. The frozen
+exploit bots (0.10.0 and 0.12.0 faders) should lose money on these odds.
+
+## Calibration
+
+- **One hidden set** (2026-11-24, a local secret, 72 sessions, the
+  verifier's flags, on a Mac: `mtx grade --informed … --draw
+  flash-crash-mainnet --count 72 --scoring v2-headline --v2-sessions`):
+
+  | Anchor | PnL | weighted as v2 (losses ×1.5) | Sharpe | profitable | worst | deepest drawdown |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | reference | $11,156 | $9,571 | 0.46 | 49% (16 flat) | −$654 | $658 |
+  | informed | $31,522 | $30,898 | 0.90 | 78% | −$614 | |
+
+  The reference is 0.31 of the informed bot, weighted (band 0.2–0.7), with
+  a per-session Sharpe of 0.46 (at least 0.25), never floored; graded as
+  the bot it scores 0.50. No breach.
+- **The reference on 72 practice-seed draws** (seed 101, graded one session
+  at a time): $8,527, Sharpe 0.39; 0.14.0's reference (ride, then fade) on
+  the same 72: $2,849, Sharpe 0.17, and −$18 a session on 600 simulated
+  draws.
+- **Practice** (seed 20261124, 6 sessions): reference −$32.85, informed
+  $2,545.21. Three of the six are reversions the reference rides and stops
+  out of; it is the draw, not the set's design (the reference's hidden-set
+  mean is $155).
+- **Not run here:** the full ladder (`just ladder`, four sets), the probe
+  bands, `mtx gates` without `--fast`, and the anchor digest (Linux).
+- **Anchor hashes:** recorded by `mtx task sync --anchors` in
+  `tests/anchor.digest` on Linux.
 
 ## Generations
 
@@ -141,3 +230,4 @@ oracle, with wide intervals; the 0.9.0 bench will say.
 | 0.8.0 | — | legs 0.6–8% log-uniform, 70% gaps, fizzles, duration drawn first; 36 hidden sessions; exploit checks |
 | 0.8.0 → 0.9.0 | frozen exploit bots made 3–6× the reference on fresh sets; the old reference (two fading tranches) made $525–$759 on 36 sessions, too little to rank the ladder's rungs reliably | a lockstep world; hidden sets drawn per batch from a secret; the reference graded alongside; `skill`; the ladder with a regime oracle; a new reference that rides each move and fades it once it stops ($647–$2,777 on the same sets) |
 | 0.10.0 | faded fizzles that always came all the way back, and rode moves cut into equal steps: 2.3–3.1×, profitable in up to 86% of sessions | 0.11.0: at-once moves past ~3.8% land in parts of unequal random sizes; fizzles give back 40–100% (fading them, near riskless, was most of the edge); renamed `flash-crash-spcx`; the 0.10.0 bots join the exploit checks |
+| 0.15.0 | 0.12.0–0.14.0's flash-crash bots made $15k–27k over 72 sessions faded on the bench; on mainnet the same families lost (RFD 0007) | the market measured from mainnet's Phoenix tape (`phoenix-tape.20261125.fc443f1e`): aftermath revert 31% / stall 24% / extend 45%, Pareto legs, small moves that mostly don't give back, a quarter of the sessions quiet, SPCX's takers (noise, informed, chasers) and price impact; scoring v2 with an informed bot told the informed takers' wallets; a reference that rides confirmed moves with a trailing stop; the regime oracle dropped |
