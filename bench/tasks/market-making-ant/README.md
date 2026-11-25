@@ -33,13 +33,14 @@ arbitrageur takes any quote a move left stale.
 
 - **The book:** the grader's reactive maker at 2.0 to 3.5 bp, 2 to 5 ANT,
   and Phoenix's own makers widened to the same, with their mainnet depth.
-- **The price** walks at SPCX's calibrated 1.55 bp a second (ANT has no
-  calibration yet). 40 of 72 sessions are calm, 28 trend, 4 have one jump
-  of 1.5 to 4.2% (about 70 times Phoenix's rate).
-- **The takers** are the actor library's: eight noise wallets and four
-  informed ones that see a minute ahead, trade while the move is over 7 bp,
-  and are right 85% of the time, at ANT's measured pace (11.6 orders a
-  minute) and sizes (median $100).
+- **The price** walks at ANT's measured 4.45 bp a second (SPCX's calibrated
+  walk scaled; ANT has no calibration). The index moves first and Phoenix's
+  makers follow 1 to 2 s later. 40 of 72 sessions are calm, 28 trend, 4 have
+  one jump of 1.5 to 4.2%.
+- **The takers** are the actor library's, at ANT's measured pace (11.6
+  orders a minute) and sizes (median $100): noise (59%), index chasers that
+  take the index's lead over the book (24%), and informed wallets that see a
+  minute ahead (16%), fitted to ANT's measured 10 s and 60 s markouts.
 - **The arbitrageur** takes, after each move and before the bot's turn,
   any quote more than 3.5 to 5 bp from Phoenix's index.
 - **Turn order:** takers, the move, the grader's maker, the arbitrageur,
@@ -64,7 +65,8 @@ frozen exploit bots below the informed bot.
 
 ## Realism limits
 
-- **Volatility** is SPCX's calibrated one: ANT has no calibration yet.
+- **Volatility** is ANT's measured level on SPCX's calibrated shape: ANT has no calibration yet.
+- **The takers' mechanism** is modelled (index chasers and informed wallets); only their markouts are measured.
 - **Jumps** are far more common than on Phoenix (stated).
 - **No transaction layer, no price impact:** the actors don't race the bot
   for block space, and the takers' fills don't move the price.

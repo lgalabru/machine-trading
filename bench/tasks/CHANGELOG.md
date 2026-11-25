@@ -16,14 +16,17 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     (`phoenix-ant-2026-11-25`, cap 35 ANT), and its family is built from
     ANT's measured profile (`market-making-ant`): the actor library's
     noise and informed takers at ANT's pace (11.6 orders a minute) and
-    sizes (median $100, log-sd 1.5), informed (they see a minute ahead and
-    trade past a 7 bp move, right 85% of the time) in the share that gives
-    ANT's one-minute markout (+4.4 bp); an arbitrageur that takes quotes a
+    sizes (median $100, log-sd 1.5), and three kinds of taker fitted to
+    ANT's measured 10 s and 60 s markouts (+2.1, +4.4 bp): noise, index
+    chasers that take the index's lead over Phoenix's makers (the book
+    follows the index 1 to 2 s late: a modelled, public mechanism), and a
+    smaller private-horizon informed share; the price walks at ANT's
+    measured 4.45 bp a second; an arbitrageur that takes quotes a
     move left stale against Phoenix's index (3.5 to 5 bp edge, 1 to 2
     slots), where luthor's paper makers lose on mainnet; the grader's
     reactive maker at ANT's measured touch (2.7 bp over 106 minutes of
-    quotes). The price walks at SPCX's calibrated 1.55 bp a second (ANT has
-    no calibration yet: stated); 4 of 72 sessions jump (about 70 times
+    quotes).  ANT has no calibration file: the walk is
+    SPCX's scaled to ANT's measured volatility (stated); 4 of 72 sessions jump (about 70 times
     Phoenix's rate: stated), 28 trend, 40 are calm. The reference also reads
     the tape (Phoenix's trade list) and steps off a side a one-sided run hits. Scored by v2 with
     an informed bot told which wallets are the informed takers. SPCX's

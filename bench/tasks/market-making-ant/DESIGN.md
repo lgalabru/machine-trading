@@ -43,7 +43,7 @@ snapshot, kept to compare.
 | What takers paid against the mid | 2.1 to 3.3 bp, 6.3 at $10k+ | not measurable (pinger mids) | same |
 | Worst fill from the mid, p90 | 11.4 ($100-1k), 16.5 ($1k-10k) bp | 15.5 to 17.4 bp | tape, `markets.<m>.impact` |
 | Touch half-spread | 2.7 bp, mean of 106 minutes (0.6 to 12) | 0.4 bp (one tick) | luthor `quotes` table, from 2026-11-25 ~01:40 UTC |
-| Volatility | none measured: SPCX's used | 1.55 bp a second, session log-sd 0.54 | `calibration/market/spcx.20261112.d1f48be2.toml` |
+| Volatility | 4.45 bp a second (60 s returns of the tape's mid, regular hours; 3.83 from 10 s returns) | 1.55 (the same method gives the calibration's `per_second_sd`) | tape mid, measured for 0.15.0 by the study's rules |
 | Jumps of 1.5%+ | 4 in 3 days | none | tape: 93 on 110 markets in 16 distinct hours; median 2.0%, p90 4.17% |
 | Fees | maker 0.5 bp, taker 3.5 bp | same | snapshot `exchange.json` |
 
@@ -85,7 +85,11 @@ How the family turns them into a session:
 | --- | --- | --- | --- |
 | Jumps | 0.0115 per market-hour (93 / 110 markets / 73 h), clustered; ANT 4 in 3 days | one jump in 4 of 72 sessions (about 70x the tape's rate) | a small stress share, not 0.14's half |
 | Trends | not measured | 24 of 72 sessions drift 0.002-0.006% a step | inventory risk with informed flow leaning through it |
-| Volatility | no ANT calibration | SPCX's 1.55 bp a second | the calibration pipeline has no ANT file yet |
+| Volatility | ANT 4.45 bp a second, measured; no ANT calibration file | SPCX's calibrated walk scaled by 4.45 / 1.55 (2.9x) | the shape (step gaps, session log-sd) is SPCX's |
+| Informed flow's mechanism | the tape measures markouts, not why | three modelled kinds: noise 59%, index chasers 24% (public: the index leads the book 1-2 s and they take the gap past the 2.7 bp touch), private-horizon informed 16% (a minute ahead), shares fitted to the 10 s (2.14 bp) and 60 s (4.43 bp) markouts against the book (simulated: 2.32 and 4.85) | the owner chose the public-signal departure; the markouts it produces are the measured ones |
+| Book lead | Binance leads Phoenix's SOL ~0.5 s, Coinbase ~0.25 s (luthor RFD 0001) | Phoenix's makers follow the index 4 to 8 slots (1-2 s) later | the competitor quotes around the index; a quote left behind is the arbitrageur's |
+| Arbitrageur latency | 1 to 2 slots | a 1-slot arbitrageur looks right after the move, before the bot; a 2-slot one at the next step, after the bot's turn | the bot steps every 2 slots |
+| Competitor | not measured | quotes post-only (never takes) | taking stale quotes is the arbitrageur's alone |
 | Informedness | unobserved per taker (the tape has no addresses) | noise plus informed wallets (hit rate 0.85, 7 bp edge) | fits the average and the size gradient's sign; a mix is what makes "who is informed" knowable |
 | Library clock | the library counts 0.4 s a slot (`library::SLOT_SECONDS`) | rates handed over x0.625 | the bench's clock is 0.25 s a slot |
 | Not modelled | transaction-layer races, price impact | none | impact is refused with a competitor and perp actors don't send through the transaction layer: new engine work |
@@ -124,42 +128,30 @@ flow.
 
 ## Detectability
 
-Measured on mtx-bench-2 (Linux) on the ANT snapshot, with fills named by
-counterparty (the report's `making_fills` now name a library wallet's kind).
-`mtx grade --draw market-making-ant`, two sets of 24 sessions (13 calm, 9
+Measured on mtx-bench-2 (Linux), ANT snapshot, the measured volatility,
+index chasers and the 1-2 s book lag, two sets of 24 sessions (13 calm, 9
 trend, 2 jump each), PnL in USD:
 
-| Bot | Set 1 | Set 2 | Sharpe a session |
-| --- | --- | --- | --- |
-| nop | 0 | 0 | |
-| naive quoter (an earlier 24, jumps at a sixth) | -25.20 | | -0.64 |
-| skew quoter (same) | -13.21 | | -0.40 |
-| reference (tape-reading) | -7.80 | -10.49 | -0.34, -0.32 |
-| informed (shipped) | +2.35 | -0.70 | 0.21, -0.14 |
-| informed, no lean or target, 3x size when quiet | -7.80 | -3.09 | -0.53, -0.58 |
+| Bot | Set 1 | Set 2 |
+| --- | --- | --- |
+| reference | -0.62 (Sharpe -0.05) | -6.12 (-0.85) |
+| informed | +1.40 (0.10) | -0.54 (-0.05) |
+| naive quoter (before the post-only competitor) | -6.65 | |
+| skew quoter (same) | -7.71 | |
 
-Where the reference's PnL goes, set 1 (by fill counterparty; spread is the
-fill against the fair price, markout the fair price's move over 60 s
-after the fill, in the bot's favour):
+By the arbitrageur's latency: reference -3.20 in 8 sessions with a 1-slot
+arbitrageur and +2.59 in 16 with a 2-slot one (set 1); -5.22 in 13 and
+-0.90 in 11 (set 2). Informed: -1.60 / +3.00 and -0.52 / -0.02.
 
-| Source | Calm (13) | Trend (9) | Jump (2) | All |
-| --- | --- | --- | --- | --- |
-| spread from noise takers | +1.11 | +0.50 | +0.24 | +1.85 |
-| spread from informed takers | +0.86 | +0.98 | +0.23 | +2.07 |
-| 60 s markout of informed fills | -4.10 | -3.84 | -11.25 | -19.19 |
-| fees | -1.48 | -0.92 | -0.22 | -2.61 |
-| inventory through jumps | 0 | 0 | -3.80 | -3.80 |
-| inventory through the walk | -0.11 | +0.74 | +0.32 | +0.95 |
-| PnL | -1.80 | -0.65 | -5.35 | -7.80 |
-
-The arbitrageur's fills cost the reference about $1 of spread over 24
-sessions (an earlier set: -1.25); the walk and the noise takers' markout
-are near 0. The loss is the informed takers, as measured: a maker inside a
-2.0 to 3.5 bp competitor captures about 1.1 bp a fill before a 0.5 bp maker
-fee, and an informed fill loses about 10 bp over the minute. Breaking even
-takes avoiding about nine informed fills in ten; the first fill of each
-informed wallet's view can't be avoided even by the informed bot. The band
-(reference at 0.2 to 0.7 of the informed bot, Sharpe 0.25) is not met.
+Where the reference loses (both sets): the arbitrageur picking off quotes a
+move left behind (-3.05, -7.27 of spread), informed fills' 60 s markout
+(-6.03, -4.29), fees (-2.35, -3.29); against +1.16 and +0.83 of spread
+from noise. At ANT's measured volatility an index step is 3 to 10 bp, more
+than the 2.0-3.5 bp touch, so a quote left resting through a move is
+picked off by a 1-slot arbitrageur before the bot can requote, and the
+noise flow pays about $1 a session at most at the measured touch and pace.
+The band (reference at 0.2 to 0.7 of the informed bot, Sharpe 0.25) is not
+met.
 
 ## Fairness
 

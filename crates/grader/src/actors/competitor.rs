@@ -315,16 +315,36 @@ impl Competitor {
             _ => state.ask_off.saturating_add(1).min(wide_off),
         };
         self.report.undercuts += undercuts;
-        self.requote(level_t, tick, held).await;
+        let touch = (
+            best_bid.map(|p| to_ticks(p, tick)),
+            best_ask.map(|p| to_ticks(p, tick)),
+        );
+        self.requote(level_t, tick, held, touch).await;
     }
 
     /// Send the reactive competitor's quotes, from its half-spreads in ticks.
-    async fn requote(&mut self, level_t: f64, tick: f64, held: f64) {
+    /// They rest post-only: a quote that would cross another trader's order
+    /// (one a move left stale, the bot's or Phoenix's makers') is held a
+    /// tick behind it, so the competitor never takes. Picking off stale
+    /// quotes is the arbitrageur's, at its measured latency.
+    async fn requote(
+        &mut self,
+        level_t: f64,
+        tick: f64,
+        held: f64,
+        (best_bid, best_ask): (Option<i64>, Option<i64>),
+    ) {
         let c: Competition = self.making.competition;
         let state = self.reactive.as_mut().expect("reactive");
         let skew = (SKEW_BPS_PER_UNIT * held * level_t / 10_000.0).round() as i64;
-        let bid = floor_ticks(level_t) - state.bid_off - skew;
-        let ask = ceil_ticks(level_t) + state.ask_off - skew;
+        let mut bid = floor_ticks(level_t) - state.bid_off - skew;
+        let mut ask = ceil_ticks(level_t) + state.ask_off - skew;
+        if let Some(best_ask) = best_ask {
+            bid = bid.min(best_ask - 1);
+        }
+        if let Some(best_bid) = best_bid {
+            ask = ask.max(best_bid + 1);
+        }
         let half = |off: i64| off as f64 / level_t * 10_000.0;
         self.report.tightest_bps = self
             .report
