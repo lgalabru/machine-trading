@@ -475,7 +475,27 @@ The keys and the machine's address live in GitHub environments (Settings ›
 Environments): `release` deploys from tags `v*.*.*`, `bench` and
 `bench-status` from `main`, and `release` and `bench` ask a reviewer.
 
-Setting up the bench machine, or another one:
+Setting up a bench machine (Ubuntu): `ops/bench/provision.sh` installs what
+mtx-bench-1 runs, at the same versions (Docker with its address pool, uv,
+just, Harbor, the Hugging Face CLI), clones the repo and installs the
+dispatcher. It leaves the API keys to fill in `~/.machine-trading.env`;
+`bash provision.sh --check` says what's missing.
+
+```sh
+scp ops/bench/provision.sh <machine>: && ssh <machine> bash provision.sh
+```
+
+A batch on several machines: each machine runs `just bench` on the same
+commit and dataset version, with the same secret (`MTX_EVAL_SEED`, the first
+machine's `<batch>/.seed`, copied with `umask 077`) and its own share of the
+models, so every trial is graded on the same hidden set. Size each share by
+the machine's cores: a trial wants about 2-3 of them (mtx-bench-1 holds 39
+trials at a load of ~80 on 128). Before publishing, copy the other
+machines' job folders into the first machine's batch
+(`rsync -a <machine>:machine-trading/jobs/bench/<batch>/20*/ jobs/bench/<batch>/`),
+list every model in its `batch.json`, and publish that batch once.
+
+To let GitHub's bench workflow reach a machine:
 
 ```sh
 install -m 755 ops/bench/bench-dispatch ~/bin/bench-dispatch   # on the machine
