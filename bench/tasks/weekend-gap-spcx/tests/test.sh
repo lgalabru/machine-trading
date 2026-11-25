@@ -40,7 +40,7 @@ fi
 # The informed bot, v2's 1, runs on the same sessions after the reference,
 # told each session's latent state (the wallets of the traders who position
 # into the reopen on information, how often they are right and how far
-# ahead they see, how much of the weekend's move the reopen keeps; never
+# ahead they see and when they trade, how much of the weekend's move the reopen keeps; never
 # the weekend's move, the open or whether a view is right); the bot is told
 # nothing.
 mtx grade \
