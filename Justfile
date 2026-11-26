@@ -93,7 +93,7 @@ geyser-parity:
     #!/usr/bin/env bash
     set -euo pipefail
     just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
-    just --justfile bench/tasks/market-making-cbrs/reference/Justfile build
+    just --justfile bench/tasks/market-making-ant/reference/Justfile build
     cargo build -p mtx-geyser
     case "$(uname -s)" in Darwin) lib=libmtx_geyser.dylib ;; *) lib=libmtx_geyser.so ;; esac
     MTX_TEST_GEYSER_PLUGIN="$PWD/${CARGO_TARGET_DIR:-target}/debug/$lib" \
@@ -423,7 +423,7 @@ tx-probe:
 scenarios out prefix count seed family="flash-crash":
     cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
 
-# Record a reference bot's PnL in each scenario file: just calibrate bench/tasks/market-making-cbrs/reference FILES...
+# Record a reference bot's PnL in each scenario file: just calibrate bench/tasks/market-making-ant/reference FILES...
 calibrate bot +files: bots
     cargo run --release -- calibrate --snapshot snapshots/{{snapshot}} --bot {{bot}} --logs target/logs/calibrate {{files}}
 
