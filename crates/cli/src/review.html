@@ -40,7 +40,7 @@
     background: radial-gradient(ellipse 70% 120% at 30% -20%, rgba(94, 209, 106, 0.08), transparent 60%), var(--bg);
   }
   header.hero:empty { display: none; }
-  .hero-inner { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 14px 32px; padding: 22px 32px 24px; }
+  .hero-inner { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px 32px; padding: 22px 32px 24px; }
   /* The model selector: a vertical list of cards, one per model. */
   .watch { display: flex; flex-direction: column; gap: 8px; }
   /* The peek: an attempt opened over the page, Notion-style. */
@@ -211,6 +211,26 @@
   .watch-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
   .seg.sm a { padding: 3px 9px; font-size: 11px; }
   .watch-hint { color: var(--text-4); font-size: 11px; text-align: right; margin-top: 2px; }
+  /* Under the chart: a top 3 per ranking, then every model A-Z. */
+  .ranks { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; }
+  .rank-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 10px 6px; min-width: 0; }
+  .rank-head { display: flex; flex-direction: column; gap: 1px; padding: 0 4px 6px; min-width: 0; }
+  .rank-head b { font-size: 13px; white-space: nowrap; }
+  .rank-head span { color: var(--text-3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pick { display: grid; grid-template-columns: 16px 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 4px; border-radius: 8px; color: inherit; text-decoration: none; }
+  .pick:hover { background: var(--panel-2); }
+  .pick.on { box-shadow: 0 0 0 1px var(--mc, var(--text-3)) inset; }
+  .pick .pos { color: var(--text-3); font: 600 12px var(--mono); text-align: right; }
+  .pick .sw { width: 8px; height: 8px; border-radius: 3px; background: var(--mc); }
+  .pick .nm { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pick .val, .pick .meta { font: 12px var(--mono); color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .pick[hidden] { display: none; }
+  .roster-head { display: flex; align-items: center; gap: 12px; margin: 4px 0 8px; }
+  .roster-head .watch-hint { margin: 0 0 0 auto; }
+  .roster-search { flex: 0 1 240px; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 6px 10px; font: 13px inherit; }
+  .roster-search:focus { outline: none; border-color: var(--text-3); }
+  .roster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 4px 10px; }
+  .roster-grid .pick { grid-template-columns: 8px minmax(0, 1fr) auto; background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; }
   .quote.multi { gap: 22px; }
   .quote.multi .q { display: flex; flex-direction: column; gap: 2px; }
   .quote.multi .qn { font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
@@ -482,7 +502,7 @@
     nav.tiles { padding: 12px; gap: 10px; }
     nav.tiles .tile { height: auto; min-height: 74px; padding: 10px 12px; }
     nav.tiles .tile .desc { display: none; }
-    .hero-inner { grid-template-columns: minmax(0, 1fr) 270px; gap: 14px 20px; padding: 20px 20px 22px; }
+    .hero-inner { gap: 14px 20px; padding: 20px 20px 22px; }
     .watch .row { grid-template-columns: minmax(0, 1fr) 64px 58px; gap: 8px; padding: 9px 10px; }
     .g-row { grid-template-columns: minmax(130px, 170px) 50px 68px 44px 48px minmax(0, 1fr); gap: 0 8px; }
     .watch .chip { width: 58px; padding: 4px 6px; font-size: 12px; }
@@ -1217,6 +1237,7 @@ addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) re
 // The model picked per task; else the best mean skill.
 let heroPick = {};
 let heroSort = "skill";
+let heroSearch = ""; // the All models field, kept across re-renders
 let heroScrub = null; // moves the header chart's cursor to a session
 const heroPickReset = () => { heroPick = {}; };
 const naturalCmp = (a, b) => a.localeCompare(b, "en", { numeric: true });
@@ -1265,21 +1286,33 @@ function renderHero() {
   const eq = equity(task.name);
   const key = task.name;
   const v2 = taskV2(task.name);
-  // The cards' order: by skill, PnL or cost (cheapest first).
-  const by = {
-    skill: (m) => m.skill ?? -Infinity,
-    pnl: (m) => m.curve?.at(-1) ?? -Infinity,
-    cost: (m) => -(m.cost ?? Infinity),
-  }[heroSort] || ((m) => m.skill ?? -Infinity);
-  const ranked = [...eq.models].sort((x, y) => by(y) - by(x));
+  const n = eq.sessions.length || 1;
+  const perRun = (m) => isNum(m.curve?.at(-1)) ? m.curve.at(-1) / n : null;
+  // Share of scenarios a model made money in, and beat the reference in.
+  const share = (m, f) => m.per ? m.per.filter(f).length / m.per.length : null;
+  const ref = eq.referencePer;
+  const rankings = [
+    { title: v2 ? "Best score" : "Best skill", hint: v2 ? "scoring v2: 0.5 is the reference" : "PnL over the reference's", value: (m) => m.skill, show: (m) => fmtScore(m.skill, v2) },
+    { title: "Most PnL", hint: "mean a scenario", value: perRun, show: (m) => compactUsd(perRun(m)) },
+    { title: "Most consistent", hint: "scenarios that made money", value: (m) => share(m, (y) => y > 0), show: (m) => `${Math.round(100 * share(m, (y) => y > 0))}%` },
+    eq.models.some((m) => isNum(m.cost))
+      ? { title: "Cheapest", hint: "model cost a run", value: (m) => isNum(m.cost) ? -m.cost : null, show: (m) => usd(m.cost, 2) }
+      : { title: "Beats the reference", hint: "scenarios ahead of it", value: (m) => ref && m.per ? m.per.filter((y, i) => y > (ref[i] ?? 0)).length / m.per.length : null, show: (m) => `${Math.round(100 * m.per.filter((y, i) => y > (ref[i] ?? 0)).length / m.per.length)}%` },
+  ];
   // The models shown: the user's picks (Cmd/Ctrl-click adds one), else the
   // best by skill.
   const best = [...eq.models].sort((x, y) => (y.skill ?? -Infinity) - (x.skill ?? -Infinity))[0];
   let picked = (heroPick[key] || []).filter((m) => eq.models.some((x) => x.model === m));
   if (!picked.length && best) picked = [best.model];
   heroPick[key] = picked;
-  const shown = ranked.filter((m) => picked.includes(m.model) && m.curve);
-  const sorts = [["skill", "Skill"], ["pnl", "PnL"], ["cost", "Cost"]];
+  const shown = eq.models.filter((m) => picked.includes(m.model) && m.curve);
+  const pickable = (m, inner) => `<a href="javascript:void 0" class="pick ${picked.includes(m.model) ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}" title="Click to show; ⌘-click to compare">${inner}</a>`;
+  const podium = (r) => {
+    const top = eq.models.filter((m) => isNum(r.value(m))).sort((x, y) => r.value(y) - r.value(x)).slice(0, 3);
+    return `<div class="rank-card"><div class="rank-head"><b>${esc(r.title)}</b><span>${esc(r.hint)}</span></div>
+      ${top.map((m, i) => pickable(m, `<span class="pos">${i + 1}</span><span class="sw"></span><span class="nm">${esc(shortModel(m.model))}</span><span class="val">${r.show(m)}</span>`)).join("") || `<div class="muted">Nothing graded yet.</div>`}</div>`;
+  };
+  const az = [...eq.models].sort((x, y) => shortModel(x.model).localeCompare(shortModel(y.model)));
   hero.innerHTML = `<div class="hero-inner"><div class="hero-title">
       <h1>${light(taskStatus(task.counts))} ${esc(task.short)} <small>${esc(task.name)}${task.version ? " · " + esc(task.version) : ""}</small></h1>
       ${task.description ? `<div class="sub">${esc(task.description)}</div>` : ""}
@@ -1287,20 +1320,14 @@ function renderHero() {
       <div class="quote" id="q-quote"></div>
       <div class="quote-sub" id="q-sub"></div>
       <div id="q-area"></div>
-    </div><div class="watch">
-      <div class="watch-head"><span class="k">Models · ${esc(taskTitle(task.short))}</span><div class="seg sm">${sorts.map(([k, l]) => `<a href="javascript:void 0" data-sort="${k}" class="${heroSort === k ? "on" : ""}">${l}</a>`).join("")}</div></div>
-      ${ranked.map((m) => {
-        const last = m.curve?.at(-1);
-        return `<div class="row ${picked.includes(m.model) ? "on" : ""}" data-model="${esc(m.model)}" style="--mc:${modelColor(m.model)}" title="Click to show; ⌘-click to add or remove">
-          <div style="min-width:0"><div class="name"><span class="sw"></span>${esc(shortModel(m.model))}</div><div class="sub">${m.graded ? `<span title="total ${susd(last, 0)} over ${eq.sessions.length} scenarios">${perScenario(last / (eq.sessions.length || 1))}</span> · cost ${usd(m.cost, 0)}` : m.running ? `${m.running} running` : "not graded"}</div></div>
-          ${sparkline(m.curve)}
-          ${isNum(m.skill) ? `<div class="chip ${atRef(m.skill, v2) ? "up" : "down"}" title="${v2 ? "score (scoring v2): 0 doing nothing, 0.5 the reference, 1 the informed bot" : "skill: PnL over the reference's"}, mean of ${m.graded} attempt${m.graded > 1 ? "s" : ""}${m.ci ? `; 90% interval ${ciText(m.ci)}` : ""}">${fmtScore(m.skill, v2)}</div>`
-            : `<div class="chip ${trend(last)}" title="mean PnL a scenario">${isNum(last) ? compactUsd(last / (eq.sessions.length || 1)) : "–"}</div>`}
-        </div>`;
-      }).join("") || `<div class="muted">No trials yet.</div>`}
-      <div class="watch-hint">⌘-click to compare models</div>
+    </div>
+    <div class="ranks">${rankings.map(podium).join("")}</div>
+    <div class="roster">
+      <div class="roster-head"><span class="k">All models · ${eq.models.length}</span><input type="search" class="roster-search" placeholder="Search models" aria-label="Search models" value="${esc(heroSearch)}"><span class="watch-hint">⌘-click to compare</span></div>
+      <div class="roster-grid">${az.map((m) => pickable(m, `<span class="sw"></span><span class="nm">${esc(shortModel(m.model))}</span>
+          <span class="meta" title="${v2 ? "score" : "skill"} · mean PnL a scenario">${m.graded ? `${isNum(m.skill) ? fmtScore(m.skill, v2) : "–"} · ${isNum(perRun(m)) ? compactUsd(perRun(m)) : "–"}` : m.running ? `${m.running} running` : "not graded"}</span>`)).join("") || `<div class="muted">No trials yet.</div>`}</div>
     </div></div>`;
-  hero.querySelectorAll(".watch .row").forEach((r) => r.addEventListener("click", (e) => {
+  hero.querySelectorAll(".pick").forEach((r) => r.addEventListener("click", (e) => {
     const m = r.dataset.model;
     if (e.metaKey || e.ctrlKey) {
       const has = picked.includes(m);
@@ -1309,7 +1336,15 @@ function renderHero() {
     } else heroPick[key] = [m];
     renderHero();
   }));
-  hero.querySelectorAll(".watch [data-sort]").forEach((a) => a.addEventListener("click", () => { heroSort = a.dataset.sort; renderHero(); }));
+  // Filtering hides cards in place, so the field keeps its focus.
+  const search = hero.querySelector(".roster-search");
+  const filter = () => {
+    heroSearch = search.value;
+    const q = heroSearch.trim().toLowerCase();
+    hero.querySelectorAll(".roster-grid .pick").forEach((c) => { c.hidden = q !== "" && !c.dataset.model.toLowerCase().includes(q); });
+  };
+  search.addEventListener("input", filter);
+  filter();
   const area = document.getElementById("q-area");
   const quoteEl = document.getElementById("q-quote"), sub = document.getElementById("q-sub");
   if (!shown.length) {
