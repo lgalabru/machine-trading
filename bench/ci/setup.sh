@@ -23,6 +23,6 @@ rustup toolchain install nightly --profile minimal --component rustfmt
 
 command -v just > /dev/null || cargo install --locked --root /usr/local just@1.49.0
 
-for user in mtx-bot mtx-bot-2 mtx-bot-3 mtx-bot-4; do
+for user in mtx-bot mtx-bot-2 mtx-bot-3 mtx-bot-4 mtx-bot-5 mtx-bot-6 mtx-bot-7 mtx-bot-8 mtx-bot-9 mtx-bot-10 mtx-bot-11 mtx-bot-12 mtx-bot-13 mtx-bot-14 mtx-bot-15 mtx-bot-16; do
   id "$user" > /dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$user"
 done

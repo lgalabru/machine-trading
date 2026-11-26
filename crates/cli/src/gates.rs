@@ -265,7 +265,16 @@ pub struct Options {
     pub out: Option<PathBuf>,
     /// Read a finished ladder's `summary.json` instead of running one.
     pub ladder_summary: Option<PathBuf>,
+    /// Sessions each ladder grade runs at once, and rungs graded at once:
+    /// one bot user per session, so their product is at most
+    /// [`mtx_grader::session::BOT_USERS`]'s count.
+    pub ladder_jobs: usize,
+    pub ladder_parallel: usize,
 }
+
+/// A laptop's ladder: four sessions at once, one rung at a time.
+pub const LADDER_JOBS_DEFAULT: usize = 4;
+pub const LADDER_PARALLEL_DEFAULT: usize = 1;
 
 /// What `ladder.py` leaves in `summary.json`.
 #[derive(Debug, Deserialize)]
@@ -1943,6 +1952,20 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
             // from another set, mustn't stand in for this one.
             clear_dir(&ladder_out.join(task))?;
             let seed = if opts.fast { FAST_PUBLIC_SEED } else { "" };
+            let users = mtx_grader::session::BOT_USERS.len();
+            let slots = opts.ladder_jobs.saturating_mul(opts.ladder_parallel);
+            if opts.ladder_jobs == 0 || opts.ladder_parallel == 0 || slots > users {
+                bail!(
+                    "--ladder-jobs × --ladder-parallel must be between 1 and {users}, one bot \
+                     user per session; got {} × {}",
+                    opts.ladder_jobs,
+                    opts.ladder_parallel
+                );
+            }
+            let (jobs, parallel) = (
+                opts.ladder_jobs.to_string(),
+                opts.ladder_parallel.to_string(),
+            );
             // The ladder exits nonzero when a rule fails: the summary says which.
             // On the task's own snapshot, not the Justfile's default.
             let snapshot_override = format!("snapshot={}", snapshot_name(root, task));
@@ -1954,8 +1977,8 @@ pub fn run(root: &Path, task: &str, opts: &Options) -> Result<(Report, PathBuf)>
                     "ladder",
                     task,
                     &sets,
-                    "4",
-                    "1",
+                    &jobs,
+                    &parallel,
                     &count,
                     &ladder_out.to_string_lossy(),
                     &odds,

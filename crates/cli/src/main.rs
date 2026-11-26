@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 #[cfg(feature = "generate")]
-use mtx_grader::generators;
+use mtx_grader::{generators, saved_anchors};
 use mtx_grader::{
     grade::{self, GradeOptions},
     keys::SessionKeys,
@@ -138,6 +138,19 @@ enum Command {
         /// Use a finished ladder's summary.json instead of running one.
         #[arg(long)]
         ladder_summary: Option<PathBuf>,
+        /// Sessions each of the ladder's grades runs at once. Each takes
+        /// one of the grader's sixteen bot users, as do the rungs graded at
+        /// once: jobs × parallel is at most 16. On a large machine,
+        /// `--ladder-jobs 4 --ladder-parallel 4`.
+        #[arg(long, env = "MTX_LADDER_JOBS", default_value_t = gates::LADDER_JOBS_DEFAULT)]
+        ladder_jobs: usize,
+        /// Rungs the ladder grades at once.
+        #[arg(
+            long,
+            env = "MTX_LADDER_PARALLEL",
+            default_value_t = gates::LADDER_PARALLEL_DEFAULT
+        )]
+        ladder_parallel: usize,
     },
     /// Serve the task-authoring tools over MCP (stdio), for Claude Code:
     /// task_new (an interview with forms), task_status, task_guide, task_list.
@@ -245,7 +258,27 @@ enum Command {
         /// part.
         #[arg(long)]
         anchors: Option<PathBuf>,
-        /// Reference sessions to run at once (1-4); the informed bot's too.
+        /// Save the anchors' sessions on this drawn set (the reference's,
+        /// the informed bot's, the nop bot's) here, for later grades of the
+        /// same set to reuse with --anchors-from. For the skill ladder,
+        /// which grades every rung of a set against the same anchors.
+        #[cfg(feature = "generate")]
+        #[arg(long, requires_all = ["draw", "reference"], conflicts_with = "stop_on_disqualify")]
+        anchors_out: Option<PathBuf>,
+        /// Reuse the anchors' sessions an earlier grade of this drawn set
+        /// saved (--anchors-out) instead of running them. Refused unless that
+        /// grade had the same grader, secret, scenarios, snapshot, anchors
+        /// and session rules. The anchors' logs and detail files stay that
+        /// grade's. For the skill ladder, never the verifier.
+        #[cfg(feature = "generate")]
+        #[arg(
+            long,
+            requires_all = ["draw", "reference"],
+            conflicts_with_all = ["anchors", "anchors_out", "replay"]
+        )]
+        anchors_from: Option<PathBuf>,
+        /// Reference sessions to run at once (1-16 for a process bot, up to
+        /// 32 for a component); the informed bot's too.
         #[arg(long, default_value_t = 4)]
         anchor_jobs: usize,
         /// Hand the bot each drawn session's regime as MTX_REGIME: the
@@ -445,7 +478,7 @@ enum BotCommand {
         /// Grade the bot as it is, without running `just build`.
         #[arg(long)]
         no_build: bool,
-        /// Sessions to run at once, each on its own surfnet: 1-4 for a
+        /// Sessions to run at once, each on its own surfnet: 1-16 for a
         /// process bot, up to 32 for a strategy component.
         #[arg(long, env = "MTX_JOBS", default_value_t = 1)]
         jobs: usize,
@@ -532,7 +565,7 @@ struct Sessions {
     /// Bot output goes to `<logs>/<scenario>.log`.
     #[arg(long, default_value = "logs")]
     logs: PathBuf,
-    /// Sessions to run at once, each on its own surfnet: 1-4 for a process
+    /// Sessions to run at once, each on its own surfnet: 1-16 for a process
     /// bot (one bot user each), up to 32 for a strategy component. The report
     /// is the same whatever it is; a machine that can't keep up grades
     /// slower, not differently.
@@ -1058,6 +1091,8 @@ async fn run() -> Result<()> {
             sessions,
             out,
             ladder_summary,
+            ladder_jobs,
+            ladder_parallel,
         } => {
             let opts = gates::Options {
                 fast,
@@ -1065,6 +1100,8 @@ async fn run() -> Result<()> {
                 sessions,
                 out,
                 ladder_summary,
+                ladder_jobs,
+                ladder_parallel,
             };
             let (report, dir) = gates::run(&authoring::repo_root(), &task, &opts)?;
             eprintln!(
@@ -1667,6 +1704,10 @@ async fn run() -> Result<()> {
             reference,
             informed,
             anchors,
+            #[cfg(feature = "generate")]
+            anchors_out,
+            #[cfg(feature = "generate")]
+            anchors_from,
             anchor_jobs,
             #[cfg(feature = "generate")]
             tell_regime,
@@ -1752,6 +1793,44 @@ async fn run() -> Result<()> {
                 remove_if_present(path)?;
             }
             keys = grade_keys(keys, drawn_set, v2_sessions);
+            // The ladder's anchors, run once per set: what they ran under,
+            // for the grade that saves them and the ones that reuse them.
+            #[cfg(feature = "generate")]
+            let anchor_identity = match (
+                anchors_out.is_some() || anchors_from.is_some(),
+                eval_seed_sha256.as_deref(),
+                reference.as_deref(),
+            ) {
+                (false, _, _) => None,
+                (true, Some(eval_seed_sha256), Some(reference_dir)) => Some(
+                    saved_anchors::Identity::of(&saved_anchors::IdentityInputs {
+                        eval_seed_sha256,
+                        scenarios: &scenarios,
+                        latent: latent.as_deref(),
+                        snapshot_dir: &sessions.snapshot,
+                        reference_dir,
+                        informed_dir: informed.as_deref(),
+                        v2_sessions,
+                    })?,
+                ),
+                // Clap drops `requires` for scenario files, which conflict
+                // with --draw.
+                (true, None, _) => anyhow::bail!(
+                    "--anchors-out and --anchors-from are for a drawn set (--draw), whose \
+                     secret says which set the anchors played"
+                ),
+                (true, Some(_), None) => unreachable!("clap requires --reference"),
+            };
+            #[cfg(feature = "generate")]
+            let saved_anchors = match (&anchors_from, &anchor_identity) {
+                (Some(path), Some(identity)) => Some(
+                    saved_anchors::SavedAnchors::load(path, identity)
+                        .with_context(|| format!("--anchors-from {}", path.display()))?,
+                ),
+                _ => None,
+            };
+            #[cfg(not(feature = "generate"))]
+            let saved_anchors: Option<grade::AnchorSessions> = None;
             let options = |jobs: usize, anchor_jobs: usize| GradeOptions {
                 snapshot_dir: &sessions.snapshot,
                 bot_dir: &sessions.bot,
@@ -1784,10 +1863,19 @@ async fn run() -> Result<()> {
                 keys: &keys,
                 v2_sessions,
                 host: None,
+                anchors_from: saved_anchors.as_ref(),
             };
             let load = (replay > 1 && replay_load > 0).then(|| replay::Load::start(replay_load));
             let mut graded = grade::grade(options(sessions.jobs, anchor_jobs)).await?;
             graded.eval_seed_sha256 = eval_seed_sha256;
+            // Saved before scoring: a set v2 refuses to scale is still the
+            // set every rung is graded on.
+            #[cfg(feature = "generate")]
+            if let (Some(path), Some(identity)) = (&anchors_out, anchor_identity) {
+                saved_anchors::SavedAnchors::of(identity, &graded)?
+                    .save(path)
+                    .with_context(|| format!("--anchors-out {}", path.display()))?;
+            }
             if replay > 1 {
                 let first = replay::reports(&graded)?;
                 let mut differences = Vec::new();
@@ -2504,6 +2592,19 @@ mod tests {
         assert!(grade(&["--tell-latent", "--tell-regime", "--draw", "flash-crash"]).is_err());
         // There is one headline mechanism: `--scoring v2-headline`.
         assert!(grade(&["--v2-headline", "x.json"]).is_err());
+        // The ladder's anchors, saved by one grade of a drawn set and reused
+        // by the next: never on scenario files, never without the reference,
+        // and a reusing grade neither replays nor saves.
+        let drawn = ["--draw", "flash-crash", "--reference", "r"];
+        assert!(grade(&[&drawn[..], &["--anchors-out", "a"]].concat()).is_ok());
+        assert!(grade(&[&drawn[..], &["--anchors-from", "a"]].concat()).is_ok());
+        assert!(grade(&["--draw", "flash-crash", "--anchors-from", "a"]).is_err());
+        let both = ["--anchors-out", "a", "--anchors-from", "b"];
+        assert!(grade(&[&drawn[..], &both[..]].concat()).is_err());
+        let replayed = ["--anchors-from", "a", "--replay", "2"];
+        assert!(grade(&[&drawn[..], &replayed[..]].concat()).is_err());
+        let stopping = ["--anchors-out", "a", "--stop-on-disqualify"];
+        assert!(grade(&[&drawn[..], &stopping[..]].concat()).is_err());
         let calibrate = |extra: &[&str]| {
             let mut args = vec!["mtx", "calibrate", "--snapshot", "s", "--bot", "b"];
             args.extend_from_slice(extra);
