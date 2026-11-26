@@ -149,6 +149,11 @@ trading costs.
   $944.2 (loss-weighted $906.6, Sharpe 0.78): the reference is 0.625 of
   the informed bot, inside the 0.2-0.7 band, and below it on every set of
   12 (40/86, 156/223, 72/111, 77/90, 131/225, 127/210).
+  With the informed bot's risk rule, over 72 more hidden sessions
+  (`fc-ref3-1` to `-6`): reference $493.4 (loss-weighted $353.4, Sharpe
+  0.40), informed $849.9 (loss-weighted $637.1, Sharpe 0.43): 0.555, the
+  informed bot ahead on every set (53/73, 30/40, 22/90, 71/143, 64/122,
+  114/169, loss-weighted).
 - **Informed (1).** `checks/bots/informed/`: the same execution, told the
   session's latent state: the premium's level, spread and half-life,
   funding's settings, the flow's pace, the informed share and the
@@ -158,8 +163,17 @@ trading costs.
   fading), takes off the entry cost, weighs what's left against the index's
   risk as v2 weighs losses, and holds up to the full cap. It never sees the
   path, the premium as it will wander, or an order.
+  Its risk rule: a loss budget of the funding it expects over the session
+  plus one standard deviation of the index over it (both priced at its
+  first step from what it is told and the calibration's per-second sd,
+  never under 7 bp of the cap's notional). Past it, the index has taken
+  more than the carry and an ordinary session's noise account for, and it
+  gets out for the session. Without it the bot, at the full cap, lost more
+  than the reference on bad sets: on the fast gates' public set its
+  loss-weighted PnL was -$14.77 and v2 had no ceiling to scale to (astra);
+  with it, +$14.45 (raw +$57.51 against the reference's +$30.7).
 
-Frozen for 0.15.0 (SHA-256 of `src/lib.rs` then `src/main.rs`, first 16 hex): the reference `2e5758d9719fcbf5`, the informed bot `0aaab64daf9ad468`.
+Frozen for 0.15.0 (SHA-256 of `src/lib.rs` then `src/main.rs`, first 16 hex): the reference `2e5758d9719fcbf5`, the informed bot `88fe6325227ea081`.
 
 The latent fields are all process facts (`LATENT_FIELDS`,
 `funding-carry-sol`): `premium_mean_bps`, `premium_sd_bps`,
