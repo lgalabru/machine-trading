@@ -44,6 +44,12 @@ pub struct Arbitrageur {
     pub size_mult: f64,
     #[serde(default = "hundred")]
     pub max_inventory_mult: f64,
+    /// It looks at the start of the next step instead of right after the
+    /// step's blocks: after the bot's turn, as an arbitrageur that sees the
+    /// index two slots late does against a bot that steps every two. Off,
+    /// it looks before the bot does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub after_turn: bool,
 }
 
 impl Default for Arbitrageur {
@@ -53,6 +59,7 @@ impl Default for Arbitrageur {
             edge_bps: five(),
             size_mult: ten(),
             max_inventory_mult: hundred(),
+            after_turn: false,
         }
     }
 }
@@ -91,7 +98,24 @@ impl Arb {
 
 #[async_trait]
 impl Actor for Arb {
+    async fn before_blocks(&mut self, last: &Moment) {
+        if self.spec.after_turn {
+            self.look(last).await;
+        }
+    }
+
     async fn after_blocks(&mut self, now: &Moment) {
+        if !self.spec.after_turn {
+            self.look(now).await;
+        }
+    }
+
+    async fn report(&mut self, _: &mut ActorsReport) {}
+}
+
+impl Arb {
+    /// Take what strays past its edge from the index, if it is due.
+    async fn look(&mut self, now: &Moment) {
         if now.at < self.next {
             return;
         }
@@ -133,12 +157,33 @@ impl Actor for Arb {
             self.wallet.count("arbs", 1);
         }
     }
-
-    async fn report(&mut self, _: &mut ActorsReport) {}
 }
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn after_turn_it_looks_at_the_start_of_the_next_step() {
+        let (book, log) = Book::new("a", 100.20, 100.30);
+        let (wallet, _) = wallet(book);
+        let mut arb = Arb::new(
+            Arbitrageur {
+                latency_slots: 2,
+                edge_bps: 5.0,
+                size_mult: 1.0,
+                max_inventory_mult: 4.0,
+                after_turn: true,
+            },
+            scale(),
+            wallet,
+        );
+        // Right after the blocks it waits for the bot's turn.
+        arb.after_blocks(&at(2, 100.0)).await;
+        assert!(log.lock().unwrap().is_empty());
+        // At the start of the next step it takes what is still rich.
+        arb.before_blocks(&at(2, 100.0)).await;
+        assert_eq!(*log.lock().unwrap(), ["a take Ask 1.000 at 100.05"]);
+    }
+
     use super::*;
     use crate::actors::library::tests::{Book, at, scale, wallet};
 
@@ -153,6 +198,7 @@ mod tests {
                 edge_bps: 5.0,
                 size_mult: 3.0,
                 max_inventory_mult: 4.0,
+                after_turn: false,
             },
             scale(),
             wallet,

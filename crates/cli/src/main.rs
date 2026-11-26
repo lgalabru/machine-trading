@@ -654,7 +654,7 @@ struct TaskArgs {
     #[arg(long)]
     summary: Option<String>,
     /// Start from `shocks` (flash-crash-nvda) or `making`
-    /// (market-making-spcx).
+    /// (market-making-cbrs).
     #[arg(long, value_enum)]
     base: Option<authoring::Base>,
     /// A good bot profits here because it ___.

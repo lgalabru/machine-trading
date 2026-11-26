@@ -110,7 +110,7 @@ harbor run -d solana-foundation/machine-trading -a claude-code -m anthropic/clau
 | [📉 `flash-crash-nvda`](bench/tasks/flash-crash-nvda) | trades crashes and squeezes on the NVDA perp at the odds mainnet's tape measured, where most moves keep going, against informed takers and chasers, and sits out the sessions where nothing happens |
 | [💸 `funding-carry-spcx`](bench/tasks/funding-carry-spcx) | earns the SPCX premium and its funding when positioning opened it, and follows when the index follows |
 | [🌊 `liquidation-flash`](bench/tasks/liquidation-flash) | reads SOL upstream of Kamino's oracle, pushes the price, liquidates with a flash loan and sells the seized SOL in one transaction, bidding only what it must to land first |
-| [⚖️ `market-making-spcx`](bench/tasks/market-making-spcx) | earns the SPCX spread from noise, and steps back before informed flow |
+| [⚖️ `market-making-cbrs`](bench/tasks/market-making-cbrs) | earns the wide CBRS spread from takers measured on mainnet, against a competing maker and an arbitrageur that picks off stale quotes |
 | [🌙 `weekend-gap-spcx`](bench/tasks/weekend-gap-spcx) | positions the SPCX perp into the weekend's reopen, on a weekend measured from mainnet: what the reopen keeps of the makers' weekend move, and which of the few traders positioning into it know where it opens |
 <!-- mtx:tasks end -->
 

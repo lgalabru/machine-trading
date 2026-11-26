@@ -9,6 +9,7 @@ flash-crash-nvda-informed mtx-bot-flash-crash-nvda-informed mtx-flash-crash-nvda
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 liquidation-flash mtx-bot-liquidation-flash mtx-liquidation-flash bench/tasks/liquidation-flash/reference component
 liquidation-flash-informed mtx-bot-liquidation-flash-informed mtx-liquidation-flash-informed bench/tasks/liquidation-flash/checks/bots/informed component
-market-making mtx-bot-maker mtx-maker bench/tasks/market-making-spcx/reference
+market-making-cbrs mtx-bot-maker mtx-maker bench/tasks/market-making-cbrs/reference component
+market-making-cbrs-informed mtx-bot-market-making-informed mtx-market-making-informed bench/tasks/market-making-cbrs/checks/bots/informed component
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
 weekend-gap-informed mtx-bot-weekend-gap-spcx-informed mtx-weekend-gap-spcx-informed bench/tasks/weekend-gap-spcx/checks/bots/informed
