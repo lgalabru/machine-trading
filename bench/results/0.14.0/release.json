@@ -8,7 +8,7 @@
       "backrun-sol": {
         "headline": "v1",
         "models": {
-          "beam-1.0-501b-a23b · hermes": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -213.24062203696752,
             "reward": 0.0,
@@ -24,7 +24,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.1 · hermes": {
+          "claude-fable-5.1 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 314.0777442503057,
             "reward": 0.0,
@@ -40,7 +40,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.2 · hermes": {
+          "claude-fable-5.2 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 3807.922757671494,
             "reward": 0.845498877257131,
@@ -56,7 +56,7 @@
             ],
             "trials": 5
           },
-          "claude-opus-5.5 · hermes": {
+          "claude-opus-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 755.0694988820339,
             "reward": 0.17658964373655395,
@@ -72,7 +72,7 @@
             ],
             "trials": 5
           },
-          "claude-sonnet-5.5 · hermes": {
+          "claude-sonnet-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 1340.977692613676,
             "reward": 0.1407336218043555,
@@ -88,7 +88,7 @@
             ],
             "trials": 5
           },
-          "gemini-4-carbon · hermes": {
+          "gemini-4-carbon \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 2569.1537775977226,
             "reward": 0.5753925277573299,
@@ -104,7 +104,7 @@
             ],
             "trials": 5
           },
-          "glm-5.3 · hermes": {
+          "glm-5.3 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 926.5202779620374,
             "reward": 0.19074650104924915,
@@ -120,7 +120,7 @@
             ],
             "trials": 5
           },
-          "gpt-6-astra · hermes": {
+          "gpt-6-astra \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 3531.840765532755,
             "reward": 0.7904649712618468,
@@ -136,7 +136,7 @@
             ],
             "trials": 5
           },
-          "gpt-6.1-sol · hermes": {
+          "gpt-6.1-sol \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 2962.388068688936,
             "reward": 0.6738503761178894,
@@ -152,7 +152,7 @@
             ],
             "trials": 5
           },
-          "grok-4.7 · hermes": {
+          "grok-4.7 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 388.9677697552003,
             "reward": 0.08624491224714378,
@@ -168,7 +168,7 @@
             ],
             "trials": 5
           },
-          "inkling-2-small · hermes": {
+          "inkling-2-small \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 1206.1880871408332,
             "reward": 0.29064980369505106,
@@ -184,7 +184,7 @@
             ],
             "trials": 5
           },
-          "kimi-k3.1-pro · hermes": {
+          "kimi-k3.1-pro \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 794.6457077118478,
             "reward": 0.19150858141155327,
@@ -200,7 +200,7 @@
             ],
             "trials": 5
           },
-          "muse-wonder · hermes": {
+          "muse-wonder \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 690.3970229456223,
             "reward": 0.13159248578690125,
@@ -224,7 +224,7 @@
       "backrun-thin": {
         "headline": "v1",
         "models": {
-          "beam-1.0-501b-a23b · hermes": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 0.0,
             "reward": 0.0,
@@ -240,7 +240,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.1 · hermes": {
+          "claude-fable-5.1 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 606.14906413115,
             "reward": 0.09628107543420125,
@@ -256,7 +256,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.2 · hermes": {
+          "claude-fable-5.2 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 3241.7368929773875,
             "reward": 0.5552336040521638,
@@ -272,7 +272,7 @@
             ],
             "trials": 5
           },
-          "claude-opus-5.5 · hermes": {
+          "claude-opus-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 636.9613318610799,
             "reward": 0.10340706701278313,
@@ -288,7 +288,7 @@
             ],
             "trials": 5
           },
-          "claude-sonnet-5.5 · hermes": {
+          "claude-sonnet-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 2016.6650747387262,
             "reward": 0.2315441359714642,
@@ -304,7 +304,7 @@
             ],
             "trials": 5
           },
-          "gemini-4-carbon · hermes": {
+          "gemini-4-carbon \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 2858.1554750727505,
             "reward": 0.5672240637040236,
@@ -320,7 +320,7 @@
             ],
             "trials": 5
           },
-          "glm-5.3 · hermes": {
+          "glm-5.3 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 1672.5704631631095,
             "reward": 0.2198334106049687,
@@ -336,7 +336,7 @@
             ],
             "trials": 5
           },
-          "gpt-6-astra · hermes": {
+          "gpt-6-astra \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 3824.216335894119,
             "reward": 0.8114553799194881,
@@ -352,7 +352,7 @@
             ],
             "trials": 5
           },
-          "gpt-6.1-sol · hermes": {
+          "gpt-6.1-sol \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 3012.4152601799938,
             "reward": 0.5113554826978411,
@@ -368,7 +368,7 @@
             ],
             "trials": 5
           },
-          "grok-4.7 · hermes": {
+          "grok-4.7 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 56.286661462300614,
             "reward": 0.06857311448227914,
@@ -384,7 +384,7 @@
             ],
             "trials": 5
           },
-          "inkling-2-small · hermes": {
+          "inkling-2-small \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 1396.6374608531873,
             "reward": 0.18528501889274335,
@@ -400,7 +400,7 @@
             ],
             "trials": 5
           },
-          "kimi-k3.1-pro · hermes": {
+          "kimi-k3.1-pro \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 1974.1724986469485,
             "reward": 0.31357872594707875,
@@ -416,7 +416,7 @@
             ],
             "trials": 5
           },
-          "muse-wonder · hermes": {
+          "muse-wonder \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 1904.9891623463477,
             "reward": 0.2087659741226931,
@@ -440,7 +440,7 @@
       "flash-crash": {
         "headline": "v1",
         "models": {
-          "beam-1.0-501b-a23b · hermes": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 11447.344483400002,
             "reward": 0.11944544193606729,
@@ -456,7 +456,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.1 · hermes": {
+          "claude-fable-5.1 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 14995.390257599996,
             "reward": 0.1564669447067117,
@@ -472,7 +472,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.2 · hermes": {
+          "claude-fable-5.2 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 18674.711874000008,
             "reward": 0.19485822376126616,
@@ -488,7 +488,7 @@
             ],
             "trials": 5
           },
-          "claude-opus-5.5 · hermes": {
+          "claude-opus-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 14697.944159800001,
             "reward": 0.15336329209492913,
@@ -504,7 +504,7 @@
             ],
             "trials": 5
           },
-          "claude-sonnet-5.5 · hermes": {
+          "claude-sonnet-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 2158.116637600002,
             "reward": 0.022518514743879604,
@@ -520,7 +520,7 @@
             ],
             "trials": 5
           },
-          "gemini-4-carbon · hermes": {
+          "gemini-4-carbon \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 20092.638518000003,
             "reward": 0.20965334719544812,
@@ -536,7 +536,7 @@
             ],
             "trials": 5
           },
-          "glm-5.3 · hermes": {
+          "glm-5.3 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 12116.4480698,
             "reward": 0.12642709376758599,
@@ -552,7 +552,7 @@
             ],
             "trials": 5
           },
-          "gpt-6-astra · hermes": {
+          "gpt-6-astra \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 19122.167587199998,
             "reward": 0.19952712714645696,
@@ -568,7 +568,7 @@
             ],
             "trials": 5
           },
-          "gpt-6.1-sol · hermes": {
+          "gpt-6.1-sol \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 19080.313392599997,
             "reward": 0.19909040640496756,
@@ -584,7 +584,7 @@
             ],
             "trials": 5
           },
-          "grok-4.7 · hermes": {
+          "grok-4.7 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 3989.8246665999977,
             "reward": 0.041631172298565514,
@@ -600,7 +600,7 @@
             ],
             "trials": 5
           },
-          "inkling-2-small · hermes": {
+          "inkling-2-small \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 10107.0154258,
             "reward": 0.10545999781346374,
@@ -616,7 +616,7 @@
             ],
             "trials": 5
           },
-          "kimi-k3.1-pro · hermes": {
+          "kimi-k3.1-pro \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 8551.074368599999,
             "reward": 0.08922478557946216,
@@ -632,7 +632,7 @@
             ],
             "trials": 5
           },
-          "muse-wonder · hermes": {
+          "muse-wonder \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 7631.038962600001,
             "reward": 0.08720002641320339,
@@ -656,7 +656,7 @@
       "funding-carry": {
         "headline": "v1",
         "models": {
-          "beam-1.0-501b-a23b · hermes": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -3980.4444633285298,
             "reward": 0.0,
@@ -672,7 +672,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.1 · hermes": {
+          "claude-fable-5.1 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 14402.451450297032,
             "reward": 0.07361817605615506,
@@ -688,7 +688,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.2 · hermes": {
+          "claude-fable-5.2 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 29845.555268914693,
             "reward": 0.1525556499782788,
@@ -704,7 +704,7 @@
             ],
             "trials": 5
           },
-          "claude-opus-5.5 · hermes": {
+          "claude-opus-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 17215.49729531068,
             "reward": 0.08799706877361527,
@@ -720,7 +720,7 @@
             ],
             "trials": 5
           },
-          "claude-sonnet-5.5 · hermes": {
+          "claude-sonnet-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 10033.736490468942,
             "reward": 0.05128747574713581,
@@ -736,7 +736,7 @@
             ],
             "trials": 5
           },
-          "gemini-4-carbon · hermes": {
+          "gemini-4-carbon \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 35848.5519129743,
             "reward": 0.1832399862756092,
@@ -752,7 +752,7 @@
             ],
             "trials": 5
           },
-          "glm-5.3 · hermes": {
+          "glm-5.3 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 15499.640292807442,
             "reward": 0.0792264602884282,
@@ -768,7 +768,7 @@
             ],
             "trials": 5
           },
-          "gpt-6-astra · hermes": {
+          "gpt-6-astra \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 43997.408992638346,
             "reward": 0.22489289496392706,
@@ -784,7 +784,7 @@
             ],
             "trials": 5
           },
-          "gpt-6.1-sol · hermes": {
+          "gpt-6.1-sol \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 42574.99282105369,
             "reward": 0.21762221021236128,
@@ -800,7 +800,7 @@
             ],
             "trials": 5
           },
-          "grok-4.7 · hermes": {
+          "grok-4.7 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 7602.502404038789,
             "reward": 0.03477975126600295,
@@ -816,7 +816,7 @@
             ],
             "trials": 5
           },
-          "inkling-2-small · hermes": {
+          "inkling-2-small \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 4283.2295100431775,
             "reward": 0.02189374116256953,
@@ -832,7 +832,7 @@
             ],
             "trials": 5
           },
-          "kimi-k3.1-pro · hermes": {
+          "kimi-k3.1-pro \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 12798.910125428218,
             "reward": 0.04780582141894576,
@@ -848,7 +848,7 @@
             ],
             "trials": 5
           },
-          "muse-wonder · hermes": {
+          "muse-wonder \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 11286.290788931601,
             "reward": 0.0576899109979914,
@@ -872,7 +872,7 @@
       "liquidation-flash": {
         "headline": "v1",
         "models": {
-          "beam-1.0-501b-a23b · hermes": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 0.0,
             "reward": 0.0,
@@ -888,7 +888,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.1 · hermes": {
+          "claude-fable-5.1 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 0.0,
             "reward": 0.0,
@@ -904,7 +904,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.2 · hermes": {
+          "claude-fable-5.2 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 339.4003810877827,
             "reward": 0.4927728908607764,
@@ -920,7 +920,7 @@
             ],
             "trials": 5
           },
-          "claude-opus-5.5 · hermes": {
+          "claude-opus-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 0.0,
             "reward": 0.0,
@@ -936,7 +936,7 @@
             ],
             "trials": 5
           },
-          "claude-sonnet-5.5 · hermes": {
+          "claude-sonnet-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 345.6488171012161,
             "reward": 0.49198210596993625,
@@ -952,7 +952,7 @@
             ],
             "trials": 5
           },
-          "gemini-4-carbon · hermes": {
+          "gemini-4-carbon \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 164.462075109488,
             "reward": 0.24217444770115026,
@@ -968,7 +968,7 @@
             ],
             "trials": 5
           },
-          "glm-5.3 · hermes": {
+          "glm-5.3 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 277.7891536639329,
             "reward": 0.4117421706594987,
@@ -984,7 +984,7 @@
             ],
             "trials": 5
           },
-          "gpt-6-astra · hermes": {
+          "gpt-6-astra \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 662.2500347749017,
             "reward": 0.9537068104178316,
@@ -1000,7 +1000,7 @@
             ],
             "trials": 5
           },
-          "gpt-6.1-sol · hermes": {
+          "gpt-6.1-sol \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 507.20870058739604,
             "reward": 0.7596642844549644,
@@ -1016,7 +1016,7 @@
             ],
             "trials": 5
           },
-          "grok-4.7 · hermes": {
+          "grok-4.7 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 172.4185766551716,
             "reward": 0.04724436401560748,
@@ -1032,7 +1032,7 @@
             ],
             "trials": 5
           },
-          "inkling-2-small · hermes": {
+          "inkling-2-small \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 139.79199908763923,
             "reward": 0.2805612897889298,
@@ -1048,7 +1048,7 @@
             ],
             "trials": 5
           },
-          "kimi-k3.1-pro · hermes": {
+          "kimi-k3.1-pro \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 459.71538271187745,
             "reward": 0.6690743886859893,
@@ -1064,7 +1064,7 @@
             ],
             "trials": 5
           },
-          "muse-wonder · hermes": {
+          "muse-wonder \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 419.22047527107827,
             "reward": 0.6187042911543561,
@@ -1088,7 +1088,7 @@
       "market-making": {
         "headline": "v1",
         "models": {
-          "beam-1.0-501b-a23b · hermes": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -860.8266688506992,
             "reward": 0.0,
@@ -1104,7 +1104,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.1 · hermes": {
+          "claude-fable-5.1 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -266.21741225163566,
             "reward": 0.0008469532196487605,
@@ -1120,7 +1120,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.2 · hermes": {
+          "claude-fable-5.2 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -330.92180308445677,
             "reward": 0.0,
@@ -1136,7 +1136,7 @@
             ],
             "trials": 5
           },
-          "claude-opus-5.5 · hermes": {
+          "claude-opus-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 17.123115814381528,
             "reward": 0.004754698109935947,
@@ -1152,7 +1152,7 @@
             ],
             "trials": 5
           },
-          "claude-sonnet-5.5 · hermes": {
+          "claude-sonnet-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -152.02386120011687,
             "reward": 0.0,
@@ -1168,7 +1168,7 @@
             ],
             "trials": 5
           },
-          "gemini-4-carbon · hermes": {
+          "gemini-4-carbon \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 306.4906861677944,
             "reward": 0.01650891960257561,
@@ -1184,7 +1184,7 @@
             ],
             "trials": 5
           },
-          "glm-5.3 · hermes": {
+          "glm-5.3 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -279.72092235950186,
             "reward": 0.0,
@@ -1200,7 +1200,7 @@
             ],
             "trials": 5
           },
-          "gpt-6-astra · hermes": {
+          "gpt-6-astra \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 321.1052721682601,
             "reward": 0.017294647594427975,
@@ -1216,7 +1216,7 @@
             ],
             "trials": 5
           },
-          "gpt-6.1-sol · hermes": {
+          "gpt-6.1-sol \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 332.9123750194805,
             "reward": 0.017930575125434136,
@@ -1232,7 +1232,7 @@
             ],
             "trials": 5
           },
-          "grok-4.7 · hermes": {
+          "grok-4.7 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -328.40883003343407,
             "reward": 0.0,
@@ -1248,7 +1248,7 @@
             ],
             "trials": 5
           },
-          "inkling-2-small · hermes": {
+          "inkling-2-small \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": -657.1972965300381,
             "reward": 0.0,
@@ -1264,7 +1264,7 @@
             ],
             "trials": 5
           },
-          "kimi-k3.1-pro · hermes": {
+          "kimi-k3.1-pro \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 61.30888592168012,
             "reward": 0.004637443858116293,
@@ -1280,7 +1280,7 @@
             ],
             "trials": 5
           },
-          "muse-wonder · hermes": {
+          "muse-wonder \u00b7 hermes": {
             "graded": 4,
             "pnl_usd": -594.0693318164936,
             "reward": 0.0,
@@ -1303,7 +1303,7 @@
       "weekend-gap": {
         "headline": "v1",
         "models": {
-          "beam-1.0-501b-a23b · hermes": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 980.9365756000013,
             "reward": 0.04767822228490405,
@@ -1319,7 +1319,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.1 · hermes": {
+          "claude-fable-5.1 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 4749.7588031999985,
             "reward": 0.061648646582616026,
@@ -1335,7 +1335,7 @@
             ],
             "trials": 5
           },
-          "claude-fable-5.2 · hermes": {
+          "claude-fable-5.2 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 8248.845629000001,
             "reward": 0.1070644194720313,
@@ -1351,7 +1351,7 @@
             ],
             "trials": 5
           },
-          "claude-opus-5.5 · hermes": {
+          "claude-opus-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 6554.084248199999,
             "reward": 0.08506756663470076,
@@ -1367,7 +1367,7 @@
             ],
             "trials": 5
           },
-          "claude-sonnet-5.5 · hermes": {
+          "claude-sonnet-5.5 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 4336.9917344,
             "reward": 0.05629121008957775,
@@ -1383,7 +1383,7 @@
             ],
             "trials": 5
           },
-          "gemini-4-carbon · hermes": {
+          "gemini-4-carbon \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 5704.297463000001,
             "reward": 0.06708934793591188,
@@ -1399,7 +1399,7 @@
             ],
             "trials": 5
           },
-          "glm-5.3 · hermes": {
+          "glm-5.3 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 1335.3842226000008,
             "reward": 0.028572606504560106,
@@ -1415,7 +1415,7 @@
             ],
             "trials": 5
           },
-          "gpt-6-astra · hermes": {
+          "gpt-6-astra \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 11794.078924799998,
             "reward": 0.15307914223194283,
@@ -1431,7 +1431,7 @@
             ],
             "trials": 5
           },
-          "gpt-6.1-sol · hermes": {
+          "gpt-6.1-sol \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 9416.1206898,
             "reward": 0.12221485777207286,
@@ -1447,7 +1447,7 @@
             ],
             "trials": 5
           },
-          "grok-4.7 · hermes": {
+          "grok-4.7 \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 1747.090751199999,
             "reward": 0.022676052559957898,
@@ -1463,7 +1463,7 @@
             ],
             "trials": 5
           },
-          "inkling-2-small · hermes": {
+          "inkling-2-small \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 3534.1292711999995,
             "reward": 0.04587060005461778,
@@ -1479,7 +1479,7 @@
             ],
             "trials": 5
           },
-          "kimi-k3.1-pro · hermes": {
+          "kimi-k3.1-pro \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 6166.299483800001,
             "reward": 0.08003438350243049,
@@ -1495,7 +1495,7 @@
             ],
             "trials": 5
           },
-          "muse-wonder · hermes": {
+          "muse-wonder \u00b7 hermes": {
             "graded": 5,
             "pnl_usd": 3773.043258200002,
             "reward": 0.050156296844855654,
@@ -1521,57 +1521,9 @@
   },
   "shared_reference_sessions": 41400,
   "skipped": [
-    "2026-11-24__15-46-35/backrun-sol-usdc__aAr5eGp/verifier/report.json (15376178 bytes)",
-    "2026-11-24__15-46-35/backrun-sol-usdc__jZnhVr3/verifier/report.json (16029077 bytes)",
-    "2026-11-24__15-46-35/backrun-sol-usdc__w3TbdQy/verifier/report.json (15402310 bytes)",
-    "2026-11-24__15-46-35/backrun-thin-pools__F2NN65f/verifier/report.json (17802497 bytes)",
-    "2026-11-24__15-46-35/backrun-thin-pools__UNu5wgF/verifier/report.json (18631555 bytes)",
-    "2026-11-24__15-46-35/liquidation-flash__BM5zBgR/verifier/report.json (32844542 bytes)",
-    "2026-11-24__15-46-35/liquidation-flash__hS6grEs/verifier/report.json (20027250 bytes)",
-    "2026-11-24__15-47-35/backrun-sol-usdc__KzuWVPT/verifier/report.json (15222830 bytes)",
-    "2026-11-24__15-47-35/backrun-sol-usdc__QKYozK7/verifier/report.json (15410988 bytes)",
-    "2026-11-24__15-47-35/backrun-thin-pools__P4khVQK/verifier/report.json (20706069 bytes)",
-    "2026-11-24__15-47-35/liquidation-flash__LY7TzHu/verifier/report.json (9783943 bytes)",
-    "2026-11-24__15-47-35/liquidation-flash__aw8B4Lo/verifier/report.json (9783909 bytes)",
-    "2026-11-24__15-47-35/market-making-spcx__8YAfjuU/verifier/report.json (1875083 bytes)",
-    "2026-11-24__15-48-35/backrun-sol-usdc__Ng8cH9b/verifier/report.json (11293685 bytes)",
-    "2026-11-24__15-48-35/backrun-sol-usdc__huHRYfG/verifier/report.json (11293666 bytes)",
-    "2026-11-24__15-48-35/backrun-thin-pools__xkkS5tR/verifier/report.json (20772395 bytes)",
-    "2026-11-24__15-48-35/liquidation-flash__4NY4Va8/verifier/report.json (9783926 bytes)",
-    "2026-11-24__15-48-35/liquidation-flash__BjrERug/verifier/report.json (9783914 bytes)",
-    "2026-11-24__15-48-35/market-making-spcx__kbEGTSk/verifier/report.json (2179472 bytes)",
-    "2026-11-24__15-49-35/backrun-sol-usdc__BoUDTug/verifier/report.json (15442119 bytes)",
-    "2026-11-24__15-49-35/backrun-sol-usdc__dxWD8Mu/verifier/report.json (15435052 bytes)",
-    "2026-11-24__15-49-35/backrun-sol-usdc__eCLia5R/verifier/report.json (15225988 bytes)",
-    "2026-11-24__15-49-35/backrun-sol-usdc__sDmuqk9/verifier/report.json (15406844 bytes)",
-    "2026-11-24__15-49-35/backrun-sol-usdc__y35ZHEA/verifier/report.json (15234224 bytes)",
-    "2026-11-24__15-49-35/backrun-thin-pools__WijN3Ak/verifier/report.json (38006332 bytes)",
-    "2026-11-24__15-49-35/backrun-thin-pools__ZSg5Y5p/verifier/report.json (20167237 bytes)",
-    "2026-11-24__15-49-35/backrun-thin-pools__dTywaX5/verifier/report.json (20145600 bytes)",
-    "2026-11-24__15-49-35/backrun-thin-pools__fiB5KPf/verifier/report.json (21672974 bytes)",
-    "2026-11-24__15-49-35/backrun-thin-pools__y5HegoE/verifier/report.json (21481419 bytes)",
-    "2026-11-24__15-49-35/liquidation-flash__4V4Ekd2/verifier/report.json (9783970 bytes)",
-    "2026-11-24__15-49-35/liquidation-flash__4bZdEb9/verifier/report.json (20837946 bytes)",
-    "2026-11-24__15-49-35/liquidation-flash__Ey3Zei7/verifier/report.json (19971828 bytes)",
-    "2026-11-24__15-49-35/liquidation-flash__fFEbry6/verifier/report.json (30222167 bytes)",
-    "2026-11-24__15-49-35/liquidation-flash__tBUGs2u/verifier/report.json (9784759 bytes)",
-    "2026-11-24__15-49-35/market-making-spcx__Ch4a5kh/verifier/report.json (2201454 bytes)",
-    "2026-11-24__15-49-35/market-making-spcx__ddfbEzN/verifier/report.json (1904474 bytes)",
-    "2026-11-24__15-49-35/market-making-spcx__fMFHMnL/verifier/report.json (1699799 bytes)",
-    "2026-11-24__15-49-35/market-making-spcx__xpKXXM5/verifier/report.json (1503037 bytes)",
-    "2026-11-24__15-50-35/backrun-sol-usdc__83sNxHv/verifier/report.json (15746479 bytes)",
     "2026-11-24__15-50-35/backrun-sol-usdc__83sNxHv/artifacts/app/bot/practice-report.json (1376610 bytes)",
-    "2026-11-24__15-50-35/backrun-sol-usdc__MwMcjm5/verifier/report.json (16085914 bytes)",
-    "2026-11-24__15-50-35/backrun-sol-usdc__N2zatci/verifier/report.json (15412089 bytes)",
-    "2026-11-24__15-50-35/backrun-sol-usdc__dcYa3WR/verifier/report.json (15159615 bytes)",
     "2026-11-24__15-50-35/backrun-sol-usdc__dcYa3WR/artifacts/app/bot/practice-report.json (1348025 bytes)",
-    "2026-11-24__15-50-35/backrun-sol-usdc__o3tEdW2/verifier/report.json (16193773 bytes)",
-    "2026-11-24__15-50-35/backrun-thin-pools__LddF2v5/verifier/report.json (21309001 bytes)",
-    "2026-11-24__15-50-35/backrun-thin-pools__MZEtu7c/verifier/report.json (20889787 bytes)",
-    "2026-11-24__15-50-35/backrun-thin-pools__ZDSccex/verifier/report.json (20853038 bytes)",
-    "2026-11-24__15-50-35/backrun-thin-pools__rgi2tTo/verifier/report.json (22507810 bytes)",
     "2026-11-24__15-50-35/backrun-thin-pools__rgi2tTo/artifacts/app/bot/practice-report.json (1067927 bytes)",
-    "2026-11-24__15-50-35/backrun-thin-pools__yPnLUNn/verifier/report.json (21815145 bytes)",
     "2026-11-24__15-50-35/flash-crash-spcx__WDZSHNv/artifacts/app/bot/bot.wasm (1235762 bytes)",
     "2026-11-24__15-50-35/flash-crash-spcx__YeewZ5e/artifacts/app/bot/bot.wasm (1794251 bytes)",
     "2026-11-24__15-50-35/flash-crash-spcx__YeewZ5e/artifacts/app/bot/dp-model-2.bin (1490012 bytes)",
@@ -1593,15 +1545,6 @@
     "2026-11-24__15-50-35/funding-carry-spcx__sseY9LZ/artifacts/app/bot/model5.bin (2086012 bytes)",
     "2026-11-24__15-50-35/funding-carry-spcx__sseY9LZ/artifacts/app/bot/model2.bin (2086012 bytes)",
     "2026-11-24__15-50-35/funding-carry-spcx__sseY9LZ/artifacts/app/bot/model10.bin (2086012 bytes)",
-    "2026-11-24__15-50-35/liquidation-flash__5QvB8gn/verifier/report.json (15823319 bytes)",
-    "2026-11-24__15-50-35/liquidation-flash__AKJbVnR/verifier/report.json (19537531 bytes)",
-    "2026-11-24__15-50-35/liquidation-flash__co6a25W/verifier/report.json (19831971 bytes)",
-    "2026-11-24__15-50-35/liquidation-flash__eX6bDRu/verifier/report.json (23853683 bytes)",
-    "2026-11-24__15-50-35/liquidation-flash__wpvEpex/verifier/report.json (40492703 bytes)",
-    "2026-11-24__15-50-35/market-making-spcx__2Psdham/verifier/report.json (1982683 bytes)",
-    "2026-11-24__15-50-35/market-making-spcx__p5QY9nP/verifier/report.json (1457518 bytes)",
-    "2026-11-24__15-50-35/market-making-spcx__rXCL7fK/verifier/report.json (1234894 bytes)",
-    "2026-11-24__15-50-35/market-making-spcx__xL8udaN/verifier/report.json (1609651 bytes)",
     "2026-11-24__15-50-35/weekend-gap-spcx__AoDR6gn/artifacts/app/bot/bot.wasm (2583385 bytes)",
     "2026-11-24__15-50-35/weekend-gap-spcx__AoDR6gn/artifacts/app/bot/model.bin (1672336 bytes)",
     "2026-11-24__15-50-35/weekend-gap-spcx__L7cF4sF/artifacts/app/bot/models/medium.bin (1111020 bytes)",
@@ -1615,22 +1558,12 @@
     "2026-11-24__15-50-35/weekend-gap-spcx__zcbschJ/artifacts/app/bot/short.bin (2092648 bytes)",
     "2026-11-24__15-50-35/weekend-gap-spcx__zcbschJ/artifacts/app/bot/medium.bin (2119052 bytes)",
     "2026-11-24__15-50-35/weekend-gap-spcx__zcbschJ/artifacts/app/bot/long.bin (2091992 bytes)",
-    "2026-11-24__15-51-35/backrun-sol-usdc__JfAd2UF/verifier/report.json (15376542 bytes)",
     "2026-11-24__15-51-35/backrun-sol-usdc__JfAd2UF/artifacts/app/bot/validation.json (1389361 bytes)",
-    "2026-11-24__15-51-35/backrun-sol-usdc__ixub2Sv/verifier/report.json (16309033 bytes)",
     "2026-11-24__15-51-35/backrun-sol-usdc__ixub2Sv/artifacts/app/bot/practice-report.json (1410877 bytes)",
-    "2026-11-24__15-51-35/backrun-sol-usdc__ogze9oY/verifier/report.json (15511482 bytes)",
     "2026-11-24__15-51-35/backrun-sol-usdc__ogze9oY/artifacts/app/bot/practice-report.json (1387210 bytes)",
-    "2026-11-24__15-51-35/backrun-sol-usdc__qqKXTjt/verifier/report.json (15214398 bytes)",
     "2026-11-24__15-51-35/backrun-sol-usdc__qqKXTjt/artifacts/app/bot/practice-report.json (1362323 bytes)",
-    "2026-11-24__15-51-35/backrun-sol-usdc__w3gGCxG/verifier/report.json (16413853 bytes)",
     "2026-11-24__15-51-35/backrun-sol-usdc__w3gGCxG/artifacts/app/bot/practice-report.json (1485042 bytes)",
-    "2026-11-24__15-51-35/backrun-thin-pools__7JbvEJ6/verifier/report.json (19106973 bytes)",
-    "2026-11-24__15-51-35/backrun-thin-pools__HTirjV3/verifier/report.json (22409965 bytes)",
-    "2026-11-24__15-51-35/backrun-thin-pools__JGGNDgN/verifier/report.json (22505997 bytes)",
     "2026-11-24__15-51-35/backrun-thin-pools__JGGNDgN/artifacts/app/bot/practice-report.json (1077200 bytes)",
-    "2026-11-24__15-51-35/backrun-thin-pools__jEusPNH/verifier/report.json (21754276 bytes)",
-    "2026-11-24__15-51-35/backrun-thin-pools__yyD44cF/verifier/report.json (21113855 bytes)",
     "2026-11-24__15-51-35/backrun-thin-pools__yyD44cF/artifacts/app/bot/practice-report.json (1063190 bytes)",
     "2026-11-24__15-51-35/flash-crash-spcx__Hec3rpR/artifacts/app/bot/bot.wasm (1283280 bytes)",
     "2026-11-24__15-51-35/flash-crash-spcx__uqb2qa2/artifacts/app/bot/bot.wasm (1762536 bytes)",
@@ -1649,15 +1582,6 @@
     "2026-11-24__15-51-35/funding-carry-spcx__xe75H6V/artifacts/app/bot/fast.bin (1173612 bytes)",
     "2026-11-24__15-51-35/funding-carry-spcx__xe75H6V/artifacts/app/bot/bot.wasm (2965642 bytes)",
     "2026-11-24__15-51-35/funding-carry-spcx__xe75H6V/artifacts/app/bot/slow.bin (1171656 bytes)",
-    "2026-11-24__15-51-35/liquidation-flash__6YCQGmr/verifier/report.json (17776301 bytes)",
-    "2026-11-24__15-51-35/liquidation-flash__CzWdSkR/verifier/report.json (16359110 bytes)",
-    "2026-11-24__15-51-35/liquidation-flash__fXzZfBH/verifier/report.json (15195066 bytes)",
-    "2026-11-24__15-51-35/liquidation-flash__nkaxKPP/verifier/report.json (18936868 bytes)",
-    "2026-11-24__15-51-35/liquidation-flash__xBUHC6U/verifier/report.json (16883257 bytes)",
-    "2026-11-24__15-51-35/market-making-spcx__bFy8kP4/verifier/report.json (1511713 bytes)",
-    "2026-11-24__15-51-35/market-making-spcx__emQNuEy/verifier/report.json (2003067 bytes)",
-    "2026-11-24__15-51-35/market-making-spcx__kVwBXFS/verifier/report.json (1350696 bytes)",
-    "2026-11-24__15-51-35/market-making-spcx__yXWnjNp/verifier/report.json (1077784 bytes)",
     "2026-11-24__15-51-35/weekend-gap-spcx__C8xaEnn/artifacts/app/bot/bot.wasm (2530164 bytes)",
     "2026-11-24__15-51-35/weekend-gap-spcx__Ut4vjSr/artifacts/app/bot/bot.wasm (2377343 bytes)",
     "2026-11-24__15-51-35/weekend-gap-spcx__mN37Azz/artifacts/app/bot/bot.wasm (1672063 bytes)",
@@ -1671,179 +1595,17 @@
     "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/models/short.bin (2950212 bytes)",
     "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/models/gap.bin (2759492 bytes)",
     "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/bot.wasm (6308776 bytes)",
-    "2026-11-24__15-52-35/backrun-sol-usdc__DNNgdZA/verifier/report.json (15955230 bytes)",
-    "2026-11-24__15-52-35/backrun-sol-usdc__KmG7uRK/verifier/report.json (11317054 bytes)",
-    "2026-11-24__15-52-35/backrun-sol-usdc__MmvS2Zb/verifier/report.json (14921739 bytes)",
-    "2026-11-24__15-52-35/backrun-sol-usdc__SRxcQnV/verifier/report.json (15856757 bytes)",
-    "2026-11-24__15-52-35/backrun-sol-usdc__vQwpfqz/verifier/report.json (15027072 bytes)",
-    "2026-11-24__15-52-35/backrun-thin-pools__Ftd9sdt/verifier/report.json (19823136 bytes)",
-    "2026-11-24__15-52-35/backrun-thin-pools__RvgtHEa/verifier/report.json (20605134 bytes)",
-    "2026-11-24__15-52-35/backrun-thin-pools__WDUDAxr/verifier/report.json (19794239 bytes)",
-    "2026-11-24__15-52-35/backrun-thin-pools__skoSA6m/verifier/report.json (19984461 bytes)",
-    "2026-11-24__15-52-35/backrun-thin-pools__ujofkcf/verifier/report.json (19025863 bytes)",
-    "2026-11-24__15-52-35/liquidation-flash__LbAf2tk/verifier/report.json (13041532 bytes)",
-    "2026-11-24__15-52-35/liquidation-flash__USan9TQ/verifier/report.json (12027417 bytes)",
-    "2026-11-24__15-52-35/liquidation-flash__YKqNACE/verifier/report.json (11950054 bytes)",
-    "2026-11-24__15-52-35/liquidation-flash__Zwnjii6/verifier/report.json (12389729 bytes)",
-    "2026-11-24__15-52-35/liquidation-flash__xujdh9a/verifier/report.json (12465150 bytes)",
-    "2026-11-24__15-52-35/market-making-spcx__9Biaxnk/verifier/report.json (1177862 bytes)",
-    "2026-11-24__15-52-35/market-making-spcx__Txvtiqw/verifier/report.json (1105235 bytes)",
-    "2026-11-24__15-52-35/market-making-spcx__ZnJ4cc7/verifier/report.json (1689812 bytes)",
-    "2026-11-24__15-52-35/market-making-spcx__tmmCNCE/verifier/report.json (2699196 bytes)",
-    "2026-11-24__15-53-35/backrun-sol-usdc__BcAvyje/verifier/report.json (15218082 bytes)",
-    "2026-11-24__15-53-35/backrun-sol-usdc__SWWrxTP/verifier/report.json (15737846 bytes)",
-    "2026-11-24__15-53-35/backrun-sol-usdc__TqYMH9j/verifier/report.json (14726679 bytes)",
-    "2026-11-24__15-53-35/backrun-sol-usdc__kSYLX6w/verifier/report.json (16272181 bytes)",
-    "2026-11-24__15-53-35/backrun-sol-usdc__oQHPADA/verifier/report.json (11293674 bytes)",
-    "2026-11-24__15-53-35/backrun-thin-pools__8CD7wC2/verifier/report.json (20684544 bytes)",
-    "2026-11-24__15-53-35/backrun-thin-pools__CEmZQ78/verifier/report.json (20436697 bytes)",
-    "2026-11-24__15-53-35/backrun-thin-pools__HBiGAwR/verifier/report.json (18476169 bytes)",
-    "2026-11-24__15-53-35/backrun-thin-pools__VvQJCqb/verifier/report.json (21431234 bytes)",
-    "2026-11-24__15-53-35/backrun-thin-pools__cnd7ywE/verifier/report.json (16401101 bytes)",
-    "2026-11-24__15-53-35/liquidation-flash__3KFe49t/verifier/report.json (9783982 bytes)",
-    "2026-11-24__15-53-35/liquidation-flash__KPVcXrC/verifier/report.json (9783987 bytes)",
-    "2026-11-24__15-53-35/liquidation-flash__b5bahaM/verifier/report.json (34717266 bytes)",
-    "2026-11-24__15-53-35/liquidation-flash__ubp2bQ4/verifier/report.json (16703794 bytes)",
-    "2026-11-24__15-53-35/liquidation-flash__ueTXnnp/verifier/report.json (9783940 bytes)",
-    "2026-11-24__15-53-35/market-making-spcx__Y6goQv5/verifier/report.json (1452694 bytes)",
-    "2026-11-24__15-53-35/market-making-spcx__hHzMdp4/verifier/report.json (1295350 bytes)",
-    "2026-11-24__15-53-35/market-making-spcx__wy8ced3/verifier/report.json (1858705 bytes)",
-    "2026-11-24__15-54-35/backrun-sol-usdc__V4chMcv/verifier/report.json (14171122 bytes)",
-    "2026-11-24__15-54-35/backrun-sol-usdc__VRoi9Db/verifier/report.json (15226430 bytes)",
-    "2026-11-24__15-54-35/backrun-sol-usdc__niiRpaH/verifier/report.json (15188235 bytes)",
-    "2026-11-24__15-54-35/backrun-sol-usdc__oYZuZ5F/verifier/report.json (39487167 bytes)",
-    "2026-11-24__15-54-35/backrun-sol-usdc__tnGMMU5/verifier/report.json (15058276 bytes)",
-    "2026-11-24__15-54-35/backrun-thin-pools__7SbQ7ca/verifier/report.json (18504483 bytes)",
-    "2026-11-24__15-54-35/backrun-thin-pools__M5gnhyQ/verifier/report.json (20839055 bytes)",
-    "2026-11-24__15-54-35/backrun-thin-pools__QmpwRcy/verifier/report.json (21999680 bytes)",
-    "2026-11-24__15-54-35/backrun-thin-pools__ULFLd5w/verifier/report.json (19022420 bytes)",
-    "2026-11-24__15-54-35/backrun-thin-pools__h99ZrbM/verifier/report.json (19789658 bytes)",
-    "2026-11-24__15-54-35/liquidation-flash__6CuYYFS/verifier/report.json (19441494 bytes)",
-    "2026-11-24__15-54-35/liquidation-flash__9NnFSmr/verifier/report.json (37168353 bytes)",
-    "2026-11-24__15-54-35/liquidation-flash__JMqWAhF/verifier/report.json (46185895 bytes)",
-    "2026-11-24__15-54-35/liquidation-flash__L9SZuq4/verifier/report.json (26460418 bytes)",
-    "2026-11-24__15-54-35/liquidation-flash__ksJiJR7/verifier/report.json (20525150 bytes)",
-    "2026-11-24__15-54-35/market-making-spcx__AsKzubz/verifier/report.json (1278926 bytes)",
-    "2026-11-24__15-54-35/market-making-spcx__Hxg8N2F/verifier/report.json (1406838 bytes)",
-    "2026-11-24__15-55-35/backrun-sol-usdc__Rc95CmK/verifier/report.json (13029509 bytes)",
-    "2026-11-24__15-55-35/backrun-sol-usdc__UifhxEY/verifier/report.json (17121148 bytes)",
-    "2026-11-24__15-55-35/backrun-sol-usdc__YBzcMFY/verifier/report.json (17358924 bytes)",
-    "2026-11-24__15-55-35/backrun-sol-usdc__fEAUrWu/verifier/report.json (15218017 bytes)",
-    "2026-11-24__15-55-35/backrun-sol-usdc__rn3bKjs/verifier/report.json (12787941 bytes)",
-    "2026-11-24__15-55-35/backrun-thin-pools__BXxZSTi/verifier/report.json (18427484 bytes)",
-    "2026-11-24__15-55-35/backrun-thin-pools__GB5yJXk/verifier/report.json (17727754 bytes)",
-    "2026-11-24__15-55-35/backrun-thin-pools__PVYRUGn/verifier/report.json (18017250 bytes)",
-    "2026-11-24__15-55-35/backrun-thin-pools__YP4Bopf/verifier/report.json (16491646 bytes)",
-    "2026-11-24__15-55-35/backrun-thin-pools__qPLHZDK/verifier/report.json (16622120 bytes)",
-    "2026-11-24__15-55-35/liquidation-flash__G4NgBhJ/verifier/report.json (22630937 bytes)",
-    "2026-11-24__15-55-35/liquidation-flash__gRFwpB8/verifier/report.json (10010712 bytes)",
-    "2026-11-24__15-55-35/liquidation-flash__pnniL66/verifier/report.json (12284030 bytes)",
-    "2026-11-24__15-55-35/liquidation-flash__sH9QuGU/verifier/report.json (14385191 bytes)",
-    "2026-11-24__15-55-35/liquidation-flash__tZzjyTM/verifier/report.json (11559450 bytes)",
-    "2026-11-24__15-55-35/market-making-spcx__oeMPs9s/verifier/report.json (1342153 bytes)",
-    "2026-11-24__15-55-35/market-making-spcx__ttu46Zr/verifier/report.json (1514387 bytes)",
-    "2026-11-24__15-55-35/market-making-spcx__vLt62ic/verifier/report.json (1617370 bytes)",
-    "2026-11-24__15-56-35/backrun-sol-usdc__A9PWZst/verifier/report.json (14573929 bytes)",
-    "2026-11-24__15-56-35/backrun-sol-usdc__Dk3szjS/verifier/report.json (14407329 bytes)",
-    "2026-11-24__15-56-35/backrun-sol-usdc__SrNXyx4/verifier/report.json (15038449 bytes)",
-    "2026-11-24__15-56-35/backrun-sol-usdc__dPLXq8a/verifier/report.json (14102284 bytes)",
-    "2026-11-24__15-56-35/backrun-sol-usdc__fDyGScv/verifier/report.json (15465738 bytes)",
-    "2026-11-24__15-56-35/backrun-thin-pools__A7KjUs9/verifier/report.json (18340308 bytes)",
-    "2026-11-24__15-56-35/backrun-thin-pools__Z2UYJp8/verifier/report.json (18387412 bytes)",
-    "2026-11-24__15-56-35/backrun-thin-pools__id6QcJU/verifier/report.json (18712379 bytes)",
     "2026-11-24__15-56-35/backrun-thin-pools__id6QcJU/artifacts/app/bot/tmp/v13-full.json (1114864 bytes)",
-    "2026-11-24__15-56-35/backrun-thin-pools__id6QcJU/artifacts/app/bot/tmp/v12-full.json (1115842 bytes)",
-    "2026-11-24__15-56-35/backrun-thin-pools__inRnTox/verifier/report.json (17358029 bytes)",
-    "2026-11-24__15-56-35/backrun-thin-pools__vhezXQy/verifier/report.json (18383482 bytes)",
-    "2026-11-24__15-56-35/liquidation-flash__3emauke/verifier/report.json (31365666 bytes)",
-    "2026-11-24__15-56-35/liquidation-flash__E5k6KMu/verifier/report.json (21443095 bytes)",
-    "2026-11-24__15-56-35/liquidation-flash__dToxwVD/verifier/report.json (42692758 bytes)",
-    "2026-11-24__15-56-35/liquidation-flash__fUXcakX/verifier/report.json (32538015 bytes)",
-    "2026-11-24__15-56-35/liquidation-flash__iqEaSKm/verifier/report.json (16484315 bytes)",
-    "2026-11-24__15-56-35/market-making-spcx__P35AJZQ/verifier/report.json (1223598 bytes)",
-    "2026-11-24__15-57-35/backrun-sol-usdc__2vYTueU/verifier/report.json (15093377 bytes)",
-    "2026-11-24__15-57-35/backrun-sol-usdc__XZEJHZD/verifier/report.json (15332333 bytes)",
-    "2026-11-24__15-57-35/backrun-sol-usdc__u2gmL8G/verifier/report.json (15506866 bytes)",
-    "2026-11-24__15-57-35/backrun-sol-usdc__vq7pJot/verifier/report.json (15140452 bytes)",
-    "2026-11-24__15-57-35/backrun-thin-pools__C5mQdai/verifier/report.json (16405089 bytes)",
-    "2026-11-24__15-57-35/backrun-thin-pools__ChfBbwR/verifier/report.json (19805204 bytes)",
-    "2026-11-24__15-57-35/backrun-thin-pools__DU55UTa/verifier/report.json (19127788 bytes)",
-    "2026-11-24__15-57-35/backrun-thin-pools__Y3mHrkA/verifier/report.json (18336853 bytes)",
-    "2026-11-24__15-57-35/backrun-thin-pools__m9gA8Qs/verifier/report.json (19668349 bytes)",
-    "2026-11-24__15-57-35/liquidation-flash__9bv3Rdv/verifier/report.json (25768416 bytes)",
-    "2026-11-24__15-57-35/liquidation-flash__DBccp2h/verifier/report.json (32811503 bytes)",
-    "2026-11-24__15-57-35/liquidation-flash__FMUUP8m/verifier/report.json (12549648 bytes)",
-    "2026-11-24__15-57-35/liquidation-flash__voB5ddv/verifier/report.json (38602717 bytes)",
-    "2026-11-24__15-57-35/liquidation-flash__wRSU8b6/verifier/report.json (11378100 bytes)",
-    "2026-11-24__15-57-35/market-making-spcx__EDciRkc/verifier/report.json (1127500 bytes)",
-    "2026-11-24__15-57-35/market-making-spcx__FkeWs3u/verifier/report.json (2756964 bytes)",
-    "2026-11-24__15-57-35/market-making-spcx__e9XCsYE/verifier/report.json (1143873 bytes)",
-    "2026-11-24__15-57-35/market-making-spcx__pyZp8mx/verifier/report.json (1559097 bytes)",
-    "2026-11-24__15-57-35/market-making-spcx__wQbVewk/verifier/report.json (1226656 bytes)",
-    "2026-11-24__15-58-35/backrun-sol-usdc__2it52W7/verifier/report.json (15110031 bytes)",
-    "2026-11-24__15-58-35/backrun-sol-usdc__Ex7Yr6A/verifier/report.json (11294060 bytes)",
-    "2026-11-24__15-58-35/backrun-sol-usdc__NWLCiyC/verifier/report.json (11306930 bytes)",
-    "2026-11-24__15-58-35/backrun-sol-usdc__bBx5pR8/verifier/report.json (11295548 bytes)",
-    "2026-11-24__15-58-35/backrun-sol-usdc__g93J2qf/verifier/report.json (12272324 bytes)",
-    "2026-11-24__15-58-35/backrun-thin-pools__R4xdHAy/verifier/report.json (16403828 bytes)",
-    "2026-11-24__15-58-35/backrun-thin-pools__SZyRXji/verifier/report.json (16401102 bytes)",
-    "2026-11-24__15-58-35/backrun-thin-pools__ZGXzxCH/verifier/report.json (16404461 bytes)",
-    "2026-11-24__15-58-35/backrun-thin-pools__jFvVgfM/verifier/report.json (16403610 bytes)",
-    "2026-11-24__15-58-35/backrun-thin-pools__zXLj9Vu/verifier/report.json (16401102 bytes)",
-    "2026-11-24__15-58-35/liquidation-flash__3cfiRkc/verifier/report.json (9784795 bytes)",
-    "2026-11-24__15-58-35/liquidation-flash__Bi9xg5r/verifier/report.json (9784273 bytes)",
-    "2026-11-24__15-58-35/liquidation-flash__FribiEr/verifier/report.json (9783958 bytes)",
-    "2026-11-24__15-58-35/liquidation-flash__NxFh5ss/verifier/report.json (9784125 bytes)",
-    "2026-11-24__15-58-35/liquidation-flash__eW3PHyJ/verifier/report.json (9784288 bytes)",
-    "2026-11-24__15-58-35/market-making-spcx__7srsFYd/verifier/report.json (1719154 bytes)",
-    "2026-11-24__15-58-35/market-making-spcx__B4pTAQp/verifier/report.json (2642857 bytes)",
-    "2026-11-24__15-58-35/market-making-spcx__shDmu8L/verifier/report.json (2595743 bytes)",
-    "2026-11-24__23-44-03/backrun-sol-usdc__7pVdKj8/verifier/report.json (11293707 bytes)",
-    "2026-11-24__23-44-03/backrun-sol-usdc__MCU5kfs/verifier/report.json (11293689 bytes)",
-    "2026-11-24__23-44-03/backrun-sol-usdc__VmN3GDq/verifier/report.json (11293699 bytes)",
-    "2026-11-24__23-44-03/backrun-thin-pools__4iGxDmc/verifier/report.json (16401241 bytes)",
-    "2026-11-24__23-44-03/backrun-thin-pools__oYNTXNu/verifier/report.json (16401097 bytes)",
-    "2026-11-24__23-44-03/backrun-thin-pools__zJy5Gtx/verifier/report.json (16401098 bytes)",
-    "2026-11-24__23-44-03/liquidation-flash__AreNmLR/verifier/report.json (9783947 bytes)",
-    "2026-11-24__23-44-03/liquidation-flash__G7n64Kk/verifier/report.json (9783956 bytes)",
-    "2026-11-24__23-44-03/liquidation-flash__bFjXZF6/verifier/report.json (9783956 bytes)",
-    "2026-11-24__23-44-03/market-making-spcx__Lg2ALaK/verifier/report.json (1762863 bytes)",
-    "2026-11-24__23-44-03/market-making-spcx__qMWCKtW/verifier/report.json (2110826 bytes)",
-    "2026-11-24__23-44-34/backrun-sol-usdc__78MRhuz/verifier/report.json (16895121 bytes)",
-    "2026-11-24__23-44-34/backrun-sol-usdc__oEBNqJt/verifier/report.json (15457296 bytes)",
-    "2026-11-24__23-44-34/backrun-thin-pools__6RvaexF/verifier/report.json (18603855 bytes)",
-    "2026-11-24__23-44-34/backrun-thin-pools__z6LN7nh/verifier/report.json (19526971 bytes)",
-    "2026-11-24__23-44-34/liquidation-flash__qGCQnAp/verifier/report.json (47583360 bytes)",
-    "2026-11-24__23-44-34/liquidation-flash__xv9praP/verifier/report.json (27571045 bytes)",
-    "2026-11-24__23-44-34/market-making-spcx__XbLUSvm/verifier/report.json (1109420 bytes)",
-    "2026-11-24__23-44-34/market-making-spcx__zxWY3PF/verifier/report.json (1118870 bytes)",
-    "2026-11-24__23-45-04/backrun-sol-usdc__9ijLWSa/verifier/report.json (12324494 bytes)",
-    "2026-11-24__23-45-04/backrun-sol-usdc__pchrrSd/verifier/report.json (11293687 bytes)",
-    "2026-11-24__23-45-04/backrun-sol-usdc__qVy8qHs/verifier/report.json (11293653 bytes)",
-    "2026-11-24__23-45-04/backrun-thin-pools__DH3a28f/verifier/report.json (16401233 bytes)",
-    "2026-11-24__23-45-04/backrun-thin-pools__MPZGKCE/verifier/report.json (16401241 bytes)",
-    "2026-11-24__23-45-04/backrun-thin-pools__jqWmvhW/verifier/report.json (16401241 bytes)",
-    "2026-11-24__23-45-04/liquidation-flash__DXWWQx9/verifier/report.json (9783885 bytes)",
-    "2026-11-24__23-45-04/liquidation-flash__nhbpmUh/verifier/report.json (9783886 bytes)",
-    "2026-11-24__23-45-04/liquidation-flash__qAWdn3T/verifier/report.json (9783918 bytes)",
-    "2026-11-24__23-45-04/market-making-spcx__2QAKRby/verifier/report.json (1206844 bytes)",
-    "2026-11-24__23-45-04/market-making-spcx__4tujtrw/verifier/report.json (1054662 bytes)",
-    "2026-11-25__07-07-13/backrun-thin-pools__RdmjHKB/verifier/report.json (19050965 bytes)",
-    "2026-11-25__07-07-13/liquidation-flash__3JtLcQ6/verifier/report.json (11688887 bytes)",
-    "2026-11-25__10-38-14/backrun-thin-pools__oP9sMy4/verifier/report.json (16401090 bytes)",
-    "2026-11-25__12-07-33/backrun-thin-pools__SdnUm72/verifier/report.json (16401216 bytes)",
-    "2026-11-25__20-04-43/market-making-spcx__fMDDKkm/verifier/report.json (1068816 bytes)",
-    "2026-11-25__20-05-04/market-making-spcx__faNTqJg/verifier/report.json (1137519 bytes)",
-    "2026-11-25__20-05-44/backrun-sol-usdc__zUakD88/verifier/report.json (15091351 bytes)"
+    "2026-11-24__15-56-35/backrun-thin-pools__id6QcJU/artifacts/app/bot/tmp/v12-full.json (1115842 bytes)"
   ],
   "source": "20261124-154634-x1",
   "store": {
-    "bytes": 1076377088,
-    "files": 89944,
+    "bytes": 1123204096,
+    "files": 90182,
     "path": "0.14.0/release.tar",
     "repo": "solana-foundation/machine-trading-results",
-    "revision": "36b1129cae6183e8b4a31f069b7afa2a48e67426",
-    "sha256": "25e2da2686f1d868aeca88dff3756ce5ab2e8b549ef50a13e8584a577ea3e2e9"
+    "revision": "c3954faf2b6f32aa31e46457bca9eb78b18a6b6a",
+    "sha256": "aa1a186c7bc2da27537d2af887e8c48cd5c7ee912f265416cb1685da8a7cb2fd"
   },
   "tasks": {
     "backrun-sol-usdc": {
