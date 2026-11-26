@@ -286,6 +286,25 @@ fn position_of(market: &ExchangeMarketConfig, base_lots: i64, quote_lots: i64) -
     }
 }
 
+/// A perp's best bid and ask, in ticks, and the base lots resting at each,
+/// once the book is uncrossed: `None` for a side with no liquidity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TopLevels {
+    /// `(ticks, base lots)` of the best bid and of the best ask.
+    pub bid: Option<(u64, u64)>,
+    pub ask: Option<(u64, u64)>,
+}
+
+impl TopLevels {
+    /// The prices alone, as Hawkeye's `view_bbo` reports them.
+    pub fn top(&self) -> TopOfBook {
+        TopOfBook {
+            best_bid_ticks: self.bid.map(|(ticks, _)| ticks),
+            best_ask_ticks: self.ask.map(|(ticks, _)| ticks),
+        }
+    }
+}
+
 /// A perp's best bid and ask, in ticks, as Phoenix's Hawkeye `view_bbo`
 /// reports them: `None` for a side with no liquidity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -336,6 +355,17 @@ pub fn perp_top_of_book(
     accounts: &PerpBookAccounts<'_>,
     current_slot: u64,
 ) -> Result<TopOfBook, String> {
+    perp_top_levels(venue, symbol, accounts, current_slot).map(|levels| levels.top())
+}
+
+/// [`perp_top_of_book`] with the base lots resting at each side's best
+/// price: what a watch of the touch reads.
+pub fn perp_top_levels(
+    venue: &PhoenixVenue,
+    symbol: &str,
+    accounts: &PerpBookAccounts<'_>,
+    current_slot: u64,
+) -> Result<TopLevels, String> {
     let traders = Traders::decode(accounts.global_trader_index, accounts.active_trader_buffer)?;
     top_of_book(venue, symbol, accounts, current_slot, &traders)
 }
@@ -351,7 +381,7 @@ pub fn perp_top_and_position(
 ) -> Result<(TopOfBook, Option<crate::Position>), String> {
     let market = venue.market(symbol)?;
     let traders = Traders::decode(accounts.global_trader_index, accounts.active_trader_buffer)?;
-    let top = top_of_book(venue, symbol, accounts, current_slot, &traders)?;
+    let top = top_of_book(venue, symbol, accounts, current_slot, &traders)?.top();
     let position = traders.position(trader, market.asset_id).map(|position| {
         position_of(
             market,
@@ -368,7 +398,7 @@ fn top_of_book(
     accounts: &PerpBookAccounts<'_>,
     current_slot: u64,
     traders: &Traders<'_>,
-) -> Result<TopOfBook, String> {
+) -> Result<TopLevels, String> {
     use phoenix_rise::accounts::{orderbook::Orderbook, spline_collection::SplineCollection};
     type Stream = Box<dyn Iterator<Item = (u64, u64)>>;
     let market = venue.market(symbol)?;
@@ -453,11 +483,8 @@ fn top_of_book(
     }
     bids.push(top::sorted(bid_orders, true));
     asks.push(top::sorted(ask_orders, false));
-    let (best_bid_ticks, best_ask_ticks) = top::top(bids, asks);
-    Ok(TopOfBook {
-        best_bid_ticks,
-        best_ask_ticks,
-    })
+    let (bid, ask) = top::top(bids, asks);
+    Ok(TopLevels { bid, ask })
 }
 
 /// Where [`perp_top_of_book`]'s time goes, stage by stage, in

@@ -59,7 +59,10 @@ Beside them, what the runtime's speed depends on:
   join the cache; a few are read each slot after the steps, so each is
   read once in `every_slots` (at least 5) and told as a `quote`, with its
   trades as `trade` events. `mtx_kit::venue::PhoenixVenue::markets` lists
-  them as `mtx_core::market::MarketInfo` (tick, lot, fees).
+  them as `mtx_core::market::MarketInfo` (tick, lot, fees). `touch` (none)
+  names up to 8 of the watched markets read every slot as well, say
+  `"touch": ["ANT", "NVDA", "SOL", "SPCX"]`: each is told as a `touch` in
+  every slot its index or touch changed.
 - `pools` (none): pools watched without trading them, for a sidecar that
   looks for arbitrage across them (`live::pools`):
   `{"pools": ["orca:amm:Czfq3xZZDmsdGdUyrNLtRhGc47cXcZtLG4crryfu44zE"], "every_slots": 150, "rungs_bps": [2, 5, 10, 20, 40, 80, 160, 320, 640]}`.
@@ -124,6 +127,7 @@ on the same host, a sidecar reads its own delay off it) and an `event`.
 | `command` | a command that changes something was done or refused | the command (an enum), and the refusal (`code`, `error`) if it was |
 | `lagged` | this connection fell behind and lost events | how many: read `status` again |
 | `quote` | a watched market was read (`control.watch`) | symbol, slot, best bid and ask (null on an empty side), mark |
+| `touch` | a market read every slot (`control.watch.touch`) changed its index or touch | symbol, slot, index (Hawkeye's, what the perp re-centres on), mark, best bid and ask and the base units at each (null on an empty side) |
 | `obligation` | a watched obligation was written, or it is its turn (`control.lending`) | venue, address, market, slot, the slot of the write read, the slot the program last refreshed it in, its debt at the borrow factors and its liquidation limit in dollars, and its deposits and borrows (mint, whole tokens, value at that refresh) |
 | `reserve` | a watched obligation's reserve changed price | venue, address, market, mint, slot, the slot of the write read, dollars a whole token, the collateral's least liquidation bonus in bps |
 | `pool` | a watched pool was read (`control.pools`): a write changed it, or it is due again | venue, address, slot, the slot of the write read, both mints, mid, fee in bps, liquidity, a ladder of exact swaps each way (bps moved, whole tokens in and out), microseconds the read took |

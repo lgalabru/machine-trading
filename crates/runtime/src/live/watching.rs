@@ -9,15 +9,24 @@
 //! as a `quote`; their trades come as `trade` events. Reading a Phoenix
 //! market costs a few hundred microseconds: 110 markets every 25 slots is
 //! about five reads, a millisecond or two, a slot.
+//!
+//! A short list of them ([`WatchConfig::touch`], at most [`TOUCH_MAX`]) is
+//! read every slot besides: its index and its touch (the best bid and ask,
+//! with the size at each), told as a `touch` event in each slot either
+//! changed, so a sidecar can measure how far the index leads the book.
 
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
-use super::perp::PerpReader;
+use super::perp::{PerpReader, Touch};
 
 /// Watched markets at most: Phoenix lists about 110.
 pub const WATCHED_MAX: usize = 256;
+
+/// Markets read every slot at most: each read is a few hundred
+/// microseconds, so eight is a few milliseconds a slot.
+pub const TOUCH_MAX: usize = 8;
 
 /// The fewest slots between two reads of a market: a market read every
 /// slot would be a strategy.
@@ -39,6 +48,10 @@ pub struct WatchConfig {
     /// Each market is read once in this many slots (25: ten seconds).
     #[serde(default = "default_every_slots")]
     pub every_slots: u64,
+    /// Of the watched markets, those read every slot for their index and
+    /// touch (`touch` events), at most [`TOUCH_MAX`]: say `["ANT", "SOL"]`.
+    #[serde(default)]
+    pub touch: Vec<String>,
 }
 
 /// The symbols to watch: those asked for that the venue lists, or every
@@ -67,9 +80,33 @@ pub fn per_slot(n: usize, every: u64) -> usize {
     n.div_ceil(every)
 }
 
+/// A market read every slot, and what it last told.
+pub struct Touched {
+    pub symbol: String,
+    reader: PerpReader,
+    last: Option<Touch>,
+}
+
+impl Touched {
+    /// Read it at `slot` with `read`; the reading, if it differs from the
+    /// last one told (the first always does), becomes the last.
+    pub fn changed(
+        &mut self,
+        read: impl FnOnce(&PerpReader) -> Result<Touch, String>,
+    ) -> Result<Option<Touch>, String> {
+        let touch = read(&self.reader)?;
+        if self.last == Some(touch) {
+            return Ok(None);
+        }
+        self.last = Some(touch);
+        Ok(Some(touch))
+    }
+}
+
 /// The watched markets and where the round-robin is.
 pub struct Watching {
     markets: Vec<(String, PerpReader)>,
+    touched: Vec<Touched>,
     /// Each watched market as a survey reads it, for `markets`.
     infos: Vec<mtx_core::market::MarketInfo>,
     every_slots: u64,
@@ -81,14 +118,37 @@ impl Watching {
         markets: Vec<(String, PerpReader)>,
         infos: Vec<mtx_core::market::MarketInfo>,
         every_slots: u64,
+        touch: &[String],
     ) -> Self {
         assert!(markets.len() <= WATCHED_MAX, "watched markets are bounded");
+        let touched: Vec<Touched> = markets
+            .iter()
+            .filter(|(symbol, _)| touch.contains(symbol))
+            .take(TOUCH_MAX)
+            .map(|(symbol, reader)| Touched {
+                symbol: symbol.clone(),
+                reader: reader.clone(),
+                last: None,
+            })
+            .collect();
+        assert!(touched.len() <= TOUCH_MAX);
         Self {
+            touched,
             markets,
             infos,
             every_slots: every_slots.max(EVERY_SLOTS_MIN),
             cursor: 0,
         }
+    }
+
+    /// Whether `symbol` is read every slot.
+    pub fn touches(&self, symbol: &str) -> bool {
+        self.touched.iter().any(|t| t.symbol == symbol)
+    }
+
+    /// The markets read every slot.
+    pub fn touched(&mut self) -> &mut [Touched] {
+        &mut self.touched
     }
 
     pub fn markets(&self) -> &[mtx_core::market::MarketInfo] {
@@ -141,6 +201,70 @@ mod tests {
             }
             prop_assert!(seen.iter().all(|s| *s));
         }
+    }
+
+    fn reader(symbol: &str) -> PerpReader {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let json =
+            std::fs::read_to_string(root.join("snapshots/phoenix-spcx-2026-10-29/exchange.json"))
+                .unwrap();
+        let exchange = serde_json::from_str(&json).unwrap();
+        PerpReader::new(exchange, symbol, &solana_pubkey::Pubkey::default()).unwrap()
+    }
+
+    /// A touched market is told when its index or touch changes, and not
+    /// again while neither does; a failed read tells nothing and keeps
+    /// the last.
+    #[test]
+    fn a_touch_is_told_only_when_it_changes() {
+        let touch = |index: f64, bid: f64| Touch {
+            index,
+            mark: index,
+            bid: Some((bid, 2.0)),
+            ask: Some((index + 0.02, 1.0)),
+        };
+        let markets = vec![
+            ("SOL".to_string(), reader("SOL")),
+            ("SPCX".to_string(), reader("SPCX")),
+        ];
+        let mut watching = Watching::new(markets, Vec::new(), 25, &["SOL".into(), "NOPE".into()]);
+        assert!(watching.touches("SOL") && !watching.touches("SPCX") && !watching.touches("NOPE"));
+        let sol = &mut watching.touched()[0];
+        assert_eq!(
+            sol.changed(|_| Ok(touch(140.0, 139.99))).unwrap(),
+            Some(touch(140.0, 139.99))
+        );
+        assert_eq!(sol.changed(|_| Ok(touch(140.0, 139.99))).unwrap(), None);
+        assert!(sol.changed(|_| Err("not seen".into())).is_err());
+        assert_eq!(sol.changed(|_| Ok(touch(140.0, 139.99))).unwrap(), None);
+        // The size at the touch alone moving is a change.
+        let resized = Touch {
+            bid: Some((139.99, 3.0)),
+            ..touch(140.0, 139.99)
+        };
+        assert_eq!(sol.changed(|_| Ok(resized)).unwrap(), Some(resized));
+        assert_eq!(
+            sol.changed(|_| Ok(touch(140.01, 139.99))).unwrap(),
+            Some(touch(140.01, 139.99))
+        );
+    }
+
+    #[test]
+    fn at_most_touch_max_markets_are_read_every_slot() {
+        let symbols: Vec<String> = [
+            "SOL", "SPCX", "BTC", "ETH", "TSLA", "NVDA", "AAPL", "QQQ", "SPY", "TAO",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let markets: Vec<(String, PerpReader)> =
+            symbols.iter().map(|s| (s.clone(), reader(s))).collect();
+        let watching = Watching::new(markets, Vec::new(), 25, &symbols);
+        assert_eq!(watching.touched.len(), TOUCH_MAX);
+        let config: WatchConfig =
+            serde_json::from_str(r#"{"exchange": "x.json", "touch": ["ANT", "SOL"]}"#).unwrap();
+        assert_eq!(config.touch, ["ANT", "SOL"]);
+        assert_eq!(config.every_slots, 25);
     }
 
     #[test]
