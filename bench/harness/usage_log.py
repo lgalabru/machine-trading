@@ -151,7 +151,9 @@ def totals(path: Path, trial: str) -> Optional[dict]:
                 line = json.loads(raw)
             except ValueError:
                 continue
-            if not isinstance(line, dict) or line.get("trial") != trial:
+            # Hermes lowercases the URL it was given (`.../t/<trial>`), and
+            # Harbor's trial names mix cases: compare without case.
+            if not isinstance(line, dict) or str(line.get("trial", "")).lower() != trial.lower():
                 continue
             calls += 1
             for key in sums:

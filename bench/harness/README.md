@@ -125,15 +125,25 @@ one line per call to `<batch>/usage.jsonl` (`usage_log.py`): the route, the
 trial (the Hermes adapter points each trial at `<proxy>/<route>/t/<trial>`),
 tokens, and the price when the provider reports one. Nous's inference API and
 OpenRouter put it in `usage.cost`; Anthropic's and OpenAI's own APIs report
-tokens only. After each trial the adapter adds its lines up into
-`result.json`'s `agent_result.cost_usd` and tokens (sub-agents included),
-and keeps them in `agent/usage.json`. `bench/report.py` shows the mean cost
-per run by model and task, and each model's total; the review page shows a
-model's cost per run and sorts by it. A model with any run missing a price
-shows no cost rather than a part.
+tokens only.
+
+Once Harbor is done with a batch's runs, `just bench` runs
+`finish_trials.py` with Harbor's Python: it writes each trial's tokens and
+cost from that log into `result.json`'s `agent_result` (the original kept as
+`result.json.orig`, the totals in `agent/usage.json`), and builds any
+missing `agent/trajectory.json` from `agent/hermes-session.jsonl` with
+Harbor's converter. Both used to be left to the agent adapter inside
+Harbor's run, where they raced with it: Harbor calls the adapter's post-run
+hook only when the trial's context is still empty, which its own token
+counting during the run prevents. The session itself is kept by the
+adapter in the container (`hermes_sessions.py`): Hermes exports only closed
+sessions under a source filter, so every timeout and every long run used to
+lose it. `bench/report.py` shows the mean cost per run by model and task and
+each model's total, and warns of any trial with neither trajectory nor
+session; the review page shows a model's cost per run.
 
 Tested by `python3 -I bench/harness/test_usage_log.py` (a fake provider
-behind a real proxy).
+behind a real proxy, and the finishing) and `test_hermes_sessions.py`.
 
 ## The harness check
 

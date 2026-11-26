@@ -817,6 +817,13 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
         run_model "$model" || status=1
       done
     fi
+    # Every Hermes trial's trajectory and model cost, now that Harbor is done
+    # with them: both raced with it inside the agent adapter
+    # (bench/harness/finish_trials.py). Harbor's own Python has its converter.
+    if [ "${#hermes_models[@]}" -gt 0 ]; then
+      harbor_python="$(dirname "$(readlink -f "$(command -v harbor)")")/python"
+      "$harbor_python" -I bench/harness/finish_trials.py "$batch" || status=1
+    fi
     scan_batch || exit 1
     if [ -e "$batch/.stopped" ]; then
       echo "stopped: a provider refused an agent for quota or credit; no trial of this batch can be ranked"

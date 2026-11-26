@@ -56,7 +56,13 @@ def trials(batch):
         if os.path.exists(report_path):
             with open(report_path) as f:
                 report = json.load(f)
-        yield task, model, result, report
+        # A trial is traced when it has its trajectory, or (before the batch
+        # is finished: bench/harness/finish_trials.py) the session it's built from.
+        agent_dir = os.path.join(os.path.dirname(path), "agent")
+        session = os.path.join(agent_dir, "hermes-session.jsonl")
+        traced = os.path.exists(os.path.join(agent_dir, "trajectory.json")) or (
+            os.path.exists(session) and os.path.getsize(session) > 0)
+        yield task, model, result, report, traced
 
 
 def interval(values):
@@ -132,7 +138,10 @@ def main():
     runs = defaultdict(lambda: defaultdict(list))
     costs = defaultdict(lambda: defaultdict(list))
     void = []
-    for task, model, result, report in trials(args.batch):
+    untraced = []
+    for task, model, result, report, traced in trials(args.batch):
+        if not traced:
+            untraced.append(f"{task} {model} {result['trial_name']}")
         costs[task][model].append(cost_of(result))
         rewards = (result.get("verifier_result") or {}).get("rewards")
         if not rewards or not report:
@@ -200,9 +209,14 @@ def main():
             print(f"  {model:28} {row['trials']:>6} {usd(row['total_usd']):>10} {usd(row['per_trial_usd']):>10}")
     if void:
         print("\nvoid (no reward; re-run, don't score): " + ", ".join(void))
+    if untraced:
+        # Every Hermes run keeps a trajectory (bench/harness/hermes_sessions.py):
+        # one missing means that broke again, so say it while the batch runs.
+        print(f"\nWARNING: {len(untraced)} trial(s) have no agent trajectory (agent/trajectory.json): "
+              + ", ".join(untraced[:10]) + (" ..." if len(untraced) > 10 else ""))
     if args.json:
         with open(args.json, "w") as f:
-            json.dump({"tasks": summary, "cost_by_model": by_model, "void": void,
+            json.dump({"tasks": summary, "cost_by_model": by_model, "void": void, "untraced": untraced,
                        **({"guarded": False} if unguarded else {})}, f, indent=2)
 
 
