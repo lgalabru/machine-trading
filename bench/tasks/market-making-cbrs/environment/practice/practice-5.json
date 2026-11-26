@@ -29,8 +29,8 @@
   },
   "description": "CBRS practice session",
   "duration_slots": 1010,
-  "informed_max_drawdown_usd": 1.38,
-  "informed_pnl_usd": 4.93,
+  "informed_max_drawdown_usd": 2.09,
+  "informed_pnl_usd": 1.59,
   "making": {
     "competition": {
       "floor_bps": 7.39,
@@ -893,7 +893,7 @@
       "slot": 1003
     }
   ],
-  "reference_max_drawdown_usd": 0.97,
-  "reference_pnl_usd": 5.79,
+  "reference_max_drawdown_usd": 0.67,
+  "reference_pnl_usd": 4.4,
   "symbol": "CBRS"
 }
