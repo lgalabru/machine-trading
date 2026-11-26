@@ -33,10 +33,6 @@ use mtx_kit::{
 };
 
 const SKEW_BPS_PER_UNIT: f64 = 2.5;
-/// Its skew where every taker is noise and it holds twice the reference's
-/// inventory: twice as steep, so it sheds what it holds as fast in time
-/// and a jump (4 sessions in 72, at any time) finds it holding less.
-const UNINFORMED_SKEW_BPS_PER_UNIT: f64 = 5.0;
 const DRIFT_WEIGHT: f64 = 0.5;
 const DRIFT_SLOTS: f64 = 80.0;
 const DRIFT_MAX_BPS: f64 = 5.0;
@@ -127,16 +123,6 @@ pub struct Informed {
     tape: tape::Tape,
 }
 
-impl Informed {
-    fn skew_bps_per_unit(&self) -> f64 {
-        if self.flow.uninformed {
-            UNINFORMED_SKEW_BPS_PER_UNIT
-        } else {
-            SKEW_BPS_PER_UNIT
-        }
-    }
-}
-
 impl Strategy for Informed {
     fn start(&mut self, session: &Session) -> BotResult {
         self.cap = session.mandate.universe[0].max_position;
@@ -196,9 +182,8 @@ impl Strategy for Informed {
         // take only to reduce): the skew pulls toward the target, not zero.
         let target = TARGET_SHARE * cap * signal;
         let lean_bps = LEAN_BPS * signal;
-        let reservation = mark
-            * (1.0
-                + (drift_bps + lean_bps - self.skew_bps_per_unit() * (held - target)) / 10_000.0);
+        let reservation =
+            mark * (1.0 + (drift_bps + lean_bps - SKEW_BPS_PER_UNIT * (held - target)) / 10_000.0);
         // The side the informed are hitting stays out of their way, unless
         // it sheds what the bot holds.
         // A run on the tape is dodged as the reference does, only while its
