@@ -31,6 +31,11 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--text); }
+  /* Nothing pans the page sideways: on iOS Safari an element past the right
+     edge (the closed peek, a long row) widens the page and zooms it out, so a
+     swipe moved the page instead of the task strip, and switching tasks
+     changed the zoom. clip, unlike hidden, keeps sticky headers working. */
+  html, body { overflow-x: clip; }
   body { font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
   a { color: inherit; }
   .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -48,6 +53,9 @@
   .peek-backdrop.on { opacity: 1; pointer-events: auto; cursor: pointer; }
   .peek { position: fixed; top: 52px; right: 0; bottom: 0; left: 440px; min-width: 640px; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -28px 0 60px rgba(0,0,0,.65); z-index: 41; display: flex; flex-direction: column; transform: translateX(104%); transition: transform .22s cubic-bezier(.2,.8,.2,1); }
   .peek.on { transform: none; }
+  /* Closed, it's out of the page altogether, not just pushed off its edge;
+     it hides once it has slid away. */
+  .peek:not(.on) { visibility: hidden; transition: transform .22s cubic-bezier(.2,.8,.2,1), visibility 0s .22s; }
   @media (max-width: 1100px) { .peek { left: 150px; min-width: 0; } }
   .peek-bar { position: relative; padding: 4px 26px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
   .peek-bar .peek-x { position: absolute; top: 12px; right: 16px; }
@@ -231,6 +239,14 @@
   .roster-search:focus { outline: none; border-color: var(--text-3); }
   .roster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 4px 10px; }
   .roster-grid .pick { grid-template-columns: 8px minmax(0, 1fr) auto; background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; }
+  @media (hover: none) { .roster-head .watch-hint { display: none; } }
+  /* Phones: the rankings are a strip to swipe, like the tasks, not a column. */
+  @media (max-width: 640px) {
+    .ranks { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+    .ranks::-webkit-scrollbar { display: none; }
+    .rank-card { flex: 0 0 82%; scroll-snap-align: start; }
+    .roster-search { flex: 1 1 auto; }
+  }
   .quote.multi { gap: 22px; }
   .quote.multi .q { display: flex; flex-direction: column; gap: 2px; }
   .quote.multi .qn { font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
