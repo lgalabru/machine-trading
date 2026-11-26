@@ -207,6 +207,10 @@ pub struct Decoy {
     pub size_mult: f64,
     #[serde(default = "fifty")]
     pub limit_bps: f64,
+    /// The window it trades in at all, if not the whole session: a decoy
+    /// that positions into an event only around it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<Window>,
 }
 
 impl Decoy {
@@ -666,6 +670,9 @@ impl Actor for DecoyTrader {
     async fn before_blocks(&mut self, last: &Moment) {
         let slots = last.at - self.last.unwrap_or(0);
         self.last = Some(last.at);
+        if !Window::holds(&self.spec.active, last.at) {
+            return;
+        }
         let rate = self.scale.per_slot() * self.spec.intensity_mult / self.wallets.len() as f64;
         for wallet in 0..self.wallets.len() {
             let Some(side) = self.side(wallet, last) else {
@@ -861,6 +868,7 @@ mod tests {
             intensity_mult: 1.0,
             size_mult: 1.0,
             limit_bps: 50.0,
+            active: None,
         };
         let mut decoy = DecoyTrader::new(spec, scale(), vec![wallet], path, Rng::new([6; 32]));
         assert!((150..200).contains(&decoy.fades[0]));
@@ -887,5 +895,46 @@ mod tests {
         // Its view changes at most once a horizon.
         let changes = sides.windows(2).filter(|p| p[0].1 != p[1].1).count();
         assert!(changes <= (2_000 - 210) / 20, "{changes}");
+    }
+
+    /// A decoy with a window trades only inside it, as one that positions
+    /// into an event does.
+    #[tokio::test]
+    async fn a_decoy_with_a_window_trades_only_inside_it() {
+        let (book, log) = Book::new("w", 99.0, 101.0);
+        let (wallet, _) = wallet(book);
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> =
+            Arc::new(|s| at(s, if s < 100 { 100.0 } else { 102.0 }));
+        let spec = Decoy {
+            wallets: 1,
+            horizon_slots: 20,
+            edge_bps: 50.0,
+            hit_rate: 1.0,
+            view_noise_bps: 0.0,
+            informed_for: Window {
+                from: 90,
+                until: Some(95),
+            },
+            intensity_mult: 50.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            active: Some(Window {
+                from: 80,
+                until: Some(120),
+            }),
+        };
+        let mut decoy = DecoyTrader::new(spec, scale(), vec![wallet], path, Rng::new([7; 32]));
+        for s in (2..80).step_by(2) {
+            decoy.before_blocks(&at(s, 100.0)).await;
+        }
+        assert!(log.lock().unwrap().is_empty());
+        for s in (80..120).step_by(2) {
+            decoy.before_blocks(&at(s, 100.0)).await;
+        }
+        assert!(!std::mem::take(&mut *log.lock().unwrap()).is_empty());
+        for s in (120..400).step_by(2) {
+            decoy.before_blocks(&at(s, 102.0)).await;
+        }
+        assert!(log.lock().unwrap().is_empty());
     }
 }

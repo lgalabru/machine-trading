@@ -43,6 +43,8 @@ Each session is drawn from one family, its draws secret:
 
 Every searcher's and trader's draws come from the session's seed: a session replays exactly.
 
+**Where this market departs from mainnet's,** so the task stays gradeable: triggers are far more common, and larger, than these ten pools have seen. A trigger's move is drawn from the 46 triggers of the week of mainnet this task was built on (median 545 bp), which came from the week's 200 most profitable SOL arbitrages over all of Solana's pools, not from these ten. From 2026-11-23 21:47 to 2026-11-25 06:10 UTC, about 32 hours, a scout on our own validator saw 14 cycles on these pools pay 0.001 SOL or more: seven through the two SOL/USDC pools (one of 0.61 SOL behind a sale of about 380 SOL, the others 0.002 to 0.05 SOL), seven through GEOD (0.002 to 0.04 SOL, behind moves of 42 to 287 bp), and none through JTO, whose cycles never came within 52 bp of paying. Every one was gone within three slots. The scout reads a write a slot after it lands, so it can't see a gap opened and closed inside one block, where most of the week's backruns landed (77 of 106): these are what the race left. The pools, and how fast the searchers come and what they pay, are mainnet's.
+
 ## The bot contract
 
 Your bot is a **strategy component**: a WebAssembly component, `/app/bot/bot.wasm`, built for `wasm32-wasip2`. The grader loads it and trades for it: before every step it reads the market, calls your strategy with it, and sends the orders your strategy puts on its order sheet, signed with the session's key. You write a `Strategy` in Rust on `mtx-kit`, and `mtx_kit::export!` makes it the component (the interface is the WIT world `mtx:strategy`, in `/opt/mtx/sdk/crates/kit/wit/strategy.wit`, for other languages).

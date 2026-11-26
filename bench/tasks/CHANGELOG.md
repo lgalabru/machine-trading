@@ -4,34 +4,68 @@ Releases of the `solana-foundation/machine-trading` dataset. Names are as
 each release shipped them: the CLI was `mth` from 0.5.0 until it became
 `mtx`.
 
-- **0.15.0** (draft). Every task's market measured from mainnet
-  ([RFD 0007](../../docs/rfd/0007-tasks-measured-against-mainnet.md)), on
-  luthor's Phoenix tape `phoenix-tape.20261125.fc443f1e`.
-  - **`market-making-spcx` is now `market-making-ant`: the market with
-    real flow, measured, scored by v2.** Its takers sent 0.8 to 1.8
-    orders a second that knew nothing, with informed orders only ahead of
-    jumps; SPCX's real takers sent 0.33 orders a minute in regular hours,
-    and the average Phoenix taker is a little informed. The task moves to
-    Phoenix's ANT (Anthropic), on a new snapshot
-    (`phoenix-ant-2026-11-25`, cap 35 ANT), and its family is built from
-    ANT's measured profile (`market-making-ant`): the actor library's
-    noise and informed takers at ANT's pace (11.6 orders a minute) and
-    sizes (median $100, log-sd 1.5), and three kinds of taker fitted to
-    ANT's measured 10 s and 60 s markouts (+2.1, +4.4 bp): noise, index
-    chasers that take the index's lead over Phoenix's makers (the book
-    follows the index 1 to 2 s late: a modelled, public mechanism), and a
-    smaller private-horizon informed share; the price walks at ANT's
-    measured 4.45 bp a second; an arbitrageur that takes quotes a
-    move left stale against Phoenix's index (3.5 to 5 bp edge, 1 to 2
-    slots), where luthor's paper makers lose on mainnet; the grader's
-    reactive maker at ANT's measured touch (2.7 bp over 106 minutes of
-    quotes).  ANT has no calibration file: the walk is
-    SPCX's scaled to ANT's measured volatility (stated); 4 of 72 sessions jump (about 70 times
-    Phoenix's rate: stated), 28 trend, 40 are calm. The reference also reads
-    the tape (Phoenix's trade list) and steps off a side a one-sided run hits. Scored by v2 with
-    an informed bot told which wallets are the informed takers. SPCX's
-    profile stays drawable (`market-making-measured-spcx`, its flow x35).
-    Rewards fall and don't compare with 0.14.0's: those measured a game.
+- **0.15.0** (draft). Every task's market measured against mainnet's
+  Phoenix tape (RFD 0007, the study `phoenix-tape.20261125.fc443f1e`).
+  - **Renamed: `flash-crash-spcx` is now `flash-crash-nvda`, on the market
+    where the shocks were.** NVDA carried 9 of the tape's 93 jumps
+    (2026-11-23's leader among them); `mtx bench review` lines the two names
+    up by their skill. On the tape a jump of 1.5% or more went on by half
+    of itself again 45% of the time fifteen minutes on, and gave half back
+    31%; flash-crash-spcx's shocks reverted 65% and extended 15%, so fading
+    paid by construction. The task now draws from
+    `flash-crash-nvda` (`ShockFamily::nvda()`): revert 31%, stall 24%,
+    extend 45%; legs from a Pareto fitted to the 93 jumps' sizes (1.5 to
+    9.5%, median about 2%); small moves that mostly don't give their move
+    back (26% revert, 37% stall, 37% extend); a quarter of the sessions
+    quiet, with no shock; NVDA's wobble from its calibration. NVDA's takers
+    trade beside the bot (the actor library: noise at NVDA's measured pace,
+    informed takers who see about ten seconds ahead, chasers, at the flow
+    NVDA's jumps carried), and its trades move the price (impact). Stated
+    departures, in its instruction: shocks far more common than on
+    mainnet, the aftermath inside the session, direction 50/50, aftermath
+    odds and leg sizes pooled over all markets. Its reference rides a
+    confirmed move with a trailing stop (fading loses on these odds); an
+    informed bot, told the informed takers' wallets, is v2's 1. Its
+    snapshot is `phoenix-perps-2026-11-13`.
+  - **`weekend-gap-spcx`: the weekend mainnet measured, scored by v2.** The
+    old task's premise, weekend taker flow that knows where SPCX opens and
+    moves the perp there, didn't show on Phoenix: the tape's 23 weekend
+    hours held one order, and over 21 weekends of candles the book's move
+    was the makers'. Its sessions now draw from `weekend-gap-mainnet`
+    (`WeekendFamily::mainnet()`): a weekend move resampled from the 21
+    measured ones (median 0.86%), a reopen that keeps 0.78 of it give or
+    take 0.50% (95% 0.57 to 1.04), the weekend's few prints and a burst at
+    the reopen (`calibration/weekend/spcx-reopens.20261120.json`). Stated
+    departures, in its instruction: time compressed, direction a coin flip,
+    an unrecorded weekend book, and two informed traders, right 95% of the
+    time, and two decoys positioning into the reopen, flow the tape never
+    saw. The reference reads the market's transactions, counts the wallets
+    first seen just before the reopen as a vote it trusts 72.5% (two right
+    95% and two decoys at 50%), and fades the expected take-back by it; an
+    informed bot, told the informed wallets and reading their silence, is
+    v2's 1. Over three sets of 24 sessions the reference makes 0.513 of
+    it. The rungs fitted to the old family are gone, and rewards don't
+    compare with 0.14.0's.
+  - **`market-making-spcx` stays at 0.14.0.** Measured, it failed both
+    ways a market can (RFD 0007, 2026-11-25): on ANT's informed flow no
+    maker earns, not even one told who is informed, and on CBRS's thin,
+    wide book every quoter earns, so skill doesn't separate. It comes back
+    as `market-making-ant` once luthor has measured how fast ANT's book is
+    picked off after its index moves.
+  - **The three atomic tasks: unchanged, their departures stated.**
+    `backrun-sol-usdc`, `backrun-thin-pools` and `liquidation-flash` were
+    checked against luthor's scouts on our own validator (RFD 0007,
+    2026-11-25). Per event they agree where the scouts can see: the one
+    chunk-sized gap on the SOL/USDC pair in 32 hours paid 0.61 SOL behind a
+    48.5 bp move, every gap on the ten pools was gone within three slots,
+    and the one contested liquidation (repaying $2,363) went to a rival
+    within two. Where they depart is rate, and for `backrun-thin-pools` the
+    size of its triggers: each session is a burst, a run of triggers or a
+    drawdown, where the scouts' calm day held seven gaps through GEOD (at
+    most 0.04 SOL), none through JTO, and two obligations a liquidator
+    could take. The scouts can't see a gap closed inside its block, and one
+    day fits nothing, so the families, references and informed bots stay;
+    each instruction now states its departure beside the measured values.
 - **0.14.0.** Three atomic-arbitrage tasks, built on a study of a week of
   mainnet arbitrage (`docs/RESEARCH.md`, ADR 0004). The four perp tasks are
   unchanged: their anchor digests did not move.

@@ -4,10 +4,12 @@ backrun-sol-usdc mtx-bot-backrun-sol-usdc mtx-backrun-sol-usdc bench/tasks/backr
 backrun-sol-usdc-informed mtx-bot-backrun-sol-usdc-informed mtx-backrun-sol-usdc-informed bench/tasks/backrun-sol-usdc/checks/bots/informed component
 backrun-thin-pools mtx-bot-backrun-thin-pools mtx-backrun-thin-pools bench/tasks/backrun-thin-pools/reference component
 backrun-thin-pools-informed mtx-bot-backrun-thin-pools-informed mtx-backrun-thin-pools-informed bench/tasks/backrun-thin-pools/checks/bots/informed component
-flash-crash mtx-bot-reference mtx-reference bench/tasks/flash-crash-spcx/reference
+flash-crash-nvda mtx-bot-flash-crash-nvda mtx-flash-crash-nvda bench/tasks/flash-crash-nvda/reference
+flash-crash-nvda-informed mtx-bot-flash-crash-nvda-informed mtx-flash-crash-nvda-informed bench/tasks/flash-crash-nvda/checks/bots/informed
 funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 liquidation-flash mtx-bot-liquidation-flash mtx-liquidation-flash bench/tasks/liquidation-flash/reference component
 liquidation-flash-informed mtx-bot-liquidation-flash-informed mtx-liquidation-flash-informed bench/tasks/liquidation-flash/checks/bots/informed component
 market-making-ant mtx-bot-maker mtx-maker bench/tasks/market-making-ant/reference component
 market-making-ant-informed mtx-bot-market-making-informed mtx-market-making-informed bench/tasks/market-making-ant/checks/bots/informed component
 weekend-gap mtx-bot-weekend mtx-weekend bench/tasks/weekend-gap-spcx/reference
+weekend-gap-informed mtx-bot-weekend-gap-spcx-informed mtx-weekend-gap-spcx-informed bench/tasks/weekend-gap-spcx/checks/bots/informed

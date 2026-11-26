@@ -7,8 +7,8 @@ whose tool isn't in the build or that needs the full run. `inconclusive`
 marks a check whose sample was too small to decide.
 
 ```sh
-mtx gates flash-crash-spcx --fast   # task files + a one-set, 12-session public ladder
-mtx gates flash-crash-spcx          # + the image checks; 4 sets of the task's sessions
+mtx gates flash-crash-nvda --fast   # task files + a one-set, 12-session public ladder
+mtx gates flash-crash-nvda          # + the image checks; 4 sets of the task's sessions
 ```
 
 Full mode builds the task image and runs Harbor, so run it on a machine with
