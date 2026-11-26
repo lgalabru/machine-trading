@@ -942,6 +942,45 @@ impl Ctx {
     }
 }
 
+/// What of the watches couldn't start (`control.watch`, `pools`,
+/// `lending`), and when to try again (`super::retry`).
+#[derive(Default)]
+struct Retrying {
+    backoff: super::retry::Backoff,
+    /// The background read of what is missing, while one runs.
+    task: Option<tokio::task::JoinHandle<()>>,
+    /// What a background read found of the pools, for the loop to take.
+    found: Arc<Mutex<Vec<(InstrumentRef, super::pools::Watched)>>>,
+    /// The watched markets' exchange file, for their tapes.
+    exchange: Option<PathBuf>,
+    markets: Vec<(String, PerpReader, Option<mtx_core::market::MarketInfo>)>,
+    pools: Vec<InstrumentRef>,
+    lending: Option<super::lending::Lending>,
+}
+
+impl Retrying {
+    fn is_empty(&self) -> bool {
+        self.markets.is_empty() && self.pools.is_empty() && self.lending.is_none()
+    }
+
+    /// The accounts the waiting markets and obligations still lack.
+    fn missing(&self, cache: &impl super::feed::Accounts) -> Vec<Address> {
+        let mut wanted: Vec<Address> = self
+            .markets
+            .iter()
+            .flat_map(|(_, reader, _)| reader.addresses())
+            .collect();
+        if let Some(lending) = &self.lending {
+            wanted.extend(lending.addresses());
+            wanted.extend(lending.reserves_named(cache).iter().map(Pubkey::to_bytes));
+        }
+        wanted.retain(|address| cache.data(address).is_none());
+        wanted.sort_unstable();
+        wanted.dedup();
+        wanted
+    }
+}
+
 /// What a strategy trades on, as its kind prepares it: a perp's reader
 /// and tape, or a pool strategy's pools.
 struct PreparedMarket {
@@ -982,6 +1021,8 @@ struct Manager {
     pools: Option<super::pools::Pools>,
     /// The lending obligations watched (`control.lending`).
     lending: Option<super::lending::Lending>,
+    /// What of the three watches couldn't start, tried again.
+    retrying: Retrying,
     /// Strategies being added, off the loop: their names are taken.
     adding: std::collections::BTreeSet<String>,
     /// Where an `add`'s task hands back the strategy it prepared.
@@ -1003,6 +1044,7 @@ impl Manager {
             slot: 0,
             tapes: BTreeMap::new(),
             watching: None,
+            retrying: Retrying::default(),
             pools: None,
             lending: None,
             adding: std::collections::BTreeSet::new(),
@@ -1052,8 +1094,13 @@ impl Manager {
                         continue;
                     }
                 };
+            let info = venue
+                .markets()
+                .into_iter()
+                .find(|m| m.instrument.symbol == symbol);
             if let Err(error) = self.ctx().backfill(&reader).await {
-                tracing::warn!(symbol, %error, "a watched market's accounts weren't found");
+                tracing::warn!(symbol, %error, "a watched market's accounts weren't found; trying again");
+                self.retrying.markets.push((symbol, reader, info));
                 continue;
             }
             if !self.tapes.contains_key(&symbol) {
@@ -1066,15 +1113,10 @@ impl Manager {
                     }
                 }
             }
-            if let Some(info) = venue
-                .markets()
-                .into_iter()
-                .find(|m| m.instrument.symbol == symbol)
-            {
-                infos.push(info);
-            }
+            infos.extend(info);
             markets.push((symbol, reader));
         }
+        self.retrying.exchange = Some(config.exchange.clone());
         tracing::info!(
             markets = markets.len(),
             every_slots = config.every_slots,
@@ -1107,13 +1149,15 @@ impl Manager {
             let pool = match crate::venue::amm::Pool::read(&chain, instrument).await {
                 Ok(pool) => pool,
                 Err(error) => {
-                    tracing::warn!(%instrument, %error, "a watched pool can't be read");
+                    tracing::warn!(%instrument, %error, "a watched pool can't be read; trying again");
+                    self.retrying.pools.push(instrument.clone());
                     continue;
                 }
             };
             let pool = super::pools::Watched::new(pool);
             if let Err(error) = self.ctx().backfill_addresses(&pool.addresses()).await {
-                tracing::warn!(%instrument, %error, "a watched pool's account wasn't found");
+                tracing::warn!(%instrument, %error, "a watched pool's account wasn't found; trying again");
+                self.retrying.pools.push(instrument.clone());
                 continue;
             }
             watched.push(pool);
@@ -1139,17 +1183,25 @@ impl Manager {
                 return;
             }
         };
-        let mut lending = super::lending::Lending::new(market, obligations, config.every_slots);
+        let lending = super::lending::Lending::new(market, obligations, config.every_slots);
         if let Err(error) = self.ctx().backfill_addresses(&lending.addresses()).await {
-            tracing::error!(%error, "the watched obligations weren't read; none is watched");
+            tracing::error!(%error, "the watched obligations weren't read; trying again");
+            self.retrying.lending = Some(lending);
             return;
         }
         let reserves = lending.reserves_named(&*lock(&self.shared.cache));
         let addresses: Vec<Address> = reserves.iter().map(Pubkey::to_bytes).collect();
         if let Err(error) = self.ctx().backfill_addresses(&addresses).await {
-            tracing::error!(%error, "the obligations' reserves weren't read; none is watched");
+            tracing::error!(%error, "the obligations' reserves weren't read; trying again");
+            self.retrying.lending = Some(lending);
             return;
         }
+        self.watch_lending(lending);
+    }
+
+    /// Start watching `lending`, its obligations and reserves in the cache.
+    fn watch_lending(&mut self, mut lending: super::lending::Lending) {
+        let reserves = lending.reserves_named(&*lock(&self.shared.cache));
         for reserve in &reserves {
             lending.ask(*reserve);
         }
@@ -1159,6 +1211,102 @@ impl Manager {
             "watching lending obligations"
         );
         self.lending = Some(lending);
+    }
+
+    /// Try again what of the watches couldn't start: start watching what
+    /// the cache now holds, and when the backoff says so, read the rest
+    /// from the node in the background. Nothing here waits on the node.
+    fn retry_watches(&mut self, slot: u64) {
+        if self.retrying.is_empty() {
+            return;
+        }
+        self.finish_retried();
+        if self.retrying.is_empty() {
+            tracing::info!("every watch that couldn't start is now watched");
+            return;
+        }
+        let running = self
+            .retrying
+            .task
+            .as_ref()
+            .is_some_and(|t| !t.is_finished());
+        if running || !self.retrying.backoff.due(slot) {
+            return;
+        }
+        let missing = self.retrying.missing(&*lock(&self.shared.cache));
+        let pools = self.retrying.pools.clone();
+        if self.retrying.backoff.worth_logging() {
+            tracing::warn!(
+                attempt = self.retrying.backoff.attempts(),
+                markets = self.retrying.markets.len(),
+                pools = pools.len(),
+                lending = self.retrying.lending.is_some(),
+                "watches still missing their accounts; reading them again"
+            );
+        }
+        let ctx = self.ctx();
+        let found = self.retrying.found.clone();
+        self.retrying.task = Some(tokio::spawn(async move {
+            if let Err(error) = ctx.backfill_addresses(&missing).await {
+                tracing::debug!(%error, "a watch's accounts still aren't there");
+            }
+            let chain = RpcChainClient::with_timeout(&ctx.config.rpc_url, BACKFILL_TIMEOUT);
+            for instrument in pools {
+                let Ok(pool) = crate::venue::amm::Pool::read(&chain, &instrument).await else {
+                    continue;
+                };
+                let pool = super::pools::Watched::new(pool);
+                if ctx.backfill_addresses(&pool.addresses()).await.is_ok() {
+                    lock(&found).push((instrument, pool));
+                }
+            }
+        }));
+    }
+
+    /// Start watching what a retry found: the markets and the obligations
+    /// whose accounts the cache now holds, and the pools the task read.
+    fn finish_retried(&mut self) {
+        let found = std::mem::take(&mut *lock(&self.retrying.found));
+        for (instrument, pool) in found {
+            self.retrying.pools.retain(|p| p != &instrument);
+            if let Some(pools) = self.pools.as_mut() {
+                tracing::info!(%instrument, "a watched pool is watched after all");
+                pools.add(pool);
+            }
+        }
+        let ready: Vec<(String, PerpReader, Option<mtx_core::market::MarketInfo>)> = {
+            let cache = lock(&self.shared.cache);
+            let (ready, waiting) = std::mem::take(&mut self.retrying.markets)
+                .into_iter()
+                .partition(|(_, reader, _)| super::retry::all_seen(&*cache, &reader.addresses()));
+            self.retrying.markets = waiting;
+            ready
+        };
+        for (symbol, reader, info) in ready {
+            if let Some(exchange) = self.retrying.exchange.clone()
+                && !self.tapes.contains_key(&symbol)
+                && let Ok(tape) = self.ctx().tape_reader_for(&exchange, &symbol)
+            {
+                self.tapes.insert(symbol.clone(), tape);
+            }
+            if let Some(watching) = self.watching.as_mut() {
+                tracing::info!(symbol, "a watched market is watched after all");
+                watching.add(symbol, reader, info);
+            }
+        }
+        let lending_ready = self.retrying.lending.as_ref().is_some_and(|lending| {
+            let cache = lock(&self.shared.cache);
+            let reserves: Vec<Address> = lending
+                .reserves_named(&*cache)
+                .iter()
+                .map(Pubkey::to_bytes)
+                .collect();
+            super::retry::all_seen(&*cache, &lending.addresses())
+                && super::retry::all_seen(&*cache, &reserves)
+        });
+        if lending_ready && let Some(lending) = self.retrying.lending.take() {
+            self.watch_lending(lending);
+        }
     }
 
     /// Tell the reserves whose price changed and the obligations a write
@@ -1482,6 +1630,7 @@ impl Manager {
                     self.emit_quotes(self.slot);
                     self.emit_pools(self.slot);
                     self.emit_lending(self.slot);
+                    self.retry_watches(self.slot);
                 }
                 request = commands.recv() => {
                     let Some((command, reply)) = request else {
@@ -2668,6 +2817,53 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A cache that lacks a watched market's accounts at first and gains
+    /// them later: what a retry still asks the node for shrinks to nothing,
+    /// and the market is then ready to watch.
+    #[test]
+    fn a_retry_asks_only_for_what_the_cache_still_lacks() {
+        struct Cache(BTreeMap<Address, Vec<u8>>);
+        impl super::super::feed::Accounts for Cache {
+            fn data(&self, address: &Address) -> Option<&[u8]> {
+                self.0.get(address).map(Vec::as_slice)
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let json =
+            std::fs::read_to_string(root.join("snapshots/phoenix-spcx-2026-10-29/exchange.json"))
+                .unwrap();
+        let reader = PerpReader::new(
+            serde_json::from_str(&json).unwrap(),
+            "SOL",
+            &Pubkey::default(),
+        )
+        .unwrap()
+        .flat_without_account();
+        let addresses = reader.addresses();
+        let mut retrying = Retrying::default();
+        retrying.markets.push(("SOL".into(), reader, None));
+        assert!(!retrying.is_empty());
+        let mut cache = Cache(BTreeMap::new());
+        let mut missing = retrying.missing(&cache);
+        missing.sort_unstable();
+        let mut wanted = addresses.clone();
+        wanted.sort_unstable();
+        wanted.dedup();
+        assert_eq!(missing, wanted);
+        // Half arrive: only the rest is asked for.
+        for address in &addresses[..addresses.len() / 2] {
+            cache.0.insert(*address, vec![0]);
+        }
+        let missing = retrying.missing(&cache);
+        assert!(!missing.is_empty() && missing.len() < wanted.len());
+        assert!(!super::super::retry::all_seen(&cache, &addresses));
+        for address in &addresses {
+            cache.0.insert(*address, vec![0]);
+        }
+        assert!(retrying.missing(&cache).is_empty());
+        assert!(super::super::retry::all_seen(&cache, &addresses));
+    }
 
     #[test]
     fn a_mandate_gives_the_cap_on_its_market_and_its_drawdown_limit() {

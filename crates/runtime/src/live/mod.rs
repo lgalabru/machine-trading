@@ -25,6 +25,7 @@ pub mod perp;
 pub mod pooldesk;
 pub mod pools;
 pub mod reference;
+pub mod retry;
 pub mod session;
 pub mod shadow;
 pub mod stopping;

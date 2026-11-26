@@ -107,6 +107,8 @@ impl Touched {
 pub struct Watching {
     markets: Vec<(String, PerpReader)>,
     touched: Vec<Touched>,
+    /// The markets asked to be read every slot, found or not yet.
+    touch_wanted: Vec<String>,
     /// Each watched market as a survey reads it, for `markets`.
     infos: Vec<mtx_core::market::MarketInfo>,
     every_slots: u64,
@@ -134,6 +136,7 @@ impl Watching {
         assert!(touched.len() <= TOUCH_MAX);
         Self {
             touched,
+            touch_wanted: touch.iter().take(TOUCH_MAX).cloned().collect(),
             markets,
             infos,
             every_slots: every_slots.max(EVERY_SLOTS_MIN),
@@ -149,6 +152,32 @@ impl Watching {
     /// The markets read every slot.
     pub fn touched(&mut self) -> &mut [Touched] {
         &mut self.touched
+    }
+
+    /// Watch one more market, one whose accounts weren't found at the start
+    /// (`super::retry`). Past [`WATCHED_MAX`] it is refused, and said so.
+    pub fn add(
+        &mut self,
+        symbol: String,
+        reader: PerpReader,
+        info: Option<mtx_core::market::MarketInfo>,
+    ) {
+        if self.markets.len() >= WATCHED_MAX {
+            tracing::warn!(symbol, "past the watched markets' limit; not watched");
+            return;
+        }
+        // A market asked to be read every slot, found late, is read every
+        // slot from now on, within the same bound.
+        if self.touch_wanted.contains(&symbol) && self.touched.len() < TOUCH_MAX {
+            self.touched.push(Touched {
+                symbol: symbol.clone(),
+                reader: reader.clone(),
+                last: None,
+            });
+        }
+        self.markets.push((symbol, reader));
+        self.infos.extend(info);
+        assert!(self.markets.len() <= WATCHED_MAX);
     }
 
     pub fn markets(&self) -> &[mtx_core::market::MarketInfo] {
@@ -247,6 +276,19 @@ mod tests {
             sol.changed(|_| Ok(touch(140.01, 139.99))).unwrap(),
             Some(touch(140.01, 139.99))
         );
+    }
+
+    /// A market asked to be read every slot whose accounts were found only
+    /// later (the retry adds it) is read every slot from then on.
+    #[test]
+    fn a_market_found_late_is_read_every_slot_if_asked() {
+        let mut watching = Watching::new(Vec::new(), Vec::new(), 25, &["SOL".into()]);
+        assert!(!watching.touches("SOL"));
+        watching.add("SPCX".into(), reader("SPCX"), None);
+        assert!(!watching.touches("SPCX"), "not asked");
+        watching.add("SOL".into(), reader("SOL"), None);
+        assert!(watching.touches("SOL"));
+        assert_eq!(watching.touched().len(), 1);
     }
 
     #[test]
