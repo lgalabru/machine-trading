@@ -5424,6 +5424,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mtx-bot-carry-sol"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-carry-sol-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
 name = "mtx-bot-fault-probe"
 version = "0.1.0"
 dependencies = [
