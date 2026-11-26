@@ -12,7 +12,12 @@
 //! risk as scoring v2 weighs losses (1.5 times): it holds the cap when that
 //! pays, less as it thins, nothing when it doesn't, against a discount the
 //! other way. It only adds, like the reference, and flattens past the same
-//! drawdown.
+//! drawdown. Its loss budget is what the carry pays plus one standard
+//! deviation of the index over the session, both as it priced them at its
+//! first step (bp of the cap's notional, never under [`MIN_BUDGET_BPS`]):
+//! once the position's loss against the mark passes it, the index has taken
+//! more than the carry and an ordinary session's noise account for, and it
+//! gets out for the session.
 //!
 //! It knows the process, never the path, the premium as it will wander, or
 //! when anyone trades.
@@ -35,6 +40,8 @@ pub const LOSS_WEIGHT: f64 = 1.5;
 pub const FULL_EDGE_BPS: f64 = 4.0;
 /// The share of the drawdown limit past which it flattens.
 pub const STOP_SHARE: f64 = 0.6;
+/// The least loss budget, bp of the cap's notional: what getting in costs.
+pub const MIN_BUDGET_BPS: f64 = 7.0;
 /// The market order it adds by, SOL, how often, and how far through the
 /// book it reaches: as the reference.
 pub const SLICE: f64 = 5.0;
@@ -165,6 +172,12 @@ fn funding_landed(map: &str, symbol: &str, period_s: f64) -> BotResult<bool> {
     Ok(period == period_s)
 }
 
+/// The loss budget in USD: `budget_bps` of the cap's notional at `mark`.
+pub fn budget_usd(budget_bps: f64, cap: f64, mark: f64) -> f64 {
+    assert!(budget_bps >= 0.0 && cap >= 0.0);
+    budget_bps / 10_000.0 * cap * mark
+}
+
 /// The strategy.
 #[derive(Default)]
 pub struct Informed {
@@ -175,6 +188,9 @@ pub struct Informed {
     max_drawdown: f64,
     landed: bool,
     stopped: bool,
+    /// The session's loss budget, bp of the cap's notional, set at its
+    /// first priced step.
+    budget_bps: Option<f64>,
     last_trade_slot: u64,
 }
 
@@ -211,6 +227,16 @@ impl Strategy for Informed {
         if market.drawdown > STOP_SHARE * self.max_drawdown {
             self.stopped = true;
         }
+        if let Some(budget_bps) = self.budget_bps
+            && held != 0.0
+            && -market.pnl > budget_usd(budget_bps, self.cap, market.mark)
+        {
+            log(&format!(
+                "slot {}: the loss passed what the carry pays; out",
+                market.slot
+            ));
+            self.stopped = true;
+        }
         if self.stopped {
             trade_toward(orders, market, held, 0.0, 8);
             return Ok(());
@@ -221,6 +247,10 @@ impl Strategy for Informed {
         let now_bps = premium_bps(market).unwrap_or(process.mean_bps);
         let seconds_left = market.slots_left as f64 * SLOT_SECONDS;
         let expected = process.expected_bps(now_bps, seconds_left);
+        if self.budget_bps.is_none() {
+            let noise = INDEX_SD_BPS_PER_S * seconds_left.sqrt();
+            self.budget_bps = Some((expected.abs() + noise).max(MIN_BUDGET_BPS));
+        }
         let side = -expected.signum();
         let risk = INDEX_SD_BPS_PER_S * seconds_left.sqrt();
         let edge = weighted_edge(expected.abs() - ENTRY_COST_BPS, risk);
@@ -264,6 +294,12 @@ mod tests {
         // Above it, a little more, and never more than the excess's integral.
         let more = p.expected_bps(3.5, 240.0) - 15.0;
         assert!(more > 0.0 && more < 2.0 * 10.92 / std::f64::consts::LN_2 / 24.0 + 1e-9);
+    }
+
+    #[test]
+    fn the_budget_is_the_carry_on_the_cap() {
+        // 20 bp of 125 SOL at $80: $20.
+        assert!((budget_usd(20.0, 125.0, 80.0) - 20.0).abs() < 1e-9);
     }
 
     #[test]

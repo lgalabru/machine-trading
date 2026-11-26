@@ -67,10 +67,11 @@ than a tenth of the pinger's orders fail voids the grade.
 ## Baselines
 
 Over 72 hidden sessions (six fresh secrets, v2 sessions, on Linux): the
-reference made +$603 (per-session Sharpe 0.79), the informed bot +$944;
-weighted as v2 weighs losses the reference is 0.625 of the informed bot,
-and below it on every set of 12. Doing nothing makes $0. The full ladder
-and `mtx gates funding-carry-sol` are still to run.
+reference made +$493 (per-session Sharpe 0.40), the informed bot +$850
+(Sharpe 0.43); weighted as v2 weighs losses the reference is 0.555 of the
+informed bot, and below it on every set of 12. On the fast gates' public
+set the informed bot's loss-weighted PnL is +$14.45. Doing nothing makes
+$0. The full ladder and `mtx gates funding-carry-sol` are still to run.
 
 ## Realism limits
 

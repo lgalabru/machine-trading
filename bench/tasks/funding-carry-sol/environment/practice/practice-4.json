@@ -51,8 +51,8 @@
     "permanent_share": 0.0,
     "probe": 6.44
   },
-  "informed_max_drawdown_usd": 33.88,
-  "informed_pnl_usd": 28.81,
+  "informed_max_drawdown_usd": 32.52,
+  "informed_pnl_usd": 42.57,
   "mandate": {
     "limits": {
       "max_drawdown_usd": 1000.0
