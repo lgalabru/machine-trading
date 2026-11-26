@@ -1211,9 +1211,9 @@ addEventListener("resize", () => { if (Math.abs(innerWidth - lastWidth) < 40) re
 
 // ---------- header ----------
 // The bench at a glance, styled like a stock quote: a watchlist of models on
-// the left, and the selected model's equity curve on the right. The curve is
-// its cumulative PnL over the hidden sessions, in order, against the
-// reference's on the same sessions.
+// the left, and the selected model's curve on the right: its mean PnL a
+// scenario so far, over the hidden sessions in order (the last point is the
+// quote above it), against the reference's on the same sessions.
 // The model picked per task; else the best mean skill.
 let heroPick = {};
 let heroSort = "skill";
@@ -1338,21 +1338,26 @@ function renderHero() {
     } else {
       quoteEl.className = "quote multi";
       quoteEl.innerHTML = shown.map((m) => `<div class="q"><div class="qn"><span class="sw" style="background:${modelColor(m.model)}"></span>${esc(shortModel(m.model))}</div><span class="mid">${susd(soFar(m.curve[i], i), 0)}</span>${vs(m.curve[i])}</div>`).join("");
-      sub.innerHTML = `mean PnL a scenario ${where(i)}${isNum(r) ? ` · reference ${perScenario(soFar(r, i))}` : ""} · the chart is the running total${legendRef}`;
+      sub.innerHTML = `mean PnL a scenario ${where(i)}${isNum(r) ? ` · reference ${perScenario(soFar(r, i))}` : ""}${legendRef}`;
     }
   };
   quote(last);
-  // One scale for every model on the task, so switching keeps the axes.
-  const range = [...eq.models.flatMap((m) => m.curve || []), ...(eq.reference || [])];
-  heroScrub = areaChart(area, {
-    series: shown.map((m) => ({ y: m.curve, color: modelColor(m.model) })),
-    ref: eq.reference, range, labels: ["start", ...eq.sessions],
-    onScrub: (i) => quote(i ?? last),
+  // The chart plots the mean a scenario so far, the unit of the quote: point
+  // k is the total after session k+1 over k+1. One scale for every model on
+  // the task, so switching keeps the axes.
+  const meanOf = (c) => c ? c.slice(1).map((y, k) => y / (k + 1)) : null;
+  const range = [...eq.models.flatMap((m) => meanOf(m.curve) || []), ...(meanOf(eq.reference) || [])];
+  const show = areaChart(area, {
+    series: shown.map((m) => ({ y: meanOf(m.curve), color: modelColor(m.model) })),
+    ref: meanOf(eq.reference), range, labels: eq.sessions, title: "mean PnL a scenario, so far",
+    onScrub: (j) => quote(j === null ? last : j + 1),
   });
+  // Callers name a point of the totals (0 is the start, k after session k).
+  heroScrub = (k) => show(k === null ? null : Math.max(0, k - 1));
 }
 // A stock-style area chart: lines in their models' colors with a gradient
 // under each, a quiet grid, values on the right, on a fixed range.
-function areaChart(host, { series, ref, range, labels, onScrub }) {
+function areaChart(host, { series, ref, range, labels, title, onScrub }) {
   host.className = "area";
   host.innerHTML = "";
   const W = Math.max(320, host.clientWidth), H = host.clientHeight || 230;
@@ -1373,6 +1378,7 @@ function areaChart(host, { series, ref, range, labels, onScrub }) {
     el("text", { x: W - R + 10, y: sy(v) + 4, class: "ylab" }, svg).textContent = susd(v, 0).replace("+", "");
   }
   if (lo < 0 && hi > 0) el("line", { x1: L, x2: W - R, y1: sy(0), y2: sy(0), stroke: "#48484a", "stroke-width": 1, "stroke-dasharray": "2 3" }, svg);
+  if (title) el("text", { x: L + 4, y: T + 12, class: "ylab" }, svg).textContent = title;
   // Session labels along the bottom, at most about one per 90 px.
   const every = Math.max(1, Math.ceil(n / Math.max(2, Math.floor((W - L - R) / 90))));
   for (let i = every; i < n; i += every) {
