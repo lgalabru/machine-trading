@@ -57,22 +57,16 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 
 ## Funding-carry
 
+`funding-carry-sol` (0.15.0; `funding-carry-spcx`, the SPCX task before it,
+was retired):
+
 | Rung | What it is | Where it should land |
 | --- | --- | --- |
 | `nop` | the starter | 0 |
 | `blind-long`, `blind-short` | the full cap one way at the open, held | below the reference |
-| `fader` | fades every premium at once, at the cap | below the reference: on discovery days the index follows the book, and the move runs several times the premium |
-| `follower` | follows every premium at once | below the reference: on positioning days the premium bleeds out against it |
-| `practice` | a gradient-boosted model fitted on the practice family | below the reference: the hidden family's noise is wider |
-| `nosession` | the model fitted on the hidden family, without the session's own history or noise | below the reference |
-| `gbm` | the model fitted on the hidden family, with them | below the reference |
-| `reference` | `reference/` (funding-carry-spcx): tree models of the next seconds' return after funding, from the episode, the session's history and its funding parameters | 1 |
-| `told` | the reference told each episode's kind: follows informed premiums until the index catches up, fades crowded ones while they last | above the reference and every frozen bot |
-| `funding-carry-sol-1`, `-2` | frozen GPT-6.1 Sol bots (`bench/tasks/<task>/checks/exploits`) | below `told` |
-| `hindsight` | the bound (the book's variation plus the funding the cap could collect) | top |
-
-All but the blind rungs and the frozen bots are `checks/bots/carry-gbm` or
-`reference/` (funding-carry-spcx) run with `MTX_RUNG` set (`carry-*/run.sh`).
+| `reference` | `reference/`: the session's premium level estimated from what it has seen and the stated prior, the funding over the rest of the session priced against the entry cost and the index's risk, up to 60% of the cap | 0.5 |
+| `informed` | `checks/bots/informed`, told the premium's level, spread and half-life and funding's settings | 1, above the reference |
+| the probes | `bench/checks/probes`, and the task's `checks/rungs/probe` around its reference | their bands ([probes](../probes/README.md)) |
 
 ## Weekend-gap
 

@@ -255,8 +255,9 @@ mtx_kit::export!(Informed);
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use reopen::expected_gap_pct;
+
+    use super::*;
 
     fn told() -> Told {
         Told {

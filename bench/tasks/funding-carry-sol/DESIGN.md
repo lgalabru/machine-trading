@@ -5,7 +5,8 @@ README says what the task is; this says why it's built this way, and what
 each version learned. It is RFD 0007's funding-carry task: the carry trade
 of `funding-carry-spcx`, moved to the market it can be measured on (SOL),
 with every number that sets what a bot can earn taken from mainnet.
-`funding-carry-spcx` stays as it shipped in 0.14.0, so its pins don't move.
+It replaces `funding-carry-spcx` in 0.15.0: that task is retired (its last
+release is 0.14.0's; its files are in git history).
 
 ## Why SOL, not SPCX
 
@@ -51,7 +52,7 @@ minutes, against six to eight minutes of SOL's price.
 - **Funding.** Phoenix's program, on the snapshot's market, with the
   interval drawn from 3 or 4 seconds, the period eight intervals, the cap
   the snapshot's. Phoenix computes it on the book's mark (the mid at its
-  last trade), as `funding-carry-spcx` does, for the reason its design
+  last trade), as `funding-carry-spcx` did, for the reason its design
   record gives (on a surfnet the oracle-weighted mark can't follow a book
   premium).
 - **The premium.** Each session draws its level from the five-day windows'

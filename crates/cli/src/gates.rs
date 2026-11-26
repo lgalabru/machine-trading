@@ -3317,7 +3317,7 @@ mod tests {
         for task in [
             "flash-crash-nvda",
             "market-making-cbrs",
-            "funding-carry-spcx",
+            "funding-carry-sol",
             "weekend-gap-spcx",
         ] {
             let config =

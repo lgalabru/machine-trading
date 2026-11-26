@@ -86,7 +86,7 @@ $0. The full ladder and `mtx gates funding-carry-sol` are still to run.
   it. The pinger prints about thirty times as often as on mainnet, to keep
   the mark fresh.
 - The mark is the book's mid at its last trade, not Phoenix's mainnet blend
-  of oracles and book (see `funding-carry-spcx`'s design record).
+  of oracles and book (see `funding-carry-spcx`'s design record, 0.14.0).
 
 ## More
 
