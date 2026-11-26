@@ -8,7 +8,6 @@ flash-crash-nvda mtx-bot-flash-crash-nvda mtx-flash-crash-nvda bench/tasks/flash
 flash-crash-nvda-informed mtx-bot-flash-crash-nvda-informed mtx-flash-crash-nvda-informed bench/tasks/flash-crash-nvda/checks/bots/informed
 funding-carry-sol mtx-bot-carry-sol mtx-carry-sol bench/tasks/funding-carry-sol/reference
 funding-carry-sol-informed mtx-bot-carry-sol-informed mtx-carry-sol-informed bench/tasks/funding-carry-sol/checks/bots/informed
-funding-carry mtx-bot-carry mtx-carry bench/tasks/funding-carry-spcx/reference
 liquidation-flash mtx-bot-liquidation-flash mtx-liquidation-flash bench/tasks/liquidation-flash/reference component
 liquidation-flash-informed mtx-bot-liquidation-flash-informed mtx-liquidation-flash-informed bench/tasks/liquidation-flash/checks/bots/informed component
 market-making-cbrs mtx-bot-maker mtx-maker bench/tasks/market-making-cbrs/reference component
