@@ -85,7 +85,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     done
 
 # Verifiers: the grader, the snapshots, and one unprivileged user per
-# session the grader can run at once (mtx grade --jobs). Graders run as root
+# session the grader can run at once (mtx grade --jobs; session::BOT_USERS,
+# sixteen, for the skill ladder on a large machine). Graders run as root
 # and start bots as these users, so bots can't read hidden scenarios or
 # signal the grader. `mtx` links only libc, so slim Debian is enough;
 # procps provides the pkill that cleans up after each bot.
@@ -93,7 +94,8 @@ FROM ${RUNTIME_IMAGE} AS runtime
 RUN apt-get update \
     && apt-get install -y --no-install-recommends procps \
     && rm -rf /var/lib/apt/lists/* \
-    && for user in mtx-bot mtx-bot-2 mtx-bot-3 mtx-bot-4; do \
+    && for user in mtx-bot mtx-bot-2 mtx-bot-3 mtx-bot-4 mtx-bot-5 mtx-bot-6 mtx-bot-7 mtx-bot-8 \
+      mtx-bot-9 mtx-bot-10 mtx-bot-11 mtx-bot-12 mtx-bot-13 mtx-bot-14 mtx-bot-15 mtx-bot-16; do \
       useradd --system --create-home --shell /usr/sbin/nologin "$user"; \
     done \
     && mkdir -p /app

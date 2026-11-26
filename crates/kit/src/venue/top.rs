@@ -111,6 +111,9 @@ impl Iterator for Walk {
     }
 }
 
+/// A price level: its price in ticks and the base lots at it.
+pub(crate) type Level = (u64, u64);
+
 /// A side's levels, best first, merged from sorted streams.
 struct Side {
     is_bid: bool,
@@ -166,13 +169,14 @@ impl Side {
     }
 }
 
-/// The best bid and ask, in ticks, of the book made of `bids` and `asks`
+/// The best bid and ask, in ticks, and the base lots at each, of the book
+/// made of `bids` and `asks`
 /// (each a list of sorted streams, best first), once uncrossed: the best
 /// bid matched against the best ask while they lock or cross.
 pub(crate) fn top(
     bids: Vec<Box<dyn Iterator<Item = (u64, u64)>>>,
     asks: Vec<Box<dyn Iterator<Item = (u64, u64)>>>,
-) -> (Option<u64>, Option<u64>) {
+) -> (Option<Level>, Option<Level>) {
     let (mut bids, mut asks) = (Side::new(true, bids), Side::new(false, asks));
     let (mut bid, mut ask) = (bids.level(), asks.level());
     // Each round empties a level; the streams are finite (a spline side
@@ -191,11 +195,11 @@ pub(crate) fn top(
             left => Some((ask_ticks, left)),
         };
     }
-    let top = (bid.map(|(ticks, _)| ticks), ask.map(|(ticks, _)| ticks));
-    if let (Some(bid), Some(ask)) = top {
+    if let (Some((bid, bid_lots)), Some((ask, ask_lots))) = (bid, ask) {
         assert!(bid < ask, "an uncrossed book: bid {bid} under ask {ask}");
+        assert!(bid_lots > 0 && ask_lots > 0, "a level holds lots");
     }
-    top
+    (bid, ask)
 }
 
 /// Orders at prices in any order, as one sorted stream, best first, equal
@@ -227,7 +231,12 @@ mod tests {
 
     /// The book built whole and uncrossed, as the venue built it before:
     /// what the merge must agree with.
-    fn built(bids: Vec<Vec<(u64, u64)>>, asks: Vec<Vec<(u64, u64)>>) -> (Option<u64>, Option<u64>) {
+    /// The book built whole and uncrossed: the best level each side, its
+    /// price and its lots, which the lazy merge must match.
+    fn built(
+        bids: Vec<Vec<(u64, u64)>>,
+        asks: Vec<Vec<(u64, u64)>>,
+    ) -> (Option<Level>, Option<Level>) {
         let ladder = |streams: Vec<Vec<(u64, u64)>>| {
             let mut side = BTreeMap::new();
             for (ticks, lots) in streams.into_iter().flatten() {
@@ -252,8 +261,8 @@ mod tests {
             }
         }
         (
-            bids.last_key_value().map(|(&t, _)| t),
-            asks.first_key_value().map(|(&t, _)| t),
+            bids.last_key_value().map(|(&t, &l)| (t, l)),
+            asks.first_key_value().map(|(&t, &l)| (t, l)),
         )
     }
 

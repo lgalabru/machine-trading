@@ -312,6 +312,7 @@ pub async fn practice(options: Practice<'_>) -> Result<String> {
         keys: &mtx_grader::keys::SessionKeys::random(),
         v2_sessions: false,
         host: None,
+        anchors_from: None,
     })
     .await?;
     if options.json {

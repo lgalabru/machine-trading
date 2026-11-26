@@ -951,6 +951,7 @@ async fn launch(studio: &Arc<Studio>, args: &Value) -> Result<Value> {
                     keys: &keys,
                     v2_sessions: false,
                     host: None,
+                    anchors_from: None,
                 }) => Some(report),
             }
         });

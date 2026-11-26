@@ -37,24 +37,29 @@ The specs and the guides are published at
 
 | Spec | Version | Status |
 | --- | --- | --- |
-| [Mandate](mandate.md) | v0.2.0 (reads v0.1.0) | Draft |
+| [Mandate](mandate.md) | v0.3.0 (reads v0.1.0 and v0.2.0) | Draft |
 | [Perpetual](instruments/perp.md) | v0.1.0 | Draft |
 | [Spot](instruments/spot.md) | v0.1.0 | Draft |
 | [Money market](instruments/money-market.md) | v0.1.0 | Draft |
-| [Pool](instruments/amm.md) | v0.1.0 | Draft, proposed (not yet agreed) |
+| [Pool](instruments/amm.md) | v0.1.0 | Draft |
 | [Stake pool](instruments/stake-pool.md) | v0.1.0 | Draft, proposed (not yet agreed) |
 | [Phoenix](venues/phoenix.md) | v0.1.0 | Draft |
 | [OpenBook](venues/openbook.md) | v0.1.0 | Draft |
-| [Kamino](venues/kamino.md) | v0.1.0 | Draft |
+| [Kamino](venues/kamino.md) | v0.2.0 | Draft |
+| [Orca](venues/orca.md) | v0.1.0 | Draft |
+| [Raydium](venues/raydium.md) | v0.1.0 | Draft |
 
 The specs are versioned with semantic versioning, and are drafts while their
 major version is 0; the mandate's [changelog](mandate.md#changelog) lists
 what each version added. v0.1.0 specifies perpetuals, spot and money
 markets, on one venue or several; v0.2.0 adds limits on notional and
-reduce-only taking. The reference implementation is `mtx_core::mandate`,
+reduce-only taking; v0.3.0 adds pools, atomic routes through them and
+flash borrows (wildcard pool allowances, an inventory limit after each
+transaction, `max_flash_borrow` and a cap on transaction costs). The reference implementation is `mtx_core::mandate`,
 which bots read and the grader audits with. It reads the part the benchmark's tasks use today:
-perpetual, spot and money-market instruments, on one venue or several, with
-position bounds, sides, limit prices, a drawdown limit and v0.2.0's limits.
+perpetual, spot, money-market and pool instruments, on one venue or
+several, with position bounds, sides, limit prices, a drawdown limit,
+v0.2.0's limits and v0.3.0's.
 It rejects the rest, a money market's `min_health` among it, and the
 benchmark's grader enforces less than it reads; see the mandate's
 [implementation status](mandate.md#implementation-status).
