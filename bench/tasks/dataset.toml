@@ -33,7 +33,7 @@ name = "solana-foundation/liquidation-flash"
 digest = "sha256:af1d1e031667e38636da0544b54c797402ae73ebdd4fbf313c4a089e4d4c131f"
 
 [[tasks]]
-name = "solana-foundation/market-making-cbrs"
+name = "solana-foundation/market-making-ant"
 digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [[tasks]]

@@ -35,7 +35,7 @@ pub enum Base {
     /// flash-crash-spcx.
     Shocks,
     /// Quoting: the grader runs counterparties (takers, competing makers)
-    /// that trade with the bot. Starts from market-making-cbrs.
+    /// that trade with the bot. Starts from market-making-ant.
     Making,
 }
 
@@ -43,7 +43,7 @@ impl Base {
     fn task(self) -> &'static str {
         match self {
             Base::Shocks => "flash-crash-spcx",
-            Base::Making => "market-making-cbrs",
+            Base::Making => "market-making-ant",
         }
     }
     /// The scenario generator the base's task draws, which the scaffold
@@ -73,7 +73,7 @@ pub struct TaskSpec {
     )]
     pub summary: String,
     #[schemars(
-        description = "The closest existing task to start from: `shocks` (the market moves along a scripted path and the bot trades it; from flash-crash-spcx) or `making` (the grader runs counterparties the bot trades with; from market-making-cbrs)."
+        description = "The closest existing task to start from: `shocks` (the market moves along a scripted path and the bot trades it; from flash-crash-spcx) or `making` (the grader runs counterparties the bot trades with; from market-making-ant)."
     )]
     pub base: Option<Base>,
     #[schemars(
