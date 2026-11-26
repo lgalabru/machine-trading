@@ -459,6 +459,17 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("market-making-cbrs", "index_trigger_bps", Knowable::Process),
     ("market-making-cbrs", "book_lead_slots", Knowable::Process),
     ("market-making-cbrs", "orders_per_minute", Knowable::Process),
+    ("market-making-cbrs", "competitor_bps", Knowable::Process),
+    (
+        "market-making-cbrs",
+        "competitor_floor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-cbrs",
+        "competitor_react_slots",
+        Knowable::Process,
+    ),
     (
         "market-making-cbrs",
         "arbitrageur_latency_slots",
@@ -551,6 +562,21 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ),
     (
         "market-making-measured-spcx",
+        "competitor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "competitor_floor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "competitor_react_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
         "arbitrageur_latency_slots",
         Knowable::Process,
     ),
@@ -597,6 +623,21 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     (
         "market-making-measured-ant",
         "orders_per_minute",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "competitor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "competitor_floor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "competitor_react_slots",
         Knowable::Process,
     ),
     (
