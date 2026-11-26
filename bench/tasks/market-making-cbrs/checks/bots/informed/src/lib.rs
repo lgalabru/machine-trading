@@ -114,8 +114,11 @@ pub struct Informed {
     /// The oracle's recent average, and the slot it was last updated at.
     average: Option<(u64, f64)>,
     /// Which sides the informed signal and the tape pulled at the last
-    /// requote.
+    /// requote, and whether it quoted inside the competitor.
     pulled: (bool, bool),
+    inside: bool,
+    /// One tick, in bp of the starting oracle.
+    tick_bps: f64,
     /// The market's recent trades, read off the chain, as the reference.
     tape: tape::Tape,
 }
@@ -125,6 +128,7 @@ impl Strategy for Informed {
         self.cap = session.mandate.universe[0].max_position;
         self.markouts = markouts::Markouts::new(MARKOUT_SLOTS);
         self.half_spread_bps = competitor_half_spread_bps(session)?;
+        self.tick_bps = tick_bps(session)?;
         let regime = session
             .var("MTX_REGIME")
             .ok_or("the informed bot runs told the session's latent state (MTX_REGIME)")?;
@@ -190,7 +194,17 @@ impl Strategy for Informed {
             (signal >= PULL_SIGNAL || (toxic_tape && flow >= pull)) && held <= target;
         let informed_selling =
             (signal <= -PULL_SIGNAL || (toxic_tape && flow <= -pull)) && held >= target;
-        let half = self.half_spread_bps;
+        // Told the competing maker's rule (it looks every `react_slots` and
+        // steps inside whoever quotes inside it), it quotes a tick inside
+        // the competitor for one step after each of its looks and at the
+        // competitor's price the rest of the time: inside some of the time
+        // without starting a race toward the competitor's floor.
+        let inside = self.flow.inside_now(slot);
+        let half = if inside {
+            self.half_spread_bps
+        } else {
+            self.half_spread_bps + self.tick_bps
+        };
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
         // Told every taker is noise, an inventory a run of fills builds
@@ -205,6 +219,7 @@ impl Strategy for Informed {
         let (bid_size, ask_size) = (size.min(cap - held), size.min(cap + held));
         let pulled = (informed_buying, informed_selling);
         let moved = self.pulled != pulled
+            || self.inside != inside
             || self.quoted.is_none_or(|(at, b, a)| {
                 slot >= at + REQUOTE_SLOTS
                     || ((bid - b) / mark).abs() * 10_000.0 >= REQUOTE_BPS
@@ -247,6 +262,7 @@ impl Strategy for Informed {
         }
         self.quoted = Some((slot, bid, ask));
         self.pulled = pulled;
+        self.inside = inside;
         Ok(())
     }
 }
@@ -266,6 +282,8 @@ struct Flow {
     /// Whether every taker is noise: the latent's informed and index-chasing
     /// shares are both 0, as on CBRS.
     uninformed: bool,
+    /// The competitor's slots between looks, when the latent states them.
+    competitor_react_slots: Option<u64>,
 }
 
 impl Flow {
@@ -316,6 +334,7 @@ impl Flow {
             horizon_slots,
             confidence: 2.0 * hit_rate - 1.0,
             uninformed,
+            competitor_react_slots: latent["competitor_react_slots"].as_u64().filter(|r| *r > 0),
         })
     }
 
@@ -365,6 +384,16 @@ impl Flow {
         signal
     }
 
+    /// Whether to quote inside the competitor at `slot`: one step (two
+    /// slots) in each of its look periods, `react_slots + 2` long; always,
+    /// as the reference does, when its rule isn't told.
+    fn inside_now(&self, slot: u64) -> bool {
+        match self.competitor_react_slots {
+            Some(react) => slot % (react + 2) < 2,
+            None => true,
+        }
+    }
+
     /// A trader account's position in the market, in base units.
     fn position(&self, data: &[u8]) -> Option<f64> {
         let trader =
@@ -380,6 +409,13 @@ impl Flow {
                 .sum(),
         )
     }
+}
+
+/// The market's tick in bp of the starting oracle.
+fn tick_bps(session: &Session) -> BotResult<f64> {
+    let venue = PhoenixVenue::from_json(&session.venue)?;
+    let market = venue.market(&session.symbol)?;
+    Ok(venue.ticks_to_usd(market, 1) / session.start_oracle * 10_000.0)
 }
 
 /// The competing makers' half-spread less one tick, in basis points of the
