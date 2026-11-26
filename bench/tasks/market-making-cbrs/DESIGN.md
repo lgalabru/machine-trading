@@ -142,15 +142,19 @@ each), PnL in USD, Sharpe a session:
 | naive quoter (1 unit) | +72.75 (0.76) | +31.31 (0.36) | +104.06 |
 | skew quoter (1 unit) | +56.70 (1.14) | +42.46 (1.43) | +99.16 |
 | reference (3.2 units, a quarter of the cap) | +79.88 (1.16) | +78.70 (1.58) | +158.58 |
-| informed (6.4 units, half the cap) | +90.57 (0.78) | +105.51 (2.70) | +196.08 |
+| informed (6.4 units, half the cap, before the look rule) | +90.57 (0.78) | +105.51 (2.70) | +196.08 |
+| informed, playing the competitor's look rule (shipped) | +99.09 (0.96) | +108.66 (1.69) | +207.75 |
+| informed, and skewing twice as steep (withdrawn) | +33.40 | +32.26 | +65.66 |
 | informed at three quarters of the cap (9.5 units) | +106.34 | +77.61 | +183.95 |
 | informed at the whole cap (12.7 units) | +87.16 | +70.50 | +157.66 |
 
 The reference leads the quoters (+158.58 against +104.06 and +99.16), with
-a Sharpe of 1.2 to 1.6. Two targets are missed, and the market is left as
-measured: the reference makes 0.81 of the informed bot (the band is 0.2 to
-0.7), and the informed bot makes 1.88 times the best non-reading rung (the
-gate asks 2). More size doesn't buy the informed bot more: past half the
+a Sharpe of 1.2 to 1.6. Told the competitor's look rule, the informed bot
+quotes a tick inside it for one step in each look period: +207.75, 2.00
+times the best non-reading rung (the gate asks 2; it is on the line). The
+band is still missed, and the market is left as measured: the reference
+makes 0.76 of the informed bot (the band is 0.2 to 0.7). A steeper skew
+for the jump stress cost far more spread than it saved. More size doesn't buy the informed bot more: past half the
 cap the jump sessions and the walk take back what the spread adds (at the
 whole cap it makes less than the reference). Knowing that every taker is
 noise is worth about a quarter more PnL on CBRS, not double: what the
