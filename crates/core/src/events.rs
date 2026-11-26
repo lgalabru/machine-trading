@@ -236,6 +236,21 @@ pub enum Event {
         best_ask: Option<f64>,
         mark: f64,
     },
+    /// A watched market read every slot (`control.watch.touch`), told in
+    /// each slot its index or its touch changed: Hawkeye's index (what the
+    /// perp re-centres on), the mark, and the best bid and ask with the
+    /// base units at each. How far the index leads the book is read off
+    /// these.
+    Touch {
+        symbol: String,
+        slot: u64,
+        index: f64,
+        mark: f64,
+        best_bid: Option<f64>,
+        best_bid_size: Option<f64>,
+        best_ask: Option<f64>,
+        best_ask_size: Option<f64>,
+    },
     /// A pool the runtime watches without trading it (`control.pools`),
     /// read in the slot a write changed it and every so often besides:
     /// its price, and what swaps of growing size get from it each way, so
@@ -373,6 +388,25 @@ mod tests {
             r#"{"at_us":7,"event":"markout","strategy":"mm-sol","model":"through","fill_slot":100,"horizon_slots":25,"bps":-1.5}"#
         );
         assert_eq!(serde_json::from_str::<Line>(&text).unwrap(), line);
+        let touch = Line {
+            at_us: 9,
+            event: Event::Touch {
+                symbol: "ANT".into(),
+                slot: 12,
+                index: 80.01,
+                mark: 80.0,
+                best_bid: Some(79.99),
+                best_bid_size: Some(2.5),
+                best_ask: None,
+                best_ask_size: None,
+            },
+        };
+        let text = serde_json::to_string(&touch).unwrap();
+        assert_eq!(
+            text,
+            r#"{"at_us":9,"event":"touch","symbol":"ANT","slot":12,"index":80.01,"mark":80.0,"best_bid":79.99,"best_bid_size":2.5,"best_ask":null,"best_ask_size":null}"#
+        );
+        assert_eq!(serde_json::from_str::<Line>(&text).unwrap(), touch);
         let command: Line =
             serde_json::from_str(r#"{"at_us":8,"event":"command","command":"pause"}"#).unwrap();
         assert_eq!(

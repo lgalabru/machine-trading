@@ -265,6 +265,7 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, trades: Trades) {
         keys: &SessionKeys::random(),
         v2_sessions: false,
         host: None,
+        anchors_from: None,
     })
     .await
     .unwrap();
@@ -416,6 +417,7 @@ async fn trades_as_the_grader_does(bot: &str, scenario: &str) {
                 keys,
                 v2_sessions: false,
                 host,
+                anchors_from: None,
             })
             .await
             .unwrap()

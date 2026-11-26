@@ -1,0 +1,1673 @@
+{
+  "format": 2,
+  "ran_at": "2026-11-24T15:46:38.070660",
+  "scores": {
+    "label": "0.14.0",
+    "published": true,
+    "tasks": {
+      "backrun-sol": {
+        "headline": "v1",
+        "models": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -213.24062203696752,
+            "reward": 0.0,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.1 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 314.0777442503057,
+            "reward": 0.0,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.2 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 3807.922757671494,
+            "reward": 0.845498877257131,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-opus-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 755.0694988820339,
+            "reward": 0.17658964373655395,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 1340.977692613676,
+            "reward": 0.1407336218043555,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gemini-4-carbon \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 2569.1537775977226,
+            "reward": 0.5753925277573299,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "glm-5.3 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 926.5202779620374,
+            "reward": 0.19074650104924915,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gpt-6-astra \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 3531.840765532755,
+            "reward": 0.7904649712618468,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gpt-6.1-sol \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 2962.388068688936,
+            "reward": 0.6738503761178894,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "grok-4.7 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 388.9677697552003,
+            "reward": 0.08624491224714378,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "inkling-2-small \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 1206.1880871408332,
+            "reward": 0.29064980369505106,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "kimi-k3.1-pro \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 794.6457077118478,
+            "reward": 0.19150858141155327,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "muse-wonder \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 690.3970229456223,
+            "reward": 0.13159248578690125,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          }
+        },
+        "name": "solana-foundation/backrun-sol-usdc",
+        "short": "backrun-sol-usdc",
+        "version": "0.14.0"
+      },
+      "backrun-thin": {
+        "headline": "v1",
+        "models": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 0.0,
+            "reward": 0.0,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.1 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 606.14906413115,
+            "reward": 0.09628107543420125,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.2 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 3241.7368929773875,
+            "reward": 0.5552336040521638,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-opus-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 636.9613318610799,
+            "reward": 0.10340706701278313,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 2016.6650747387262,
+            "reward": 0.2315441359714642,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gemini-4-carbon \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 2858.1554750727505,
+            "reward": 0.5672240637040236,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "glm-5.3 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 1672.5704631631095,
+            "reward": 0.2198334106049687,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gpt-6-astra \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 3824.216335894119,
+            "reward": 0.8114553799194881,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gpt-6.1-sol \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 3012.4152601799938,
+            "reward": 0.5113554826978411,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "grok-4.7 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 56.286661462300614,
+            "reward": 0.06857311448227914,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "inkling-2-small \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 1396.6374608531873,
+            "reward": 0.18528501889274335,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "kimi-k3.1-pro \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 1974.1724986469485,
+            "reward": 0.31357872594707875,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "muse-wonder \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 1904.9891623463477,
+            "reward": 0.2087659741226931,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          }
+        },
+        "name": "solana-foundation/backrun-thin-pools",
+        "short": "backrun-thin-pools",
+        "version": "0.14.0"
+      },
+      "flash-crash": {
+        "headline": "v1",
+        "models": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 11447.344483400002,
+            "reward": 0.11944544193606729,
+            "score": 1.0565037104711348,
+            "sessions": 72,
+            "skill": 1.0565037104711348,
+            "skills": [
+              1.1727932156727376,
+              1.3167220448873667,
+              1.2832323638316887,
+              1.3312050977746444,
+              0.17856583018923655
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.1 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 14995.390257599996,
+            "reward": 0.1564669447067117,
+            "score": 1.3839616227231444,
+            "sessions": 72,
+            "skill": 1.3839616227231444,
+            "skills": [
+              1.1137480746867592,
+              1.4962161489674315,
+              1.3469964344649616,
+              1.4463916868479532,
+              1.5164557686486162
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.2 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 18674.711874000008,
+            "reward": 0.19485822376126616,
+            "score": 1.7235353068540082,
+            "sessions": 72,
+            "skill": 1.7235353068540082,
+            "skills": [
+              1.6799791645131765,
+              1.9140265286402,
+              1.7159285327712097,
+              1.8190393755675995,
+              1.4887029327778554
+            ],
+            "trials": 5
+          },
+          "claude-opus-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 14697.944159800001,
+            "reward": 0.15336329209492913,
+            "score": 1.3565095873234445,
+            "sessions": 72,
+            "skill": 1.3565095873234445,
+            "skills": [
+              1.5146831221989236,
+              0.480880257071449,
+              1.6327829960351155,
+              1.5874678968022504,
+              1.5667336645094836
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 2158.116637600002,
+            "reward": 0.022518514743879604,
+            "score": 0.19917791751268116,
+            "sessions": 72,
+            "skill": 0.19917791751268116,
+            "skills": [
+              0.1715211453126497,
+              0.19607975453894355,
+              0.3250066824363742,
+              0.27014793237176865,
+              0.0331340729036697
+            ],
+            "trials": 5
+          },
+          "gemini-4-carbon \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 20092.638518000003,
+            "reward": 0.20965334719544812,
+            "score": 1.8543992607373063,
+            "sessions": 72,
+            "skill": 1.8543992607373063,
+            "skills": [
+              1.8541023410908233,
+              1.6975556400852045,
+              1.770349624831104,
+              2.0551534781340677,
+              1.894835219545331
+            ],
+            "trials": 5
+          },
+          "glm-5.3 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 12116.4480698,
+            "reward": 0.12642709376758599,
+            "score": 1.1182569339148989,
+            "sessions": 72,
+            "skill": 1.1182569339148989,
+            "skills": [
+              1.2086505505245901,
+              1.4330747570862157,
+              0.8588247492413557,
+              0.8341992551074656,
+              1.256535357614867
+            ],
+            "trials": 5
+          },
+          "gpt-6-astra \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 19122.167587199998,
+            "reward": 0.19952712714645696,
+            "score": 1.7648321003551408,
+            "sessions": 72,
+            "skill": 1.7648321003551408,
+            "skills": [
+              1.881077045662623,
+              1.80100509842069,
+              1.6312385439201402,
+              1.7065941110942937,
+              1.804245702677958
+            ],
+            "trials": 5
+          },
+          "gpt-6.1-sol \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 19080.313392599997,
+            "reward": 0.19909040640496756,
+            "score": 1.7609692733075402,
+            "sessions": 72,
+            "skill": 1.7609692733075402,
+            "skills": [
+              1.8158861809560012,
+              1.8537067744519669,
+              1.6337415154608343,
+              1.8135651833113065,
+              1.6879467123575926
+            ],
+            "trials": 5
+          },
+          "grok-4.7 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 3989.8246665999977,
+            "reward": 0.041631172298565514,
+            "score": 0.3682307779332391,
+            "sessions": 72,
+            "skill": 0.3682307779332391,
+            "skills": [
+              0.4516642773684093,
+              0.4805306057524045,
+              0.2693881705048024,
+              0.21558151446407592,
+              0.4239893215765031
+            ],
+            "trials": 5
+          },
+          "inkling-2-small \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 10107.0154258,
+            "reward": 0.10545999781346374,
+            "score": 0.9328014295919196,
+            "sessions": 72,
+            "skill": 0.9328014295919196,
+            "skills": [
+              0.5912997942800818,
+              0.9454037719010036,
+              0.8891833159208198,
+              0.9827365885195553,
+              1.2553836773381373
+            ],
+            "trials": 5
+          },
+          "kimi-k3.1-pro \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 8551.074368599999,
+            "reward": 0.08922478557946216,
+            "score": 0.7891997844601627,
+            "sessions": 72,
+            "skill": 0.7891997844601627,
+            "skills": [
+              0.2546116385420744,
+              0.6041286957597147,
+              1.4241963606309846,
+              1.4003849262398567,
+              0.2626773011281827
+            ],
+            "trials": 5
+          },
+          "muse-wonder \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 7631.038962600001,
+            "reward": 0.08720002641320339,
+            "score": 0.7712906408604614,
+            "sessions": 72,
+            "skill": 0.7712906408604614,
+            "skills": [
+              0.5144602744593507,
+              0.5782928481641184,
+              1.5244091475682782,
+              1.239290934110559,
+              0.0
+            ],
+            "trials": 5
+          }
+        },
+        "name": "solana-foundation/flash-crash-spcx",
+        "short": "flash-crash-spcx",
+        "version": "0.14.0"
+      },
+      "funding-carry": {
+        "headline": "v1",
+        "models": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -3980.4444633285298,
+            "reward": 0.0,
+            "score": 0.0,
+            "sessions": 34,
+            "skill": 0.0,
+            "skills": [
+              0.0,
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.1 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 14402.451450297032,
+            "reward": 0.07361817605615506,
+            "score": 0.3468432629288391,
+            "sessions": 72,
+            "skill": 0.3468432629288391,
+            "skills": [
+              0.28263156364348424,
+              0.23610518314629503,
+              0.43002064973875664,
+              0.44330741010967095,
+              0.34215150800598865
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.2 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 29845.555268914693,
+            "reward": 0.1525556499782788,
+            "score": 0.7187477638176581,
+            "sessions": 72,
+            "skill": 0.7187477638176581,
+            "skills": [
+              0.6835056049732072,
+              0.8547938012620194,
+              0.6356685840233153,
+              0.855043359833319,
+              0.5647274689964294
+            ],
+            "trials": 5
+          },
+          "claude-opus-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 17215.49729531068,
+            "reward": 0.08799706877361527,
+            "score": 0.4145877023404245,
+            "sessions": 72,
+            "skill": 0.4145877023404245,
+            "skills": [
+              0.44352180732960966,
+              0.4575322771119491,
+              0.29342454960136066,
+              0.6376653775799738,
+              0.24079450007922923
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 10033.736490468942,
+            "reward": 0.05128747574713581,
+            "score": 0.2416348297185639,
+            "sessions": 72,
+            "skill": 0.2416348297185639,
+            "skills": [
+              0.28866621092453315,
+              0.22836337658409314,
+              0.16879823174419412,
+              0.1765272984364405,
+              0.34581903090355837
+            ],
+            "trials": 5
+          },
+          "gemini-4-carbon \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 35848.5519129743,
+            "reward": 0.1832399862756092,
+            "score": 0.8633133574294014,
+            "sessions": 72,
+            "skill": 0.8633133574294014,
+            "skills": [
+              0.8343931406108446,
+              0.8907531185929495,
+              0.8700221581308858,
+              0.8888059085269141,
+              0.8325924612854128
+            ],
+            "trials": 5
+          },
+          "glm-5.3 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 15499.640292807442,
+            "reward": 0.0792264602884282,
+            "score": 0.37326602571326617,
+            "sessions": 72,
+            "skill": 0.37326602571326617,
+            "skills": [
+              0.34979763695934835,
+              0.457208342916359,
+              0.3625166117047945,
+              0.3535762903434511,
+              0.34323124664237803
+            ],
+            "trials": 5
+          },
+          "gpt-6-astra \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 43997.408992638346,
+            "reward": 0.22489289496392706,
+            "score": 1.0595560726647413,
+            "sessions": 72,
+            "skill": 1.0595560726647413,
+            "skills": [
+              1.0894740469229665,
+              1.050668994216455,
+              1.075796337512357,
+              0.9622924928196243,
+              1.1195484918523038
+            ],
+            "trials": 5
+          },
+          "gpt-6.1-sol \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 42574.99282105369,
+            "reward": 0.21762221021236128,
+            "score": 1.0253011079528143,
+            "sessions": 72,
+            "skill": 1.0253011079528143,
+            "skills": [
+              0.5926369495050227,
+              1.1631407189712248,
+              1.0646431681387463,
+              1.1637005653405577,
+              1.1423841378085198
+            ],
+            "trials": 5
+          },
+          "grok-4.7 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 7602.502404038789,
+            "reward": 0.03477975126600295,
+            "score": 0.1638606531592454,
+            "sessions": 72,
+            "skill": 0.1638606531592454,
+            "skills": [
+              0.0,
+              0.022360123257710255,
+              0.25745769239661115,
+              0.2410383164570557,
+              0.2984471336848498
+            ],
+            "trials": 5
+          },
+          "inkling-2-small \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 4283.2295100431775,
+            "reward": 0.02189374116256953,
+            "score": 0.10314975226705796,
+            "sessions": 72,
+            "skill": 0.10314975226705796,
+            "skills": [
+              0.1196167081273705,
+              0.17005024896969356,
+              0.1850651047689448,
+              0.002549412033400726,
+              0.03846728743588015
+            ],
+            "trials": 5
+          },
+          "kimi-k3.1-pro \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 12798.910125428218,
+            "reward": 0.04780582141894576,
+            "score": 0.22523143028282372,
+            "sessions": 72,
+            "skill": 0.22523143028282372,
+            "skills": [
+              0.4233440426618189,
+              0.43014700978115045,
+              0.0,
+              0.2726660989711493,
+              0.0
+            ],
+            "trials": 5
+          },
+          "muse-wonder \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 11286.290788931601,
+            "reward": 0.0576899109979914,
+            "score": 0.271799140382869,
+            "sessions": 72,
+            "skill": 0.271799140382869,
+            "skills": [
+              0.24541774516143416,
+              0.16745711241087158,
+              0.4129096153068419,
+              0.23071822921959176,
+              0.3024929998156057
+            ],
+            "trials": 5
+          }
+        },
+        "name": "solana-foundation/funding-carry-spcx",
+        "short": "funding-carry-spcx",
+        "version": "0.14.0"
+      },
+      "liquidation-flash": {
+        "headline": "v1",
+        "models": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 0.0,
+            "reward": 0.0,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.1 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 0.0,
+            "reward": 0.0,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.2 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 339.4003810877827,
+            "reward": 0.4927728908607764,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-opus-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 0.0,
+            "reward": 0.0,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 345.6488171012161,
+            "reward": 0.49198210596993625,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gemini-4-carbon \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 164.462075109488,
+            "reward": 0.24217444770115026,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "glm-5.3 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 277.7891536639329,
+            "reward": 0.4117421706594987,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gpt-6-astra \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 662.2500347749017,
+            "reward": 0.9537068104178316,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "gpt-6.1-sol \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 507.20870058739604,
+            "reward": 0.7596642844549644,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "grok-4.7 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 172.4185766551716,
+            "reward": 0.04724436401560748,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "inkling-2-small \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 139.79199908763923,
+            "reward": 0.2805612897889298,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "kimi-k3.1-pro \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 459.71538271187745,
+            "reward": 0.6690743886859893,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          },
+          "muse-wonder \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 419.22047527107827,
+            "reward": 0.6187042911543561,
+            "score": null,
+            "sessions": 0,
+            "skill": null,
+            "skills": [
+              null,
+              null,
+              null,
+              null,
+              null
+            ],
+            "trials": 5
+          }
+        },
+        "name": "solana-foundation/liquidation-flash",
+        "short": "liquidation-flash",
+        "version": "0.14.0"
+      },
+      "market-making": {
+        "headline": "v1",
+        "models": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -860.8266688506992,
+            "reward": 0.0,
+            "score": -42.98612073087645,
+            "sessions": 72,
+            "skill": -42.98612073087645,
+            "skills": [
+              -62.87850592261982,
+              -69.28061915818786,
+              0.0,
+              -65.19843064097876,
+              -17.573047932595827
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.1 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -266.21741225163566,
+            "reward": 0.0008469532196487605,
+            "score": -13.364327924278893,
+            "sessions": 72,
+            "skill": -13.364327924278893,
+            "skills": [
+              -26.609153529051365,
+              -7.95913917588869,
+              -4.6663698159281575,
+              3.947078945211193,
+              -31.53405604573745
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.2 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -330.92180308445677,
+            "reward": 0.0,
+            "score": -16.612540315484768,
+            "sessions": 0,
+            "skill": -16.612540315484768,
+            "skills": [
+              -33.452423538604684,
+              -18.605680625276275,
+              -9.06803591456776,
+              -8.727248737323697,
+              -13.209312761651432
+            ],
+            "trials": 5
+          },
+          "claude-opus-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 17.123115814381528,
+            "reward": 0.004754698109935947,
+            "score": 0.8595941673886301,
+            "sessions": 72,
+            "skill": 0.8595941673886301,
+            "skills": [
+              -0.24856280699267175,
+              -8.761792319984691,
+              -0.761332257525282,
+              -8.088789689463095,
+              22.15844791090889
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -152.02386120011687,
+            "reward": 0.0,
+            "score": -7.631719939764899,
+            "sessions": 72,
+            "skill": -7.631719939764899,
+            "skills": [
+              -11.664947245803262,
+              -2.0839817480173872,
+              -8.09145768247997,
+              -15.22803931607323,
+              -1.0901737064506525
+            ],
+            "trials": 5
+          },
+          "gemini-4-carbon \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 306.4906861677944,
+            "reward": 0.01650891960257561,
+            "score": 15.386078622881238,
+            "sessions": 72,
+            "skill": 15.386078622881238,
+            "skills": [
+              0.0,
+              19.48224371897039,
+              41.73797644662637,
+              -0.006570415331429919,
+              15.716743364140866
+            ],
+            "trials": 5
+          },
+          "glm-5.3 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -279.72092235950186,
+            "reward": 0.0,
+            "score": -14.042214977886633,
+            "sessions": 72,
+            "skill": -14.042214977886633,
+            "skills": [
+              -4.188569599839035,
+              -19.756849895382203,
+              -3.4150295842167724,
+              -12.767938863333317,
+              -30.082686946661838
+            ],
+            "trials": 5
+          },
+          "gpt-6-astra \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 321.1052721682601,
+            "reward": 0.017294647594427975,
+            "score": 16.119742578727912,
+            "sessions": 72,
+            "skill": 16.119742578727912,
+            "skills": [
+              20.825518606591178,
+              9.671352715201047,
+              13.235819513409064,
+              11.468386238082061,
+              25.397635820356204
+            ],
+            "trials": 5
+          },
+          "gpt-6.1-sol \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 332.9123750194805,
+            "reward": 0.017930575125434136,
+            "score": 16.712468625475925,
+            "sessions": 72,
+            "skill": 16.712468625475925,
+            "skills": [
+              21.755611124317355,
+              22.79929826679763,
+              9.793019121335016,
+              16.671906720888497,
+              12.542507894041115
+            ],
+            "trials": 5
+          },
+          "grok-4.7 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -328.40883003343407,
+            "reward": 0.0,
+            "score": -16.486387049871183,
+            "sessions": 72,
+            "skill": -16.486387049871183,
+            "skills": [
+              -18.792126621796896,
+              -14.854410438508678,
+              -18.308508219954714,
+              -10.780717626199017,
+              -19.6961723428966
+            ],
+            "trials": 5
+          },
+          "inkling-2-small \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": -657.1972965300381,
+            "reward": 0.0,
+            "score": -32.99183215512238,
+            "sessions": 0,
+            "skill": -32.99183215512238,
+            "skills": [
+              -29.753606247529472,
+              -51.75500774894059,
+              -38.56806847129518,
+              -27.354163085366647,
+              -17.528315222480025
+            ],
+            "trials": 5
+          },
+          "kimi-k3.1-pro \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 61.30888592168012,
+            "reward": 0.004637443858116293,
+            "score": 3.077755317353419,
+            "sessions": 72,
+            "skill": 3.077755317353419,
+            "skills": [
+              3.5405941390712323,
+              8.7490910140561,
+              4.524092047886386,
+              -6.223228170190767,
+              4.798227555944141
+            ],
+            "trials": 5
+          },
+          "muse-wonder \u00b7 hermes": {
+            "graded": 4,
+            "pnl_usd": -594.0693318164936,
+            "reward": 0.0,
+            "score": -29.822757621309904,
+            "sessions": 72,
+            "skill": -29.822757621309904,
+            "skills": [
+              -19.369995883794868,
+              -79.14805205333286,
+              -9.973840531806777,
+              -10.799142016305106
+            ],
+            "trials": 4
+          }
+        },
+        "name": "solana-foundation/market-making-spcx",
+        "short": "market-making-spcx",
+        "version": "0.14.0"
+      },
+      "weekend-gap": {
+        "headline": "v1",
+        "models": {
+          "beam-1.0-501b-a23b \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 980.9365756000013,
+            "reward": 0.04767822228490405,
+            "score": 0.0755034136984826,
+            "sessions": 72,
+            "skill": 0.0755034136984826,
+            "skills": [
+              0.2913289070539833,
+              0.37516639549875125,
+              0.2396803272795848,
+              -1.036203991240729,
+              0.5075454299008227
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.1 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 4749.7588031999985,
+            "reward": 0.061648646582616026,
+            "score": 0.36559244787733924,
+            "sessions": 72,
+            "skill": 0.36559244787733924,
+            "skills": [
+              0.4689841796650998,
+              0.3452914632522446,
+              0.2306435578184954,
+              0.397861915801708,
+              0.3851811228491483
+            ],
+            "trials": 5
+          },
+          "claude-fable-5.2 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 8248.845629000001,
+            "reward": 0.1070644194720313,
+            "score": 0.6349197486905351,
+            "sessions": 72,
+            "skill": 0.6349197486905351,
+            "skills": [
+              0.827497525236781,
+              0.5513308201617153,
+              0.501692716566797,
+              0.5408387068146046,
+              0.7532389746727779
+            ],
+            "trials": 5
+          },
+          "claude-opus-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 6554.084248199999,
+            "reward": 0.08506756663470076,
+            "score": 0.5044727118100052,
+            "sessions": 72,
+            "skill": 0.5044727118100052,
+            "skills": [
+              0.4995946118942878,
+              0.725752710178226,
+              0.519922852920462,
+              0.4101939602600069,
+              0.36689942379704343
+            ],
+            "trials": 5
+          },
+          "claude-sonnet-5.5 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 4336.9917344,
+            "reward": 0.05629121008957775,
+            "score": 0.33382146132027896,
+            "sessions": 72,
+            "skill": 0.33382146132027896,
+            "skills": [
+              0.38757153391138316,
+              0.37256528604251093,
+              0.2016579334126135,
+              0.42129841247849587,
+              0.28601414075639137
+            ],
+            "trials": 5
+          },
+          "gemini-4-carbon \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 5704.297463000001,
+            "reward": 0.06708934793591188,
+            "score": 0.39785721663029794,
+            "sessions": 72,
+            "skill": 0.39785721663029794,
+            "skills": [
+              0.0,
+              0.9216045050973868,
+              0.0,
+              0.0,
+              1.0676815780541027
+            ],
+            "trials": 5
+          },
+          "glm-5.3 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 1335.3842226000008,
+            "reward": 0.028572606504560106,
+            "score": 0.10278551122810667,
+            "sessions": 72,
+            "skill": 0.10278551122810667,
+            "skills": [
+              -0.24125810382582977,
+              0.17939035502753647,
+              0.4091853067476391,
+              -0.0920291398134999,
+              0.2586391380046874
+            ],
+            "trials": 5
+          },
+          "gpt-6-astra \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 11794.078924799998,
+            "reward": 0.15307914223194283,
+            "score": 0.9077989774283303,
+            "sessions": 72,
+            "skill": 0.9077989774283303,
+            "skills": [
+              0.8898541460673725,
+              1.0200272586486243,
+              0.9109402678581731,
+              1.087166831230108,
+              0.6310063833373736
+            ],
+            "trials": 5
+          },
+          "gpt-6.1-sol \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 9416.1206898,
+            "reward": 0.12221485777207286,
+            "score": 0.7247657734058396,
+            "sessions": 72,
+            "skill": 0.7247657734058396,
+            "skills": [
+              0.7565367271271827,
+              0.7154498925873332,
+              0.8637031344794273,
+              0.7323981808735406,
+              0.555740931961714
+            ],
+            "trials": 5
+          },
+          "grok-4.7 \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 1747.090751199999,
+            "reward": 0.022676052559957898,
+            "score": 0.13447486722162558,
+            "sessions": 72,
+            "skill": 0.13447486722162558,
+            "skills": [
+              0.184511706633723,
+              0.06642418628458364,
+              0.1147853522373466,
+              0.10470960933501189,
+              0.2019434816174628
+            ],
+            "trials": 5
+          },
+          "inkling-2-small \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 3534.1292711999995,
+            "reward": 0.04587060005461778,
+            "score": 0.2720245437520925,
+            "sessions": 72,
+            "skill": 0.2720245437520925,
+            "skills": [
+              0.3724416000677342,
+              0.3098610561924882,
+              0.30331157824652977,
+              0.3625477685028034,
+              0.011960715750906998
+            ],
+            "trials": 5
+          },
+          "kimi-k3.1-pro \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 6166.299483800001,
+            "reward": 0.08003438350243049,
+            "score": 0.47462463169885954,
+            "sessions": 72,
+            "skill": 0.47462463169885954,
+            "skills": [
+              0.562608258652473,
+              0.3887837614830721,
+              0.28104858416173095,
+              0.6144449813923234,
+              0.5262375728046984
+            ],
+            "trials": 5
+          },
+          "muse-wonder \u00b7 hermes": {
+            "graded": 5,
+            "pnl_usd": 3773.043258200002,
+            "reward": 0.050156296844855654,
+            "score": 0.29041393002590066,
+            "sessions": 72,
+            "skill": 0.29041393002590066,
+            "skills": [
+              0.5102821762706911,
+              0.450260129002959,
+              0.31752452341642334,
+              -0.035129530747886016,
+              0.20913235218731605
+            ],
+            "trials": 5
+          }
+        },
+        "name": "solana-foundation/weekend-gap-spcx",
+        "short": "weekend-gap-spcx",
+        "version": "0.14.0"
+      }
+    },
+    "trials": 454
+  },
+  "shared_reference_sessions": 41400,
+  "skipped": [
+    "2026-11-24__15-50-35/backrun-sol-usdc__83sNxHv/artifacts/app/bot/practice-report.json (1376610 bytes)",
+    "2026-11-24__15-50-35/backrun-sol-usdc__dcYa3WR/artifacts/app/bot/practice-report.json (1348025 bytes)",
+    "2026-11-24__15-50-35/backrun-thin-pools__rgi2tTo/artifacts/app/bot/practice-report.json (1067927 bytes)",
+    "2026-11-24__15-50-35/flash-crash-spcx__WDZSHNv/artifacts/app/bot/bot.wasm (1235762 bytes)",
+    "2026-11-24__15-50-35/flash-crash-spcx__YeewZ5e/artifacts/app/bot/bot.wasm (1794251 bytes)",
+    "2026-11-24__15-50-35/flash-crash-spcx__YeewZ5e/artifacts/app/bot/dp-model-2.bin (1490012 bytes)",
+    "2026-11-24__15-50-35/flash-crash-spcx__g2fbdTc/artifacts/app/bot/bot.wasm (2114234 bytes)",
+    "2026-11-24__15-50-35/flash-crash-spcx__kcyUKM7/artifacts/app/bot/bot.wasm (2096911 bytes)",
+    "2026-11-24__15-50-35/flash-crash-spcx__kcyUKM7/artifacts/app/bot/forecast.bin (1537132 bytes)",
+    "2026-11-24__15-50-35/flash-crash-spcx__pnWoTTu/artifacts/app/bot/bot.wasm (1105120 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__FHrxhAU/artifacts/app/bot/bot.wasm (2149120 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__YPQ8R7q/artifacts/app/bot/bot.wasm (4707020 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__YPQ8R7q/artifacts/app/bot/model1.bin (1367996 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__YPQ8R7q/artifacts/app/bot/model0.bin (1360124 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__YPQ8R7q/artifacts/app/bot/model2.bin (1367612 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__cZk5z3X/artifacts/app/bot/model8.bin (1271412 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__cZk5z3X/artifacts/app/bot/bot.wasm (3158511 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__cZk5z3X/artifacts/app/bot/model20.bin (1271412 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__nF77BY6/artifacts/app/bot/bot.wasm (2597944 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__nF77BY6/artifacts/app/bot/model.bin (1989852 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__sseY9LZ/artifacts/app/bot/bot.wasm (6839443 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__sseY9LZ/artifacts/app/bot/model5.bin (2086012 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__sseY9LZ/artifacts/app/bot/model2.bin (2086012 bytes)",
+    "2026-11-24__15-50-35/funding-carry-spcx__sseY9LZ/artifacts/app/bot/model10.bin (2086012 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__AoDR6gn/artifacts/app/bot/bot.wasm (2583385 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__AoDR6gn/artifacts/app/bot/model.bin (1672336 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__L7cF4sF/artifacts/app/bot/models/medium.bin (1111020 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__L7cF4sF/artifacts/app/bot/bot.wasm (3721412 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__Yzjw8Mx/artifacts/app/bot/bot.wasm (3393656 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__Yzjw8Mx/artifacts/app/bot/open.bin (1257720 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__Yzjw8Mx/artifacts/app/bot/short.bin (1271412 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__yvGyBLQ/artifacts/app/bot/bot.wasm (1136263 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__zcbschJ/artifacts/app/bot/bot.wasm (8440146 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__zcbschJ/artifacts/app/bot/open.bin (1495148 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__zcbschJ/artifacts/app/bot/short.bin (2092648 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__zcbschJ/artifacts/app/bot/medium.bin (2119052 bytes)",
+    "2026-11-24__15-50-35/weekend-gap-spcx__zcbschJ/artifacts/app/bot/long.bin (2091992 bytes)",
+    "2026-11-24__15-51-35/backrun-sol-usdc__JfAd2UF/artifacts/app/bot/validation.json (1389361 bytes)",
+    "2026-11-24__15-51-35/backrun-sol-usdc__ixub2Sv/artifacts/app/bot/practice-report.json (1410877 bytes)",
+    "2026-11-24__15-51-35/backrun-sol-usdc__ogze9oY/artifacts/app/bot/practice-report.json (1387210 bytes)",
+    "2026-11-24__15-51-35/backrun-sol-usdc__qqKXTjt/artifacts/app/bot/practice-report.json (1362323 bytes)",
+    "2026-11-24__15-51-35/backrun-sol-usdc__w3gGCxG/artifacts/app/bot/practice-report.json (1485042 bytes)",
+    "2026-11-24__15-51-35/backrun-thin-pools__JGGNDgN/artifacts/app/bot/practice-report.json (1077200 bytes)",
+    "2026-11-24__15-51-35/backrun-thin-pools__yyD44cF/artifacts/app/bot/practice-report.json (1063190 bytes)",
+    "2026-11-24__15-51-35/flash-crash-spcx__Hec3rpR/artifacts/app/bot/bot.wasm (1283280 bytes)",
+    "2026-11-24__15-51-35/flash-crash-spcx__uqb2qa2/artifacts/app/bot/bot.wasm (1762536 bytes)",
+    "2026-11-24__15-51-35/flash-crash-spcx__uqb2qa2/artifacts/app/bot/model.bin (1173612 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__LpY2Y4i/artifacts/app/bot/shadow.bin (2086012 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__LpY2Y4i/artifacts/app/bot/bot.wasm (10282325 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__LpY2Y4i/artifacts/app/bot/model4.bin (2533012 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__LpY2Y4i/artifacts/app/bot/model20.bin (2530032 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__LpY2Y4i/artifacts/app/bot/model10.bin (2533012 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__X8TsUJT/artifacts/app/bot/bot.wasm (2954656 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__X8TsUJT/artifacts/app/bot/model.bin (1173612 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__X8TsUJT/artifacts/app/bot/adv.bin (1173612 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__uuLRezh/artifacts/app/bot/bot.wasm (4147781 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__uuLRezh/artifacts/app/bot/model_smooth.bin (1788012 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__uuLRezh/artifacts/app/bot/model.bin (1788012 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__xe75H6V/artifacts/app/bot/fast.bin (1173612 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__xe75H6V/artifacts/app/bot/bot.wasm (2965642 bytes)",
+    "2026-11-24__15-51-35/funding-carry-spcx__xe75H6V/artifacts/app/bot/slow.bin (1171656 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__C8xaEnn/artifacts/app/bot/bot.wasm (2530164 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__Ut4vjSr/artifacts/app/bot/bot.wasm (2377343 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__mN37Azz/artifacts/app/bot/bot.wasm (1672063 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__s42yRiA/artifacts/app/bot/models/open.bin (1582000 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__s42yRiA/artifacts/app/bot/models/short.bin (2714812 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__s42yRiA/artifacts/app/bot/models/medium.bin (2672856 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__s42yRiA/artifacts/app/bot/bot.wasm (7614246 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/checkpoints/verified3-gap.bin (2759492 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/checkpoints/verified3-short.bin (2950212 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/checkpoints/verified3.wasm (6308776 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/models/short.bin (2950212 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/models/gap.bin (2759492 bytes)",
+    "2026-11-24__15-51-35/weekend-gap-spcx__zpSET5X/artifacts/app/bot/bot.wasm (6308776 bytes)",
+    "2026-11-24__15-56-35/backrun-thin-pools__id6QcJU/artifacts/app/bot/tmp/v13-full.json (1114864 bytes)",
+    "2026-11-24__15-56-35/backrun-thin-pools__id6QcJU/artifacts/app/bot/tmp/v12-full.json (1115842 bytes)"
+  ],
+  "source": "20261124-154634-x1",
+  "store": {
+    "bytes": 1123204096,
+    "files": 90182,
+    "path": "0.14.0/release.tar",
+    "repo": "solana-foundation/machine-trading-results",
+    "revision": "c3954faf2b6f32aa31e46457bca9eb78b18a6b6a",
+    "sha256": "aa1a186c7bc2da27537d2af887e8c48cd5c7ee912f265416cb1685da8a7cb2fd"
+  },
+  "tasks": {
+    "backrun-sol-usdc": {
+      "name": "solana-foundation/backrun-sol-usdc",
+      "ref": "sha256:acffe1a5d83d23cfbd9b1113d44e5ec99a1b274006ce86963a37b5504b0f1484"
+    },
+    "backrun-thin-pools": {
+      "name": "solana-foundation/backrun-thin-pools",
+      "ref": "sha256:2445c589859da4fb0f12ab023fb45548bb5c90379fc866909e7ebdf064a54c87"
+    },
+    "flash-crash-spcx": {
+      "name": "solana-foundation/flash-crash-spcx",
+      "ref": "sha256:f7e3f93f8566f32a09fe539ccb66aa14bacafa523dce94a287aa8edcf85cd13b"
+    },
+    "funding-carry-spcx": {
+      "name": "solana-foundation/funding-carry-spcx",
+      "ref": "sha256:b52230e89f6fcc4aa43a7c9dd821d8b7d4264c508e75ade1761405cfa5e915d8"
+    },
+    "liquidation-flash": {
+      "name": "solana-foundation/liquidation-flash",
+      "ref": "sha256:af1d1e031667e38636da0544b54c797402ae73ebdd4fbf313c4a089e4d4c131f"
+    },
+    "market-making-spcx": {
+      "name": "solana-foundation/market-making-spcx",
+      "ref": "sha256:2056464674693ef84bcf378d09e7604b5d71becc2d0a9d8d679bd02482b3e55e"
+    },
+    "weekend-gap-spcx": {
+      "name": "solana-foundation/weekend-gap-spcx",
+      "ref": "sha256:8e65ebe7f0e97ad4cc315c0de350de0048761a9c97e0117f37a0a43a996155a1"
+    }
+  },
+  "trials": 454,
+  "version": "0.14.0",
+  "version_mismatch": [],
+  "versions": {
+    "backrun-sol-usdc": {
+      "scoring_hash": "8b4655aa597875c8fff542a6481ec892228e395107bc256c18f36e6d72b8a09e",
+      "task_fingerprint": "a7ac9679f0ef608609a36b5e4f3caa27f5682b6f52531f0db6509e4032c3c070"
+    },
+    "backrun-thin-pools": {
+      "scoring_hash": "8b4655aa597875c8fff542a6481ec892228e395107bc256c18f36e6d72b8a09e",
+      "task_fingerprint": "47a02a9e9f76c489ab1f83b96fd4695c39bb0d178ce272d7427ff17bcceada55"
+    },
+    "flash-crash-spcx": {
+      "scoring_hash": "6a70cd975247a7d87762a11def8de43537712f39c3e7e4ad3903a3ea443cb80e",
+      "task_fingerprint": "d77989bd50114e06cfac1feb5521a5d75947fe24f4ce7584695d87ee688189ee"
+    },
+    "funding-carry-spcx": {
+      "scoring_hash": "6a70cd975247a7d87762a11def8de43537712f39c3e7e4ad3903a3ea443cb80e",
+      "task_fingerprint": "6a751c4227aba050db957a469940ec1d9b57abc12872ef18a0fe0bbb8278e394"
+    },
+    "liquidation-flash": {
+      "scoring_hash": "8b4655aa597875c8fff542a6481ec892228e395107bc256c18f36e6d72b8a09e",
+      "task_fingerprint": "3b5f374ac6aefa74529c56c300c810c5492f5ff70ce6da89d8bb891499c1d724"
+    },
+    "market-making-spcx": {
+      "scoring_hash": "6a70cd975247a7d87762a11def8de43537712f39c3e7e4ad3903a3ea443cb80e",
+      "task_fingerprint": "dff6e003b6e4a616e8f9f934df7e60e11909fea6faa823b946301be7b5df525a"
+    },
+    "weekend-gap-spcx": {
+      "scoring_hash": "6a70cd975247a7d87762a11def8de43537712f39c3e7e4ad3903a3ea443cb80e",
+      "task_fingerprint": "9f638812ce80e22adee53913fdc375bf8f319e19bee963a5672873324ee0ed89"
+    }
+  }
+}

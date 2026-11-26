@@ -98,6 +98,7 @@ pub async fn run(options: Run<'_>) -> Result<String> {
         keys: &mtx_grader::keys::SessionKeys::random(),
         v2_sessions: false,
         host: None,
+        anchors_from: None,
     })
     .await?;
     let log = logs.join(format!("{}.log", scenario.name));

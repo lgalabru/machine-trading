@@ -88,7 +88,27 @@ pub const DEPOSIT_USDC: f64 = 10_000.0;
 /// Unix users bots run as when the grader runs as root, one per session that
 /// can run at once (see [`SessionOptions::slot`]). Each session kills every
 /// process its user owns when it ends, so two sessions never share one.
-pub const BOT_USERS: [&str; 4] = ["mtx-bot", "mtx-bot-2", "mtx-bot-3", "mtx-bot-4"];
+/// Sixteen: the verifier runs four at once, and the skill ladder runs up to
+/// sixteen on a large machine (bench/image/Dockerfile and bench/ci/setup.sh
+/// create them all).
+pub const BOT_USERS: [&str; 16] = [
+    "mtx-bot",
+    "mtx-bot-2",
+    "mtx-bot-3",
+    "mtx-bot-4",
+    "mtx-bot-5",
+    "mtx-bot-6",
+    "mtx-bot-7",
+    "mtx-bot-8",
+    "mtx-bot-9",
+    "mtx-bot-10",
+    "mtx-bot-11",
+    "mtx-bot-12",
+    "mtx-bot-13",
+    "mtx-bot-14",
+    "mtx-bot-15",
+    "mtx-bot-16",
+];
 /// How long a bot gets to exit after SIGTERM before it is killed.
 const STOP_GRACE: Duration = Duration::from_secs(2);
 
@@ -1834,6 +1854,33 @@ fn bot_user(user: &str) -> Option<(u32, u32)> {
     }
 }
 
+/// Refuse to run bots as `users` (a range of [`BOT_USERS`]) on a machine that
+/// has some bot users but not all of these: an image made for fewer users
+/// would run the rest of the sessions' bots as root, beside bots that run as
+/// their own users. A grader not running as root runs every bot as itself,
+/// and one on a machine with no bot users at all runs them as root, with a
+/// warning, as it always has.
+pub(crate) fn check_bot_users(users: std::ops::Range<usize>) -> Result<()> {
+    assert!(users.end <= BOT_USERS.len());
+    // SAFETY: getuid has no preconditions.
+    if unsafe { libc::getuid() } != 0 {
+        return Ok(());
+    }
+    let exists = |user: &str| {
+        let name = std::ffi::CString::new(user).expect("no NUL in user name");
+        // SAFETY: getpwnam is given a valid C string; only the null check
+        // reads its result.
+        !unsafe { libc::getpwnam(name.as_ptr()) }.is_null()
+    };
+    if !BOT_USERS.iter().any(|user| exists(user)) {
+        return Ok(());
+    }
+    match BOT_USERS[users].iter().find(|user| !exists(user)) {
+        Some(missing) => Err(Error::MissingBotUser((*missing).to_string())),
+        None => Ok(()),
+    }
+}
+
 /// Where graders on a machine hold the bot users their sessions run as:
 /// a fixed path, not `TMPDIR`, so that every grader finds it.
 const BOT_USER_LOCKS: &str = "/tmp/mtx-bot-users";
@@ -2059,6 +2106,24 @@ mod tests {
             .unwrap();
         drop(second);
         std::fs::remove_file(&path).unwrap();
+    }
+
+    /// The images that run graders as root create every bot user a grade
+    /// can run a bot as: one missing would refuse the grade (see
+    /// [`check_bot_users`]).
+    #[test]
+    fn the_images_create_every_bot_user() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for file in ["bench/ci/setup.sh", "bench/image/Dockerfile"] {
+            let text = std::fs::read_to_string(root.join(file)).unwrap();
+            let listed: Vec<&str> = text
+                .split(|c: char| c.is_whitespace() || c == ';' || c == '\\')
+                .filter(|word| word.starts_with("mtx-bot"))
+                .collect();
+            assert_eq!(listed, BOT_USERS, "{file}");
+        }
+        let unique: std::collections::BTreeSet<&str> = BOT_USERS.into_iter().collect();
+        assert_eq!(unique.len(), BOT_USERS.len());
     }
 
     #[test]

@@ -50,13 +50,21 @@ ports, RPC guard, directory and keys, and for a component its own store and
 fuel. A strategy component runs inside the grader, with no files and no
 network, so up to 32 of its sessions run at once, as many as memory holds
 with each strategy at its 1 GiB cap (two in a 6 GB container); a process bot runs as one
-of four bot users, so at most four. Grades running at once on one machine
+of sixteen bot users, so at most sixteen (the verifier runs four). Grades running at once on one machine
 never run bots as the same user at the same time (a session's end kills
 everything its user runs): a session waits for its user, and
 `--first-bot-user` ranges that don't overlap keep them from waiting. A
 session starts whenever another ends. The report doesn't depend on `--jobs`:
 `--replay-jobs` runs the replays with another number, so `--jobs 16 --replay
 2 --replay-jobs 1` checks a parallel grade against a serial one.
+
+The skill ladder grades every rung of a set against the same anchors, so it
+runs them once per set: the first rung's grade saves the reference's, the
+informed bot's and the nop bot's sessions (`--anchors-out`), and every other
+rung's grade reuses them (`--anchors-from`) rather than playing them again.
+A grade refuses a saved file unless it was saved by the same grader, from
+the same secret, scenarios, snapshot and anchor components (`bot.wasm`), and
+under the same session rules. The verifier never reuses anchors.
 
 ```sh
 MTX_EVAL_SEED=... mtx grade --draw flash-crash-nvda --count 6 --components-only \

@@ -58,7 +58,16 @@ and every rule, exploit and clean-run verdict.
 `--parallel N` grades N rungs at once. Each grade's bots run as its own
 range of the grader's bot users (`--first-bot-user`): a session's end kills
 every process of its user, so rungs sharing users would kill each other's
-bots. There are four, so `parallel × jobs` can't exceed 4.
+bots. There are sixteen, so `parallel × jobs` can't exceed 16.
+
+A v2 task's rungs are all graded against the same anchors on a set: the
+reference and the informed bot play the same sessions, from the same secret,
+in every rung's grade. So the ladder runs them once per set: the first rung's
+grade saves them (`mtx grade --anchors-out <set>/anchors.json`, its anchor
+sessions `parallel × jobs` at once) and every other rung's grade reuses them
+(`--anchors-from`), which the grader refuses unless they were saved for the
+same set, snapshot and anchors. Only component anchors (a `bot.wasm`) can be
+reused; process anchors still run in every grade.
 """
 
 import argparse
@@ -81,7 +90,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "../../.."))
 BOOTSTRAP_DRAWS = 2000
 # The grader's bot users (session::BOT_USERS).
-BOT_USERS = 4
+BOT_USERS = 16
+# Where a set's anchors are saved for its rungs' grades (`mtx grade
+# --anchors-out`).
+ANCHORS_FILE = "anchors.json"
 # What the grader sets for a bot: a rung's `env` can't override them.
 GRADER_VARS = {
     "MTX_RPC_URL", "MTX_KEYPAIR", "MTX_EXCHANGE", "MTX_SYMBOL", "MTX_END_SLOT",
@@ -178,8 +190,48 @@ def rung_grading(task, config, probes, root=ROOT):
     return probe_grading(task, config, root)
 
 
-def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users, v2=None):
-    report = os.path.join(out, f"{rung['name']}.json")
+def report_path(out, rung):
+    return os.path.join(out, f"{rung['name']}.json")
+
+
+def anchors_once(v2):
+    """Whether a set's anchors can run once for all its rungs: a v2 grading
+    whose anchors are components, which the grader knows a saved anchor by."""
+    if not v2:
+        return False
+    dirs = [v2["reference"]] + ([v2["informed"]] if "informed" in v2 else [])
+    return all(os.path.isfile(os.path.join(d, "bot.wasm")) for d in dirs)
+
+
+def grade_set(mtx, snapshot, family, count, jobs, parallel, rungs, secret, out, users, v2=None):
+    """Every rung's report on one set, in the ladder file's order. With
+    anchors run once (see `anchors_once`), the first rung not yet graded
+    saves them before the others are graded against them."""
+    reports = {}
+    anchors = None
+    if anchors_once(v2):
+        path = os.path.join(out, ANCHORS_FILE)
+        if not os.path.exists(path):
+            first = next((r for r in rungs if not os.path.exists(report_path(out, r))), None)
+            if first is not None:
+                # Nothing else runs meanwhile: its anchors take every slot.
+                save = {"out": path, "jobs": jobs * parallel}
+                reports[first["name"]] = grade(mtx, snapshot, family, count, jobs, first,
+                                               secret, out, users, v2, save)
+        anchors = {"from": path}
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
+        futures = {
+            rung["name"]: pool.submit(grade, mtx, snapshot, family, count, jobs, rung, secret,
+                                      out, users, v2, anchors)
+            for rung in rungs if rung["name"] not in reports
+        }
+        reports.update({name: future.result() for name, future in futures.items()})
+    assert len(reports) == len(rungs)
+    return {rung["name"]: reports[rung["name"]] for rung in rungs}
+
+
+def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users, v2=None, anchors=None):
+    report = report_path(out, rung)
     if os.path.exists(report):
         with open(report) as f:
             return json.load(f)
@@ -187,13 +239,13 @@ def grade(mtx, snapshot, family, count, jobs, rung, secret, out, users, v2=None)
     first_bot_user = users.get()
     try:
         return run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report,
-                         first_bot_user, v2)
+                         first_bot_user, v2, anchors)
     finally:
         users.put(first_bot_user)
 
 
 def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, first_bot_user,
-              v2=None):
+              v2=None, anchors=None):
     command = [
         mtx, "grade", "--draw", family, "--count", str(count), "--jobs", str(jobs),
         "--first-bot-user", str(first_bot_user),
@@ -208,13 +260,21 @@ def run_grade(mtx, snapshot, family, count, jobs, rung, secret, out, report, fir
     if v2:
         # v2 anchors every session to the reference's PnL on it, so the
         # reference plays the same sessions in each grade.
-        command += ["--scoring", "v2", "--reference", v2["reference"],
-                    "--anchor-jobs", str(jobs)]
+        command += ["--scoring", "v2", "--reference", v2["reference"]]
         # The settings the task's own verifier grades with.
         for flag, value in v2["flags"]:
             command += [flag, value]
         if "informed" in v2:
             command += ["--informed", v2["informed"]]
+        # The set's anchors, saved by one rung's grade and reused by the
+        # others' (see `grade_set`).
+        anchors = anchors or {}
+        if "out" in anchors:
+            command += ["--anchors-out", anchors["out"], "--anchor-jobs", str(anchors["jobs"])]
+        else:
+            command += ["--anchor-jobs", str(jobs)]
+        if "from" in anchors:
+            command += ["--anchors-from", anchors["from"]]
     # A v2 task's informed rung: told each session's latent state, as the
     # verifier tells its informed bot (`mtx grade --informed`).
     if rung.get("tell_latent"):
@@ -1018,15 +1078,8 @@ def main():
             secret = secrets.token_hex(32)
             with open(os.open(secret_file, os.O_WRONLY | os.O_CREAT, 0o600), "w") as f:
                 f.write(secret)
-        with ThreadPoolExecutor(max_workers=args.parallel) as pool:
-            futures = {
-                rung["name"]: pool.submit(
-                    grade, args.mtx, args.snapshot, config["family"], count, args.jobs,
-                    rung, secret, set_dir, users, grading,
-                )
-                for rung in config["rungs"]
-            }
-            reports = {name: future.result() for name, future in futures.items()}
+        reports = grade_set(args.mtx, args.snapshot, config["family"], count, args.jobs,
+                            args.parallel, config["rungs"], secret, set_dir, users, grading)
         sets.append(reports)
         refused = next((r["v2_refused"] for r in reports.values() if r.get("v2_refused")), None)
         if refused:

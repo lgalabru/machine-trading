@@ -13,7 +13,10 @@ mtx gates flash-crash-nvda          # + the image checks; 4 sets of the task's s
 
 Full mode builds the task image and runs Harbor, so run it on a machine with
 Docker. `--sets`, `--sessions` and `--ladder-summary <summary.json>` (reuse a
-finished ladder) adjust a run.
+finished ladder) adjust a run. The ladder grades one rung at a time, four
+sessions at once, by default; on a large machine `--ladder-jobs 4
+--ladder-parallel 4` (or `MTX_LADDER_JOBS`, `MTX_LADDER_PARALLEL`) runs four
+rungs at once, up to the grader's sixteen bot users.
 
 ## What it checks
 

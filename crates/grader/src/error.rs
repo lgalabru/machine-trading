@@ -87,6 +87,16 @@ pub enum Error {
     /// Two runs of the same grade disagreed (see [`crate::replay`]).
     #[error("the grade didn't replay: {0}")]
     Replay(String),
+    /// Saved anchor sessions that can't be saved, or can't stand in for this
+    /// grade's own (see [`crate::saved_anchors`]).
+    #[error("saved anchors: {0}")]
+    SavedAnchors(String),
+    /// A grader running as root was asked to run a bot as a bot user the
+    /// machine doesn't have: the bot would run as root.
+    #[error(
+        "bot user {0} doesn't exist: a grader running as root runs each session's bot as its own user (bench/ci/setup.sh creates them)"
+    )]
+    MissingBotUser(String),
     /// Scoring v2 couldn't score a grade's sessions (see [`crate::scoring_v2`]).
     #[error("scoring v2: {0}")]
     ScoringV2(String),
