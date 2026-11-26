@@ -3242,13 +3242,13 @@ mod tests {
             assert!(root.join(&snapshot).is_dir(), "{snapshot}");
             // The Kamino and backrun tasks trade the atomic-arb snapshot
             // (its main market and SOL/USDC pools), the thin-pools task its
-            // ten pools; flash-crash-nvda the 96-market perps snapshot, which
-            // holds NVDA; market making Phoenix's CBRS; the other perp tasks Phoenix's
-            // SPCX.
+            // ten pools; flash-crash-nvda and funding-carry-sol the 96-market
+            // perps snapshot, which holds NVDA and SOL; market making Phoenix's
+            // CBRS; the other perp tasks Phoenix's SPCX.
             let want = match task.dir.as_str() {
                 "liquidation-flash" | "backrun-sol-usdc" => "snapshots/atomic-arb-2026-11-21",
                 "backrun-thin-pools" => "snapshots/thin-pools-2026-11-21",
-                "flash-crash-nvda" => "snapshots/phoenix-perps-2026-11-13",
+                "flash-crash-nvda" | "funding-carry-sol" => "snapshots/phoenix-perps-2026-11-13",
                 "market-making-cbrs" => "snapshots/phoenix-cbrs-2026-11-25",
                 _ => "snapshots/phoenix-spcx-2026-10-29",
             };
