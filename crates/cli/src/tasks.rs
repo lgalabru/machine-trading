@@ -880,7 +880,7 @@ mod tests {
     fn a_shared_generator_needs_its_own_anchor() {
         let dir = std::env::temp_dir().join(format!("mtx-tasks-{}", uuid::Uuid::new_v4().simple()));
         let real = crate::authoring::repo_root();
-        for name in ["flash-crash-nvda", "market-making-ant"] {
+        for name in ["flash-crash-nvda", "market-making-cbrs"] {
             let folder = dir.join("bench/tasks").join(name);
             std::fs::create_dir_all(folder.join("reference")).unwrap();
             for file in ["task.toml", "reference/Cargo.toml"] {
@@ -895,7 +895,7 @@ mod tests {
             std::fs::write(
                 folder.join("task.toml"),
                 toml.replace(
-                    "generator = \"market-making-ant\"",
+                    "generator = \"market-making-cbrs\"",
                     "generator = \"flash-crash-nvda\"",
                 ),
             )
