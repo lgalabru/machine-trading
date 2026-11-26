@@ -574,6 +574,8 @@ impl MeasuredCarryFamily {
                 edge_bps: shape.arbitrageur_edge_bps,
                 size_mult: self.arbitrageur_size_mult,
                 max_inventory_mult: self.arbitrageur_inventory_mult,
+                // Before the bot's turn, as the carry family was measured.
+                after_turn: false,
             }),
             ..Library::default()
         }
