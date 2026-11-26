@@ -139,28 +139,27 @@ each), PnL in USD, Sharpe a session:
 | Bot | Set 1 | Set 2 | 48 sessions |
 | --- | --- | --- | --- |
 | nop | 0 | 0 | 0 |
-| naive quoter | +72.75 (0.76) | +31.31 (0.36) | +104.06 |
-| skew quoter | +56.70 (1.14) | +42.46 (1.43) | +99.16 |
-| reference | +61.63 (1.52) | +43.89 (0.97) | +105.52 |
-| informed | +90.31 (1.01) | +93.25 (2.71) | +183.56 |
+| naive quoter (1 unit) | +72.75 (0.76) | +31.31 (0.36) | +104.06 |
+| skew quoter (1 unit) | +56.70 (1.14) | +42.46 (1.43) | +99.16 |
+| reference (3.2 units, a quarter of the cap) | +79.88 (1.16) | +78.70 (1.58) | +158.58 |
+| informed (6.4 units, half the cap) | +90.57 (0.78) | +105.51 (2.70) | +196.08 |
+| informed at three quarters of the cap (9.5 units) | +106.34 | +77.61 | +183.95 |
+| informed at the whole cap (12.7 units) | +87.16 | +70.50 | +157.66 |
 
-The reference's PnL is 0.57 of the informed bot's, with a Sharpe of 1.0 to
-1.5 a session. Where it comes from (reference, set 1): the spread from
-noise takers +54.84 over 502 CBRS filled, the arbitrageur's picks -3 to -4,
-fees -2, the rest inventory (the two jump sessions +8.9). The informed bot
-fills 2.6 times the volume (1,291 CBRS) at about the same spread a unit.
-The reference barely leads the naive and skewed quoters over 48 sessions
-(+105.52 against +104.06 and +99.16): on a book of takers who know nothing,
-any quote inside the competitor earns, and the naive quoter's lead on set 1
-is inventory through the walk and the jumps (+29 of its +73). Its own-fill
-learner (2 units after 10 fills that hold up) rarely acts: a session fills
-it 10 to 24 times. The ladder's order rules `naive-quoter < reference` and
-`skew-quoter < reference` will not hold with the bootstrap's confidence.
+The reference leads the quoters (+158.58 against +104.06 and +99.16), with
+a Sharpe of 1.2 to 1.6. Two targets are missed, and the market is left as
+measured: the reference makes 0.81 of the informed bot (the band is 0.2 to
+0.7), and the informed bot makes 1.88 times the best non-reading rung (the
+gate asks 2). More size doesn't buy the informed bot more: past half the
+cap the jump sessions and the walk take back what the spread adds (at the
+whole cap it makes less than the reference). Knowing that every taker is
+noise is worth about a quarter more PnL on CBRS, not double: what the
+reference doesn't know costs it little where nobody informed trades.
 
 Practice is drawn by the date rule the other 0.14 and 0.15 tasks follow
 (the snapshot's date: seed 20261125) and calibrated with both anchors
-(`mtx calibrate --practice market-making-cbrs --practice-seed 20261125`):
-reference +10.62, informed +23.31 over the six (0.46). Seed history: seed
+(`mtx calibrate --practice market-making-cbrs --practice-seed 20261125`),
+recalibrated when the anchors' sizing changed. Seed history: seed
 15 (an arbitrary first pick) had the reference ahead (+17.93 against
 +12.71), which v2 refuses to scale; seed 17 was then picked for its
 outcome, which practice must not be, and is withdrawn.
