@@ -3378,16 +3378,16 @@ pub(crate) mod tests {
             )
         };
         assert!(matches!(
-            run(2, 4).await,
+            run(14, 4).await,
             Err(Error::BotUsers {
-                first: 2,
+                first: 14,
                 jobs: 4,
-                users: 4
+                users: 16
             })
         ));
-        assert!(matches!(run(4, 1).await, Err(Error::BotUsers { .. })));
-        assert!(run(2, 2).await.unwrap().is_empty());
-        assert!(run(0, 4).await.unwrap().is_empty());
+        assert!(matches!(run(16, 1).await, Err(Error::BotUsers { .. })));
+        assert!(run(14, 2).await.unwrap().is_empty());
+        assert!(run(0, 16).await.unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&logs);
     }
 
@@ -3423,7 +3423,7 @@ pub(crate) mod tests {
         assert!(matches!(run(0, 0).await, Err(Error::Jobs(0, _))));
         // A process bot's sessions still take one bot user each.
         std::fs::remove_file(bot.join(crate::wasm::BOT_WASM)).unwrap();
-        assert!(matches!(run(0, 5).await, Err(Error::Jobs(5, 4))));
+        assert!(matches!(run(0, 17).await, Err(Error::Jobs(17, 16))));
         let _ = std::fs::remove_dir_all(&bot);
         let _ = std::fs::remove_dir_all(&logs);
     }
