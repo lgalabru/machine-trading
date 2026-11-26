@@ -10,7 +10,7 @@ spot_snapshot := "sol-usdc-spot-2026-11-11"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.14.0"
+tag := "0.15.0"
 tasks := "bench/tasks"
 # The harness versions `just bench` runs, pinned so results compare. Every
 # model runs in Hermes (NousResearch/hermes-agent): one harness for every
