@@ -37,11 +37,21 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     take 0.50% (95% 0.57 to 1.04), the weekend's few prints and a burst at
     the reopen (`calibration/weekend/spcx-reopens.20261120.json`). Stated
     departures, in its instruction: time compressed, direction a coin flip,
-    an unrecorded weekend book, and two informed traders and two decoys
-    positioning into the reopen, flow the tape never saw. The reference
-    fades the take-back by its size; an informed bot, told the informed
-    wallets, is v2's 1. The rungs fitted to the old family are gone, and
-    rewards don't compare with 0.14.0's.
+    an unrecorded weekend book, and two informed traders, right 95% of the
+    time, and two decoys positioning into the reopen, flow the tape never
+    saw. The reference reads the market's transactions, counts the wallets
+    first seen just before the reopen as a vote it trusts 72.5% (two right
+    95% and two decoys at 50%), and fades the expected take-back by it; an
+    informed bot, told the informed wallets and reading their silence, is
+    v2's 1. Over three sets of 24 sessions the reference makes 0.513 of
+    it. The rungs fitted to the old family are gone, and rewards don't
+    compare with 0.14.0's.
+  - **`market-making-spcx` stays at 0.14.0.** Measured, it failed both
+    ways a market can (RFD 0007, 2026-11-25): on ANT's informed flow no
+    maker earns, not even one told who is informed, and on CBRS's thin,
+    wide book every quoter earns, so skill doesn't separate. It comes back
+    as `market-making-ant` once luthor has measured how fast ANT's book is
+    picked off after its index moves.
   - **The three atomic tasks: unchanged, their departures stated.**
     `backrun-sol-usdc`, `backrun-thin-pools` and `liquidation-flash` were
     checked against luthor's scouts on our own validator (RFD 0007,
