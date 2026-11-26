@@ -22,6 +22,8 @@
 //! Takers care about price: each order carries its own limit, so a maker
 //! quoting wider than a taker will pay doesn't fill it at all.
 
+pub mod measured;
+
 use mtx_core::Side;
 use mtx_kit::protocols::fills::MarketFill;
 use serde::{Deserialize, Serialize};
@@ -91,6 +93,11 @@ pub(crate) fn is_false(value: &bool) -> bool {
 pub struct Parties {
     pub takers: Vec<Pubkey>,
     pub competitor: Option<Pubkey>,
+    /// The actor library's trader accounts and each one's kind (`noise`,
+    /// `informed`, `arbitrageur`, ...), as [`Library::wallets`] names them.
+    ///
+    /// [`Library::wallets`]: crate::actors::library::Library::wallets
+    pub library: Vec<(Pubkey, StaticName)>,
 }
 
 impl Parties {
@@ -99,6 +106,8 @@ impl Parties {
             COMPETITOR
         } else if self.takers.contains(account) {
             TAKER
+        } else if let Some((_, kind)) = self.library.iter().find(|(a, _)| a == account) {
+            kind
         } else {
             BOOK
         }
@@ -1388,7 +1397,29 @@ mod tests {
         Parties {
             takers: vec![account(10), account(11)],
             competitor: Some(account(20)),
+            library: vec![(account(30), "informed"), (account(31), "arbitrageur")],
         }
+    }
+
+    #[test]
+    fn a_fill_against_a_library_wallet_names_its_kind() {
+        let parties = parties();
+        let rows = MakingFill::of(
+            &fill(account(30), account(1), Side::Buy),
+            &[account(1)],
+            &parties,
+            0,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].counterparty, "informed");
+        let rows = MakingFill::of(
+            &fill(account(31), account(1), Side::Sell),
+            &[account(1)],
+            &parties,
+            0,
+        );
+        assert_eq!(rows[0].counterparty, "arbitrageur");
+        assert_eq!(parties.name(&account(99)), BOOK);
     }
 
     #[test]

@@ -23,7 +23,7 @@ use crate::{
         measured::{MeasuredCarryFamily, MeasuredCarryShape},
     },
     liquidation_flash::{LiquidationFamily, LiquidationShape},
-    making::MakingFamily,
+    making::{MakingFamily, measured::MeasuredFamily},
     scenario::{Shape, ShockFamily},
     thin_pools::{ThinPoolsFamily, ThinPoolsShape},
     weekend::{WeekendFamily, WeekendShape},
@@ -141,6 +141,39 @@ pub const GENERATORS: &[Generator] = &[
         },
         hidden: |count, seed, tell| making_drawn(&MakingFamily::v2(), "hidden", count, seed, tell),
         params: || format!("{:?}", MakingFamily::v2()),
+    },
+    Generator {
+        name: "market-making-measured-spcx",
+        practice_drawn: |prefix, count, seed| {
+            measured_drawn(&MeasuredFamily::spcx(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| {
+            measured_drawn(&MeasuredFamily::spcx(), "hidden", count, seed, tell)
+        },
+        params: || format!("{:?}", MeasuredFamily::spcx()),
+    },
+    // ANT's measured flow on Phoenix's ANT: the profile the task was drawn
+    // on before it moved to CBRS, kept to compare.
+    Generator {
+        name: "market-making-measured-ant",
+        practice_drawn: |prefix, count, seed| {
+            measured_drawn(&MeasuredFamily::ant(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| {
+            measured_drawn(&MeasuredFamily::ant(), "hidden", count, seed, tell)
+        },
+        params: || format!("{:?}", MeasuredFamily::ant()),
+    },
+    // The task's: CBRS's measured flow on Phoenix's CBRS (market-making-cbrs).
+    Generator {
+        name: "market-making-cbrs",
+        practice_drawn: |prefix, count, seed| {
+            measured_drawn(&MeasuredFamily::cbrs(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| {
+            measured_drawn(&MeasuredFamily::cbrs(), "hidden", count, seed, tell)
+        },
+        params: || format!("{:?}", MeasuredFamily::cbrs()),
     },
     Generator {
         name: "funding-carry",
@@ -336,6 +369,48 @@ fn making_drawn(
 }
 
 #[cfg(feature = "generators")]
+/// A measured market-making hidden set: each session annotated with its
+/// kind, its latent state the informed takers' and the arbitrageur's
+/// roster and the flow's process, and, when told, the kind as the regime.
+fn measured_drawn(
+    family: &MeasuredFamily,
+    prefix: &str,
+    count: usize,
+    seed: u64,
+    tell: bool,
+) -> Result<Hidden> {
+    let drawn = family.sample_set(prefix, count, seed);
+    let annotations = drawn
+        .iter()
+        .map(|(_, shape)| json!({ "regime": shape.regime_name(), "latent": shape.latent() }))
+        .collect();
+    let regimes = if tell {
+        Some(
+            drawn
+                .iter()
+                .map(|(_, shape)| {
+                    Ok(serde_json::to_string(
+                        &json!({ "regime": shape.regime_name() }),
+                    )?)
+                })
+                .collect::<Result<_>>()?,
+        )
+    } else {
+        None
+    };
+    let latent = drawn
+        .iter()
+        .map(|(_, shape)| Ok(serde_json::to_string(&shape.latent())?))
+        .collect::<Result<_>>()?;
+    Ok(Hidden {
+        scenarios: drawn.into_iter().map(|(scenario, _)| scenario).collect(),
+        annotations,
+        regimes,
+        latent,
+    })
+}
+
+#[cfg(feature = "generators")]
 /// A hidden set drawn with each scenario's shape: annotated `{"shape": ..}`,
 /// with its `latent` state and, when told, the shape as the regime.
 fn shaped<S: serde::Serialize>(
@@ -395,6 +470,39 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("flash-crash-nvda", "quiet_odds", Knowable::Process),
     ("flash-crash-nvda", "aftermath_odds", Knowable::Process),
     ("flash-crash-nvda", "impact", Knowable::Process),
+    ("market-making-cbrs", "informed_share", Knowable::Process),
+    (
+        "market-making-cbrs",
+        "informed_horizon_slots",
+        Knowable::Process,
+    ),
+    ("market-making-cbrs", "informed_hit_rate", Knowable::Process),
+    ("market-making-cbrs", "informed_edge_bps", Knowable::Process),
+    ("market-making-cbrs", "index_share", Knowable::Process),
+    ("market-making-cbrs", "index_trigger_bps", Knowable::Process),
+    ("market-making-cbrs", "book_lead_slots", Knowable::Process),
+    ("market-making-cbrs", "orders_per_minute", Knowable::Process),
+    ("market-making-cbrs", "competitor_bps", Knowable::Process),
+    (
+        "market-making-cbrs",
+        "competitor_floor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-cbrs",
+        "competitor_react_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-cbrs",
+        "arbitrageur_latency_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-cbrs",
+        "arbitrageur_edge_bps",
+        Knowable::Process,
+    ),
     ("funding-carry", "informed_share", Knowable::Process),
     ("funding-carry", "lag_slots", Knowable::Process),
     ("funding-carry", "hold_slots", Knowable::Process),
@@ -455,6 +563,136 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("backrun-thin-pools", "searchers", Knowable::Identity),
     ("backrun-thin-pools", "pool_searchers", Knowable::Identity),
     ("backrun-thin-pools", "flow_scale", Knowable::Process),
+    (
+        "market-making-measured-spcx",
+        "informed_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "informed_horizon_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "informed_hit_rate",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "informed_edge_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "index_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "index_trigger_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "book_lead_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "orders_per_minute",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "competitor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "competitor_floor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "competitor_react_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "arbitrageur_latency_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-spcx",
+        "arbitrageur_edge_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_horizon_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_hit_rate",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_edge_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "index_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "index_trigger_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "book_lead_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "orders_per_minute",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "competitor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "competitor_floor_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "competitor_react_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "arbitrageur_latency_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "arbitrageur_edge_bps",
+        Knowable::Process,
+    ),
 ];
 
 /// The members of a latent state itself, which no shipped practice file may

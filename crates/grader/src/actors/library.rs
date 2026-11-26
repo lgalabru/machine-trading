@@ -72,7 +72,7 @@ pub use self::{
     rfq::{DeskReport, RfqBoard, RfqClients, RfqSeat, Settlement, SwapError, Swaps, Token},
     spoofer::Spoofer,
     stop_hunter::StopHunter,
-    traders::{Chaser, Decoy, Informed, Noise},
+    traders::{Chaser, Decoy, IndexChaser, Informed, Noise},
 };
 use super::{Actor, ActorsReport, Moment, SendReader};
 use crate::venue::Seat;
@@ -98,6 +98,9 @@ pub struct Library {
     pub chasers: Vec<Chaser>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub decoys: Vec<Decoy>,
+    /// Takers on the index's lead over the book (see [`IndexChaser`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub index_chasers: Vec<IndexChaser>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub spoofers: Vec<Spoofer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -249,6 +252,13 @@ impl Library {
         )?;
         each("decoys", self.decoys.iter().map(Decoy::validate).collect())?;
         each(
+            "index_chasers",
+            self.index_chasers
+                .iter()
+                .map(IndexChaser::validate)
+                .collect(),
+        )?;
+        each(
             "spoofers",
             self.spoofers.iter().map(Spoofer::validate).collect(),
         )?;
@@ -351,6 +361,9 @@ impl Library {
         }
         for decoy in &self.decoys {
             add("decoy", own(PoolRole::Decoys, decoy.wallets));
+        }
+        for chaser in &self.index_chasers {
+            add("index-chaser", chaser.wallets);
         }
         for _ in &self.spoofers {
             add("spoofer", 1);
@@ -472,6 +485,15 @@ impl Library {
                 wallets,
                 setting.path.clone(),
                 rng("decoy"),
+            )));
+        }
+        for spec in &self.index_chasers {
+            let wallets = ledger.add("index-chaser", seats_for(None, spec.wallets), false);
+            built.actors.push(Box::new(traders::IndexChaserTrader::new(
+                spec.clone(),
+                scale,
+                wallets,
+                rng("index-chaser"),
             )));
         }
         for spec in &self.spoofers {

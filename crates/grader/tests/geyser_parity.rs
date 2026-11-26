@@ -321,8 +321,8 @@ async fn the_plugin_reads_a_flash_crash_as_the_grader_does() {
 #[ignore = "needs the built plugin and components"]
 async fn the_plugin_reads_market_making_as_the_grader_does() {
     plays_as_the_grader_reads(
-        "bench/tasks/market-making-spcx/reference",
-        "bench/tasks/market-making-spcx/environment/practice/practice-1.json",
+        "bench/tasks/market-making-cbrs/reference",
+        "bench/tasks/market-making-cbrs/environment/practice/practice-1.json",
         Trades::Makes,
     )
     .await;
@@ -371,8 +371,8 @@ async fn the_plugin_trades_a_flash_crash_as_the_grader_does() {
 #[ignore = "needs the built plugin and components"]
 async fn the_plugin_trades_market_making_as_the_grader_does() {
     trades_as_the_grader_does(
-        "bench/tasks/market-making-spcx/reference",
-        "bench/tasks/market-making-spcx/environment/practice/practice-1.json",
+        "bench/tasks/market-making-cbrs/reference",
+        "bench/tasks/market-making-cbrs/environment/practice/practice-1.json",
     )
     .await;
 }

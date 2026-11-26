@@ -206,7 +206,7 @@ jobs:
         # grader does. On a surfnet in real time it runs a strategy on its own
         # and takes `mtx live`'s commands.
         run: |
-          just --justfile bench/tasks/market-making-spcx/reference/Justfile build
+          just --justfile bench/tasks/market-making-cbrs/reference/Justfile build
           cargo build -p mtx-geyser
           MTX_TEST_GEYSER_PLUGIN="$PWD/target/debug/libmtx_geyser.so" \
             cargo test -p mtx-grader --test geyser_parity --test live_control -- --ignored
