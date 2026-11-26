@@ -149,9 +149,10 @@ pub const GENERATORS: &[Generator] = &[
         },
         params: || format!("{:?}", MeasuredFamily::spcx()),
     },
-    // The task's: ANT's measured flow on Phoenix's ANT (market-making-ant).
+    // ANT's measured flow on Phoenix's ANT: the profile the task was drawn
+    // on before it moved to CBRS, kept to compare.
     Generator {
-        name: "market-making-ant",
+        name: "market-making-measured-ant",
         practice_drawn: |prefix, count, seed| {
             measured_drawn(&MeasuredFamily::ant(), prefix, count, seed, false)
         },
@@ -159,6 +160,17 @@ pub const GENERATORS: &[Generator] = &[
             measured_drawn(&MeasuredFamily::ant(), "hidden", count, seed, tell)
         },
         params: || format!("{:?}", MeasuredFamily::ant()),
+    },
+    // The task's: CBRS's measured flow on Phoenix's CBRS (market-making-cbrs).
+    Generator {
+        name: "market-making-cbrs",
+        practice_drawn: |prefix, count, seed| {
+            measured_drawn(&MeasuredFamily::cbrs(), prefix, count, seed, false)
+        },
+        hidden: |count, seed, tell| {
+            measured_drawn(&MeasuredFamily::cbrs(), "hidden", count, seed, tell)
+        },
+        params: || format!("{:?}", MeasuredFamily::cbrs()),
     },
     Generator {
         name: "funding-carry",
@@ -435,6 +447,28 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("flash-crash-nvda", "quiet_odds", Knowable::Process),
     ("flash-crash-nvda", "aftermath_odds", Knowable::Process),
     ("flash-crash-nvda", "impact", Knowable::Process),
+    ("market-making-cbrs", "informed_share", Knowable::Process),
+    (
+        "market-making-cbrs",
+        "informed_horizon_slots",
+        Knowable::Process,
+    ),
+    ("market-making-cbrs", "informed_hit_rate", Knowable::Process),
+    ("market-making-cbrs", "informed_edge_bps", Knowable::Process),
+    ("market-making-cbrs", "index_share", Knowable::Process),
+    ("market-making-cbrs", "index_trigger_bps", Knowable::Process),
+    ("market-making-cbrs", "book_lead_slots", Knowable::Process),
+    ("market-making-cbrs", "orders_per_minute", Knowable::Process),
+    (
+        "market-making-cbrs",
+        "arbitrageur_latency_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-cbrs",
+        "arbitrageur_edge_bps",
+        Knowable::Process,
+    ),
     ("funding-carry", "informed_share", Knowable::Process),
     ("funding-carry", "lag_slots", Knowable::Process),
     ("funding-carry", "hold_slots", Knowable::Process),
@@ -525,25 +559,53 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
         "arbitrageur_edge_bps",
         Knowable::Process,
     ),
-    ("market-making-ant", "informed_share", Knowable::Process),
     (
-        "market-making-ant",
+        "market-making-measured-ant",
+        "informed_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
         "informed_horizon_slots",
         Knowable::Process,
     ),
-    ("market-making-ant", "informed_hit_rate", Knowable::Process),
-    ("market-making-ant", "informed_edge_bps", Knowable::Process),
-    ("market-making-ant", "index_share", Knowable::Process),
-    ("market-making-ant", "index_trigger_bps", Knowable::Process),
-    ("market-making-ant", "book_lead_slots", Knowable::Process),
-    ("market-making-ant", "orders_per_minute", Knowable::Process),
     (
-        "market-making-ant",
+        "market-making-measured-ant",
+        "informed_hit_rate",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "informed_edge_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "index_share",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "index_trigger_bps",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "book_lead_slots",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
+        "orders_per_minute",
+        Knowable::Process,
+    ),
+    (
+        "market-making-measured-ant",
         "arbitrageur_latency_slots",
         Knowable::Process,
     ),
     (
-        "market-making-ant",
+        "market-making-measured-ant",
         "arbitrageur_edge_bps",
         Knowable::Process,
     ),
