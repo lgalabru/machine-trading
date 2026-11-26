@@ -159,7 +159,9 @@ reference doesn't know costs it little where nobody informed trades.
 Practice is drawn by the date rule the other 0.14 and 0.15 tasks follow
 (the snapshot's date: seed 20261125) and calibrated with both anchors
 (`mtx calibrate --practice market-making-cbrs --practice-seed 20261125`),
-recalibrated when the anchors' sizing changed. Seed history: seed
+recalibrated when the anchors' sizing changed: reference +24.76, informed
++11.43 over the six. The reference is ahead, so v2 can't scale practice on
+this set: one more sign the informed bot isn't dominant enough on CBRS. Seed history: seed
 15 (an arbitrary first pick) had the reference ahead (+17.93 against
 +12.71), which v2 refuses to scale; seed 17 was then picked for its
 outcome, which practice must not be, and is withdrawn.
