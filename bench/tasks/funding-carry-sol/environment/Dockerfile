@@ -2,7 +2,7 @@
 # snapshots, a Rust toolchain, the bot SDK at /opt/mtx/sdk with its
 # dependencies compiled, and a built starter bot at /app/bot. `just release`
 # pins it to the release's image.
-FROM ghcr.io/solana-foundation/machine-trading:0.14.0@sha256:9f7e8b6cc186afb653da76b27244528781d293c9a6277e49365f8a89062bcba1
+FROM ghcr.io/solana-foundation/machine-trading:0.15.0
 ENV MTX_SNAPSHOT=/opt/mtx/snapshots/phoenix-perps-2026-11-13
 # The task's name, before anything is copied in: the tasks' Dockerfiles are
 # otherwise identical, and BuildKit building two at once has put one task's
