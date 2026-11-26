@@ -179,6 +179,8 @@ informed bot lost 65.60, the spread earned falling to about 3 bp a unit.
 On CBRS's book the edge is the width; a maker that races the competitor to
 its floor gives it away.
 
+**The band.** On CBRS every measured taker is noise, so the told facts are worth about 30% over a reference that sizes from the instruction's stated facts (0.76 of the informed bot over 48 sessions), and the band's 0.7 assumes an informed edge the measured market doesn't have: the band is set to 0.2 to 0.85 in `checks/ladder.json`, the signal gate's 2x stays.
+
 ## Fairness
 
 - Every correct path runs through standard RPC and `mtx-kit`: the

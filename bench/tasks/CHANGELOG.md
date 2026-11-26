@@ -67,6 +67,12 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     cap); the informed bot, told every taker is noise, holds half the cap.
     Scored by v2. On ANT, the market with real flow, no maker earned even
     told who was informed, so the task isn't there.
+    On CBRS every measured taker is noise, so the told facts are worth
+    about 30% over a reference that sizes from the instruction's stated
+    facts (0.76 of the informed bot over 48 sessions), and the band's
+    0.7 assumes an informed edge the measured market doesn't have: the
+    band is set to 0.2 to 0.85 in its ladder file, the signal gate's 2x
+    stays.
   - **The three atomic tasks: unchanged, their departures stated.**
     `backrun-sol-usdc`, `backrun-thin-pools` and `liquidation-flash` were
     checked against luthor's scouts on our own validator (RFD 0007,
