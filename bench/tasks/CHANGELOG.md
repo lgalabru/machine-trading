@@ -46,12 +46,27 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     v2's 1. Over three sets of 24 sessions the reference makes 0.513 of
     it. The rungs fitted to the old family are gone, and rewards don't
     compare with 0.14.0's.
-  - **`market-making-spcx` stays at 0.14.0.** Measured, it failed both
-    ways a market can (RFD 0007, 2026-11-25): on ANT's informed flow no
-    maker earns, not even one told who is informed, and on CBRS's thin,
-    wide book every quoter earns, so skill doesn't separate. It comes back
-    as `market-making-ant` once luthor has measured how fast ANT's book is
-    picked off after its index moves.
+  - **Renamed: `market-making-spcx` is now `market-making-cbrs`, a thin,
+    wide book where mainnet makers earn.** On Phoenix makers on liquid
+    books lose (luthor's paper makers, -1 to -3 bp a fill); on CBRS
+    (Cerebras) luthor's paper maker made +7 bp a fill after fees. The task
+    moves there, on a new snapshot (`phoenix-cbrs-2026-11-25`, cap 33 CBRS),
+    its family built from CBRS's measured profile (`market-making-cbrs`,
+    study `phoenix-tape.20261125.3cb49758`): the actor library's noise
+    takers at CBRS's sizes (median $298), a pinger's $3 print a minute, the
+    grader's reactive maker (post-only) at the measured 13.9 bp touch (4.8
+    hours of luthor's quotes), an arbitrageur that takes quotes a move left
+    stale against Phoenix's index, Phoenix's makers following the index 1 to
+    2 s late, the price at CBRS's measured 3.44 bp a second. Stated
+    departures, in its instruction: flow 30 times the measured 0.185 orders
+    a minute and sessions twice as long (4 to 6.7 minutes); lognormal sizes
+    where the tape's orders are nearly one size ($298 to $308, likely one
+    bot); the takers' measured negative markout (-7.6 bp a minute on) not
+    reproduced; jumps in 4 of 72 sessions. The reference sizes from the
+    stated facts (a one-sided run of 2.6 orders inside a quarter of the
+    cap); the informed bot, told every taker is noise, holds half the cap.
+    Scored by v2. On ANT, the market with real flow, no maker earned even
+    told who was informed, so the task isn't there.
   - **The three atomic tasks: unchanged, their departures stated.**
     `backrun-sol-usdc`, `backrun-thin-pools` and `liquidation-flash` were
     checked against luthor's scouts on our own validator (RFD 0007,

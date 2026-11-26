@@ -49,11 +49,9 @@ const SKEW_BPS_PER_UNIT: f64 = 2.5;
 const DRIFT_WEIGHT: f64 = 0.5;
 const DRIFT_SLOTS: f64 = 80.0;
 const DRIFT_MAX_BPS: f64 = 5.0;
-const QUOTE_SIZE: f64 = 1.0;
-/// Its quote size once its fills have shown they aren't run over: after
-/// `MARKOUT_FILLS` fills whose 10 s markout (`MARKOUT_SLOTS`) gives back
-/// no more than half the half-spread it quotes at.
-const LEARNED_QUOTE_SIZE: f64 = 2.0;
+/// The fills it marks out (`MARKOUT_SLOTS`) before it judges whether they
+/// hold up (give back no more than `MARKOUT_GIVEBACK` of its half-spread);
+/// until they do, it steps off one-sided runs on the tape.
 const MARKOUT_FILLS: u32 = 10;
 const MARKOUT_SLOTS: u64 = 40;
 const MARKOUT_GIVEBACK: f64 = 0.5;
@@ -66,15 +64,20 @@ fn fills_hold_up(markouts: &markouts::Markouts, half_spread_bps: f64) -> bool {
         .is_some_and(|mean| mean >= -MARKOUT_GIVEBACK * half_spread_bps)
 }
 
-/// Its quote size, from what its fills have earned so far.
-fn learned_size(markouts: &markouts::Markouts, half_spread_bps: f64) -> f64 {
-    if fills_hold_up(markouts, half_spread_bps) {
-        LEARNED_QUOTE_SIZE
-    } else {
-        QUOTE_SIZE
-    }
-}
 const INVENTORY_LIMIT: f64 = 0.25;
+/// The takers' orders a one-sided run lasts, on average: the stated chance
+/// the next order is on the same side, 0.61 on CBRS's tape, makes a run of
+/// `1 / (1 - 0.61)`, about 2.6 orders.
+const RUN_ORDERS: f64 = 1.0 / (1.0 - 0.608);
+
+/// Its quote size: what keeps an average one-sided run of fills inside its
+/// inventory limit, `limit × cap / RUN_ORDERS` (3.2 CBRS at a 33 cap).
+fn quote_size(cap: f64, limit: f64) -> f64 {
+    assert!(cap > 0.0 && limit > 0.0 && limit <= 1.0);
+    let size = (limit * cap / RUN_ORDERS * 1_000.0).floor() / 1_000.0;
+    assert!(size > 0.0 && size <= cap);
+    size
+}
 const TOXIC_UNITS: f64 = 1.5;
 const TOXIC_WINDOW_SLOTS: u64 = 8;
 const TOXIC_SLOTS: u64 = 24;
@@ -178,7 +181,7 @@ impl Strategy for Maker {
         let half = self.half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
-        let size = learned_size(&self.markouts, self.half_spread_bps);
+        let size = quote_size(cap, INVENTORY_LIMIT);
         let (bid_size, ask_size) = (size.min(cap - held), size.min(cap + held));
         let runs = (buyers_run, sellers_run);
         let moved = self.runs != runs

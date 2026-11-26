@@ -36,11 +36,9 @@ const SKEW_BPS_PER_UNIT: f64 = 2.5;
 const DRIFT_WEIGHT: f64 = 0.5;
 const DRIFT_SLOTS: f64 = 80.0;
 const DRIFT_MAX_BPS: f64 = 5.0;
-const QUOTE_SIZE: f64 = 1.0;
-/// Its quote size once its fills have shown they aren't run over: after
-/// `MARKOUT_FILLS` fills whose 10 s markout (`MARKOUT_SLOTS`) gives back
-/// no more than half the half-spread it quotes at.
-const LEARNED_QUOTE_SIZE: f64 = 2.0;
+/// The fills it marks out (`MARKOUT_SLOTS`) before it judges whether they
+/// hold up (give back no more than `MARKOUT_GIVEBACK` of its half-spread);
+/// until they do, it steps off one-sided runs on the tape.
 const MARKOUT_FILLS: u32 = 10;
 const MARKOUT_SLOTS: u64 = 40;
 const MARKOUT_GIVEBACK: f64 = 0.5;
@@ -53,17 +51,21 @@ fn fills_hold_up(markouts: &markouts::Markouts, half_spread_bps: f64) -> bool {
         .is_some_and(|mean| mean >= -MARKOUT_GIVEBACK * half_spread_bps)
 }
 
-/// Its quote size, from what its fills have earned so far.
-fn learned_size(markouts: &markouts::Markouts, half_spread_bps: f64) -> f64 {
-    if fills_hold_up(markouts, half_spread_bps) {
-        LEARNED_QUOTE_SIZE
-    } else {
-        QUOTE_SIZE
-    }
-}
-/// Its quote size when every taker is noise, base units.
-const UNINFORMED_QUOTE_SIZE: f64 = 4.0;
 const INVENTORY_LIMIT: f64 = 0.25;
+/// Its inventory limit where every taker is noise, a share of the cap.
+const UNINFORMED_INVENTORY_LIMIT: f64 = 0.5;
+/// As the reference's: the stated same-side odds (0.61) make an average
+/// one-sided run of `1 / (1 - 0.61)` orders.
+const RUN_ORDERS: f64 = 1.0 / (1.0 - 0.608);
+
+/// Its quote size: what keeps an average one-sided run of fills inside its
+/// inventory limit, as the reference's (6.4 CBRS at half a 33 cap).
+fn quote_size(cap: f64, limit: f64) -> f64 {
+    assert!(cap > 0.0 && limit > 0.0 && limit <= 1.0);
+    let size = (limit * cap / RUN_ORDERS * 1_000.0).floor() / 1_000.0;
+    assert!(size > 0.0 && size <= cap);
+    size
+}
 const TOXIC_UNITS: f64 = 1.5;
 const TOXIC_WINDOW_SLOTS: u64 = 8;
 const TOXIC_SLOTS: u64 = 24;
@@ -191,10 +193,15 @@ impl Strategy for Informed {
         let half = self.half_spread_bps;
         let bid = reservation * (1.0 - half / 10_000.0);
         let ask = reservation * (1.0 + half / 10_000.0);
-        let size = self
-            .flow
-            .quote_size()
-            .max(learned_size(&self.markouts, self.half_spread_bps));
+        // Told every taker is noise, an inventory a run of fills builds
+        // reverts as the flow does: it holds twice the reference's limit,
+        // and sizes to it as the reference does.
+        let limit = if self.flow.uninformed {
+            UNINFORMED_INVENTORY_LIMIT
+        } else {
+            INVENTORY_LIMIT
+        };
+        let size = quote_size(cap, limit);
         let (bid_size, ask_size) = (size.min(cap - held), size.min(cap + held));
         let pulled = (informed_buying, informed_selling);
         let moved = self.pulled != pulled
@@ -213,7 +220,7 @@ impl Strategy for Informed {
                 Side::Bid,
                 bid,
                 bid_size,
-                held < target + INVENTORY_LIMIT * cap
+                held < target + limit * cap
                     && !(toxic && self.toxic_side > 0.0)
                     && !informed_selling,
             ),
@@ -221,7 +228,7 @@ impl Strategy for Informed {
                 Side::Ask,
                 ask,
                 ask_size,
-                held > target - INVENTORY_LIMIT * cap
+                held > target - limit * cap
                     && !(toxic && self.toxic_side < 0.0)
                     && !informed_buying,
             ),
@@ -356,16 +363,6 @@ impl Flow {
         }
         assert!(signal.abs() <= 1.0);
         signal
-    }
-
-    /// Its quote size: with every taker noise, nobody it fills knows more
-    /// than it does, and it shows more; else the reference's.
-    fn quote_size(&self) -> f64 {
-        if self.uninformed {
-            UNINFORMED_QUOTE_SIZE
-        } else {
-            QUOTE_SIZE
-        }
     }
 
     /// A trader account's position in the market, in base units.
