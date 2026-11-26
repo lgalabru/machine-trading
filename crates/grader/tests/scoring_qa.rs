@@ -64,6 +64,7 @@ async fn grade_nop(scenarios: &[Scenario], v2_sessions: bool) -> GradeReport {
         keys: &SessionKeys::from_eval_seed(b"scoring-qa-fixed-secret-0123456789"),
         v2_sessions,
         host: None,
+        anchors_from: None,
     })
     .await
     .unwrap();

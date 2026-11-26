@@ -159,6 +159,81 @@ class AnchorRefusal(unittest.TestCase):
             self.assertIn(f'ANCHORS_TOO_CLOSE: &str = "{ladder.ANCHORS_TOO_CLOSE}"', f.read())
 
 
+class AnchorsOncePerSet(unittest.TestCase):
+    """A v2 set's anchors run in one rung's grade and are reused by the
+    others'; process anchors, which the grader can't know again, run in every
+    grade."""
+
+    def grade_set(self, out, components=True, graded=(), rungs=("reference", "a", "b", "c")):
+        # A grader that records its arguments and writes a report.
+        mtx = os.path.join(out, "mtx")
+        calls = os.path.join(out, "calls")
+        with open(mtx, "w") as f:
+            f.write("#!/usr/bin/env bash\n"
+                    f"echo \"$*\" >> {calls}\n"
+                    "while [ $# -gt 0 ]; do [ \"$1\" = --report ] && report=$2; shift; done\n"
+                    f"echo '{json.dumps(report([1.0]))}' > \"$report\"\n")
+        os.chmod(mtx, 0o755)
+        v2 = {"reference": os.path.join(out, "ref"), "informed": os.path.join(out, "inf"),
+              "flags": []}
+        for d in (v2["reference"], v2["informed"]):
+            os.makedirs(d)
+            if components:
+                open(os.path.join(d, "bot.wasm"), "w").close()
+        rungs = [{"name": n, "dir": "bench/tasks/x/" + n} for n in rungs]
+        for name in graded:
+            with open(os.path.join(out, f"{name}.json"), "w") as f:
+                json.dump(report([2.0]), f)
+        users = ladder.queue.Queue()
+        for k in range(2):
+            users.put(k * 2)
+        reports = ladder.grade_set(mtx, "snap", "family", 3, 2, 2, rungs, "00", out, users, v2)
+        with open(calls) as f:
+            lines = [line.split() for line in f]
+        return reports, {line[line.index("--report") + 1]: line for line in lines}
+
+    def test_the_first_rung_saves_the_anchors_and_the_others_reuse_them(self):
+        with tempfile.TemporaryDirectory() as out:
+            reports, calls = self.grade_set(out)
+            self.assertEqual(list(reports), ["reference", "a", "b", "c"])
+            path = os.path.join(out, ladder.ANCHORS_FILE)
+            first = calls[os.path.join(out, "reference.json")]
+            self.assertEqual(first[first.index("--anchors-out") + 1], path)
+            # Its anchors take every slot: parallel × jobs.
+            self.assertEqual(first[first.index("--anchor-jobs") + 1], "4")
+            self.assertNotIn("--anchors-from", first)
+            for name in "abc":
+                line = calls[os.path.join(out, f"{name}.json")]
+                self.assertEqual(line[line.index("--anchors-from") + 1], path)
+                self.assertNotIn("--anchors-out", line)
+                self.assertEqual(line[line.index("--anchor-jobs") + 1], "2")
+
+    def test_a_resumed_set_saves_them_in_the_first_rung_left_to_grade(self):
+        with tempfile.TemporaryDirectory() as out:
+            reports, calls = self.grade_set(out, graded=("reference",))
+            self.assertEqual(ladder.pnls(reports["reference"]), [2.0])
+            self.assertNotIn(os.path.join(out, "reference.json"), calls)
+            self.assertIn("--anchors-out", calls[os.path.join(out, "a.json")])
+            self.assertIn("--anchors-from", calls[os.path.join(out, "b.json")])
+
+    def test_process_anchors_run_in_every_grade(self):
+        with tempfile.TemporaryDirectory() as out:
+            _, calls = self.grade_set(out, components=False)
+            self.assertEqual(len(calls), 4)
+            for line in calls.values():
+                self.assertNotIn("--anchors-out", line)
+                self.assertNotIn("--anchors-from", line)
+
+    def test_a_v1_task_runs_no_anchors(self):
+        self.assertFalse(ladder.anchors_once(None))
+
+    def test_the_bot_users_are_the_graders(self):
+        source = os.path.join(ladder.ROOT, "crates/grader/src/session.rs")
+        with open(source) as f:
+            text = f.read()
+        self.assertIn(f"pub const BOT_USERS: [&str; {ladder.BOT_USERS}]", text)
+
+
 class ExploitRatio(unittest.TestCase):
     def test_a_ladder_file_that_sets_a_multiple_enforces_it(self):
         self.assertIn("2.50x", ladder.ratio_reason(2.5, {"max_ratio": 2.0}))

@@ -84,6 +84,7 @@ async fn run(
         keys,
         v2_sessions: true,
         host: None,
+        anchors_from: None,
     })
     .await
     .unwrap();
