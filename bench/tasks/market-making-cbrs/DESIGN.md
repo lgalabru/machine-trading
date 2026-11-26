@@ -99,23 +99,36 @@ behind when the index moves.
 
 ## Anchors
 
+Both size from the facts the instruction states, not from the band.
+
 - **Reference** (`reference/`): one tick inside the competing makers
-  around the oracle (the index), a linear skew against inventory, a lean
-  with the drift, a pause on a side after one-sided fills of its own. It
-  marks out its own fills 10 s on (`reference/src/markouts.rs`): once 10
-  of them give back no more than half the half-spread it quotes at, it
-  shows 2 units instead of 1; until then, or if they stop holding up, it
-  also steps off a side a one-sided run hits on the tape (net taker volume
-  over 40 slots past three typical trades, from Phoenix's trade list,
-  `reference/src/tape.rs`). Never takes.
+  around the oracle (the index), a linear skew against inventory (2.5 bp a
+  unit), a lean with the drift, a pause on a side after one-sided fills.
+  - **Its inventory limit** is a quarter of the cap, 8.25 CBRS: the most a
+    maker that can't tell this session's flow from an informed one holds
+    one way (as since 0.13).
+  - **Its quote size** keeps an average one-sided run of fills inside that
+    limit. The tape says the next CBRS order is on the same side 61% of the
+    time, so a run lasts `1 / (1 - 0.61)` = 2.6 orders on average, and the
+    size is `0.25 × 33 / 2.6` = 3.2 CBRS (`quote_size`). At the stated
+    3.44 bp a second over the 22 seconds a side's fill takes at 5.5 orders
+    a minute, that inventory moves about 16 bp, against the 12 bp a fill
+    earns inside a 13.9 bp touch after the 0.5 bp fee: a risk the skew
+    sheds within a run.
+  - It steps off one-sided runs on the tape only until its first 10 fills,
+    marked out 10 s on, show they give back no more than half its
+    half-spread (`markouts.rs`, `tape.rs`). Never takes.
 - **Informed bot** (`checks/bots/informed/`): the reference, told the
-  latent state (`MTX_REGIME`: the informed and index-chasing shares and
-  wallets, if any, the informed process, the book's lead over the index, the
-  arbitrageur's latency and edge). On CBRS both shares are 0: it knows from
-  the first step that every taker is noise, shows 4 units and never dodges
-  the tape. Where there are informed wallets (ANT's profile) it reads their
-  trader accounts and leans with them.
-- Neither knows a path, a jump or when anyone trades.
+  latent state (`MTX_REGIME`): the informed and index-chasing shares (both 0
+  on CBRS), the competitor's half-spread, floor and reaction, the book's
+  lead, the arbitrageur's latency and edge, the flow's pace. Told every
+  taker is noise, it knows an inventory a run builds reverts as the flow
+  does, so it holds half the cap (16.5 CBRS) and sizes to it by the same
+  rule: `0.5 × 33 / 2.6` = 6.4 CBRS. It never dodges the tape. Where there
+  are informed wallets (ANT's profile) it reads their trader accounts and
+  leans with them.
+- The naive and skew quoters (`bench/checks/ladder/rungs`) quote 1 unit.
+- None of them knows a path, a jump or when anyone trades.
 
 ## Detectability
 
