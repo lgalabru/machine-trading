@@ -302,8 +302,8 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, trades: Trades) {
 #[ignore = "needs the built plugin and components"]
 async fn the_plugin_reads_a_flash_crash_as_the_grader_does() {
     plays_as_the_grader_reads(
-        "bench/tasks/flash-crash-spcx/reference",
-        "bench/tasks/flash-crash-spcx/environment/practice/practice-1.json",
+        "bench/tasks/flash-crash-nvda/reference",
+        "bench/tasks/flash-crash-nvda/environment/practice/practice-1.json",
         Trades::Takes,
     )
     .await;
@@ -360,8 +360,8 @@ impl session::TurnHost for PluginHost {
 #[ignore = "needs the built plugin and components"]
 async fn the_plugin_trades_a_flash_crash_as_the_grader_does() {
     trades_as_the_grader_does(
-        "bench/tasks/flash-crash-spcx/reference",
-        "bench/tasks/flash-crash-spcx/environment/practice/practice-1.json",
+        "bench/tasks/flash-crash-nvda/reference",
+        "bench/tasks/flash-crash-nvda/environment/practice/practice-1.json",
     )
     .await;
 }

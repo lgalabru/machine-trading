@@ -47,7 +47,7 @@ struct Basics {
     summary: String,
     // Forms take a plain list of strings, not a described enum.
     #[schemars(
-        description = "Start from: shocks (the market moves along a scripted path; from flash-crash-spcx) or making (the grader runs counterparties the bot trades with; from market-making-ant)",
+        description = "Start from: shocks (the market moves along a scripted path; from flash-crash-nvda) or making (the grader runs counterparties the bot trades with; from market-making-ant)",
         extend("enum" = ["shocks", "making"])
     )]
     base: String,

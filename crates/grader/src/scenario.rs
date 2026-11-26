@@ -1214,7 +1214,7 @@ pub enum Aftermath {
 ///   The path is cut where the session ends, so the end slot dates nothing:
 ///   a session may end mid-shock.
 /// - Between moves the mark wobbles, so quiet stretches aren't flat lines.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ShockFamily {
     pub symbol: String,
     /// Range of the session's length, in slots. Drawn before the path.
@@ -1222,8 +1222,13 @@ pub struct ShockFamily {
     /// Range of the slot the shock starts at.
     pub shock_slot: (u64, u64),
     /// Range of each leg's size, in percent of the starting mark. Sizes are
-    /// log-uniform over it: small legs are as common as large ones.
+    /// log-uniform over it (small legs as common as large ones), or, with
+    /// `leg_alpha`, drawn from a Pareto tail truncated to it.
     pub leg_pct: (f64, f64),
+    /// The Pareto exponent of the legs' sizes: `None` draws them
+    /// log-uniform over `leg_pct`. Mainnet's jumps fall off as a power law:
+    /// a small jump is far more common than a large one.
+    pub leg_alpha: Option<f64>,
     /// Odds a leg or the aftermath lands at once, as one move; the rest ramp.
     pub gap_odds: f64,
     /// Odds that another leg follows a leg, up to `max_legs`.
@@ -1232,6 +1237,10 @@ pub struct ShockFamily {
     /// Range of how many slots the market holds still after a leg, before
     /// the next leg or the aftermath.
     pub pause_slots: (u64, u64),
+    /// Odds a session has no shock at all: it wobbles, with fizzles, from
+    /// start to end. Drawn after the direction and the aftermath, and only
+    /// when above 0, so a family without quiet sessions draws as before.
+    pub quiet_odds: f64,
     /// Odds of a crash; a squeeze takes the rest.
     pub crash_odds: f64,
     /// Odds of a reversion and of a stall; an extension takes the rest.
@@ -1241,8 +1250,14 @@ pub struct ShockFamily {
     pub revert_recovery: (f64, f64),
     /// Range of how much of the shock a stall gives back, 0 to 1.
     pub stall_recovery: (f64, f64),
-    /// Range of how much further an extension goes, in percent of the starting mark.
+    /// Range of how much further an extension goes, in percent of the
+    /// starting mark. With `extend_share`, its bounds: the extension is
+    /// that share of the shock, kept within them.
     pub extend_pct: (f64, f64),
+    /// Range of how much further an extension goes as a share of the
+    /// shock's depth, or `None` for `extend_pct` alone. The tape counts a
+    /// jump as extended when it goes on by half of itself again or more.
+    pub extend_share: Option<(f64, f64)>,
     /// Largest single step of a ramp, in percent of the starting mark. Phoenix
     /// moves at most 4% of the current price per step; 3% of the start stays
     /// under that down to a 25% drop.
@@ -1257,7 +1272,7 @@ pub struct ShockFamily {
     pub fizzle_odds: f64,
     pub fizzle_pct: (f64, f64),
     pub fizzle_hold: (u64, u64),
-    pub fizzle_giveback: (f64, f64),
+    pub fizzle_giveback: Giveback,
     /// Largest change of the wobble per tick, in percent of the starting mark.
     pub noise_pct: f64,
     /// Range of slots between wobble ticks.
@@ -1266,6 +1281,147 @@ pub struct ShockFamily {
     pub max_position: f64,
     /// The drawdown limit, in USD, every scenario in the family carries.
     pub max_drawdown_usd: f64,
+    /// The market's other takers, from the actor library, every scenario
+    /// in the family carries. `None`: nobody trades but the bot.
+    pub actors: Option<crate::actors::Library>,
+    /// Price impact every scenario in the family carries: the book stays
+    /// where trades leave it. `None`: the book re-centres on the path.
+    pub impact: Option<crate::impact::Impact>,
+}
+
+/// The family's parameters as text, part of a task's fingerprint
+/// (`Generator::params`). Written by hand so that a family that uses none of
+/// the levers 0.15.0 added (quiet sessions, Pareto legs, extensions by
+/// share, a small-move mix, takers, impact) prints exactly as the derived
+/// text did before them: the `flash-crash` generator's parameters, and
+/// any fingerprint that holds them, don't move.
+impl std::fmt::Debug for ShockFamily {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut out = f.debug_struct("ShockFamily");
+        out.field("symbol", &self.symbol)
+            .field("duration", &self.duration)
+            .field("shock_slot", &self.shock_slot)
+            .field("leg_pct", &self.leg_pct);
+        if let Some(alpha) = &self.leg_alpha {
+            out.field("leg_alpha", alpha);
+        }
+        out.field("gap_odds", &self.gap_odds)
+            .field("extra_leg_odds", &self.extra_leg_odds)
+            .field("max_legs", &self.max_legs)
+            .field("pause_slots", &self.pause_slots);
+        if self.quiet_odds != 0.0 {
+            out.field("quiet_odds", &self.quiet_odds);
+        }
+        out.field("crash_odds", &self.crash_odds)
+            .field("revert_odds", &self.revert_odds)
+            .field("stall_odds", &self.stall_odds)
+            .field("revert_recovery", &self.revert_recovery)
+            .field("stall_recovery", &self.stall_recovery)
+            .field("extend_pct", &self.extend_pct);
+        if let Some(share) = &self.extend_share {
+            out.field("extend_share", share);
+        }
+        out.field("max_step_pct", &self.max_step_pct)
+            .field("step_gap", &self.step_gap)
+            .field("fizzle_odds", &self.fizzle_odds)
+            .field("fizzle_pct", &self.fizzle_pct)
+            .field("fizzle_hold", &self.fizzle_hold);
+        match &self.fizzle_giveback {
+            Giveback::Range(low, high) => out.field("fizzle_giveback", &(*low, *high)),
+            mix => out.field("fizzle_giveback", mix),
+        };
+        out.field("noise_pct", &self.noise_pct)
+            .field("noise_gap", &self.noise_gap)
+            .field("max_position", &self.max_position)
+            .field("max_drawdown_usd", &self.max_drawdown_usd);
+        if let Some(actors) = &self.actors {
+            out.field("actors", actors);
+        }
+        if let Some(impact) = &self.impact {
+            out.field("impact", impact);
+        }
+        out.finish()
+    }
+}
+
+/// How much of its move a fizzle gives back, as a share of it: 1 is all
+/// of it, 0 none, and a negative share goes on the move's way.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Giveback {
+    /// Uniform over `(low, high)`.
+    Range(f64, f64),
+    /// What small moves did on mainnet: they revert (give back half or
+    /// more), stall (move less than half either way) or extend (go on by
+    /// half again or more) at these odds, each uniform over its range.
+    Mix {
+        revert_odds: f64,
+        stall_odds: f64,
+        revert: (f64, f64),
+        stall: (f64, f64),
+        extend: (f64, f64),
+    },
+}
+
+impl Giveback {
+    fn draw(&self, rng: &mut SplitMix64) -> f64 {
+        match *self {
+            Self::Range(low, high) => rng.range_f64((low, high)),
+            Self::Mix {
+                revert_odds,
+                stall_odds,
+                revert,
+                stall,
+                extend,
+            } => {
+                assert!(
+                    revert_odds + stall_odds <= 1.0,
+                    "the odds leave room to extend"
+                );
+                let pick = rng.next_f64();
+                if pick < revert_odds {
+                    rng.range_f64(revert)
+                } else if pick < revert_odds + stall_odds {
+                    rng.range_f64(stall)
+                } else {
+                    rng.range_f64(extend)
+                }
+            }
+        }
+    }
+
+    /// The least share a fizzle gives back.
+    pub fn least(&self) -> f64 {
+        match *self {
+            Self::Range(low, _) => low,
+            Self::Mix {
+                revert,
+                stall,
+                extend,
+                ..
+            } => revert.0.min(stall.0).min(extend.0),
+        }
+    }
+
+    /// The most share a fizzle gives back.
+    pub fn most(&self) -> f64 {
+        match *self {
+            Self::Range(_, high) => high,
+            Self::Mix {
+                revert,
+                stall,
+                extend,
+                ..
+            } => revert.1.max(stall.1).max(extend.1),
+        }
+    }
+}
+
+/// What kind of session a draw is, as a hidden set is stratified by: a
+/// quiet one, or a shock of a direction and an aftermath.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cell {
+    Quiet,
+    Shock(Direction, Aftermath),
 }
 
 /// What a draw from a [`ShockFamily`] is, beneath its path: the regime a
@@ -1285,6 +1441,11 @@ pub struct Shape {
     pub tail_slots: u64,
     /// Whether the session ended before the aftermath had landed.
     pub cut: bool,
+    /// Whether the session has no shock: its direction and aftermath were
+    /// drawn and never played, and it has no legs. Left out when false, so
+    /// a family without quiet sessions describes its draws as before.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
 }
 
 impl ShockFamily {
@@ -1294,22 +1455,25 @@ impl ShockFamily {
             duration: (320, 720),
             shock_slot: (40, 200),
             leg_pct: (0.6, 8.0),
+            leg_alpha: None,
             gap_odds: 0.7,
             extra_leg_odds: 0.35,
             max_legs: 3,
             pause_slots: (30, 140),
+            quiet_odds: 0.0,
             crash_odds: 0.5,
             revert_odds: 0.65,
             stall_odds: 0.2,
             revert_recovery: (0.5, 1.0),
             stall_recovery: (0.0, 0.2),
             extend_pct: (1.0, 5.0),
+            extend_share: None,
             max_step_pct: 3.0,
             step_gap: (3, 6),
             fizzle_odds: 0.5,
             fizzle_pct: (0.4, 2.0),
             fizzle_hold: (6, 40),
-            fizzle_giveback: (0.4, 1.0),
+            fizzle_giveback: Giveback::Range(0.4, 1.0),
             noise_pct: 0.12,
             noise_gap: (4, 12),
             // ~1x the 10,000 USDC of collateral at the snapshot's ~$143 mark.
@@ -1318,6 +1482,92 @@ impl ShockFamily {
             // tranches on, then stopped out at 13.5%) stays inside it; a
             // blind full-size bet caught by a deep shock breaks it.
             max_drawdown_usd: 1_000.0,
+            actors: None,
+            impact: None,
+        }
+    }
+
+    /// NVDA as mainnet's Phoenix tape measured it (RFD 0007): the study
+    /// `phoenix-tape.20261125.fc443f1e` (`calibration/tape/`, written by
+    /// `calibration/fitter/tape/study.py`), 3.06 days of every Phoenix
+    /// market from 2026-11-21 23:45 to 2026-11-25 01:12 UTC, and NVDA's
+    /// market calibration (`calibration/market/nvda.20261113.903d1120.toml`).
+    /// NVDA is where the shocks were: 9 of the tape's 93 jumps, among them
+    /// 2026-11-23's leader. Every number that sets what a bot can earn cites
+    /// one of them, or is a stated default.
+    ///
+    /// Stated departures, in the task's instruction and `DESIGN.md` too:
+    /// - a quarter of the sessions are quiet, and the rest each carry a
+    ///   shock: mainnet's 93 jumps came in 16 distinct hours of 3 days, far
+    ///   rarer than one in a few minutes;
+    /// - the tape's aftermath odds are measured 15 minutes on, and play here
+    ///   within a session of 80 to 180 seconds; they are all 93 jumps' (all
+    ///   markets): NVDA's 9 alone are too few;
+    /// - direction stays 50/50: 57 of the 93 jumps went up, on one bullish
+    ///   news day (2026-11-23).
+    pub fn nvda() -> Self {
+        Self {
+            symbol: "NVDA".into(),
+            duration: (320, 720),
+            shock_slot: (40, 200),
+            // Jumps (a 1-minute move of 1.5% or more, with $2,000 of flow):
+            // smallest 1.5%, median 2.0%, p90 4.2%, largest 9.5%. A Pareto
+            // tail truncated there, exponent 2.0 (the maximum-likelihood
+            // fit to the 93 is 2.03), draws median 2.1%, p90 4.3%.
+            leg_pct: (1.5, 9.5),
+            leg_alpha: Some(2.0),
+            // Not measured (the tape is read a minute at a time): kept.
+            gap_odds: 0.7,
+            // The 93 jumps came in 16 distinct hours: they cluster. One
+            // shock may be several legs. Not measured per shock: kept.
+            extra_leg_odds: 0.35,
+            max_legs: 3,
+            pause_slots: (30, 140),
+            // A stated share: real shocks are far rarer (see above).
+            quiet_odds: 0.25,
+            // Stated: 57 of 93 went up, on one news day.
+            crash_odds: 0.5,
+            // 15 minutes on, of 93 jumps: 29 reverted (back half or more),
+            // 22 stalled, 42 extended (on half again or more).
+            revert_odds: 0.31,
+            stall_odds: 0.24,
+            // The tape's classes: back half or more (at most all of it, a
+            // default), less than half either way, on half again or more
+            // (at most once again, a default, and 0.75 to 6% of the start:
+            // half the smallest jump, and about half the largest).
+            revert_recovery: (0.5, 1.0),
+            stall_recovery: (-0.45, 0.45),
+            extend_pct: (0.75, 6.0),
+            extend_share: Some((0.5, 1.0)),
+            max_step_pct: 3.0,
+            step_gap: (3, 6),
+            // Moves of 0.5 to 1.5% (490, in 50 distinct hours), 5 minutes
+            // on: 26% reverted, 37% stalled, 38% extended. Most small moves
+            // don't give their move back; one in four quiet stretches
+            // carrying one that does is what the tape says, against every
+            // fizzle giving back 40% or more before.
+            fizzle_odds: 0.5,
+            fizzle_pct: (0.5, 1.5),
+            fizzle_hold: (6, 40),
+            fizzle_giveback: Giveback::Mix {
+                revert_odds: 0.26,
+                stall_odds: 0.37,
+                revert: (0.5, 1.0),
+                stall: (-0.45, 0.45),
+                extend: (-1.0, -0.5),
+            },
+            // NVDA's calibration: 0.83 bp a second in regular hours, 1.34
+            // times that in its stressed state, the one shocks come in. A
+            // wobble tick, about 2 s apart, moves at most 0.03% (sd 1.7 bp).
+            noise_pct: 0.03,
+            noise_gap: (4, 12),
+            // About 1x the 10,000 USDC of collateral at the snapshot's $160
+            // ($9,920), as SPCX's 70 were at its $143: the largest leg (9.5%)
+            // against a full position stays inside the $1,000 limit.
+            max_position: 62.0,
+            max_drawdown_usd: 1_000.0,
+            actors: Some(nvda_takers()),
+            impact: Some(nvda_impact()),
         }
     }
 
@@ -1345,73 +1595,25 @@ impl ShockFamily {
 
     fn draw_with(&self, name: &str, seed: u64, marked: bool) -> (Scenario, Shape) {
         let mut rng = SplitMix64(seed);
-        // Direction and aftermath come first, so `kind` can read them alone.
+        // Direction and aftermath come first, then whether the session is
+        // quiet, so `cell` can read them alone. A family without quiet
+        // sessions makes no third draw, and draws as it did before them.
         let direction = self.pick_direction(rng.next_f64());
         let aftermath = self.pick_aftermath(rng.next_f64());
-        let sign = direction.sign();
+        let quiet = self.quiet_odds > 0.0 && rng.next_f64() < self.quiet_odds;
         // The session's length comes before the path, so the path can't
         // date it.
         let duration_slots = rng.range_u64(self.duration);
-        let shock_slot = rng.range_u64(self.shock_slot);
-        let mut legs = 1;
-        while legs < self.max_legs && rng.next_f64() < self.extra_leg_odds {
-            legs += 1;
-        }
-
-        let mut path = PathBuilder::new(self, rng);
-        path.quiet(0.0, shock_slot);
-        let mut base = 0.0;
-        let mut first_leg_pct = 0.0;
-        for leg in 0..legs {
-            let size = path.rng.log_range_f64(self.leg_pct);
-            if leg == 0 {
-                first_leg_pct = size;
-            }
-            base = round(base + sign * size);
-            path.travel(base);
-            let pause = path.rng.range_u64(self.pause_slots);
-            path.quiet(base, path.slot + pause);
-        }
-        let extreme = base;
-        let end = match aftermath {
-            Aftermath::Revert => round(extreme * (1.0 - path.rng.range_f64(self.revert_recovery))),
-            Aftermath::Stall => round(extreme * (1.0 - path.rng.range_f64(self.stall_recovery))),
-            Aftermath::Extend => round(extreme + sign * path.rng.range_f64(self.extend_pct)),
-        };
-        path.travel(end);
-        let aftermath_landed = path.slot;
-        path.quiet(end, duration_slots);
-        let cut = aftermath_landed > duration_slots;
-        path.cut(duration_slots);
-        let tail = duration_slots - path.waypoints.last().map_or(0, |w| w.slot);
-
-        let depth = extreme.abs();
-        let legs_text = if legs == 1 {
-            "at once".to_string()
+        let (waypoints, shape, shock_slot) = if quiet {
+            self.quiet_path(rng, direction, aftermath, duration_slots)
         } else {
-            format!("in {legs} legs")
+            self.shock_path(rng, direction, aftermath, duration_slots)
         };
-        let (moves, then) = match (direction, aftermath) {
-            (Direction::Crash, Aftermath::Revert) => ("drops", "rebounds"),
-            (Direction::Crash, Aftermath::Stall) => ("drops", "stalls"),
-            (Direction::Crash, Aftermath::Extend) => ("drops", "slides further"),
-            (Direction::Squeeze, Aftermath::Revert) => ("spikes", "fades"),
-            (Direction::Squeeze, Aftermath::Stall) => ("spikes", "stalls"),
-            (Direction::Squeeze, Aftermath::Extend) => ("spikes", "keeps running"),
-        };
+        assert!(waypoints.iter().all(|w| w.slot < duration_slots));
+        assert_eq!(shape.quiet, quiet);
         let scenario = Scenario {
             name: name.to_string(),
-            description: if cut {
-                format!(
-                    "{} {moves} {depth:.1}% {legs_text} from around slot {shock_slot}; the session ends before it {then}",
-                    self.symbol
-                )
-            } else {
-                format!(
-                    "{} {moves} {depth:.1}% {legs_text} from around slot {shock_slot}, then {then} to {end:+.2}% of its starting mark",
-                    self.symbol
-                )
-            },
+            description: self.describe(&shape, shock_slot),
             symbol: self.symbol.clone(),
             duration_slots,
             mandate: Mandate::perp(
@@ -1420,14 +1622,14 @@ impl ShockFamily {
                 self.max_position,
                 self.max_drawdown_usd,
             ),
-            path: path.waypoints,
+            path: waypoints,
             making: None,
             offhours: None,
             funding: None,
             tape: Vec::new(),
             spot: None,
             faults: None,
-            actors: None,
+            actors: self.actors.clone(),
             takers_pricing: None,
             turn_data: None,
             oracles: None,
@@ -1444,7 +1646,7 @@ impl ShockFamily {
             fair_path: marked.then(|| {
                 vec![Waypoint {
                     slot: shock_slot,
-                    level_pct: end,
+                    level_pct: shape.end_pct,
                     premium_pct: 0.0,
                 }]
             }),
@@ -1458,8 +1660,58 @@ impl ShockFamily {
             tx_layer: None,
             stop_out: None,
             liquidator: None,
-            impact: None,
+            impact: self.impact.clone(),
         };
+        (scenario, shape)
+    }
+
+    /// A session with a shock: quiet until the shock slot, the legs with a
+    /// pause after each, the aftermath, quiet to the end, cut at the end.
+    /// Returns the path, its shape and the slot the shock starts around.
+    fn shock_path(
+        &self,
+        mut rng: SplitMix64,
+        direction: Direction,
+        aftermath: Aftermath,
+        duration_slots: u64,
+    ) -> (Vec<Waypoint>, Shape, u64) {
+        let sign = direction.sign();
+        let shock_slot = rng.range_u64(self.shock_slot);
+        let mut legs = 1;
+        while legs < self.max_legs && rng.next_f64() < self.extra_leg_odds {
+            legs += 1;
+        }
+
+        let mut path = PathBuilder::new(self, rng);
+        path.quiet(0.0, shock_slot);
+        let mut base = 0.0;
+        let mut first_leg_pct = 0.0;
+        for leg in 0..legs {
+            let size = match self.leg_alpha {
+                Some(alpha) => path.rng.pareto_f64(self.leg_pct, alpha),
+                None => path.rng.log_range_f64(self.leg_pct),
+            };
+            assert!(size >= self.leg_pct.0 - 1e-9 && size <= self.leg_pct.1 + 1e-9);
+            if leg == 0 {
+                first_leg_pct = size;
+            }
+            base = round(base + sign * size);
+            path.travel(base);
+            let pause = path.rng.range_u64(self.pause_slots);
+            path.quiet(base, path.slot + pause);
+        }
+        let extreme = base;
+        let end = match aftermath {
+            Aftermath::Revert => round(extreme * (1.0 - path.rng.range_f64(self.revert_recovery))),
+            Aftermath::Stall => round(extreme * (1.0 - path.rng.range_f64(self.stall_recovery))),
+            Aftermath::Extend => round(extreme + sign * self.extension_pct(&mut path.rng, extreme)),
+        };
+        path.travel(end);
+        let aftermath_landed = path.slot;
+        path.quiet(end, duration_slots);
+        let cut = aftermath_landed > duration_slots;
+        path.cut(duration_slots);
+        let tail = duration_slots - path.waypoints.last().map_or(0, |w| w.slot);
         let shape = Shape {
             direction,
             aftermath,
@@ -1469,8 +1721,82 @@ impl ShockFamily {
             end_pct: end,
             tail_slots: tail,
             cut,
+            quiet: false,
         };
-        (scenario, shape)
+        (path.waypoints, shape, shock_slot)
+    }
+
+    /// A session with no shock: one quiet stretch, wobble and perhaps a
+    /// fizzle, from start to end. Its direction and aftermath were drawn
+    /// (so `cell` reads every draw alike) and are never played.
+    fn quiet_path(
+        &self,
+        rng: SplitMix64,
+        direction: Direction,
+        aftermath: Aftermath,
+        duration_slots: u64,
+    ) -> (Vec<Waypoint>, Shape, u64) {
+        let mut path = PathBuilder::new(self, rng);
+        path.quiet(0.0, duration_slots);
+        path.cut(duration_slots);
+        let tail = duration_slots - path.waypoints.last().map_or(0, |w| w.slot);
+        let shape = Shape {
+            direction,
+            aftermath,
+            legs: 0,
+            first_leg_pct: 0.0,
+            extreme_pct: 0.0,
+            end_pct: 0.0,
+            tail_slots: tail,
+            cut: false,
+            quiet: true,
+        };
+        (path.waypoints, shape, 0)
+    }
+
+    /// How much further an extension goes, in percent of the starting mark:
+    /// `extend_pct`, or with `extend_share` that share of the shock's depth
+    /// kept within `extend_pct`.
+    fn extension_pct(&self, rng: &mut SplitMix64, extreme_pct: f64) -> f64 {
+        let (low, high) = self.extend_pct;
+        assert!(0.0 < low && low <= high, "extend_pct is a positive range");
+        match self.extend_share {
+            Some(share) => (rng.range_f64(share) * extreme_pct.abs()).clamp(low, high),
+            None => rng.range_f64(self.extend_pct),
+        }
+    }
+
+    /// The scenario's description: what its path does, in a line.
+    fn describe(&self, shape: &Shape, shock_slot: u64) -> String {
+        if shape.quiet {
+            return format!("{} wobbles, with no shock", self.symbol);
+        }
+        let depth = shape.extreme_pct.abs();
+        let end = shape.end_pct;
+        let legs_text = if shape.legs == 1 {
+            "at once".to_string()
+        } else {
+            format!("in {} legs", shape.legs)
+        };
+        let (moves, then) = match (shape.direction, shape.aftermath) {
+            (Direction::Crash, Aftermath::Revert) => ("drops", "rebounds"),
+            (Direction::Crash, Aftermath::Stall) => ("drops", "stalls"),
+            (Direction::Crash, Aftermath::Extend) => ("drops", "slides further"),
+            (Direction::Squeeze, Aftermath::Revert) => ("spikes", "fades"),
+            (Direction::Squeeze, Aftermath::Stall) => ("spikes", "stalls"),
+            (Direction::Squeeze, Aftermath::Extend) => ("spikes", "keeps running"),
+        };
+        if shape.cut {
+            format!(
+                "{} {moves} {depth:.1}% {legs_text} from around slot {shock_slot}; the session ends before it {then}",
+                self.symbol
+            )
+        } else {
+            format!(
+                "{} {moves} {depth:.1}% {legs_text} from around slot {shock_slot}, then {then} to {end:+.2}% of its starting mark",
+                self.symbol
+            )
+        }
     }
 
     /// `count` scenarios named `<prefix>-<n>`, stratified: each direction and
@@ -1486,22 +1812,10 @@ impl ShockFamily {
 
     /// [`Self::sample_set`], with each scenario's [`Shape`].
     pub fn draw_set(&self, prefix: &str, count: usize, seed: u64) -> Vec<(Scenario, Shape)> {
-        let mut cells: Vec<((Direction, Aftermath), f64)> = Vec::new();
-        for (direction, p_dir) in [
-            (Direction::Crash, self.crash_odds),
-            (Direction::Squeeze, 1.0 - self.crash_odds),
-        ] {
-            for (aftermath, p_after) in [
-                (Aftermath::Revert, self.revert_odds),
-                (Aftermath::Stall, self.stall_odds),
-                (Aftermath::Extend, 1.0 - self.revert_odds - self.stall_odds),
-            ] {
-                cells.push(((direction, aftermath), p_dir * p_after));
-            }
-        }
-        let mut quotas: Vec<((Direction, Aftermath), usize, f64)> = cells
-            .iter()
-            .map(|&(cell, p)| {
+        let mut quotas: Vec<(Cell, usize, f64)> = self
+            .cell_odds()
+            .into_iter()
+            .map(|(cell, p)| {
                 let exact = p * count as f64;
                 (cell, exact.floor() as usize, exact - exact.floor())
             })
@@ -1513,13 +1827,14 @@ impl ShockFamily {
         for &i in by_remainder.iter().take(short) {
             quotas[i].1 += 1;
         }
+        assert_eq!(quotas.iter().map(|q| q.1).sum::<usize>(), count);
 
         let mut drawn = Vec::with_capacity(count);
         let mut draw = 0u64;
         while drawn.len() < count {
             draw += 1;
             let draw_seed = seed.wrapping_mul(1_000_003).wrapping_add(draw);
-            let cell = self.kind(draw_seed);
+            let cell = self.cell(draw_seed);
             let quota = quotas.iter_mut().find(|q| q.0 == cell).expect("every cell");
             if quota.1 == 0 {
                 continue;
@@ -1534,12 +1849,44 @@ impl ShockFamily {
             .collect()
     }
 
-    /// The direction and aftermath a seed draws, without building the
-    /// scenario: the first two draws of [`Self::draw`].
-    pub fn kind(&self, seed: u64) -> (Direction, Aftermath) {
+    /// Each cell a draw can land in, and its odds: the quiet sessions (when
+    /// the family has them), then each direction and aftermath of the rest.
+    /// They sum to 1.
+    pub fn cell_odds(&self) -> Vec<(Cell, f64)> {
+        assert!((0.0..1.0).contains(&self.quiet_odds));
+        let mut cells: Vec<(Cell, f64)> = Vec::new();
+        if self.quiet_odds > 0.0 {
+            cells.push((Cell::Quiet, self.quiet_odds));
+        }
+        let shocks = 1.0 - self.quiet_odds;
+        for (direction, p_dir) in [
+            (Direction::Crash, self.crash_odds),
+            (Direction::Squeeze, 1.0 - self.crash_odds),
+        ] {
+            for (aftermath, p_after) in [
+                (Aftermath::Revert, self.revert_odds),
+                (Aftermath::Stall, self.stall_odds),
+                (Aftermath::Extend, 1.0 - self.revert_odds - self.stall_odds),
+            ] {
+                cells.push((Cell::Shock(direction, aftermath), shocks * p_dir * p_after));
+            }
+        }
+        let total: f64 = cells.iter().map(|c| c.1).sum();
+        assert!((total - 1.0).abs() < 1e-9, "the cells' odds sum to {total}");
+        cells
+    }
+
+    /// The cell a seed draws, without building the scenario: the first
+    /// draws of [`Self::draw`].
+    pub fn cell(&self, seed: u64) -> Cell {
         let mut rng = SplitMix64(seed);
         let direction = self.pick_direction(rng.next_f64());
-        (direction, self.pick_aftermath(rng.next_f64()))
+        let aftermath = self.pick_aftermath(rng.next_f64());
+        if self.quiet_odds > 0.0 && rng.next_f64() < self.quiet_odds {
+            Cell::Quiet
+        } else {
+            Cell::Shock(direction, aftermath)
+        }
     }
 
     fn pick_aftermath(&self, draw: f64) -> Aftermath {
@@ -1558,6 +1905,112 @@ impl ShockFamily {
         } else {
             Direction::Squeeze
         }
+    }
+}
+
+/// NVDA's mark when a session starts on `phoenix-perps-2026-11-13`, which
+/// turns the tape's dollar sizes into NVDA.
+const NVDA_MARK_USD: f64 = 160.0;
+
+/// The actor library counts 0.4 s a slot (mainnet's); this family's clock
+/// is 250 ms a slot. A measured rate a minute is written this many times
+/// smaller, so that a slot of market time sees the measured rate.
+const LIBRARY_RATE_PER_MEASURED: f64 = 0.25 / crate::actors::library::SLOT_SECONDS;
+
+/// The informed takers' horizon and the chasers' lookback, in slots: ten
+/// seconds, about how long Phoenix's followers took to reprice after
+/// NVDA's leader on 2026-11-23 (4 to 88 s; luthor RFD 0003). A default.
+const MOVE_WINDOW_SLOTS: u64 = 40;
+
+/// NVDA's takers, from the tape (`phoenix-tape.20261125.fc443f1e`,
+/// `markets.NVDA.flow.regular`): 0.99 orders a minute in regular hours
+/// ($290k an hour), median $1,000 (6.25 NVDA), p90 $9,900, log-sd 2.05,
+/// pinger orders under $5 left out (off hours: 0.29 a minute).
+///
+/// - **Noise** at that pace: about two orders a session.
+/// - **Informed** takers who see the path a horizon ahead and trade its
+///   way, right 85% of the time (the library's default). NVDA's takers are
+///   the most informed the tape measured: they pay about 8.6 bp to cross
+///   and the mid moves 8 to 12 bp their way within 60 s.
+/// - **Chasers** who take the way the price just moved: they compete with
+///   a rider for the move, and push the book before it gets there.
+///
+/// Around a move the informed and the chasers each trade half the flow
+/// NVDA's jumps carried in their minute: a median $20,500 over its 9
+/// jumps (`jumps.events[].usd`), about 10 orders of $1,000 each, in their
+/// ten-second window: about 25 times NVDA's own pace while they trade.
+fn nvda_takers() -> crate::actors::Library {
+    use crate::actors::library::{Chaser, Informed, Library, Noise, Scale};
+    let measured_per_minute = 0.991;
+    let median_usd = 1_000.1;
+    let scale = Scale {
+        trades_per_minute: measured_per_minute * LIBRARY_RATE_PER_MEASURED,
+        trade_size: median_usd / NVDA_MARK_USD,
+        trade_size_sigma: 2.05,
+    };
+    let orders_per_move = 20_500.0 / median_usd / 2.0;
+    let window_rate = orders_per_move / (scale.per_slot() * MOVE_WINDOW_SLOTS as f64);
+    assert!(
+        window_rate > 1.0,
+        "a move draws more flow than the market's pace"
+    );
+    Library {
+        scale,
+        noise: vec![Noise {
+            wallets: 2,
+            flow_mult: 1.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            active: None,
+        }],
+        informed: vec![Informed {
+            wallets: 3,
+            horizon_slots: MOVE_WINDOW_SLOTS,
+            // Under the smallest small move (0.5%), well over the wobble:
+            // they trade every move, never the noise.
+            edge_bps: 40.0,
+            hit_rate: 0.85,
+            view_noise_bps: 10.0,
+            intensity_mult: window_rate,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            active: None,
+        }],
+        chasers: vec![Chaser {
+            wallets: 3,
+            lookback_slots: MOVE_WINDOW_SLOTS,
+            // Two thirds of the smallest jump: they chase what looks like a
+            // shock, and the larger small moves.
+            trigger_bps: 100.0,
+            intensity_mult: window_rate,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            active: None,
+        }],
+        ..Library::default()
+    }
+}
+
+/// Price impact on NVDA: the book stays where trades leave it.
+///
+/// - `probe`: 6.25 NVDA, the tape's median order ($1,000).
+/// - `max_bps`: 50, about the worst-fill p90 of NVDA's $10,000-and-over
+///   orders (`markets.NVDA.impact`: 51.5 bp; the 0.15.0 brief's run of the
+///   study, 34 bp). NVDA's $1,000 to $10,000 orders' worst fill: median 6.9
+///   bp, p90 31.9 bp in the file (the brief: 2.5 and 24). A 70-NVDA take
+///   ($11,200, about the cap) walked the snapshot's book 12 to 15 bp on a
+///   graded session.
+/// - `permanent_share` and `half_life_slots`: not measured (luthor keeps
+///   no book); the NVDA calibration's defaults (`nvda.20261113.903d1120`,
+///   `book.impact`: half permanent, the rest halving every 30 s, 120 slots
+///   at 250 ms).
+fn nvda_impact() -> crate::impact::Impact {
+    crate::impact::Impact {
+        permanent_share: 0.5,
+        half_life_slots: 120.0,
+        max_bps: 50.0,
+        probe: 1_000.1 / NVDA_MARK_USD,
+        resistance: Vec::new(),
     }
 }
 
@@ -1718,7 +2171,7 @@ impl<'a> PathBuilder<'a> {
         };
         let mut settle = base;
         if let Some((at, size, hold)) = fizzle {
-            let giveback = self.rng.range_f64(family.fizzle_giveback);
+            let giveback = family.fizzle_giveback.draw(&mut self.rng);
             self.wobble(base, at);
             let away = round(base + size);
             self.travel(away);
@@ -1799,6 +2252,15 @@ impl SplitMix64 {
         (lo.ln() + (hi.ln() - lo.ln()) * self.next_f64()).exp()
     }
 
+    /// A Pareto draw of exponent `alpha`, truncated to `[lo, hi]` (both
+    /// positive): by inverting its distribution function.
+    pub(crate) fn pareto_f64(&mut self, (lo, hi): (f64, f64), alpha: f64) -> f64 {
+        assert!(0.0 < lo && lo < hi && alpha > 0.0);
+        let tail = 1.0 - (lo / hi).powf(alpha);
+        let x = lo * (1.0 - self.next_f64() * tail).powf(-1.0 / alpha);
+        x.clamp(lo, hi)
+    }
+
     pub(crate) fn range_u64(&mut self, (lo, hi): (u64, u64)) -> u64 {
         lo + self.next_u64() % (hi - lo + 1)
     }
@@ -1857,10 +2319,14 @@ mod tests {
                     panic!("{} has one market", scenario.name)
                 };
                 assert_eq!(market.symbol, scenario.symbol);
-                assert_eq!(
-                    market.valuation(scenario.prices_the_close()),
-                    scenario.valuation()
-                );
+                // Impact plays one market only, and values its account at
+                // the book level, over the market's own `mark`.
+                let valuation = market.valuation(scenario.prices_the_close());
+                if scenario.impact.is_some() && valuation == "mark" {
+                    assert_eq!(scenario.valuation(), "book");
+                } else {
+                    assert_eq!(valuation, scenario.valuation());
+                }
                 let start = 187.25;
                 let bound = scenario.bound_usd(start, 3);
                 assert_eq!(
@@ -1930,7 +2396,12 @@ mod tests {
     #[test]
     fn the_family_draws_every_kind_at_roughly_its_odds() {
         let family = ShockFamily::spcx();
-        let draws: Vec<(Direction, Aftermath)> = (0..4_000).map(|seed| family.kind(seed)).collect();
+        let draws: Vec<(Direction, Aftermath)> = (0..4_000)
+            .map(|seed| match family.cell(seed) {
+                Cell::Shock(direction, aftermath) => (direction, aftermath),
+                Cell::Quiet => unreachable!("spcx has no quiet sessions"),
+            })
+            .collect();
         let share = |f: &dyn Fn(&(Direction, Aftermath)) -> bool| {
             draws.iter().filter(|d| f(d)).count() as f64 / draws.len() as f64
         };
@@ -1947,7 +2418,10 @@ mod tests {
         let slack = family.fizzle_pct.1 + 2.0 * family.noise_pct;
         for seed in 0..200 {
             let (scenario, shape) = family.draw("s", seed);
-            assert_eq!((shape.direction, shape.aftermath), family.kind(seed));
+            assert_eq!(
+                Cell::Shock(shape.direction, shape.aftermath),
+                family.cell(seed)
+            );
             let sign = shape.direction.sign();
             let extreme = sign * shape.extreme_pct;
             let end = sign * shape.end_pct;
@@ -2051,6 +2525,191 @@ mod tests {
         assert!(part_counts.iter().filter(|(t, _)| *t == -8).count() > 1);
     }
 
+    /// The NVDA family's hidden sets carry each cell (quiet, or a
+    /// direction and an aftermath) in proportion to its odds, by largest
+    /// remainder: within one session of the exact share, whatever the seed.
+    #[test]
+    fn an_nvda_set_holds_each_cell_at_its_odds() {
+        let family = ShockFamily::nvda();
+        let odds = family.cell_odds();
+        assert_eq!(odds.len(), 7, "quiet and six shocks");
+        assert_eq!(odds[0], (Cell::Quiet, 0.25));
+        for seed in [1, 2, 3] {
+            let set = family.draw_set("hidden", 72, seed);
+            assert_eq!(set.len(), 72);
+            for (cell, p) in &odds {
+                let count = set
+                    .iter()
+                    .filter(|(_, shape)| cell_of(shape) == *cell)
+                    .count() as f64;
+                assert!(
+                    (count - p * 72.0).abs() < 1.0,
+                    "seed {seed}: {cell:?} has {count} of 72, odds {p}"
+                );
+            }
+        }
+        let set = family.draw_set("hidden", 72, 1);
+        let quiet = set.iter().filter(|(_, s)| s.quiet).count();
+        assert_eq!(quiet, 18, "a quarter of 72");
+        let extend = set
+            .iter()
+            .filter(|(_, s)| !s.quiet && s.aftermath == Aftermath::Extend)
+            .count();
+        let revert = set
+            .iter()
+            .filter(|(_, s)| !s.quiet && s.aftermath == Aftermath::Revert)
+            .count();
+        assert!(
+            extend > revert,
+            "the tape's jumps extend more than they revert"
+        );
+    }
+
+    fn cell_of(shape: &Shape) -> Cell {
+        if shape.quiet {
+            Cell::Quiet
+        } else {
+            Cell::Shock(shape.direction, shape.aftermath)
+        }
+    }
+
+    /// Each seed's draw lands in the cell `cell` reads, and over many seeds
+    /// at the tape's odds: a quarter quiet, and of the shocks 31% revert,
+    /// 24% stall and 45% extend.
+    #[test]
+    fn nvda_draws_land_at_the_tapes_odds() {
+        let family = ShockFamily::nvda();
+        let cells: Vec<Cell> = (0..8_000).map(|seed| family.cell(seed)).collect();
+        let share = |f: &dyn Fn(&Cell) -> bool| {
+            cells.iter().filter(|c| f(c)).count() as f64 / cells.len() as f64
+        };
+        assert!((share(&|c| *c == Cell::Quiet) - 0.25).abs() < 0.02);
+        let shocks = 0.75;
+        for (aftermath, odds) in [
+            (Aftermath::Revert, 0.31),
+            (Aftermath::Stall, 0.24),
+            (Aftermath::Extend, 0.45),
+        ] {
+            let got = share(&|c| matches!(c, Cell::Shock(_, a) if *a == aftermath)) / shocks;
+            assert!((got - odds).abs() < 0.03, "{aftermath:?}: {got}");
+        }
+        for seed in 0..64 {
+            let (_, shape) = family.draw("s", seed);
+            assert_eq!(cell_of(&shape), family.cell(seed), "seed {seed}");
+        }
+    }
+
+    /// A quiet session has no shock: no legs, and its path stays within
+    /// what a fizzle can do (a small move that goes on by once itself at
+    /// most) and the wobble. Every other session has one, its first leg a
+    /// jump by the tape's measure.
+    #[test]
+    fn nvda_quiet_sessions_have_no_shock() {
+        let family = ShockFamily::nvda();
+        let reach =
+            family.fizzle_pct.1 * (1.0 - family.fizzle_giveback.least()) + 2.0 * family.noise_pct;
+        assert!(reach < 2.0 * family.leg_pct.0 + 0.5);
+        let (mut quiet, mut shocks) = (0, 0);
+        for (scenario, shape) in family.draw_set("q", 144, 9) {
+            if shape.quiet {
+                quiet += 1;
+                assert_eq!(shape.legs, 0);
+                assert_eq!((shape.extreme_pct, shape.end_pct), (0.0, 0.0));
+                assert!(scenario.description.contains("no shock"));
+                for w in &scenario.path {
+                    assert!(
+                        w.level_pct.abs() <= reach + 1e-9,
+                        "{}: {w:?}",
+                        scenario.name
+                    );
+                }
+            } else {
+                shocks += 1;
+                assert!(shape.legs >= 1);
+                assert!(shape.first_leg_pct >= family.leg_pct.0 - 1e-9);
+                assert!(shape.extreme_pct.abs() >= family.leg_pct.0 - 0.01);
+            }
+        }
+        assert_eq!((quiet, shocks), (36, 108));
+    }
+
+    /// The legs' sizes follow the Pareto fitted to mainnet's 93 jumps
+    /// (median 2.0%, p90 4.2%, within 1.5 to 9.5%), and an extension goes
+    /// on by half the shock or more, as the tape counts one.
+    #[test]
+    fn nvda_legs_and_extensions_are_the_tapes() {
+        let family = ShockFamily::nvda();
+        let mut rng = SplitMix64(5);
+        let mut legs: Vec<f64> = (0..20_000)
+            .map(|_| rng.pareto_f64(family.leg_pct, family.leg_alpha.unwrap()))
+            .collect();
+        legs.sort_by(f64::total_cmp);
+        let median = legs[legs.len() / 2];
+        let p90 = legs[legs.len() * 9 / 10];
+        assert!((median - 2.1).abs() < 0.1, "median {median}");
+        assert!((p90 - 4.3).abs() < 0.3, "p90 {p90}");
+        assert!(legs[0] >= 1.5 && *legs.last().unwrap() <= 9.5);
+        for seed in 0..400 {
+            let (_, shape) = family.draw("e", seed);
+            if shape.quiet || shape.aftermath != Aftermath::Extend {
+                continue;
+            }
+            let depth = shape.extreme_pct.abs();
+            let further = (shape.end_pct - shape.extreme_pct).abs();
+            let least = (0.5 * depth).clamp(family.extend_pct.0, family.extend_pct.1);
+            assert!(further >= least - 0.01, "seed {seed}: {shape:?}");
+            assert!(further <= family.extend_pct.1 + 0.01, "seed {seed}");
+        }
+    }
+
+    /// Every NVDA scenario carries price impact and the takers, and is a
+    /// scenario the grader loads: impact plays a plain path (no making, no
+    /// oracles of its own, no refill, no transaction layer, one market).
+    #[test]
+    fn nvda_scenarios_carry_impact_and_takers_and_load() {
+        let family = ShockFamily::nvda();
+        for (scenario, _) in family.draw_set("i", 12, 4) {
+            let impact = scenario.impact.as_ref().expect("impact is on");
+            assert!(
+                (impact.probe - 6.25).abs() < 0.01,
+                "the tape's median order, $1,000"
+            );
+            assert!(impact.max_bps <= crate::impact::MAX_IMPACT_BPS);
+            impact.validate().unwrap();
+            let actors = scenario.actors.as_ref().expect("the takers trade");
+            assert_eq!(actors.informed.len(), 1);
+            assert_eq!(actors.chasers.len(), 1);
+            assert!(
+                actors.refill.is_none(),
+                "impact's fading part is the refill"
+            );
+            // NVDA's measured pace: 0.99 orders a minute of 250 ms slots.
+            let per_minute = actors.scale.per_slot() * 240.0;
+            assert!((per_minute - 0.991).abs() < 1e-3, "{per_minute}");
+            assert_eq!(scenario.symbol, "NVDA");
+            scenario.validate().unwrap();
+            let text = serde_json::to_string(&scenario).unwrap();
+            let back: Scenario = serde_json::from_str(&text).unwrap();
+            assert_eq!(back, scenario);
+        }
+        // The old family is untouched: no takers, no impact, no quiet draw,
+        // and its parameters print as they did (a fingerprint holds them).
+        let (old, shape) = ShockFamily::spcx().draw("o", 1);
+        assert!(old.actors.is_none() && old.impact.is_none() && !shape.quiet);
+        let text = format!("{:?}", ShockFamily::spcx());
+        assert!(text.starts_with("ShockFamily { symbol: \"SPCX\", duration: (320, 720),"));
+        assert!(text.contains("fizzle_giveback: (0.4, 1.0), noise_pct: 0.12,"));
+        for added in [
+            "quiet_odds",
+            "leg_alpha",
+            "extend_share",
+            "actors",
+            "impact",
+        ] {
+            assert!(!text.contains(added), "{added}");
+        }
+    }
+
     /// Quiet stretches carry fizzles: a move away that comes most or all of
     /// the way back, by a share that varies.
     #[test]
@@ -2081,7 +2740,7 @@ mod tests {
                     .fold(0.0, f64::max);
                 let left = path.waypoints.last().unwrap().level_pct.abs();
                 assert!(
-                    left < (1.0 - family.fizzle_giveback.0) * peak + 2.0 * family.noise_pct,
+                    left < (1.0 - family.fizzle_giveback.least()) * peak + 2.0 * family.noise_pct,
                     "seed {seed}"
                 );
                 kept.push(left / peak);

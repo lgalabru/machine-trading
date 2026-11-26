@@ -5424,17 +5424,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mtx-bot-dip-buyer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "mtx-kit",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "mtx-bot-fault-probe"
 version = "0.1.0"
 dependencies = [
@@ -5446,6 +5435,31 @@ dependencies = [
 
 [[package]]
 name = "mtx-bot-first-strategy"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-flash-crash-nvda"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
+]
+
+[[package]]
+name = "mtx-bot-flash-crash-nvda-dip-buyer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mtx-kit",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "mtx-bot-flash-crash-nvda-informed"
 version = "0.1.0"
 dependencies = [
  "mtx-kit",
@@ -5576,13 +5590,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mtx-bot-reference"
-version = "0.1.0"
-dependencies = [
- "mtx-kit",
-]
-
-[[package]]
 name = "mtx-bot-rfq-desk"
 version = "0.1.0"
 dependencies = [
@@ -5635,10 +5642,14 @@ dependencies = [
 name = "mtx-bot-weekend"
 version = "0.1.0"
 dependencies = [
- "borsh 1.8.1",
- "bs58",
  "mtx-kit",
- "serde_json",
+]
+
+[[package]]
+name = "mtx-bot-weekend-gap-spcx-informed"
+version = "0.1.0"
+dependencies = [
+ "mtx-kit",
 ]
 
 [[package]]

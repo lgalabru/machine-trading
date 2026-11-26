@@ -24,6 +24,7 @@ use crate::{
     scenario::{Shape, ShockFamily},
     thin_pools::{ThinPoolsFamily, ThinPoolsShape},
     weekend::{WeekendFamily, WeekendShape},
+    weekend_measured::MeasuredWeekendShape,
 };
 use crate::{error::Result, scenario::Scenario};
 
@@ -101,6 +102,24 @@ pub const GENERATORS: &[Generator] = &[
             )
         },
         params: || format!("{:?}", ShockFamily::spcx()),
+    },
+    Generator {
+        name: "flash-crash-nvda",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                ShockFamily::nvda().draw_set(prefix, count, seed),
+                false,
+                nvda_shock_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                ShockFamily::nvda().draw_set("hidden", count, seed),
+                tell,
+                nvda_shock_latent,
+            )
+        },
+        params: || format!("{:?}", ShockFamily::nvda()),
     },
     Generator {
         name: "market-making",
@@ -182,6 +201,24 @@ pub const GENERATORS: &[Generator] = &[
             )
         },
         params: || format!("{:?}", WeekendFamily::spcx()),
+    },
+    Generator {
+        name: "weekend-gap-mainnet",
+        practice_drawn: |prefix, count, seed| {
+            shaped(
+                WeekendFamily::mainnet().draw_set(prefix, count, seed),
+                false,
+                mainnet_weekend_latent,
+            )
+        },
+        hidden: |count, seed, tell| {
+            shaped(
+                WeekendFamily::mainnet().draw_set("hidden", count, seed),
+                tell,
+                mainnet_weekend_latent,
+            )
+        },
+        params: || format!("{:?}", WeekendFamily::mainnet()),
     },
     Generator {
         name: "liquidation-flash",
@@ -393,6 +430,11 @@ pub enum Knowable {
 /// as it starts.
 pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("*", crate::latent::ROSTER, Knowable::Identity),
+    ("flash-crash-nvda", "horizon_slots", Knowable::Process),
+    ("flash-crash-nvda", "hit_rate", Knowable::Process),
+    ("flash-crash-nvda", "quiet_odds", Knowable::Process),
+    ("flash-crash-nvda", "aftermath_odds", Knowable::Process),
+    ("flash-crash-nvda", "impact", Knowable::Process),
     ("funding-carry", "informed_share", Knowable::Process),
     ("funding-carry", "lag_slots", Knowable::Process),
     ("funding-carry", "hold_slots", Knowable::Process),
@@ -405,6 +447,21 @@ pub const LATENT_FIELDS: &[(&str, &str, Knowable)] = &[
     ("weekend-gap", "worker_account", Knowable::Identity),
     ("weekend-gap", "impact_pct", Knowable::Process),
     ("weekend-gap", "half_life_slots", Knowable::Process),
+    ("weekend-gap-mainnet", "reopen_keep", Knowable::Process),
+    (
+        "weekend-gap-mainnet",
+        "open_residual_sd_pct",
+        Knowable::Process,
+    ),
+    ("weekend-gap-mainnet", "horizon_slots", Knowable::Process),
+    ("weekend-gap-mainnet", "hit_rate", Knowable::Process),
+    ("weekend-gap-mainnet", "edge_bps", Knowable::Process),
+    ("weekend-gap-mainnet", "view_noise_bps", Knowable::Process),
+    (
+        "weekend-gap-mainnet",
+        "orders_per_wallet",
+        Knowable::Process,
+    ),
     ("liquidation-flash", "liquidators", Knowable::Identity),
     ("liquidation-flash", "bids", Knowable::Identity),
     ("liquidation-flash", "bid_share", Knowable::Process),
@@ -605,6 +662,50 @@ fn shock_latent(_: &Shape) -> Value {
 }
 
 #[cfg(feature = "generators")]
+/// Who trades on information, and the process every session is drawn
+/// from: the informed takers' wallets (resolved as the session starts),
+/// how far ahead they see and how often they are right, the share of quiet
+/// sessions and the aftermath's odds, and the impact's persistence. Never
+/// the session's own draws: whether it is quiet, the shock's direction,
+/// legs, size, timing or aftermath. Every session tells the same process;
+/// only the wallets differ.
+fn nvda_shock_latent(_: &Shape) -> Value {
+    let family = ShockFamily::nvda();
+    let informed = family
+        .actors
+        .as_ref()
+        .and_then(|actors| actors.informed.first())
+        .expect("the NVDA family seats informed takers");
+    let impact = family.impact.as_ref().expect("the NVDA family has impact");
+    let latent = crate::latent::Latent::new()
+        .roster(&["informed"])
+        .and_then(|l| l.process("horizon_slots", informed.horizon_slots))
+        .and_then(|l| l.process("hit_rate", informed.hit_rate))
+        .and_then(|l| l.process("quiet_odds", family.quiet_odds))
+        .and_then(|l| {
+            l.process(
+                "aftermath_odds",
+                json!({
+                    "revert": family.revert_odds,
+                    "stall": family.stall_odds,
+                    "extend": 1.0 - family.revert_odds - family.stall_odds,
+                }),
+            )
+        })
+        .and_then(|l| {
+            l.process(
+                "impact",
+                json!({
+                    "permanent_share": impact.permanent_share,
+                    "half_life_slots": impact.half_life_slots,
+                }),
+            )
+        })
+        .expect("the NVDA family's latent fields are sound");
+    serde_json::from_str(&latent.to_json()).expect("a latent is JSON")
+}
+
+#[cfg(feature = "generators")]
 /// The session's funding process and how its episodes behave: the informed
 /// share, the index's lag, how long a crowded premium holds, funding's
 /// settings and cap, and the index's noise. Not the episodes themselves:
@@ -634,6 +735,31 @@ fn weekend_latent(shape: &WeekendShape) -> Value {
         "impact_pct": shape.impact_pct,
         "half_life_slots": shape.half_life_slots,
     })
+}
+
+#[cfg(feature = "generators")]
+/// Who positions into the reopen on information, and the process every
+/// session is drawn from: the informed traders' wallets (resolved as the
+/// session starts), how far ahead they see and how often they are right,
+/// when they trade at all (past an edge, through a noisy view, at a pace),
+/// and how much of the weekend's move the reopen keeps, give or take what.
+/// Never the session's own draws: the weekend's move, the open, whether
+/// an informed wallet's view is right this time. Every session tells the
+/// same process; only the wallets differ.
+fn mainnet_weekend_latent(_: &MeasuredWeekendShape) -> Value {
+    let family = WeekendFamily::mainnet();
+    let positioners = &family.positioners;
+    let latent = crate::latent::Latent::new()
+        .roster(&["informed"])
+        .and_then(|l| l.process("reopen_keep", family.reopen_keep))
+        .and_then(|l| l.process("open_residual_sd_pct", family.open_residual_sd_pct))
+        .and_then(|l| l.process("horizon_slots", positioners.horizon_slots))
+        .and_then(|l| l.process("hit_rate", positioners.hit_rate))
+        .and_then(|l| l.process("edge_bps", positioners.edge_bps))
+        .and_then(|l| l.process("view_noise_bps", positioners.view_noise_bps))
+        .and_then(|l| l.process("orders_per_wallet", positioners.orders_per_wallet))
+        .expect("the mainnet weekend's latent fields are sound");
+    serde_json::from_str(&latent.to_json()).expect("a latent is JSON")
 }
 
 #[cfg(test)]
@@ -856,6 +982,66 @@ mod tests {
         );
         for name in ["market-making", "market-making-v2"] {
             assert!(latent(name).iter().all(|l| l == "{}"), "{name}");
+        }
+    }
+
+    /// The mainnet weekend tells its informed bot who positions on
+    /// information and the process, the same in every session, and nothing
+    /// of the session's own draw: not the weekend's move nor the open.
+    #[cfg(feature = "generators")]
+    #[test]
+    fn the_mainnet_weekend_latent_is_the_process_and_the_informed_wallets() {
+        let hidden = (generator("weekend-gap-mainnet").unwrap().hidden)(24, 5, false).unwrap();
+        let first: Value = serde_json::from_str(&hidden.latent[0]).unwrap();
+        assert!(hidden.latent.iter().all(|l| *l == hidden.latent[0]));
+        assert_eq!(first["roster"], json!(["informed"]));
+        assert_eq!(first["reopen_keep"], 0.78);
+        assert_eq!(first["open_residual_sd_pct"], 0.5);
+        assert_eq!(first["horizon_slots"], 40);
+        assert_eq!(first["hit_rate"], 0.95);
+        assert_eq!(first["edge_bps"], 10.0);
+        assert_eq!(first["view_noise_bps"], 10.0);
+        assert_eq!(first["orders_per_wallet"], 3.0);
+        for drawn in ["weekend_pct", "open_pct", "gap_pct", "path", "reopen_slot"] {
+            assert!(first.get(drawn).is_none(), "{drawn} is the session's draw");
+        }
+        let annotation = &hidden.annotations[0]["shape"];
+        assert!(annotation.get("gap_pct").is_some());
+    }
+
+    /// The NVDA shock family tells its informed bot who trades on
+    /// information and the process, the same in every session, and nothing
+    /// of the session's own draw: not whether it is quiet, nor the shock's
+    /// direction, legs, size or aftermath.
+    #[cfg(feature = "generators")]
+    #[test]
+    fn the_nvda_shock_latent_is_the_process_and_the_informed_wallets() {
+        let hidden = (generator("flash-crash-nvda").unwrap().hidden)(24, 5, false).unwrap();
+        let first: Value = serde_json::from_str(&hidden.latent[0]).unwrap();
+        assert!(hidden.latent.iter().all(|l| *l == hidden.latent[0]));
+        assert_eq!(first["roster"], json!(["informed"]));
+        assert_eq!(first["horizon_slots"], 40);
+        assert_eq!(first["quiet_odds"], 0.25);
+        for drawn in [
+            "quiet",
+            "direction",
+            "aftermath",
+            "legs",
+            "extreme_pct",
+            "end_pct",
+        ] {
+            assert!(first.get(drawn).is_none(), "{drawn} is the session's draw");
+        }
+        let classified: Vec<&str> = LATENT_FIELDS
+            .iter()
+            .filter(|(family, ..)| *family == "flash-crash-nvda")
+            .map(|(_, field, _)| *field)
+            .collect();
+        for field in first.as_object().unwrap().keys() {
+            assert!(
+                field == crate::latent::ROSTER || classified.contains(&field.as_str()),
+                "{field}"
+            );
         }
     }
 

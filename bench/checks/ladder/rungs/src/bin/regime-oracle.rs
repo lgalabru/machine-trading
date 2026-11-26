@@ -28,7 +28,7 @@ use mtx_ladder_rungs::init_logs;
 use serde::Deserialize;
 use tracing::{info, warn};
 
-// The reference's parameters (bench/tasks/flash-crash-spcx/solution).
+// The reference's parameters (flash-crash-spcx's solution, 0.9.0 to 0.14.0).
 const ENTER_PCT: f64 = 1.14;
 const STEP_PCT: f64 = 1.36;
 const END_STEPS: u32 = 3;
