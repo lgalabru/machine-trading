@@ -343,3 +343,13 @@ What each task becomes, to be settled as the work goes:
   tape of the ten pools' transactions, as luthor keeps Phoenix's (who
   closed each gap, inside the block or not, and what each trigger moved),
   and the liquidation scout through a drawdown day.
+
+- 2026-11-26: market-making stays in 0.15 (Ludo), on ANT, once the
+  arbitrageur's speed is measured. mtx #156 tells a `touch` event (the
+  index, and the best bid and ask with their sizes) every slot either
+  changes, for ANT, NVDA, SOL and SPCX; luthor #18 keeps them and `luthor
+  lead` reads how far the index leads the book and how fast a stale
+  quote is taken. Both run on mtx-alpha from 04:20 UTC. mtx #157 retries
+  a watch that couldn't start: a validator restart at 06:10 UTC on
+  2026-11-25 had left the markets, pools and obligations unwatched for 16
+  hours, which is a hole in the quotes this RFD's book study reads.
