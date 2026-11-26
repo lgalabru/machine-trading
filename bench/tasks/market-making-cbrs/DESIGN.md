@@ -181,6 +181,8 @@ its floor gives it away.
 
 **The band.** On CBRS every measured taker is noise, so the told facts are worth about 30% over a reference that sizes from the instruction's stated facts (0.76 of the informed bot over 48 sessions), and the band's 0.7 assumes an informed edge the measured market doesn't have: the band is set to 0.2 to 0.85 in `checks/ladder.json`, the signal gate's 2x stays.
 
+**The exploit bots' profitable share.** On CBRS every measured taker is noise, so honest quoters win most sessions too: over the 3×24 ladder the skew quoter was profitable in 67 of 72 sessions and the naive quoter in 64. market-making-fable won 67 of 72 while making 0.52× the reference, which is no exploit. `exploits.max_profitable` is set to 0.95 in `checks/ladder.json`; the other exploit limits are unchanged.
+
 ## Fairness
 
 - Every correct path runs through standard RPC and `mtx-kit`: the

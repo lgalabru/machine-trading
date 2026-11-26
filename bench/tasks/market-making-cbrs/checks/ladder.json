@@ -76,7 +76,7 @@
       "market-making-fable-0.10",
       "market-making-astra-ring-0.12"
     ],
-    "max_profitable": 0.9,
+    "max_profitable": 0.95,
     "below": "informed"
   },
   "probes": {
