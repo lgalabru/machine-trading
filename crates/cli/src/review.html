@@ -195,7 +195,10 @@
   .limit { color: var(--text-3); font-size: 11px; cursor: help; }
   .note-limit { margin: 0 0 14px; padding: 9px 12px; border-radius: 10px; background: #141416; border: 1px solid #2c2c2e; color: var(--text-2); font-size: 12.5px; }
   .note-limit code { font: 11.5px var(--mono); }
-  .strip { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 2px; align-items: center; }
+  /* The gap shrinks with the scenarios, at most a quarter of a cell's share:
+     a fixed 2px over 144 scenarios needed 286px of gaps alone, wider than a
+     phone's strip, so the run grid pushed the page sideways. */
+  .strip { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); column-gap: min(2px, calc(100% / var(--n) / 4)); row-gap: 2px; align-items: center; }
   .strip i { display: block; height: 18px; border-radius: 3px; background: #1c1c1e; cursor: pointer; transition: transform .08s, box-shadow .08s; }
   .strip i.na { background: transparent; box-shadow: inset 0 0 0 1px #1c1c1e; }
   .strip i.hc { box-shadow: 0 0 0 1px rgba(255,255,255,.55); }
