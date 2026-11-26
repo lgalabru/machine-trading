@@ -311,7 +311,7 @@ actors-smoke:
         || { echo "$name: the takers didn't send every order: $flow"; exit 1; }
       echo "$name: $flow"
     }
-    takers actors-perp {{snapshot}} bots/starter bench/tasks/funding-carry-spcx/environment/practice/practice-1.json
+    takers actors-perp {{snapshot}} bots/starter bench/checks/takers/carry-spcx-tape.json
     takers actors-spot {{spot_snapshot}} bots/spot-smoke bench/checks/spot/smoke-tape.json
     # The library: every actor beside a bot that sells and answers requests
     # for quotes, in six sessions of fresh wallets. In each, every actor

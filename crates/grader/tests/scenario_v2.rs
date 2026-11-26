@@ -76,7 +76,7 @@ const GOLDEN: [(&str, &str); 6] = [
         "weekend-gap.json",
     ),
     (
-        "bench/tasks/funding-carry-spcx/environment/practice/practice-1.json",
+        "bench/checks/takers/carry-spcx-tape.json",
         "funding-carry.json",
     ),
     ("bench/checks/spot/smoke-buy-order.json", "spot-order.json"),

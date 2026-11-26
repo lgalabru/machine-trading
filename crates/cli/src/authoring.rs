@@ -2117,7 +2117,27 @@ mod tests {
 
     #[test]
     fn a_v1_task_has_no_v2_steps() {
-        let steps = status(&repo_root(), "funding-carry-spcx").unwrap();
+        // No task in bench/tasks is v1 any more: a v1 copy of one, in a
+        // temp dir (its task.toml without `headline`, and its reference).
+        let task = "funding-carry-sol";
+        let root = std::env::temp_dir().join(format!("mtx-v1-task-{}", std::process::id()));
+        let from = repo_root().join("bench/tasks").join(task);
+        let to = root.join("bench/tasks").join(task);
+        std::fs::create_dir_all(to.join("reference")).unwrap();
+        let toml = std::fs::read_to_string(from.join("task.toml")).unwrap();
+        assert!(toml.contains("headline = \"v2\""));
+        std::fs::write(
+            to.join("task.toml"),
+            toml.replace("headline = \"v2\"\n", ""),
+        )
+        .unwrap();
+        std::fs::copy(
+            from.join("reference/Cargo.toml"),
+            to.join("reference/Cargo.toml"),
+        )
+        .unwrap();
+        let steps = status(&root, task).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
         for id in ["anchors", "scoring", "probes"] {
             assert!(steps.iter().all(|s| s.id != id), "{id}");
         }

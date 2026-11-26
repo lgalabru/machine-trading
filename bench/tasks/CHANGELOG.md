@@ -87,10 +87,10 @@ each release shipped them: the CLI was `mth` from 0.5.0 until it became
     could take. The scouts can't see a gap closed inside its block, and one
     day fits nothing, so the families, references and informed bots stay;
     each instruction now states its departure beside the measured values.
-  - **`funding-carry-sol`, new: the carry trade on the market it can be
-    measured on.** `funding-carry-spcx` continues on SOL;
-    `funding-carry-spcx` itself is left as 0.14.0 shipped it, so its pins
-    don't move. Its premiums (30 to 150 bp, scripted crowded or informed)
+  - **Renamed: `funding-carry-spcx` is now `funding-carry-sol`, the carry
+    trade on the market it can be measured on.** `funding-carry-spcx` is
+    retired: its last release is 0.14.0's, and `mtx bench review` lines
+    the two up by their skill. Its premiums (30 to 150 bp, scripted crowded or informed)
     looked like nothing on Phoenix: over 90 days of Phoenix's hourly SOL
     funding (a new study, `phoenix-funding.sol.20261125.248a28ea`, from
     Phoenix's public `/v1/funding/SOL/rates`) the premium averaged +1.43
