@@ -1,4 +1,4 @@
-# Venue profile: Kamino (`kamino`), v0.1.0
+# Venue profile: Kamino (`kamino`), v0.2.0
 
 Status: draft
 
@@ -139,9 +139,23 @@ and of the obligation:
 | `repay(amount)` | `repay_obligation_liquidity_v2` | None repays all of the debt. |
 | `liquidate{obligation, collateral, repay, min-received}` | `liquidate_obligation_and_redeem_reserve_collateral_v2` | `repay` is in the debt reserve's asset (the line's venue), `min-received` in the collateral's; the program pays no less. |
 
-A reduce-only lending line is not sent. Anything else klend offers (flash
-loans, elevation groups, other obligations, deposits without an
-obligation) goes through a raw transaction.
+`mtx:strategy@0.3.0` adds two lines that only an atomic group
+(`tx-options.atomic`) sends, since each lives inside one transaction:
+
+| Line | klend instruction | Notes |
+| --- | --- | --- |
+| `flash(amount)` | `flash_borrow_reserve_liquidity`, then `flash_repay_reserve_liquidity` | The borrow comes before the group's other lines (after the compute budget and any `push-price`), into the wallet's token account for the reserve's asset, created if missing. The repay comes after the last line and names the borrow by its instruction index; it returns the amount plus the reserve's flash fee, from the wallet. klend refuses a transaction whose borrow isn't repaid, so the group fails whole if the route doesn't end holding enough. A group holds at most one. |
+| `push-price` | Scope's `refresh_price_list` | For the entries the reserve prices with. Scope takes it only as the transaction's first instruction after the compute budget, so it comes first in the group. |
+
+A flash borrow is not a position, and doesn't count as borrowed in the
+account's obligations; mandate v0.3.0 bounds each one by the allowance's
+[`max_flash_borrow`](../mandate.md#flash-borrows), per transaction and
+per reserve, and a reserve whose allowance doesn't set it may not be flash
+borrowed from at all.
+
+A reduce-only lending line is not sent. Anything else klend offers
+(elevation groups, other obligations, deposits without an obligation)
+goes through a raw transaction.
 
 ## The benchmark's enforcer
 
