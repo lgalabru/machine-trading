@@ -190,8 +190,15 @@ the reference; the informed bot (`tell_latent`); the shared probe set
 (coin flips, martingale, limit-hugger, stop-lotto, levers, breacher,
 honest blends, crash) with the task's probe wrapper
 (`checks/rungs/probe`). Rules: blind below the reference; the reference
-below the informed bot. The honest blends and sizes are flash-crash-spcx's
-until `bench/checks/probes/calibrate.py` is run on this task.
+below the informed bot. The honest probes are calibrated for this family
+(`bench/checks/probes/calibrate.py` on the reference and the full-cap coin
+flip, 4 fresh sets of 24 sessions on mtx-bench-2): the reference measured a
+mean of $5.7 a session, a spread of $15.0 and a per-session Sharpe of 0.38;
+the full-cap coin a spread of $28.6; so the coin is sized at 0.381 of the
+cap, and the blends for a Sharpe of 0.1, 0.2 and 0.3 are 0.545, 0.703 and
+0.866 (`crash-*` wrap `honest-0.2`'s). A Sharpe of 0.5 is past the
+reference's: `honest-0.5` is held at a blend of 0.97, mostly the
+reference, as flash-crash's is.
 
 ## Generations
 
