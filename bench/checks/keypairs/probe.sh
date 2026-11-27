@@ -24,9 +24,9 @@ docker run --rm -e MTX_EVAL_SEED="$seed" \
     echo "#!/bin/bash" > /tests/test.sh
     chmod -R go-rwx /tests
     chmod 0777 /logs /logs/verifier
-    exec mtx grade --draw market-making --count 1 --anchor-jobs 1 --jobs 1 \
-      --reference /opt/mtx/anchors/market-making \
-      --snapshot /opt/mtx/snapshots/phoenix-spcx-2026-10-29 \
+    exec mtx grade --draw market-making-cbrs --count 1 --anchor-jobs 1 --jobs 1 \
+      --reference /opt/mtx/anchors/market-making-cbrs \
+      --snapshot /opt/mtx/snapshots/phoenix-cbrs-2026-11-25 \
       --bot /probe --logs /logs/verifier/bot \
       --reward /logs/verifier/reward.json --report /logs/verifier/report.json \
       --details /logs/verifier/sessions' > /dev/null 2>&1 || true
