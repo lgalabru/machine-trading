@@ -395,6 +395,10 @@ pub(crate) async fn prepare(opts: &SessionOptions<'_>) -> Result<Prepared> {
                 .map(|(role, n)| opts.keys.keypair(role, n))
                 .collect();
             let pubkeys: Vec<Pubkey> = keypairs.iter().map(Signer::pubkey).collect();
+            // A fill against a library wallet names its kind in the report.
+            for ((role, _), pubkey) in library.wallets().into_iter().zip(&pubkeys) {
+                parties.library.push((phoenix.trader_account(pubkey), role));
+            }
             // Onboarded in an order drawn from the session's seed: listed
             // role by role, the order of their first transactions would
             // tell a bot reading the chain which wallets are of a kind.

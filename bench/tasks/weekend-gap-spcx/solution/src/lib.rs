@@ -1,614 +1,227 @@
-//! Reference: read the weekend's flow, ride what it predicts, and hold the
-//! gap into the reopen.
+//! Reference: fade the part of the weekend's move the reopen takes back,
+//! leaning the way the late positioners trade, and hold it into the reopen.
 //!
-//! While SPCX's own market is closed, Phoenix's index is the perp's price,
-//! smoothed: it carries nothing the perp doesn't, and the mark sits on it.
-//! The reference reads the flow instead. Each step it takes the makers' mid
-//! (the perp's price, from the book's best bid and ask), Phoenix's index, and
-//! every taker order since the last step (`getSignaturesForAddress` on the
-//! market at `confirmed`, then `getTransaction`: the signer, side, size and
-//! limit of each Phoenix order), and keeps a tape (`features.rs`): its
-//! structural model's read (`model.rs`: which one-sided account's impact
-//! stays, where that puts the open, whether it's still trading) and flow
-//! statistics per account.
+//! Over a weekend Phoenix's makers re-price SPCX's perp with almost no
+//! trade behind them, and the reopen keeps about four fifths of where they
+//! took it (the instruction's numbers, from 21 weekends). So the reference
+//! reads two things:
 //!
-//! Every 8 slots a forecaster (`gbm.rs`, gradient-boosted trees trained on
-//! generated sessions) predicts the perp's move over the next 64 slots, the
-//! reopen's included when it's nearer. The position is the cap times the
-//! forecast over a scale, changed only when the target moves by a dead band;
-//! within 64 slots of the reopen it's also sized so the worst open any likely
-//! hypothesis allows stays inside the loss limit. It stops, flat, past a
-//! drawdown of its own, and holds through the reopen to the end.
+//! - **The weekend's move:** the makers' mid against where it started
+//!   (Friday's last external price). The fifth it expects back is the
+//!   prior.
+//! - **The positioners' net flow:** every transaction on SPCX's market
+//!   account and its signer (`tape.rs`). The wallets that first trade in
+//!   the last 40 slots before the reopen are the ones positioning into it;
+//!   the weekend's prints come from wallets it has seen all weekend. Their
+//!   positions, summed, are one vote on which way the reopen goes. It can't
+//!   tell the informed from the decoys, so it trusts the vote as one right
+//!   72.5% of the time: the instruction's two informed wallets right 95%
+//!   of the time and two decoys trading a random view (50%), averaged,
+//!   (2 × 0.95 + 2 × 0.5) / 4.
 //!
-//! Its parameters and its forecaster come from offline work: trained on 8,000 generated
-//! sessions, tuned on 1,000 others.
+//! A few slots before the reopen, after the makers' last re-price, it takes
+//! the gap it then expects, sized by how big that is, and holds it through
+//! the reopen to the end, where the mark values it.
 //!
-//! It builds two ways: a strategy component (`bot.wasm`, what the task's
-//! oracle solution is), and a process (`src/main.rs`), which the ladder runs
-//! as several rungs (`MTX_RUNG`): `reference` (the default); `g0`, the first
-//! generation's reference (the structural model alone, the gap only);
-//! `told`, whose forecaster also knows which accounts are the informed
-//! trader and the worker (`MTX_REGIME`); `path-oracle`, told the perp's
-//! whole path, which plans its positions by dynamic programming after costs
-//! (`oracle.rs`); `follow`, the cap with the perp's move from the last
-//! external price; `fade`, the cap against it; `basis`, which takes the
-//! index for fair value; and `fitted`, a regression on generic features
-//! fitted to generated sessions.
+//! It builds two ways: a strategy component (`bot.wasm`, the task's oracle
+//! solution) and a process (`src/main.rs`), which the ladder runs as rungs
+//! (`MTX_RUNG`): `reference` (the default); `follow`, the cap the weekend's
+//! way into the reopen; `fade`, the cap against it.
 
-mod features;
-mod gbm;
-mod model;
-mod oracle;
+pub mod reopen;
+pub mod tape;
 
-use std::collections::{HashMap, HashSet};
-
-use features::Tape;
-use gbm::Forest;
-use model::{Params, Trade};
-use mtx_kit::{
-    log,
-    prelude::*,
-    rpc,
-    venue::{
-        PhoenixVenue,
-        phoenix_rise::{
-            ix::{PhoenixInstruction, order_packet::OrderPacket},
-            types::exchange::ExchangeMarketConfig,
-        },
-    },
+use mtx_kit::{log, prelude::*, venue::PhoenixVenue};
+use reopen::{
+    ACCOUNTS_MAX, Account, Clock, OPEN_RESIDUAL_SD_PCT, Phase, Positions, REOPEN_KEEP,
+    expected_gap_given_votes, position_for, trade_toward,
 };
-use serde_json::{Value, json};
+use tape::Tape;
 
-/// Market orders of at most this many shares (one order that crosses much
-/// of the book doesn't fit a transaction's compute budget), and at most
-/// this many shares a turn.
-const SLICE: f64 = 10.0;
-const MAX_STEP_TRADE: f64 = 35.0;
-/// How far past the perp's price a market order may fill, in percent.
-const SLIPPAGE_PCT: f64 = 1.0;
-/// The forecaster's policy: the 64-slot forecast (in percent) that takes the
-/// full position, the dead band (in shares), and the drawdown at which it
-/// stops (in USD).
-const FORECAST_SCALE_PCT: f64 = 0.3;
-const DEAD_BAND: f64 = 60.0;
-const STOP_DRAWDOWN_USD: f64 = 450.0;
-/// The forecasters, trained offline (see `gbm.rs`).
-const FORECAST: &str = include_str!("../model/forecast.json");
-const FORECAST_TOLD: &str = include_str!("../model/forecast_told.json");
+/// The positioners trade from this many slots before the reopen: the
+/// instruction's number.
+const POSITIONING_SLOTS: u64 = 40;
+/// How often it takes the positioners' net flow to be right about the
+/// reopen's direction, derived from the instruction: a late wallet is an
+/// informed one (right 95% of the time) or a decoy (a random view once it
+/// loses the thread, 50%), two of each, so (2 × 0.95 + 2 × 0.5) / 4. A
+/// decoy is as right as the informed before it turns, so this leans low.
+const FLOW_HIT_RATE: f64 = 0.725;
+/// A net position smaller than this, in SPCX, is no vote.
+const FLOW_MIN: f64 = 0.0005;
 
-/// The `fitted` rung's coefficients: a ridge regression of the gap between
-/// the open and the perp on generic features (see `fitted_features`),
-/// fitted on generated sessions.
-const FITTED: [f64; 9] = [
-    0.0541, 0.5295, -1.5255, 1.1073, 0.5213, 0.00444, -0.0265, -0.0577, 0.5581,
-];
+/// Under this weekend move, in percent, the `follow` and `fade` rungs sit
+/// out: there's no move to follow or fade.
+const RUNG_MOVE_MIN_PCT: f64 = 0.3;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Which bot the process runs as.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum Rung {
+    #[default]
     Reference,
-    G0,
-    Told,
-    PathOracle,
     Follow,
     Fade,
-    Basis,
-    Fitted,
 }
 
-/// What `start` reads of the session.
-struct Setup {
-    venue: PhoenixVenue,
-    market: ExchangeMarketConfig,
-    start_slot: u64,
-    end_slot: u64,
-    /// The reopen, in slots from the start.
-    reopen: u64,
-    cap: f64,
-    me: String,
-    rung: Rung,
-    regime: Option<Value>,
-    informed_slots: HashSet<u64>,
-    worker_slots: HashSet<u64>,
-    half_life: f64,
-    open: f64,
-    signed: Vec<usize>,
-    forest: Forest,
-}
-
-/// The weekend reference, as a [`Strategy`].
 #[derive(Default)]
 pub struct Weekend {
-    setup: Option<Setup>,
-    params: Params,
-    g0: Params,
-    tape: Tape,
-    ids: HashMap<String, u16>,
-    informed_id: Option<u16>,
-    worker_id: Option<u16>,
-    /// Per account: net, gross, last slot (the fitted rung's flow).
-    flows: HashMap<u16, (f64, f64, u64)>,
-    flow_total: f64,
+    clock: Option<Clock>,
+    cap: f64,
+    rung: Rung,
+    /// The makers' mid at the first step: Friday's last external price.
     start_mid: Option<f64>,
-    half_spread_usd: f64,
-    mids: HashMap<u64, f64>,
-    hold: f64,
-    decided: Option<f64>,
-    history: Vec<(u64, f64)>,
-    plan: Option<Vec<f64>>,
-    seen_sigs: HashSet<String>,
-    /// The account's value from the start, marked each step, against its
-    /// peak: the stop.
-    value: f64,
-    peak: f64,
-    last_mark: Option<f64>,
-    stopped: bool,
+    target: f64,
+    account: Account,
+    symbol: String,
+    venue: Option<PhoenixVenue>,
+    positions: Positions,
+    tape: Tape,
 }
 
 impl Strategy for Weekend {
     fn start(&mut self, session: &Session) -> BotResult {
-        let reopen_slot: u64 = session
-            .var("MTX_REOPEN_SLOT")
-            .ok_or("MTX_REOPEN_SLOT")?
+        assert!(session.cap > 0.0);
+        self.clock = Some(Clock::from_session(session)?);
+        self.cap = session.cap;
+        let venue = PhoenixVenue::from_json(&session.venue)?;
+        self.positions = Positions::new(&venue)?;
+        self.venue = Some(venue);
+        self.symbol = session.symbol.clone();
+        let own: mtx_kit::Pubkey = session
+            .authority
             .parse()
-            .map_err(|_| "MTX_REOPEN_SLOT")?;
-        let reopen = reopen_slot - session.start_slot;
-        let rung = match session.var("MTX_RUNG") {
-            Some("g0") => Rung::G0,
-            Some("told") => Rung::Told,
-            Some("path-oracle") => Rung::PathOracle,
+            .map_err(|e| format!("the session's authority: {e}"))?;
+        self.tape = Tape::new(own);
+        self.rung = match session.var("MTX_RUNG") {
             Some("follow") => Rung::Follow,
             Some("fade") => Rung::Fade,
-            Some("basis") => Rung::Basis,
-            Some("fitted") => Rung::Fitted,
             _ => Rung::Reference,
         };
-        let regime: Option<Value> = session
-            .var("MTX_REGIME")
-            .and_then(|r| serde_json::from_str(r).ok());
-        let slots_of = |key: &str| -> HashSet<u64> {
-            regime
-                .as_ref()
-                .and_then(|r| r[key].as_array())
-                .map(|a| a.iter().filter_map(Value::as_u64).collect())
-                .unwrap_or_default()
-        };
-        let (informed_slots, worker_slots) = (slots_of("informed_slots"), slots_of("worker_slots"));
-        let half_life = regime
-            .as_ref()
-            .and_then(|r| r["half_life_slots"].as_f64())
-            .unwrap_or(100.0);
-        let open = regime
-            .as_ref()
-            .and_then(|r| r["open_pct"].as_f64())
-            .unwrap_or(0.0);
-        let signed: Vec<usize> = if rung == Rung::Told {
-            features::SIGNED
-                .iter()
-                .chain(features::SIGNED_TOLD_EXTRA.iter())
-                .copied()
-                .collect()
-        } else {
-            features::SIGNED.to_vec()
-        };
-        let forest = Forest::parse(if rung == Rung::Told {
-            FORECAST_TOLD
-        } else {
-            FORECAST
-        })
-        .ok_or("the forecaster")?;
-        let venue = PhoenixVenue::from_json(&session.venue)?;
-        let market = venue.market(&session.symbol)?.clone();
-        self.setup = Some(Setup {
-            venue,
-            market,
-            start_slot: session.start_slot,
-            end_slot: session.end_slot,
-            reopen,
-            cap: session.cap,
-            me: session.authority.clone(),
-            rung,
-            regime,
-            informed_slots,
-            worker_slots,
-            half_life,
-            open,
-            signed,
-            forest,
-        });
-        log(&format!("weekend: rung {rung:?}, reopen at {reopen}"));
+        log(&format!("weekend: rung {:?}", self.rung));
         Ok(())
     }
 
-    fn step(&mut self, step: &Market, orders: &mut Orders) -> BotResult {
-        let setup = self.setup.as_ref().ok_or("no session")?;
-        let (start_slot, reopen, cap, rung) =
-            (setup.start_slot, setup.reopen, setup.cap, setup.rung);
-        let at = step.slot - start_slot;
-        // The perp's price: the makers' mid.
-        let (Some(bid), Some(ask)) = (step.best_bid, step.best_ask) else {
+    fn step(&mut self, market: &Market, orders: &mut Orders) -> BotResult {
+        let clock = self.clock.ok_or("step before start")?;
+        let (Some(bid), Some(ask)) = (market.best_bid, market.best_ask) else {
             return Ok(());
         };
+        assert!(bid > 0.0 && ask >= bid);
         let mid = 0.5 * (bid + ask);
-        let (index, mark) = (step.index, step.mark);
-        let half_spread_usd = &mut self.half_spread_usd;
-        let s0 = *self.start_mid.get_or_insert_with(|| {
-            *half_spread_usd = 0.5 * (ask - bid);
-            mid
-        });
-        self.mids.insert(at, mid);
-        let level = (mid / s0 - 1.0) * 100.0;
-        let index_level = (index / s0 - 1.0) * 100.0;
-        let position = step.position.size;
-        if let Some(last) = self.last_mark {
-            self.value += position * (mark - last);
+        let start_mid = *self.start_mid.get_or_insert(mid);
+        let held = market.position.size;
+        if self.account.step(market.mark, held) {
+            trade_toward(orders, held, 0.0, mid);
+            return Ok(());
         }
-        self.last_mark = Some(mark);
-        self.peak = self.peak.max(self.value);
-        if !self.stopped && self.peak - self.value > STOP_DRAWDOWN_USD {
-            log("drawdown past the stop; flat from here");
-            self.stopped = true;
+        let phase = clock.phase(market.slot);
+        if self.rung == Rung::Reference && phase != Phase::Hold {
+            self.read_tape()?;
         }
-        if at < reopen {
-            self.tape.observe(at, level, index_level);
-        }
-        // The orders since the last step: every Phoenix order on SPCX but
-        // ours, from the market's transaction history.
-        for (tx_slot, signer, side, size, limit_usd) in new_orders(
-            &setup.venue,
-            &setup.market.market_pubkey,
-            &setup.market,
-            &mut self.seen_sigs,
-        ) {
-            if signer == setup.me || tx_slot < start_slot {
-                continue;
-            }
-            // The step that first showed the order: it executes in the slot
-            // the last step ended at, and the next step shows it, whenever
-            // the listing does. It was priced off that step's price.
-            let landed = tx_slot - start_slot;
-            let seen = (landed / 2 * 2 + 2).min(at);
-            let priced = self
-                .mids
-                .get(&(seen.saturating_sub(2)))
-                .copied()
-                .unwrap_or(mid);
-            let limit = if self.half_spread_usd > 0.0 {
-                (limit_usd - priced).abs() / self.half_spread_usd
-            } else {
-                0.0
+        if phase == Phase::Entry {
+            let weekend_pct = (mid / start_mid - 1.0) * 100.0;
+            let vote = match self.rung {
+                Rung::Reference => self.positioners_vote(clock)?,
+                Rung::Follow | Rung::Fade => 0.0,
             };
-            let next = self.ids.len() as u16;
-            let account = *self.ids.entry(signer).or_insert(next);
-            if setup.informed_slots.contains(&seen.saturating_sub(2)) {
-                self.informed_id.get_or_insert(account);
-            }
-            if setup.worker_slots.contains(&seen.saturating_sub(2)) {
-                self.worker_id.get_or_insert(account);
-            }
-            if seen < reopen {
-                self.tape.trade(Trade {
-                    seen,
-                    account,
-                    side,
-                    size,
-                    limit,
-                });
-            }
-            let f = self.flows.entry(account).or_insert((0.0, 0.0, 0));
-            f.0 += side * size;
-            f.1 += size;
-            f.2 = at;
-            self.flow_total += side * size;
+            self.target = self.decide(weekend_pct, vote);
         }
-
-        let params = self.params;
-        let target = if self.stopped {
-            0.0
-        } else if at >= reopen && rung != Rung::PathOracle {
-            self.hold
-        } else {
-            match rung {
-                Rung::Reference | Rung::Told => {
-                    if at >= 16 && at.is_multiple_of(8) {
-                        let x = if rung == Rung::Told {
-                            self.tape.features_told(
-                                &params,
-                                at,
-                                reopen,
-                                features::Told {
-                                    informed: self.informed_id,
-                                    worker: self.worker_id,
-                                    half_life: setup.half_life,
-                                    open: setup.open,
-                                },
-                            )
-                        } else {
-                            self.tape.features(&params, at, reopen)
-                        };
-                        let forecast = setup.forest.predict(&x, &setup.signed);
-                        let mut target = cap * (forecast / FORECAST_SCALE_PCT).clamp(-1.0, 1.0);
-                        if rung == Rung::Reference
-                            && at + 64 >= reopen
-                            && let Some(e) = self.tape.model.estimate(&params, at)
-                        {
-                            let room = model::target(
-                                &Params {
-                                    scale_pct: 1e-9,
-                                    ..params
-                                },
-                                &e,
-                                level,
-                                s0,
-                                cap,
-                            )
-                            .abs();
-                            target = target.clamp(-room, room);
-                        }
-                        // Told where SPCX opens, it holds the gap into the
-                        // reopen outright.
-                        let gap_window = rung == Rung::Told && at + 64 >= reopen;
-                        if gap_window {
-                            target =
-                                cap * ((setup.open - level) / FORECAST_SCALE_PCT).clamp(-1.0, 1.0);
-                        }
-                        if gap_window || (target - self.hold).abs() >= DEAD_BAND {
-                            self.hold = target;
-                        }
-                        log(&format!(
-                            "forecast at={at} level={level} forecast={forecast} target={target} hold={}",
-                            self.hold
-                        ));
-                    }
-                    self.hold
-                }
-                Rung::G0 => {
-                    let g0 = self.g0;
-                    if at + g0.enter_slots >= reopen && at.is_multiple_of(8) {
-                        self.hold = self
-                            .tape
-                            .model
-                            .estimate(&g0, at)
-                            .map_or(0.0, |e| model::target(&g0, &e, level, s0, cap));
-                    }
-                    self.hold
-                }
-                Rung::PathOracle => {
-                    let half_spread_usd = self.half_spread_usd;
-                    let plan = self.plan.get_or_insert_with(|| {
-                        let path = setup.regime.as_ref().and_then(|r| r["path"].as_array());
-                        let level_at = |slot: u64| -> f64 {
-                            path.into_iter()
-                                .flatten()
-                                .take_while(|w| w["slot"].as_u64().is_some_and(|s| s <= slot))
-                                .last()
-                                .and_then(|w| w["level_pct"].as_f64())
-                                .unwrap_or(0.0)
-                        };
-                        let steps = (setup.end_slot - start_slot) / 2;
-                        let levels: Vec<f64> = (1..=steps).map(|k| level_at(2 * k)).collect();
-                        let cost_bps = 1e4 * half_spread_usd / s0 + 3.5;
-                        oracle::plan(&levels, s0, cost_bps, 0.15, cap, MAX_STEP_TRADE)
-                    });
-                    plan.get((at / 2).saturating_sub(1) as usize)
-                        .copied()
-                        .unwrap_or(0.0)
-                }
-                Rung::Follow | Rung::Fade => {
-                    if at + 40 >= reopen {
-                        let sign = if rung == Rung::Follow { 1.0 } else { -1.0 };
-                        *self.decided.get_or_insert(if level.abs() > 1.0 {
-                            sign * cap * level.signum()
-                        } else {
-                            0.0
-                        })
-                    } else {
-                        0.0
-                    }
-                }
-                Rung::Basis => {
-                    let premium = level - index_level;
-                    if premium.abs() > 0.8 {
-                        self.hold = -cap * premium.signum();
-                    } else if premium.abs() < 0.2 {
-                        self.hold = 0.0;
-                    }
-                    self.hold
-                }
-                Rung::Fitted => {
-                    if at + 60 >= reopen && at.is_multiple_of(8) {
-                        let back = |n: u64| {
-                            level
-                                - self
-                                    .history
-                                    .iter()
-                                    .rev()
-                                    .find(|(s, _)| *s + n <= at)
-                                    .map_or(0.0, |h| h.1)
-                        };
-                        let x = fitted_features(
-                            level,
-                            index_level,
-                            back(40),
-                            back(120),
-                            &self.flows,
-                            self.flow_total,
-                            at,
-                        );
-                        let pred: f64 = x.iter().zip(FITTED).map(|(a, b)| a * b).sum();
-                        self.hold = cap * (pred / 2.0).clamp(-1.0, 1.0);
-                    }
-                    self.hold
-                }
-            }
-        };
-        self.history.push((at, level));
-        trade_toward(orders, position, target.clamp(-cap, cap), mid);
+        assert!(self.target.abs() <= self.cap);
+        trade_toward(orders, held, self.target, mid);
         Ok(())
     }
 }
 
-fn fitted_features(
-    level: f64,
-    index_level: f64,
-    back40: f64,
-    back120: f64,
-    flows: &HashMap<u16, (f64, f64, u64)>,
-    total: f64,
-    at: u64,
-) -> Vec<f64> {
-    let (mut top, mut top_net, mut top_recent) = (0.0, 0.0, 0.0);
-    for (net, gross, last) in flows.values() {
-        let score = net.abs() * (net.abs() / gross.max(1e-9));
-        if score > top {
-            top = score;
-            top_net = *net;
-            top_recent = if at.saturating_sub(*last) < 40 {
-                1.0
-            } else {
-                0.0
-            };
-        }
+impl Weekend {
+    fn read_tape(&mut self) -> Result<(), String> {
+        let venue = self.venue.as_ref().ok_or("step before start")?;
+        let market = venue.market(&self.symbol)?.market_pubkey.clone();
+        self.tape.read(&market)
     }
-    vec![
-        1.0,
-        level,
-        level - index_level,
-        back40,
-        back120,
-        top_net,
-        top_net * top_recent,
-        total,
-        level * top_recent,
-    ]
-}
 
-/// The Phoenix orders on `orderbook` not seen before: their slot, signer,
-/// side (+1 buys), size in shares and limit in USD, oldest first. Reads the
-/// market's recent signatures, then each new transaction.
-fn new_orders(
-    venue: &PhoenixVenue,
-    orderbook: &str,
-    market: &ExchangeMarketConfig,
-    seen: &mut HashSet<String>,
-) -> Vec<(u64, String, f64, f64, f64)> {
-    let call = |method: &str, params: Value| -> Option<Value> {
-        serde_json::from_str(&rpc(method, &params.to_string()).ok()?).ok()
-    };
-    let Some(sigs) = call(
-        "getSignaturesForAddress",
-        json!([orderbook, { "limit": 100, "commitment": "confirmed" }]),
-    ) else {
-        return Vec::new();
-    };
-    let mut fresh: Vec<(u64, String)> = sigs
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|s| s["err"].is_null())
-        .filter_map(|s| Some((s["slot"].as_u64()?, s["signature"].as_str()?.to_string())))
-        .filter(|(_, sig)| !seen.contains(sig))
-        .collect();
-    fresh.sort_by_key(|(slot, _)| *slot);
-    let mut out = Vec::new();
-    for (slot, sig) in fresh {
-        seen.insert(sig.clone());
-        let Some(tx) = call(
-            "getTransaction",
-            json!([sig, { "encoding": "json", "maxSupportedTransactionVersion": 0, "commitment": "confirmed" }]),
-        ) else {
-            continue;
-        };
-        out.extend(
-            orders_in(&tx, venue, market)
-                .into_iter()
-                .map(|(signer, side, size, limit)| (slot, signer, side, size, limit)),
-        );
-    }
-    out
-}
-
-/// The Phoenix orders in one transaction (`getTransaction`, json).
-fn orders_in(
-    tx: &Value,
-    venue: &PhoenixVenue,
-    market: &ExchangeMarketConfig,
-) -> Vec<(String, f64, f64, f64)> {
-    let mut out = Vec::new();
-    if !tx["meta"]["err"].is_null() {
-        return out;
-    }
-    let message = &tx["transaction"]["message"];
-    let keys: Vec<&str> = message["accountKeys"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
-    let Some(signer) = keys.first() else {
-        return out;
-    };
-    for ix in message["instructions"].as_array().into_iter().flatten() {
-        let data = ix["data"]
-            .as_str()
-            .and_then(|d| bs58::decode(d).into_vec().ok())
-            .unwrap_or_default();
-        let Some(kind) = data
-            .get(..8)
-            .and_then(|tag| PhoenixInstruction::from_discriminant(tag.try_into().ok()?))
-        else {
-            continue;
-        };
-        if !matches!(
-            kind,
-            PhoenixInstruction::PlaceLimitOrder | PhoenixInstruction::PlaceMarketOrder
-        ) {
-            continue;
+    /// The late positioners' summed position: +1 net long, -1 net short, 0
+    /// none.
+    fn positioners_vote(&self, clock: Clock) -> Result<f64, String> {
+        let venue = self.venue.as_ref().ok_or("step before start")?;
+        let from = clock.reopen_slot.saturating_sub(POSITIONING_SLOTS);
+        let late = self.tape.late(from, ACCOUNTS_MAX);
+        if late.is_empty() {
+            return Ok(0.0);
         }
-        let Ok(packet) = <OrderPacket as borsh::BorshDeserialize>::deserialize(&mut &data[8..])
-        else {
-            continue;
-        };
-        let Ok(value) = serde_json::to_value(&packet) else {
-            continue;
-        };
-        let Some((_, fields)) = value["kind"].as_object().and_then(|o| o.iter().next()) else {
-            continue;
-        };
-        let side = match fields["side"].as_str() {
-            Some(s) if s.eq_ignore_ascii_case("bid") => 1.0,
-            Some(_) => -1.0,
-            None => continue,
-        };
-        let Some(lots) = fields["num_base_lots"].as_i64() else {
-            continue;
-        };
-        let limit = fields["price_in_ticks"]
-            .as_u64()
-            .map_or(0.0, |ticks| venue.ticks_to_usd(market, ticks));
-        out.push((
-            signer.to_string(),
-            side,
-            venue.lots_to_base_units(market, lots),
-            limit,
+        let net: f64 = self
+            .positions
+            .read(venue, &self.symbol, &late)?
+            .iter()
+            .sum();
+        log(&format!(
+            "{} late positioners, net {net:+.2} SPCX",
+            late.len()
         ));
-    }
-    out
-}
-
-/// Market orders moving the position toward `target` by up to
-/// [`MAX_STEP_TRADE`] shares, in slices of at most [`SLICE`].
-fn trade_toward(orders: &mut Orders, position: f64, target: f64, mid: f64) {
-    let mut left = (target - position).clamp(-MAX_STEP_TRADE, MAX_STEP_TRADE);
-    while left.abs() >= 0.5 {
-        let size = left.abs().min(SLICE);
-        if left > 0.0 {
-            orders.buy(size, mid * (1.0 + SLIPPAGE_PCT / 100.0));
+        Ok(if net.abs() < FLOW_MIN {
+            0.0
         } else {
-            orders.sell(size, mid * (1.0 - SLIPPAGE_PCT / 100.0));
+            net.signum()
+        })
+    }
+
+    /// The position into the reopen, for a weekend that moved the makers'
+    /// price `weekend_pct` from where it started, and the positioners' vote.
+    fn decide(&self, weekend_pct: f64, vote: f64) -> f64 {
+        assert!(vote.abs() <= 1.0);
+        let way = weekend_pct.signum();
+        match self.rung {
+            Rung::Reference => position_for(
+                expected_gap_given_votes(
+                    weekend_pct,
+                    REOPEN_KEEP,
+                    OPEN_RESIDUAL_SD_PCT,
+                    vote,
+                    FLOW_HIT_RATE,
+                ),
+                self.cap,
+            ),
+            Rung::Follow if weekend_pct.abs() >= RUNG_MOVE_MIN_PCT => way * self.cap,
+            Rung::Fade if weekend_pct.abs() >= RUNG_MOVE_MIN_PCT => -way * self.cap,
+            Rung::Follow | Rung::Fade => 0.0,
         }
-        left -= size * left.signum();
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 mtx_kit::export!(Weekend);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bot(rung: Rung) -> Weekend {
+        Weekend {
+            cap: 70.0,
+            rung,
+            ..Weekend::default()
+        }
+    }
+
+    #[test]
+    fn the_reference_fades_what_the_reopen_takes_back() {
+        let reference = bot(Rung::Reference);
+        // Up 1%, no positioners: the reopen is expected 0.22% lower, most
+        // of a full short.
+        assert!((reference.decide(1.0, 0.0) + 70.0 * 0.22 / 0.25).abs() < 1e-6);
+        // Down 2%: a full long.
+        assert_eq!(reference.decide(-2.0, 0.0), 70.0);
+        // A quiet weekend: nothing worth the entry.
+        assert_eq!(reference.decide(0.2, 0.0), 0.0);
+        // The positioners buying a flat weekend: a long.
+        assert!(reference.decide(0.0, 1.0) > 0.0);
+        // Selling into a fade: a bigger short.
+        assert!(reference.decide(0.5, -1.0) < reference.decide(0.5, 0.0));
+    }
+
+    #[test]
+    fn the_rungs_follow_and_fade_at_the_cap() {
+        assert_eq!(bot(Rung::Follow).decide(1.0, 0.0), 70.0);
+        assert_eq!(bot(Rung::Fade).decide(1.0, 0.0), -70.0);
+        assert_eq!(bot(Rung::Fade).decide(-0.1, 0.0), 0.0);
+    }
+}

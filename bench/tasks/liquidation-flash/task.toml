@@ -4,7 +4,7 @@ artifacts = [{ source = "/app/bot", exclude = ["target"] }]
 
 [task]
 name = "solana-foundation/liquidation-flash"
-version = "0.14.0"
+version = "0.15.0"
 description = "Write a bot that liquidates unhealthy Kamino obligations (SOL collateral, USDC debt) on the main market with a flash loan, pushing Scope's price and selling the seized SOL through Orca's or Raydium's SOL/USDC pool in the same transaction, on an offline copy of Solana mainnet."
 keywords = ["solana", "trading", "kamino", "lending", "liquidation", "flash-loan", "atomic-arbitrage", "jito", "surfpool", "rust"]
 
@@ -67,7 +67,7 @@ allowed_hosts = ["crates.io", "index.crates.io", "static.crates.io"]
 [verifier.environment]
 # The verifier's image, built by `just image` from tests/: the runtime
 # image with this task's tests in it. The rest as [environment].
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-liquidation-flash-verifier@sha256:9c8e010c5c25c60d1dfb49fae9ac380d6d8c32c6c3328e282d010991c4cb4ae9"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.15.0-liquidation-flash-verifier"
 network_mode = "public"
 build_timeout_sec = 1800.0
 cpus = 4
@@ -78,7 +78,7 @@ os = "linux"
 # Built by `just image` from environment/ (pinned by `just release`):
 # Harbor builds nothing when a trial starts. Building the tasks' images
 # there, at once, has put one task's files into another's image.
-docker_image = "ghcr.io/solana-foundation/machine-trading:0.14.0-liquidation-flash@sha256:d2a7bfc115b466410b98c3f733ed4f95bb7ef326365f001208933418ad9ca293"
+docker_image = "ghcr.io/solana-foundation/machine-trading:0.15.0-liquidation-flash"
 # Agents need package registries and their model API. The chain they trade
 # on is a local, offline sandbox either way.
 network_mode = "public"

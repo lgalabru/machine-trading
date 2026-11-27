@@ -96,12 +96,12 @@ fn the_fixtures_exercise_the_f32_rounding() {
     }
 }
 
-/// The funding-carry reference's model loads, writes back the same bytes,
+/// The 0.14 funding-carry-spcx reference's model (its `model.bin`, kept as
+/// `tests/fixtures/carry-trees.bin` since the task was retired) loads, writes back the same bytes,
 /// and predicts what the reference's own evaluator does, to the bit.
 #[test]
 fn matches_the_funding_carry_reference() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../bench/tasks/funding-carry-spcx/reference/model.bin");
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/carry-trees.bin");
     let bytes = std::fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
     let trees = Trees::from_bytes(&bytes).unwrap();
     assert_eq!(trees.tree_count(), 1900);
@@ -134,7 +134,7 @@ fn matches_the_funding_carry_reference() {
     assert!(distinct.len() > 10, "the rows reach different leaves");
 }
 
-/// The reference's evaluator (`bench/tasks/funding-carry-spcx/reference/
+/// The 0.14 funding-carry-spcx reference's evaluator (its `reference/
 /// src/model.rs`), copied so this test doesn't depend on the reference.
 mod reference {
     pub struct Node {

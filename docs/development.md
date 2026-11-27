@@ -20,7 +20,7 @@
 
 ```sh
 just bots                                          # build every bot's bin/bot
-just grade bench/tasks/flash-crash-spcx/reference bench/tasks/flash-crash-spcx/environment/practice/*.json
+just snapshot=phoenix-perps-2026-11-13 grade bench/tasks/flash-crash-nvda/reference bench/tasks/flash-crash-nvda/environment/practice/*.json
 just test lint                                     # unit tests and clippy
 ```
 
@@ -67,9 +67,9 @@ the same secret, scenarios, snapshot and anchor components (`bot.wasm`), and
 under the same session rules. The verifier never reuses anchors.
 
 ```sh
-MTX_EVAL_SEED=... mtx grade --draw flash-crash --count 6 --components-only \
-  --reference /opt/mtx/anchors/flash-crash --bot bench/tasks/flash-crash-spcx/reference \
-  --snapshot snapshots/phoenix-spcx-2026-10-29 --replay 3 --replay-load 16
+MTX_EVAL_SEED=... mtx grade --draw flash-crash-nvda --count 6 --components-only \
+  --reference /opt/mtx/anchors/flash-crash-nvda --bot bench/tasks/flash-crash-nvda/reference \
+  --snapshot snapshots/phoenix-perps-2026-11-13 --replay 3 --replay-load 16
 ```
 
 A finished grade can be scored again without running a session, when a

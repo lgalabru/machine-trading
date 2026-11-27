@@ -2337,15 +2337,15 @@ mod tests {
             "anchors": { "reference": "reference", "informed": "informed" },
             "rungs": [
                 { "name": "blind-long", "dir": "bench/checks/ladder/blind-long" },
-                { "name": "reference", "dir": "bench/tasks/flash-crash-spcx/reference" },
-                { "name": "informed", "dir": "bench/tasks/flash-crash-spcx/checks/bots/informed", "tell_latent": true }
+                { "name": "reference", "dir": "bench/tasks/flash-crash-nvda/reference" },
+                { "name": "informed", "dir": "bench/tasks/flash-crash-nvda/checks/bots/informed", "tell_latent": true }
             ]
         });
         let root = authoring::repo_root();
         let v2 = |ladder: &Value, summary, test| {
             v2_checks(
                 &root,
-                "flash-crash-spcx",
+                "flash-crash-nvda",
                 tasks::Headline::V2,
                 ladder,
                 summary,
@@ -2404,7 +2404,7 @@ mod tests {
         );
         let v1 = v2_checks(
             &root,
-            "flash-crash-spcx",
+            "flash-crash-nvda",
             tasks::Headline::V1,
             &serde_json::json!({}),
             None,
@@ -3242,10 +3242,14 @@ mod tests {
             assert!(root.join(&snapshot).is_dir(), "{snapshot}");
             // The Kamino and backrun tasks trade the atomic-arb snapshot
             // (its main market and SOL/USDC pools), the thin-pools task its
-            // ten pools; the perp tasks Phoenix's SPCX.
+            // ten pools; flash-crash-nvda and funding-carry-sol the 96-market
+            // perps snapshot, which holds NVDA and SOL; market making Phoenix's
+            // CBRS; the other perp tasks Phoenix's SPCX.
             let want = match task.dir.as_str() {
                 "liquidation-flash" | "backrun-sol-usdc" => "snapshots/atomic-arb-2026-11-21",
                 "backrun-thin-pools" => "snapshots/thin-pools-2026-11-21",
+                "flash-crash-nvda" | "funding-carry-sol" => "snapshots/phoenix-perps-2026-11-13",
+                "market-making-cbrs" => "snapshots/phoenix-cbrs-2026-11-25",
                 _ => "snapshots/phoenix-spcx-2026-10-29",
             };
             assert_eq!(snapshot, want, "{}", task.dir);
@@ -3297,7 +3301,7 @@ mod tests {
         ] {
             std::fs::write(dir.join("calibration/market").join(f), "").unwrap();
         }
-        let file = calibration_file(&dir, "flash-crash-spcx").unwrap();
+        let file = calibration_file(&dir, "weekend-gap-spcx").unwrap();
         assert!(
             file.ends_with("spcx.20261111.bb.toml"),
             "{}",
@@ -3311,9 +3315,9 @@ mod tests {
     fn every_task_declares_its_signal_and_names_real_rungs() {
         let root = authoring::repo_root();
         for task in [
-            "flash-crash-spcx",
-            "market-making-spcx",
-            "funding-carry-spcx",
+            "flash-crash-nvda",
+            "market-making-cbrs",
+            "funding-carry-sol",
             "weekend-gap-spcx",
         ] {
             let config =
@@ -3338,7 +3342,7 @@ mod tests {
     #[test]
     fn status_reads_the_component_layout() {
         let root = authoring::repo_root();
-        let steps = authoring::status(&root, "flash-crash-spcx").unwrap();
+        let steps = authoring::status(&root, "flash-crash-nvda").unwrap();
         let reference = steps.iter().find(|s| s.id == "reference").unwrap();
         assert_eq!(reference.state, "done", "{}", reference.detail);
     }

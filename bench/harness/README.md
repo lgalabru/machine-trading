@@ -111,7 +111,7 @@ To run one task outside a batch, start the proxy yourself:
 export MTX_PROXY_SECRET="$(python3 -I -c 'import secrets; print(secrets.token_hex(32))')"
 python3 -I bench/harness/key_proxy.py --host "$(ip -4 -o addr show docker0 | awk '{print $4}' | cut -d/ -f1)" kimi-k3 > /tmp/proxy.url &
 MTX_PROXY_TOKEN="$(python3 -I bench/harness/models.py token kimi-k3)" \
-env -u OPENROUTER_API_KEY -u MTX_PROXY_SECRET PYTHONPATH=bench/harness harbor run -p bench/tasks/flash-crash-spcx -a mtx_hermes:Hermes \
+env -u OPENROUTER_API_KEY -u MTX_PROXY_SECRET PYTHONPATH=bench/harness harbor run -p bench/tasks/flash-crash-nvda -a mtx_hermes:Hermes \
   $(python3 -I bench/harness/models.py args kimi-k3 "$(cat /tmp/proxy.url)") --effort high --ak version=v0.23.1 -k 1 -n 1
 ```
 
@@ -125,20 +125,30 @@ one line per call to `<batch>/usage.jsonl` (`usage_log.py`): the route, the
 trial (the Hermes adapter points each trial at `<proxy>/<route>/t/<trial>`),
 tokens, and the price when the provider reports one. Nous's inference API and
 OpenRouter put it in `usage.cost`; Anthropic's and OpenAI's own APIs report
-tokens only. After each trial the adapter adds its lines up into
-`result.json`'s `agent_result.cost_usd` and tokens (sub-agents included),
-and keeps them in `agent/usage.json`. `bench/report.py` shows the mean cost
-per run by model and task, and each model's total; the review page shows a
-model's cost per run and sorts by it. A model with any run missing a price
-shows no cost rather than a part.
+tokens only.
+
+Once Harbor is done with a batch's runs, `just bench` runs
+`finish_trials.py` with Harbor's Python: it writes each trial's tokens and
+cost from that log into `result.json`'s `agent_result` (the original kept as
+`result.json.orig`, the totals in `agent/usage.json`), and builds any
+missing `agent/trajectory.json` from `agent/hermes-session.jsonl` with
+Harbor's converter. Both used to be left to the agent adapter inside
+Harbor's run, where they raced with it: Harbor calls the adapter's post-run
+hook only when the trial's context is still empty, which its own token
+counting during the run prevents. The session itself is kept by the
+adapter in the container (`hermes_sessions.py`): Hermes exports only closed
+sessions under a source filter, so every timeout and every long run used to
+lose it. `bench/report.py` shows the mean cost per run by model and task and
+each model's total, and warns of any trial with neither trajectory nor
+session; the review page shows a model's cost per run.
 
 Tested by `python3 -I bench/harness/test_usage_log.py` (a fake provider
-behind a real proxy).
+behind a real proxy, and the finishing) and `test_hermes_sessions.py`.
 
 ## The harness check
 
 ```sh
-just hermes-check flash-crash-spcx          # every route; or: just hermes-check flash-crash-spcx openai
+just hermes-check flash-crash-nvda          # every route; or: just hermes-check flash-crash-nvda openai
 ```
 
 First the proxy under attack (`proxy_attacks.py`): another route's

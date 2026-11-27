@@ -35,7 +35,7 @@ done
 
 fn base() -> Scenario {
     Scenario::load(
-        &root().join("bench/tasks/flash-crash-spcx/environment/practice/practice-1.json"),
+        &root().join("bench/tasks/flash-crash-nvda/environment/practice/practice-1.json"),
     )
     .unwrap()
 }

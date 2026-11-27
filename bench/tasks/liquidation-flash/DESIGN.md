@@ -348,3 +348,21 @@ should come from composition first and bidding second.
   width 0.05 to 0.2), as `min-tip < reference` passed about one fresh set
   in three ("Calibration", "Rival bids, centred"); `scope-reader` tips the
   reference's share, from the reference's own constant.
+- **0.15.0** (2026-11-25): unchanged but for its instruction (RFD 0007,
+  2026-11-25). luthor's liquidation scout on mtx-alpha follows the main
+  market's 1,965 obligations with $1,000 of debt or more within 25% of
+  their limit ($210M of debt). From 2026-11-24 04:55 to 2026-11-25 06:10
+  UTC, SOL 4.2% lower, it saw two that a liquidator could take: one
+  repaying $2,363 ($11.82 kept), liquidated by someone else within two
+  slots of crossing at the upstream price, as the research's large ones
+  were (93% in the update's slot); one repaying $88, under water at the
+  upstream price only, which recovered twice. Its other 40 episodes under
+  water were two obligations on which it prices no repay; 25 obligations
+  sat within 5% of their limit, one within 1%. Per event the family is the
+  research's (ticks of a few basis points, rivals in the slot, their bid
+  shares); the departure is the rate, every borrower near its limit and a
+  drawdown in a few hundred slots, as against 5,290 liquidations on the
+  main market in nine days, 2,521 of all markets' on the day SOL fell 11%.
+  Two obligations measure no rate of crossings or recoveries: the family
+  and the anchors stay, and the instruction states the departure beside
+  these numbers. Rewards compare with 0.14.0's.

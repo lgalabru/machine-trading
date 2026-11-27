@@ -653,8 +653,8 @@ struct TaskArgs {
     /// One sentence: what the agent's bot does, on which market.
     #[arg(long)]
     summary: Option<String>,
-    /// Start from `shocks` (flash-crash-spcx) or `making`
-    /// (market-making-spcx).
+    /// Start from `shocks` (flash-crash-nvda) or `making`
+    /// (market-making-cbrs).
     #[arg(long, value_enum)]
     base: Option<authoring::Base>,
     /// A good bot profits here because it ___.

@@ -3,7 +3,7 @@
 Fixed bots, from harmful to ideal, graded on fresh hidden sets. A task whose
 scenarios are right ranks them the way a trader would, on every set; a
 scenario change that reorders them fails, whatever it does to the models'
-scores. `just ladder <task>` (a task's folder name, as in `just ladder flash-crash-spcx`)
+scores. `just ladder <task>` (a task's folder name, as in `just ladder flash-crash-nvda`)
 draws `sets` hidden sets, each from a secret of its own, grades every rung on
 each with `mtx grade --draw`, and checks the task's `checks/ladder.json`. A
 task's rungs, ladder bots and exploit bots live in its folder
@@ -50,29 +50,23 @@ reference is 1, doing nothing 0, and `hindsight` is the bound.
 | `nop` | the starter | 0 |
 | `naive-quoter` | one tick inside the competitor around the oracle, symmetric | below the reference |
 | `skew-quoter` | the same, leaning against its inventory | below the reference |
-| `reference` | `reference/` (market-making-spcx): inside the competitor, skewed, leaning with the drift, backing off one-sided flow | 1 |
+| `reference` | `reference/` (market-making-cbrs): inside the competitor, skewed, leaning with the drift, backing off one-sided flow | 1 |
 | `flow-oracle` | told which taker orders are informed (`mtx grade --tell-regime`), each only once it has traded: quotes like the skewed quoter, and on an informed order sheds what the burst gave it and rests the cap's room at the oracle on the burst's side until the jump lands (the mandate allows taking only to reduce) | above the reference: what reading the tape perfectly is worth to a maker |
 | `market-making-opus`, `market-making-fable` (0.7.0), `*-0.10` (0.10.0), `market-making-astra-*-0.12` (0.12.0) | the frozen exploit bots: all took positions with each burst, which the mandate now refuses | below the flow oracle, losing in a tenth of sessions or more |
 | `hindsight` | the bound (spread plus hindsight) | top |
 
 ## Funding-carry
 
+`funding-carry-sol` (0.15.0; `funding-carry-spcx`, the SPCX task before it,
+was retired):
+
 | Rung | What it is | Where it should land |
 | --- | --- | --- |
 | `nop` | the starter | 0 |
 | `blind-long`, `blind-short` | the full cap one way at the open, held | below the reference |
-| `fader` | fades every premium at once, at the cap | below the reference: on discovery days the index follows the book, and the move runs several times the premium |
-| `follower` | follows every premium at once | below the reference: on positioning days the premium bleeds out against it |
-| `practice` | a gradient-boosted model fitted on the practice family | below the reference: the hidden family's noise is wider |
-| `nosession` | the model fitted on the hidden family, without the session's own history or noise | below the reference |
-| `gbm` | the model fitted on the hidden family, with them | below the reference |
-| `reference` | `reference/` (funding-carry-spcx): tree models of the next seconds' return after funding, from the episode, the session's history and its funding parameters | 1 |
-| `told` | the reference told each episode's kind: follows informed premiums until the index catches up, fades crowded ones while they last | above the reference and every frozen bot |
-| `funding-carry-sol-1`, `-2` | frozen GPT-6.1 Sol bots (`bench/tasks/<task>/checks/exploits`) | below `told` |
-| `hindsight` | the bound (the book's variation plus the funding the cap could collect) | top |
-
-All but the blind rungs and the frozen bots are `checks/bots/carry-gbm` or
-`reference/` (funding-carry-spcx) run with `MTX_RUNG` set (`carry-*/run.sh`).
+| `reference` | `reference/`: the session's premium level estimated from what it has seen and the stated prior, the funding over the rest of the session priced against the entry cost and the index's risk, up to 60% of the cap | 0.5 |
+| `informed` | `checks/bots/informed`, told the premium's level, spread and half-life and funding's settings | 1, above the reference |
+| the probes | `bench/checks/probes`, and the task's `checks/rungs/probe` around its reference | their bands ([probes](../probes/README.md)) |
 
 ## Weekend-gap
 

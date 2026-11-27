@@ -64,11 +64,11 @@ fn every_shipped_file_survives_the_trip_to_v2() {
 /// A v1 file of each kind and the v2 file it must write.
 const GOLDEN: [(&str, &str); 6] = [
     (
-        "bench/tasks/flash-crash-spcx/environment/practice/practice-1.json",
+        "bench/tasks/flash-crash-nvda/environment/practice/practice-1.json",
         "flash-crash.json",
     ),
     (
-        "bench/tasks/market-making-spcx/environment/practice/practice-1.json",
+        "bench/tasks/market-making-cbrs/environment/practice/practice-1.json",
         "market-making.json",
     ),
     (
@@ -76,7 +76,7 @@ const GOLDEN: [(&str, &str); 6] = [
         "weekend-gap.json",
     ),
     (
-        "bench/tasks/funding-carry-spcx/environment/practice/practice-1.json",
+        "bench/checks/takers/carry-spcx-tape.json",
         "funding-carry.json",
     ),
     ("bench/checks/spot/smoke-buy-order.json", "spot-order.json"),

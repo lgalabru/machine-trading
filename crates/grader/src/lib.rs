@@ -47,5 +47,6 @@ pub use mtx_runtime::venue;
 pub mod versions;
 pub mod wasm;
 pub mod weekend;
+pub mod weekend_measured;
 
 pub use error::{Error, Result};

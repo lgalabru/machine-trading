@@ -1,0 +1,3799 @@
+{
+  "actors": {
+    "arbitrageur": {
+      "edge_bps": 3.87,
+      "latency_slots": 2,
+      "max_inventory_mult": 40.0,
+      "size_mult": 1.0
+    },
+    "informed": [
+      {
+        "edge_bps": 7.0,
+        "hit_rate": 0.85,
+        "horizon_slots": 240,
+        "intensity_mult": 0.408,
+        "limit_bps": 20.32,
+        "size_mult": 1.5,
+        "view_noise_bps": 0.0,
+        "wallets": 4
+      }
+    ],
+    "noise": [
+      {
+        "flow_mult": 0.88,
+        "limit_bps": 20.32,
+        "size_mult": 1.0,
+        "wallets": 8
+      }
+    ],
+    "scale": {
+      "trade_size": 6.723,
+      "trade_size_sigma": 1.686,
+      "trades_per_minute": 0.834
+    }
+  },
+  "description": "SOL practice session",
+  "duration_slots": 1651,
+  "funding": {
+    "interval_seconds": 3,
+    "mark": {
+      "book_weight": 100,
+      "ema_ticks": 0,
+      "perp_weight": 0,
+      "spot_weight": 0
+    },
+    "max_rate": 1931,
+    "period_seconds": 24
+  },
+  "impact": {
+    "half_life_slots": 240.0,
+    "max_bps": 20.32,
+    "permanent_share": 0.0,
+    "probe": 6.44
+  },
+  "informed_max_drawdown_usd": 4.11,
+  "informed_pnl_usd": 20.26,
+  "mandate": {
+    "limits": {
+      "max_drawdown_usd": 1000.0
+    },
+    "universe": [
+      {
+        "instrument": "phoenix:perp:SOL",
+        "max_position": 125.0
+      }
+    ],
+    "version": "v0.1.0"
+  },
+  "market_model": {
+    "calibration": "sol-usd.20261112.0dbc6cdf",
+    "calibration_sha256": "0220031886f8178ff401775a50ed5e58e939dc253968577f192dbb9caf8d9e10",
+    "process": "regime_garch_t",
+    "regime_vol": [
+      0.30778822004454304,
+      1.3957507089438064
+    ],
+    "regimes": [
+      {
+        "name": "calm",
+        "slot": 0
+      }
+    ],
+    "sessions": [
+      {
+        "name": "continuous",
+        "slot": 0
+      }
+    ],
+    "slot_seconds": 0.25,
+    "start_unix": 1825363440,
+    "vol_mult": 1.0
+  },
+  "name": "practice-3",
+  "path": [
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.017,
+      "slot": 4
+    },
+    {
+      "level_pct": 0.003,
+      "premium_pct": 0.015,
+      "slot": 8
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.016,
+      "slot": 12
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.02,
+      "slot": 16
+    },
+    {
+      "level_pct": 0.012,
+      "premium_pct": 0.021,
+      "slot": 20
+    },
+    {
+      "level_pct": 0.013,
+      "premium_pct": 0.022,
+      "slot": 24
+    },
+    {
+      "level_pct": 0.016,
+      "premium_pct": 0.017,
+      "slot": 28
+    },
+    {
+      "level_pct": 0.018,
+      "premium_pct": 0.016,
+      "slot": 32
+    },
+    {
+      "level_pct": 0.015,
+      "premium_pct": 0.026,
+      "slot": 36
+    },
+    {
+      "level_pct": 0.017,
+      "premium_pct": 0.023,
+      "slot": 40
+    },
+    {
+      "level_pct": 0.018,
+      "premium_pct": 0.028,
+      "slot": 44
+    },
+    {
+      "level_pct": 0.016,
+      "premium_pct": 0.032,
+      "slot": 48
+    },
+    {
+      "level_pct": 0.018,
+      "premium_pct": 0.028,
+      "slot": 52
+    },
+    {
+      "level_pct": 0.019,
+      "premium_pct": 0.03,
+      "slot": 56
+    },
+    {
+      "level_pct": 0.02,
+      "premium_pct": 0.028,
+      "slot": 60
+    },
+    {
+      "level_pct": 0.02,
+      "premium_pct": 0.03,
+      "slot": 64
+    },
+    {
+      "level_pct": 0.02,
+      "premium_pct": 0.026,
+      "slot": 68
+    },
+    {
+      "level_pct": 0.02,
+      "premium_pct": 0.028,
+      "slot": 72
+    },
+    {
+      "level_pct": 0.016,
+      "premium_pct": 0.023,
+      "slot": 76
+    },
+    {
+      "level_pct": 0.015,
+      "premium_pct": 0.023,
+      "slot": 80
+    },
+    {
+      "level_pct": 0.014,
+      "premium_pct": 0.022,
+      "slot": 84
+    },
+    {
+      "level_pct": 0.014,
+      "premium_pct": 0.023,
+      "slot": 88
+    },
+    {
+      "level_pct": 0.016,
+      "premium_pct": 0.025,
+      "slot": 92
+    },
+    {
+      "level_pct": 0.017,
+      "premium_pct": 0.023,
+      "slot": 96
+    },
+    {
+      "level_pct": 0.014,
+      "premium_pct": 0.02,
+      "slot": 100
+    },
+    {
+      "level_pct": 0.017,
+      "premium_pct": 0.015,
+      "slot": 104
+    },
+    {
+      "level_pct": 0.016,
+      "premium_pct": 0.017,
+      "slot": 108
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.018,
+      "slot": 112
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.02,
+      "slot": 116
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.018,
+      "slot": 120
+    },
+    {
+      "level_pct": 0.004,
+      "premium_pct": 0.023,
+      "slot": 124
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.028,
+      "slot": 128
+    },
+    {
+      "level_pct": 0.004,
+      "premium_pct": 0.032,
+      "slot": 132
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.027,
+      "slot": 136
+    },
+    {
+      "level_pct": 0.004,
+      "premium_pct": 0.029,
+      "slot": 140
+    },
+    {
+      "level_pct": 0.003,
+      "premium_pct": 0.025,
+      "slot": 144
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.023,
+      "slot": 148
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.02,
+      "slot": 152
+    },
+    {
+      "level_pct": 0.005,
+      "premium_pct": 0.015,
+      "slot": 156
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.016,
+      "slot": 160
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.02,
+      "slot": 164
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.018,
+      "slot": 168
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.024,
+      "slot": 172
+    },
+    {
+      "level_pct": 0.011,
+      "premium_pct": 0.021,
+      "slot": 176
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.024,
+      "slot": 180
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.027,
+      "slot": 188
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.03,
+      "slot": 192
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.029,
+      "slot": 196
+    },
+    {
+      "level_pct": 0.011,
+      "premium_pct": 0.025,
+      "slot": 200
+    },
+    {
+      "level_pct": 0.011,
+      "premium_pct": 0.024,
+      "slot": 204
+    },
+    {
+      "level_pct": 0.012,
+      "premium_pct": 0.016,
+      "slot": 208
+    },
+    {
+      "level_pct": 0.013,
+      "premium_pct": 0.017,
+      "slot": 212
+    },
+    {
+      "level_pct": 0.013,
+      "premium_pct": 0.019,
+      "slot": 216
+    },
+    {
+      "level_pct": 0.015,
+      "premium_pct": 0.021,
+      "slot": 220
+    },
+    {
+      "level_pct": 0.018,
+      "premium_pct": 0.015,
+      "slot": 224
+    },
+    {
+      "level_pct": 0.019,
+      "premium_pct": 0.012,
+      "slot": 228
+    },
+    {
+      "level_pct": 0.02,
+      "premium_pct": 0.017,
+      "slot": 232
+    },
+    {
+      "level_pct": 0.021,
+      "premium_pct": 0.016,
+      "slot": 236
+    },
+    {
+      "level_pct": 0.018,
+      "premium_pct": 0.014,
+      "slot": 240
+    },
+    {
+      "level_pct": 0.017,
+      "premium_pct": 0.016,
+      "slot": 244
+    },
+    {
+      "level_pct": 0.017,
+      "premium_pct": 0.02,
+      "slot": 248
+    },
+    {
+      "level_pct": 0.013,
+      "premium_pct": 0.019,
+      "slot": 252
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.024,
+      "slot": 256
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.026,
+      "slot": 260
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.022,
+      "slot": 264
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.023,
+      "slot": 268
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.024,
+      "slot": 272
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.025,
+      "slot": 276
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.023,
+      "slot": 284
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.024,
+      "slot": 288
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.023,
+      "slot": 292
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.023,
+      "slot": 296
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.029,
+      "slot": 300
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.028,
+      "slot": 304
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.03,
+      "slot": 308
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.033,
+      "slot": 312
+    },
+    {
+      "level_pct": 0.003,
+      "premium_pct": 0.033,
+      "slot": 316
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.036,
+      "slot": 320
+    },
+    {
+      "level_pct": -0.003,
+      "premium_pct": 0.038,
+      "slot": 328
+    },
+    {
+      "level_pct": -0.004,
+      "premium_pct": 0.039,
+      "slot": 332
+    },
+    {
+      "level_pct": -0.006,
+      "premium_pct": 0.037,
+      "slot": 336
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.037,
+      "slot": 340
+    },
+    {
+      "level_pct": -0.01,
+      "premium_pct": 0.032,
+      "slot": 344
+    },
+    {
+      "level_pct": -0.01,
+      "premium_pct": 0.031,
+      "slot": 348
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.035,
+      "slot": 352
+    },
+    {
+      "level_pct": -0.013,
+      "premium_pct": 0.03,
+      "slot": 356
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.032,
+      "slot": 360
+    },
+    {
+      "level_pct": -0.009,
+      "premium_pct": 0.032,
+      "slot": 364
+    },
+    {
+      "level_pct": -0.009,
+      "premium_pct": 0.029,
+      "slot": 368
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.032,
+      "slot": 372
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.025,
+      "slot": 376
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.026,
+      "slot": 380
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.017,
+      "slot": 384
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.019,
+      "slot": 388
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.021,
+      "slot": 392
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.023,
+      "slot": 396
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.023,
+      "slot": 400
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.023,
+      "slot": 404
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.023,
+      "slot": 408
+    },
+    {
+      "level_pct": -0.023,
+      "premium_pct": 0.022,
+      "slot": 412
+    },
+    {
+      "level_pct": -0.023,
+      "premium_pct": 0.019,
+      "slot": 416
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.019,
+      "slot": 420
+    },
+    {
+      "level_pct": -0.021,
+      "premium_pct": 0.012,
+      "slot": 424
+    },
+    {
+      "level_pct": -0.023,
+      "premium_pct": 0.013,
+      "slot": 428
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.012,
+      "slot": 432
+    },
+    {
+      "level_pct": -0.019,
+      "premium_pct": 0.012,
+      "slot": 436
+    },
+    {
+      "level_pct": -0.019,
+      "premium_pct": 0.015,
+      "slot": 440
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.016,
+      "slot": 444
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.021,
+      "slot": 452
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.022,
+      "slot": 456
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.02,
+      "slot": 460
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.017,
+      "slot": 464
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.015,
+      "slot": 468
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.014,
+      "slot": 472
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.012,
+      "slot": 476
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.013,
+      "slot": 480
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.015,
+      "slot": 484
+    },
+    {
+      "level_pct": -0.009,
+      "premium_pct": 0.013,
+      "slot": 488
+    },
+    {
+      "level_pct": -0.009,
+      "premium_pct": 0.011,
+      "slot": 492
+    },
+    {
+      "level_pct": -0.007,
+      "premium_pct": 0.012,
+      "slot": 496
+    },
+    {
+      "level_pct": -0.008,
+      "premium_pct": 0.018,
+      "slot": 504
+    },
+    {
+      "level_pct": -0.006,
+      "premium_pct": 0.017,
+      "slot": 508
+    },
+    {
+      "level_pct": -0.001,
+      "premium_pct": 0.023,
+      "slot": 512
+    },
+    {
+      "level_pct": 0.0,
+      "premium_pct": 0.023,
+      "slot": 516
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.02,
+      "slot": 520
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.018,
+      "slot": 524
+    },
+    {
+      "level_pct": -0.003,
+      "premium_pct": 0.023,
+      "slot": 528
+    },
+    {
+      "level_pct": -0.004,
+      "premium_pct": 0.026,
+      "slot": 532
+    },
+    {
+      "level_pct": -0.005,
+      "premium_pct": 0.028,
+      "slot": 536
+    },
+    {
+      "level_pct": -0.007,
+      "premium_pct": 0.03,
+      "slot": 540
+    },
+    {
+      "level_pct": -0.008,
+      "premium_pct": 0.029,
+      "slot": 544
+    },
+    {
+      "level_pct": -0.005,
+      "premium_pct": 0.024,
+      "slot": 548
+    },
+    {
+      "level_pct": -0.007,
+      "premium_pct": 0.024,
+      "slot": 552
+    },
+    {
+      "level_pct": -0.009,
+      "premium_pct": 0.024,
+      "slot": 556
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.02,
+      "slot": 560
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.018,
+      "slot": 564
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.018,
+      "slot": 568
+    },
+    {
+      "level_pct": -0.021,
+      "premium_pct": 0.023,
+      "slot": 572
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.024,
+      "slot": 576
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.026,
+      "slot": 580
+    },
+    {
+      "level_pct": -0.027,
+      "premium_pct": 0.028,
+      "slot": 584
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.024,
+      "slot": 588
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.026,
+      "slot": 592
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.02,
+      "slot": 600
+    },
+    {
+      "level_pct": -0.021,
+      "premium_pct": 0.017,
+      "slot": 604
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.02,
+      "slot": 608
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.022,
+      "slot": 612
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.025,
+      "slot": 616
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.025,
+      "slot": 620
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.022,
+      "slot": 624
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.02,
+      "slot": 628
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.02,
+      "slot": 632
+    },
+    {
+      "level_pct": -0.021,
+      "premium_pct": 0.017,
+      "slot": 636
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.015,
+      "slot": 640
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.013,
+      "slot": 644
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.015,
+      "slot": 648
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.017,
+      "slot": 652
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.018,
+      "slot": 656
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.016,
+      "slot": 660
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.014,
+      "slot": 664
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.013,
+      "slot": 668
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.014,
+      "slot": 672
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.013,
+      "slot": 676
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.013,
+      "slot": 680
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.016,
+      "slot": 684
+    },
+    {
+      "level_pct": -0.009,
+      "premium_pct": 0.021,
+      "slot": 688
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.023,
+      "slot": 692
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.021,
+      "slot": 696
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.025,
+      "slot": 700
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.023,
+      "slot": 704
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.024,
+      "slot": 708
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.023,
+      "slot": 712
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.02,
+      "slot": 716
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.019,
+      "slot": 720
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.019,
+      "slot": 724
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.017,
+      "slot": 728
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.021,
+      "slot": 732
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.022,
+      "slot": 736
+    },
+    {
+      "level_pct": -0.019,
+      "premium_pct": 0.026,
+      "slot": 740
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.02,
+      "slot": 744
+    },
+    {
+      "level_pct": -0.021,
+      "premium_pct": 0.023,
+      "slot": 748
+    },
+    {
+      "level_pct": -0.026,
+      "premium_pct": 0.022,
+      "slot": 752
+    },
+    {
+      "level_pct": -0.025,
+      "premium_pct": 0.024,
+      "slot": 756
+    },
+    {
+      "level_pct": -0.021,
+      "premium_pct": 0.022,
+      "slot": 760
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.022,
+      "slot": 764
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.023,
+      "slot": 768
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.02,
+      "slot": 772
+    },
+    {
+      "level_pct": -0.021,
+      "premium_pct": 0.013,
+      "slot": 776
+    },
+    {
+      "level_pct": -0.021,
+      "premium_pct": 0.01,
+      "slot": 780
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.009,
+      "slot": 784
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.008,
+      "slot": 788
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.005,
+      "slot": 792
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.005,
+      "slot": 796
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.004,
+      "slot": 800
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.012,
+      "slot": 804
+    },
+    {
+      "level_pct": -0.027,
+      "premium_pct": 0.015,
+      "slot": 808
+    },
+    {
+      "level_pct": -0.03,
+      "premium_pct": 0.017,
+      "slot": 812
+    },
+    {
+      "level_pct": -0.032,
+      "premium_pct": 0.017,
+      "slot": 816
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.016,
+      "slot": 820
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.019,
+      "slot": 824
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.017,
+      "slot": 828
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.015,
+      "slot": 832
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.014,
+      "slot": 836
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.015,
+      "slot": 840
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.02,
+      "slot": 844
+    },
+    {
+      "level_pct": -0.032,
+      "premium_pct": 0.021,
+      "slot": 848
+    },
+    {
+      "level_pct": -0.03,
+      "premium_pct": 0.022,
+      "slot": 852
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.024,
+      "slot": 856
+    },
+    {
+      "level_pct": -0.031,
+      "premium_pct": 0.025,
+      "slot": 860
+    },
+    {
+      "level_pct": -0.031,
+      "premium_pct": 0.029,
+      "slot": 868
+    },
+    {
+      "level_pct": -0.03,
+      "premium_pct": 0.028,
+      "slot": 872
+    },
+    {
+      "level_pct": -0.032,
+      "premium_pct": 0.028,
+      "slot": 876
+    },
+    {
+      "level_pct": -0.032,
+      "premium_pct": 0.025,
+      "slot": 884
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.026,
+      "slot": 888
+    },
+    {
+      "level_pct": -0.028,
+      "premium_pct": 0.028,
+      "slot": 892
+    },
+    {
+      "level_pct": -0.027,
+      "premium_pct": 0.029,
+      "slot": 896
+    },
+    {
+      "level_pct": -0.027,
+      "premium_pct": 0.031,
+      "slot": 900
+    },
+    {
+      "level_pct": -0.028,
+      "premium_pct": 0.029,
+      "slot": 904
+    },
+    {
+      "level_pct": -0.03,
+      "premium_pct": 0.031,
+      "slot": 908
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.033,
+      "slot": 912
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.026,
+      "slot": 916
+    },
+    {
+      "level_pct": -0.027,
+      "premium_pct": 0.028,
+      "slot": 920
+    },
+    {
+      "level_pct": -0.025,
+      "premium_pct": 0.028,
+      "slot": 924
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.027,
+      "slot": 928
+    },
+    {
+      "level_pct": -0.023,
+      "premium_pct": 0.023,
+      "slot": 932
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.026,
+      "slot": 936
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.023,
+      "slot": 940
+    },
+    {
+      "level_pct": -0.028,
+      "premium_pct": 0.024,
+      "slot": 944
+    },
+    {
+      "level_pct": -0.027,
+      "premium_pct": 0.024,
+      "slot": 948
+    },
+    {
+      "level_pct": -0.027,
+      "premium_pct": 0.025,
+      "slot": 952
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.025,
+      "slot": 956
+    },
+    {
+      "level_pct": -0.028,
+      "premium_pct": 0.026,
+      "slot": 960
+    },
+    {
+      "level_pct": -0.025,
+      "premium_pct": 0.03,
+      "slot": 964
+    },
+    {
+      "level_pct": -0.023,
+      "premium_pct": 0.032,
+      "slot": 968
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.033,
+      "slot": 972
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.035,
+      "slot": 976
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.027,
+      "slot": 980
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.024,
+      "slot": 984
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.029,
+      "slot": 988
+    },
+    {
+      "level_pct": -0.026,
+      "premium_pct": 0.03,
+      "slot": 992
+    },
+    {
+      "level_pct": -0.03,
+      "premium_pct": 0.029,
+      "slot": 996
+    },
+    {
+      "level_pct": -0.031,
+      "premium_pct": 0.031,
+      "slot": 1000
+    },
+    {
+      "level_pct": -0.031,
+      "premium_pct": 0.027,
+      "slot": 1004
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.026,
+      "slot": 1008
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.028,
+      "slot": 1012
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.027,
+      "slot": 1016
+    },
+    {
+      "level_pct": -0.035,
+      "premium_pct": 0.03,
+      "slot": 1020
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.033,
+      "slot": 1024
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.036,
+      "slot": 1028
+    },
+    {
+      "level_pct": -0.032,
+      "premium_pct": 0.034,
+      "slot": 1032
+    },
+    {
+      "level_pct": -0.035,
+      "premium_pct": 0.032,
+      "slot": 1040
+    },
+    {
+      "level_pct": -0.037,
+      "premium_pct": 0.034,
+      "slot": 1044
+    },
+    {
+      "level_pct": -0.036,
+      "premium_pct": 0.03,
+      "slot": 1048
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.029,
+      "slot": 1052
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.028,
+      "slot": 1056
+    },
+    {
+      "level_pct": -0.031,
+      "premium_pct": 0.025,
+      "slot": 1060
+    },
+    {
+      "level_pct": -0.028,
+      "premium_pct": 0.027,
+      "slot": 1064
+    },
+    {
+      "level_pct": -0.03,
+      "premium_pct": 0.022,
+      "slot": 1068
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.019,
+      "slot": 1072
+    },
+    {
+      "level_pct": -0.035,
+      "premium_pct": 0.015,
+      "slot": 1076
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.013,
+      "slot": 1080
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.012,
+      "slot": 1084
+    },
+    {
+      "level_pct": -0.034,
+      "premium_pct": 0.005,
+      "slot": 1088
+    },
+    {
+      "level_pct": -0.035,
+      "premium_pct": 0.007,
+      "slot": 1092
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.011,
+      "slot": 1096
+    },
+    {
+      "level_pct": -0.031,
+      "premium_pct": 0.012,
+      "slot": 1100
+    },
+    {
+      "level_pct": -0.032,
+      "premium_pct": 0.015,
+      "slot": 1104
+    },
+    {
+      "level_pct": -0.031,
+      "premium_pct": 0.011,
+      "slot": 1112
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.012,
+      "slot": 1116
+    },
+    {
+      "level_pct": -0.028,
+      "premium_pct": 0.014,
+      "slot": 1120
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.015,
+      "slot": 1124
+    },
+    {
+      "level_pct": -0.029,
+      "premium_pct": 0.017,
+      "slot": 1128
+    },
+    {
+      "level_pct": -0.033,
+      "premium_pct": 0.022,
+      "slot": 1132
+    },
+    {
+      "level_pct": -0.03,
+      "premium_pct": 0.024,
+      "slot": 1136
+    },
+    {
+      "level_pct": -0.028,
+      "premium_pct": 0.025,
+      "slot": 1140
+    },
+    {
+      "level_pct": -0.028,
+      "premium_pct": 0.024,
+      "slot": 1144
+    },
+    {
+      "level_pct": -0.027,
+      "premium_pct": 0.02,
+      "slot": 1148
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.014,
+      "slot": 1152
+    },
+    {
+      "level_pct": -0.024,
+      "premium_pct": 0.016,
+      "slot": 1156
+    },
+    {
+      "level_pct": -0.022,
+      "premium_pct": 0.017,
+      "slot": 1160
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.019,
+      "slot": 1164
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.024,
+      "slot": 1168
+    },
+    {
+      "level_pct": -0.01,
+      "premium_pct": 0.021,
+      "slot": 1172
+    },
+    {
+      "level_pct": -0.012,
+      "premium_pct": 0.022,
+      "slot": 1176
+    },
+    {
+      "level_pct": -0.013,
+      "premium_pct": 0.02,
+      "slot": 1180
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.02,
+      "slot": 1184
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.019,
+      "slot": 1188
+    },
+    {
+      "level_pct": -0.02,
+      "premium_pct": 0.02,
+      "slot": 1192
+    },
+    {
+      "level_pct": -0.018,
+      "premium_pct": 0.019,
+      "slot": 1196
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.021,
+      "slot": 1200
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.018,
+      "slot": 1204
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.017,
+      "slot": 1208
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.019,
+      "slot": 1212
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.014,
+      "slot": 1216
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.017,
+      "slot": 1220
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.015,
+      "slot": 1224
+    },
+    {
+      "level_pct": -0.016,
+      "premium_pct": 0.022,
+      "slot": 1228
+    },
+    {
+      "level_pct": -0.019,
+      "premium_pct": 0.023,
+      "slot": 1232
+    },
+    {
+      "level_pct": -0.019,
+      "premium_pct": 0.022,
+      "slot": 1236
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.021,
+      "slot": 1240
+    },
+    {
+      "level_pct": -0.017,
+      "premium_pct": 0.02,
+      "slot": 1244
+    },
+    {
+      "level_pct": -0.015,
+      "premium_pct": 0.017,
+      "slot": 1248
+    },
+    {
+      "level_pct": -0.014,
+      "premium_pct": 0.017,
+      "slot": 1252
+    },
+    {
+      "level_pct": -0.01,
+      "premium_pct": 0.017,
+      "slot": 1256
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.014,
+      "slot": 1260
+    },
+    {
+      "level_pct": -0.009,
+      "premium_pct": 0.016,
+      "slot": 1264
+    },
+    {
+      "level_pct": -0.008,
+      "premium_pct": 0.02,
+      "slot": 1268
+    },
+    {
+      "level_pct": -0.005,
+      "premium_pct": 0.019,
+      "slot": 1272
+    },
+    {
+      "level_pct": -0.003,
+      "premium_pct": 0.02,
+      "slot": 1276
+    },
+    {
+      "level_pct": -0.003,
+      "premium_pct": 0.018,
+      "slot": 1280
+    },
+    {
+      "level_pct": -0.004,
+      "premium_pct": 0.02,
+      "slot": 1284
+    },
+    {
+      "level_pct": -0.006,
+      "premium_pct": 0.018,
+      "slot": 1292
+    },
+    {
+      "level_pct": -0.008,
+      "premium_pct": 0.023,
+      "slot": 1296
+    },
+    {
+      "level_pct": -0.011,
+      "premium_pct": 0.019,
+      "slot": 1300
+    },
+    {
+      "level_pct": -0.01,
+      "premium_pct": 0.021,
+      "slot": 1304
+    },
+    {
+      "level_pct": -0.009,
+      "premium_pct": 0.025,
+      "slot": 1308
+    },
+    {
+      "level_pct": -0.005,
+      "premium_pct": 0.021,
+      "slot": 1312
+    },
+    {
+      "level_pct": -0.003,
+      "premium_pct": 0.022,
+      "slot": 1316
+    },
+    {
+      "level_pct": -0.0,
+      "premium_pct": 0.021,
+      "slot": 1320
+    },
+    {
+      "level_pct": 0.0,
+      "premium_pct": 0.019,
+      "slot": 1324
+    },
+    {
+      "level_pct": 0.0,
+      "premium_pct": 0.016,
+      "slot": 1328
+    },
+    {
+      "level_pct": 0.003,
+      "premium_pct": 0.014,
+      "slot": 1332
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.018,
+      "slot": 1336
+    },
+    {
+      "level_pct": 0.005,
+      "premium_pct": 0.018,
+      "slot": 1340
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.018,
+      "slot": 1344
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.02,
+      "slot": 1348
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.017,
+      "slot": 1352
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.02,
+      "slot": 1356
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.015,
+      "slot": 1360
+    },
+    {
+      "level_pct": 0.004,
+      "premium_pct": 0.012,
+      "slot": 1364
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.015,
+      "slot": 1368
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.017,
+      "slot": 1372
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.019,
+      "slot": 1376
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.019,
+      "slot": 1380
+    },
+    {
+      "level_pct": 0.003,
+      "premium_pct": 0.022,
+      "slot": 1384
+    },
+    {
+      "level_pct": 0.004,
+      "premium_pct": 0.021,
+      "slot": 1388
+    },
+    {
+      "level_pct": 0.005,
+      "premium_pct": 0.019,
+      "slot": 1392
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.018,
+      "slot": 1396
+    },
+    {
+      "level_pct": 0.004,
+      "premium_pct": 0.019,
+      "slot": 1400
+    },
+    {
+      "level_pct": 0.003,
+      "premium_pct": 0.018,
+      "slot": 1404
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.015,
+      "slot": 1408
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.016,
+      "slot": 1412
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.016,
+      "slot": 1416
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.013,
+      "slot": 1420
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.012,
+      "slot": 1424
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.014,
+      "slot": 1428
+    },
+    {
+      "level_pct": -0.0,
+      "premium_pct": 0.014,
+      "slot": 1432
+    },
+    {
+      "level_pct": -0.001,
+      "premium_pct": 0.011,
+      "slot": 1436
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.017,
+      "slot": 1440
+    },
+    {
+      "level_pct": 0.004,
+      "premium_pct": 0.019,
+      "slot": 1444
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.02,
+      "slot": 1448
+    },
+    {
+      "level_pct": 0.004,
+      "premium_pct": 0.019,
+      "slot": 1452
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.018,
+      "slot": 1456
+    },
+    {
+      "level_pct": 0.002,
+      "premium_pct": 0.021,
+      "slot": 1460
+    },
+    {
+      "level_pct": 0.001,
+      "premium_pct": 0.025,
+      "slot": 1464
+    },
+    {
+      "level_pct": 0.003,
+      "premium_pct": 0.017,
+      "slot": 1468
+    },
+    {
+      "level_pct": 0.005,
+      "premium_pct": 0.017,
+      "slot": 1472
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.014,
+      "slot": 1476
+    },
+    {
+      "level_pct": 0.005,
+      "premium_pct": 0.014,
+      "slot": 1480
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.015,
+      "slot": 1484
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.016,
+      "slot": 1488
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.014,
+      "slot": 1492
+    },
+    {
+      "level_pct": 0.011,
+      "premium_pct": 0.015,
+      "slot": 1496
+    },
+    {
+      "level_pct": 0.014,
+      "premium_pct": 0.013,
+      "slot": 1500
+    },
+    {
+      "level_pct": 0.012,
+      "premium_pct": 0.013,
+      "slot": 1504
+    },
+    {
+      "level_pct": 0.011,
+      "premium_pct": 0.011,
+      "slot": 1508
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.013,
+      "slot": 1512
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.009,
+      "slot": 1516
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.008,
+      "slot": 1520
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.003,
+      "slot": 1524
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.006,
+      "slot": 1528
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.009,
+      "slot": 1532
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.014,
+      "slot": 1536
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.014,
+      "slot": 1540
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.017,
+      "slot": 1544
+    },
+    {
+      "level_pct": 0.011,
+      "premium_pct": 0.016,
+      "slot": 1548
+    },
+    {
+      "level_pct": 0.011,
+      "premium_pct": 0.013,
+      "slot": 1552
+    },
+    {
+      "level_pct": 0.011,
+      "premium_pct": 0.015,
+      "slot": 1556
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.01,
+      "slot": 1560
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.013,
+      "slot": 1564
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.016,
+      "slot": 1568
+    },
+    {
+      "level_pct": 0.007,
+      "premium_pct": 0.016,
+      "slot": 1572
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.018,
+      "slot": 1576
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.022,
+      "slot": 1580
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.019,
+      "slot": 1584
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.016,
+      "slot": 1588
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.013,
+      "slot": 1592
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.019,
+      "slot": 1596
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.018,
+      "slot": 1600
+    },
+    {
+      "level_pct": 0.008,
+      "premium_pct": 0.017,
+      "slot": 1604
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.017,
+      "slot": 1608
+    },
+    {
+      "level_pct": 0.005,
+      "premium_pct": 0.017,
+      "slot": 1612
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.015,
+      "slot": 1616
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.019,
+      "slot": 1620
+    },
+    {
+      "level_pct": 0.006,
+      "premium_pct": 0.022,
+      "slot": 1624
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.017,
+      "slot": 1628
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.018,
+      "slot": 1632
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.021,
+      "slot": 1636
+    },
+    {
+      "level_pct": 0.009,
+      "premium_pct": 0.025,
+      "slot": 1640
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.026,
+      "slot": 1644
+    },
+    {
+      "level_pct": 0.01,
+      "premium_pct": 0.019,
+      "slot": 1648
+    }
+  ],
+  "reference_max_drawdown_usd": 3.77,
+  "reference_pnl_usd": 10.66,
+  "symbol": "SOL",
+  "tape": [
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 8
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 12
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 16
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 24
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 30
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 36
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 43
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 52
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 59
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 64
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 68
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 78
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 84
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 94
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 103
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 109
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 117
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 121
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 128
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 135
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 140
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 146
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 150
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 158
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 163
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 170
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 179
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 188
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 197
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 201
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 207
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 217
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 227
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 232
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 239
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 246
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 251
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 256
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 261
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 271
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 278
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 284
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 288
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 295
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 299
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 307
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 314
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 318
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 325
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 333
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 338
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 343
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 348
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 358
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 364
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 373
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 380
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 384
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 388
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 398
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 402
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 411
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 418
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 423
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 432
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 442
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 450
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 459
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 466
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 474
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 478
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 486
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 494
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 504
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 514
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 519
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 525
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 534
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 540
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 544
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 553
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 562
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 567
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 571
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 575
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 584
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 591
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 598
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 604
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 611
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 617
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 625
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 630
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 638
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 643
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 649
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 657
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 661
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 670
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 678
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 684
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 690
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 698
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 708
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 717
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 724
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 728
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 733
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 742
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 747
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 751
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 755
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 759
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 763
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 770
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 780
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 787
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 791
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 798
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 806
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 814
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 819
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 826
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 832
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 837
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 847
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 856
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 863
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 869
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 879
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 885
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 894
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 902
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 907
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 911
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 921
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 928
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 934
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 940
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 945
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 955
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 965
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 972
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 978
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 982
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 992
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1002
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1007
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1011
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1015
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1023
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1031
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1037
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1041
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1045
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1050
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1057
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1062
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1071
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1080
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1086
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1095
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1103
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1109
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1117
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1121
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1130
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1138
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1144
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1149
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1154
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1164
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1171
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1178
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1186
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1193
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1201
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1207
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1214
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1224
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1229
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1239
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1245
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1253
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1257
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1263
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1267
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1274
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1278
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1283
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1287
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1294
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1302
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1307
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1314
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1321
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1331
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1335
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1344
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1353
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1363
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1373
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1378
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1384
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1391
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1397
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1405
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1415
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1419
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1426
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1432
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1442
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1451
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1456
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1462
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1469
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1473
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1480
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1484
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1492
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1502
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1507
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1511
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1521
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1529
+    },
+    {
+      "account": 1,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1533
+    },
+    {
+      "account": 6,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1539
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1547
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1551
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1558
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1566
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1570
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1575
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1579
+    },
+    {
+      "account": 5,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1587
+    },
+    {
+      "account": 2,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1597
+    },
+    {
+      "account": 3,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1604
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1609
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1615
+    },
+    {
+      "account": 7,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1625
+    },
+    {
+      "account": 4,
+      "limit_bps": 10.0,
+      "side": "sell",
+      "size": 0.04,
+      "slot": 1635
+    },
+    {
+      "account": 0,
+      "limit_bps": 10.0,
+      "side": "buy",
+      "size": 0.04,
+      "slot": 1644
+    }
+  ]
+}

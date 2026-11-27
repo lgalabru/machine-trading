@@ -7,8 +7,8 @@ whose tool isn't in the build or that needs the full run. `inconclusive`
 marks a check whose sample was too small to decide.
 
 ```sh
-mtx gates flash-crash-spcx --fast   # task files + a one-set, 12-session public ladder
-mtx gates flash-crash-spcx          # + the image checks; 4 sets of the task's sessions
+mtx gates flash-crash-nvda --fast   # task files + a one-set, 12-session public ladder
+mtx gates flash-crash-nvda          # + the image checks; 4 sets of the task's sessions
 ```
 
 Full mode builds the task image and runs Harbor, so run it on a machine with
@@ -145,6 +145,7 @@ changes from session to session without a class:
 | --- | --- | --- | --- |
 | funding-carry | `informed_share`, `lag_slots`, `hold_slots` | process | how the session's episodes are drawn and behave, not which ones come |
 | funding-carry | `funding`, `cap_pct`, `noise_pct` | process | the funding process and the index's noise |
+| funding-carry-sol | `premium_mean_bps`, `premium_sd_bps`, `premium_half_life_slots`, `funding`, `orders_per_minute`, `informed_share`, `arbitrageur_latency_slots`, `arbitrageur_edge_bps` | process | the session's basis (its level, spread and half-life), funding's settings, and the pace of the flow and the arbitrageur; never the premium as it wanders, the path, or an order |
 | weekend-gap | `informed`, `informed_account`, `worker`, `worker_account` | identity | whether an informed trader and a one-sided worker are seated, and from which of the grader's accounts |
 | weekend-gap | `impact_pct`, `half_life_slots` | process | the impact curve |
 | flash-crash | none | | the shock (direction, legs, aftermath) is the session's one draw |

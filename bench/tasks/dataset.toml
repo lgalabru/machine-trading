@@ -4,7 +4,7 @@
 
 [dataset]
 name = "solana-foundation/machine-trading"
-version = "0.14.0"
+version = "0.15.0"
 description = "Trading tasks for agents on Solana: bots trade DeFi markets replayed on offline mainnet snapshots with Surfpool."
 keywords = [ "solana", "trading", "defi", "perpetuals", "surfpool",]
 [[dataset.authors]]
@@ -21,20 +21,20 @@ name = "solana-foundation/backrun-thin-pools"
 digest = "sha256:2445c589859da4fb0f12ab023fb45548bb5c90379fc866909e7ebdf064a54c87"
 
 [[tasks]]
-name = "solana-foundation/flash-crash-spcx"
-digest = "sha256:f7e3f93f8566f32a09fe539ccb66aa14bacafa523dce94a287aa8edcf85cd13b"
+name = "solana-foundation/flash-crash-nvda"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [[tasks]]
-name = "solana-foundation/funding-carry-spcx"
-digest = "sha256:b52230e89f6fcc4aa43a7c9dd821d8b7d4264c508e75ade1761405cfa5e915d8"
+name = "solana-foundation/funding-carry-sol"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [[tasks]]
 name = "solana-foundation/liquidation-flash"
 digest = "sha256:af1d1e031667e38636da0544b54c797402ae73ebdd4fbf313c4a089e4d4c131f"
 
 [[tasks]]
-name = "solana-foundation/market-making-spcx"
-digest = "sha256:2056464674693ef84bcf378d09e7604b5d71becc2d0a9d8d679bd02482b3e55e"
+name = "solana-foundation/market-making-cbrs"
+digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [[tasks]]
 name = "solana-foundation/weekend-gap-spcx"

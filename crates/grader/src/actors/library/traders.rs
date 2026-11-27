@@ -147,6 +147,40 @@ impl Chaser {
     }
 }
 
+/// Index chasers: they read the market's index (the scenario's level) and
+/// take the way it has moved away from the book, once the gap is over
+/// `trigger_bps`, at `intensity_mult` times the market's trade rate. The
+/// index leads the book (as an exchange leads Phoenix by a second or two),
+/// so they take quotes the book hasn't moved yet: public information, read
+/// fast. They know nothing of the path ahead.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct IndexChaser {
+    #[serde(default = "one_wallet")]
+    pub wallets: u32,
+    pub trigger_bps: f64,
+    #[serde(default = "one")]
+    pub intensity_mult: f64,
+    #[serde(default = "one")]
+    pub size_mult: f64,
+    #[serde(default = "fifty")]
+    pub limit_bps: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<Window>,
+}
+
+impl IndexChaser {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.wallets == 0 {
+            return Err("wallets must be at least 1".into());
+        }
+        finite_at_least_zero("trigger_bps", self.trigger_bps)?;
+        finite_positive("intensity_mult", self.intensity_mult)?;
+        finite_positive("size_mult", self.size_mult)?;
+        finite_positive("limit_bps", self.limit_bps)
+    }
+}
+
 /// Decoys: each wallet trades as an informed trader does (it sees the
 /// level `horizon_slots` ahead, as imperfectly, by `hit_rate` and
 /// `view_noise_bps`) until a slot drawn per session in
@@ -173,6 +207,10 @@ pub struct Decoy {
     pub size_mult: f64,
     #[serde(default = "fifty")]
     pub limit_bps: f64,
+    /// The window it trades in at all, if not the whole session: a decoy
+    /// that positions into an event only around it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active: Option<Window>,
 }
 
 impl Decoy {
@@ -486,6 +524,68 @@ impl Actor for ChaserTrader {
     async fn report(&mut self, _: &mut ActorsReport) {}
 }
 
+/// The index's lead over the book at `now`, bp: positive when the index is
+/// above the book.
+fn index_gap_bps(now: &Moment) -> f64 {
+    (now.level_usd / now.book_usd - 1.0) * 10_000.0
+}
+
+pub(super) struct IndexChaserTrader {
+    spec: IndexChaser,
+    scale: Scale,
+    wallets: Vec<Wallet>,
+    rng: Rng,
+    last: Option<u64>,
+}
+
+impl IndexChaserTrader {
+    pub fn new(spec: IndexChaser, scale: Scale, wallets: Vec<Wallet>, rng: Rng) -> Self {
+        assert!(!wallets.is_empty(), "an index chaser trades from a wallet");
+        Self {
+            spec,
+            scale,
+            wallets,
+            rng,
+            last: None,
+        }
+    }
+}
+
+#[async_trait]
+impl Actor for IndexChaserTrader {
+    async fn before_blocks(&mut self, last: &Moment) {
+        let slots = last.at - self.last.unwrap_or(0);
+        self.last = Some(last.at);
+        if !Window::holds(&self.spec.active, last.at) {
+            return;
+        }
+        let Some(side) = side_of(index_gap_bps(last), self.spec.trigger_bps) else {
+            return;
+        };
+        let n = self
+            .rng
+            .poisson(self.scale.per_slot() * self.spec.intensity_mult * slots as f64);
+        for _ in 0..n {
+            let size = self.scale.draw_size(&mut self.rng, self.spec.size_mult);
+            take_one(
+                &self.wallets,
+                &mut self.rng,
+                last.at,
+                side,
+                size,
+                last.book_usd,
+                self.spec.limit_bps,
+            )
+            .await;
+        }
+        if n > 0 {
+            self.wallets[0].count("index_chases", 1);
+        }
+    }
+
+    async fn report(&mut self, _: &mut ActorsReport) {}
+}
+
 pub(super) struct DecoyTrader {
     spec: Decoy,
     scale: Scale,
@@ -570,6 +670,9 @@ impl Actor for DecoyTrader {
     async fn before_blocks(&mut self, last: &Moment) {
         let slots = last.at - self.last.unwrap_or(0);
         self.last = Some(last.at);
+        if !Window::holds(&self.spec.active, last.at) {
+            return;
+        }
         let rate = self.scale.per_slot() * self.spec.intensity_mult / self.wallets.len() as f64;
         for wallet in 0..self.wallets.len() {
             let Some(side) = self.side(wallet, last) else {
@@ -627,6 +730,52 @@ mod tests {
             "{log:?}"
         );
         assert_eq!(ledger.report().actors[0].counts["informed_steps"], 1);
+    }
+
+    #[tokio::test]
+    async fn index_chasers_take_the_way_the_index_leads_the_book() {
+        let (book, log) = Book::new("x", 99.0, 101.0);
+        let (wallet, ledger) = wallet(book);
+        let spec = IndexChaser {
+            wallets: 1,
+            trigger_bps: 5.0,
+            intensity_mult: 10.0,
+            size_mult: 1.0,
+            limit_bps: 20.0,
+            active: None,
+        };
+        let mut chaser = IndexChaserTrader::new(spec, scale(), vec![wallet], Rng::new([6; 32]));
+        let moment = |at, level_usd, book_usd| Moment {
+            at,
+            level_usd,
+            book_usd,
+            fair_usd: None,
+        };
+        // The index 3 bp over the book: under the trigger, nothing.
+        chaser.before_blocks(&moment(20, 100.03, 100.0)).await;
+        assert!(log.lock().unwrap().is_empty());
+        // 10 bp over: it buys, up to 20 bp through the book's price.
+        chaser.before_blocks(&moment(40, 100.10, 100.0)).await;
+        let taken = log.lock().unwrap().clone();
+        assert!(!taken.is_empty());
+        assert!(
+            taken.iter().all(|l| l == "x take Bid 1.000 at 100.20"),
+            "{taken:?}"
+        );
+        // 10 bp under: it sells.
+        log.lock().unwrap().clear();
+        chaser.before_blocks(&moment(60, 99.90, 100.0)).await;
+        let taken = log.lock().unwrap().clone();
+        assert!(!taken.is_empty());
+        assert!(
+            taken.iter().all(|l| l.starts_with("x take Ask")),
+            "{taken:?}"
+        );
+        assert!(ledger.report().actors[0].counts["index_chases"] >= 2);
+        // The book caught up: nothing.
+        log.lock().unwrap().clear();
+        chaser.before_blocks(&moment(80, 99.90, 99.90)).await;
+        assert!(log.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -719,6 +868,7 @@ mod tests {
             intensity_mult: 1.0,
             size_mult: 1.0,
             limit_bps: 50.0,
+            active: None,
         };
         let mut decoy = DecoyTrader::new(spec, scale(), vec![wallet], path, Rng::new([6; 32]));
         assert!((150..200).contains(&decoy.fades[0]));
@@ -745,5 +895,46 @@ mod tests {
         // Its view changes at most once a horizon.
         let changes = sides.windows(2).filter(|p| p[0].1 != p[1].1).count();
         assert!(changes <= (2_000 - 210) / 20, "{changes}");
+    }
+
+    /// A decoy with a window trades only inside it, as one that positions
+    /// into an event does.
+    #[tokio::test]
+    async fn a_decoy_with_a_window_trades_only_inside_it() {
+        let (book, log) = Book::new("w", 99.0, 101.0);
+        let (wallet, _) = wallet(book);
+        let path: Arc<dyn Fn(u64) -> Moment + Send + Sync> =
+            Arc::new(|s| at(s, if s < 100 { 100.0 } else { 102.0 }));
+        let spec = Decoy {
+            wallets: 1,
+            horizon_slots: 20,
+            edge_bps: 50.0,
+            hit_rate: 1.0,
+            view_noise_bps: 0.0,
+            informed_for: Window {
+                from: 90,
+                until: Some(95),
+            },
+            intensity_mult: 50.0,
+            size_mult: 1.0,
+            limit_bps: 50.0,
+            active: Some(Window {
+                from: 80,
+                until: Some(120),
+            }),
+        };
+        let mut decoy = DecoyTrader::new(spec, scale(), vec![wallet], path, Rng::new([7; 32]));
+        for s in (2..80).step_by(2) {
+            decoy.before_blocks(&at(s, 100.0)).await;
+        }
+        assert!(log.lock().unwrap().is_empty());
+        for s in (80..120).step_by(2) {
+            decoy.before_blocks(&at(s, 100.0)).await;
+        }
+        assert!(!std::mem::take(&mut *log.lock().unwrap()).is_empty());
+        for s in (120..400).step_by(2) {
+            decoy.before_blocks(&at(s, 102.0)).await;
+        }
+        assert!(log.lock().unwrap().is_empty());
     }
 }

@@ -10,7 +10,7 @@ spot_snapshot := "sol-usdc-spot-2026-11-11"
 registry := "ghcr.io/solana-foundation"
 image := "machine-trading"
 # Bump on every image change that tasks should pick up.
-tag := "0.14.0"
+tag := "0.15.0"
 tasks := "bench/tasks"
 # The harness versions `just bench` runs, pinned so results compare. Every
 # model runs in Hermes (NousResearch/hermes-agent): one harness for every
@@ -92,8 +92,8 @@ bots:
 geyser-parity:
     #!/usr/bin/env bash
     set -euo pipefail
-    just --justfile bench/tasks/flash-crash-spcx/reference/Justfile build
-    just --justfile bench/tasks/market-making-spcx/reference/Justfile build
+    just --justfile bench/tasks/flash-crash-nvda/reference/Justfile build
+    just --justfile bench/tasks/market-making-cbrs/reference/Justfile build
     cargo build -p mtx-geyser
     case "$(uname -s)" in Darwin) lib=libmtx_geyser.dylib ;; *) lib=libmtx_geyser.so ;; esac
     MTX_TEST_GEYSER_PLUGIN="$PWD/${CARGO_TARGET_DIR:-target}/debug/$lib" \
@@ -311,7 +311,7 @@ actors-smoke:
         || { echo "$name: the takers didn't send every order: $flow"; exit 1; }
       echo "$name: $flow"
     }
-    takers actors-perp {{snapshot}} bots/starter bench/tasks/funding-carry-spcx/environment/practice/practice-1.json
+    takers actors-perp {{snapshot}} bots/starter bench/checks/takers/carry-spcx-tape.json
     takers actors-spot {{spot_snapshot}} bots/spot-smoke bench/checks/spot/smoke-tape.json
     # The library: every actor beside a bot that sells and answers requests
     # for quotes, in six sessions of fresh wallets. In each, every actor
@@ -403,7 +403,7 @@ compat-0-2-0:
 # (target/logs/wit-probe) shows what it was handed and what became of each.
 wit-probe:
     just --justfile bots/wit-probe/Justfile build
-    cargo run --release -- grade --components-only --snapshot snapshots/{{snapshot}} --bot bots/wit-probe --logs target/logs/wit-probe bench/tasks/flash-crash-spcx/environment/practice/practice-1.json
+    cargo run --release -- grade --components-only --snapshot snapshots/phoenix-perps-2026-11-13 --bot bots/wit-probe --logs target/logs/wit-probe bench/tasks/flash-crash-nvda/environment/practice/practice-1.json
 
 # Raw sends end to end: the probe tries one of each kind, allowed and not,
 # in a session that enables them, and its log (target/logs/raw-probe) shows
@@ -423,7 +423,7 @@ tx-probe:
 scenarios out prefix count seed family="flash-crash":
     cargo run --release -- scenario generate --family {{family}} --out {{out}} --prefix {{prefix}} --count {{count}} --seed {{seed}}
 
-# Record a reference bot's PnL in each scenario file: just calibrate bench/tasks/market-making-spcx/reference FILES...
+# Record a reference bot's PnL in each scenario file: just calibrate bench/tasks/market-making-cbrs/reference FILES...
 calibrate bot +files: bots
     cargo run --release -- calibrate --snapshot snapshots/{{snapshot}} --bot {{bot}} --logs target/logs/calibrate {{files}}
 
@@ -817,6 +817,13 @@ bench models="claude-sonnet-5-5 claude-opus-5-5 claude-fable-5-1 claude-fable-5-
         run_model "$model" || status=1
       done
     fi
+    # Every Hermes trial's trajectory and model cost, now that Harbor is done
+    # with them: both raced with it inside the agent adapter
+    # (bench/harness/finish_trials.py). Harbor's own Python has its converter.
+    if [ "${#hermes_models[@]}" -gt 0 ]; then
+      harbor_python="$(dirname "$(readlink -f "$(command -v harbor)")")/python"
+      "$harbor_python" -I bench/harness/finish_trials.py "$batch" || status=1
+    fi
     scan_batch || exit 1
     if [ -e "$batch/.stopped" ]; then
       echo "stopped: a provider refused an agent for quota or credit; no trial of this batch can be ranked"
@@ -851,7 +858,7 @@ preflight models:
 # per route through the key proxy to a stand-in provider on this machine;
 # the second must see nothing the first planted, and the key must reach no
 # trial file, nor anything the agent can read under /proc.
-hermes-check task="flash-crash-spcx" routes="openai anthropic openrouter chat":
+hermes-check task="flash-crash-nvda" routes="openai anthropic openrouter chat":
     #!/usr/bin/env bash
     set -euo pipefail
     status=0
@@ -919,7 +926,7 @@ check-solution:
 # The checks every task change should pass: oracle ~1, and nop and every
 # cheater 0, each grade completing. The component cheater's log must show
 # every attempt refused; the process cheaters aren't graded (not_graded 1).
-harbor-checks task="flash-crash-spcx" surfpool="" jobs="jobs": (image surfpool) check-solution
+harbor-checks task="flash-crash-nvda" surfpool="" jobs="jobs": (image surfpool) check-solution
     #!/usr/bin/env bash
     set -euo pipefail
     # The checks run on the images `image` just built: a task still pinned to
@@ -1009,9 +1016,10 @@ leak-audit task="":
         if docker run --rm --entrypoint mtx "$image" grade --help 2>&1 | grep -q -e '--draw'; then
           echo "LEAK: $image's mtx offers grade --draw"; found=1
         fi
-        # Generator source and family parameters: none ships with the agent.
+        # The SDK's making.rs holds public quoting helpers, not a generator.
+        # Keep checking every other path for generator source and parameters.
         local gen_hits
-        gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target \) -prune -o \
+        gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target -o -path /opt/mtx/sdk/crates/kit/src/making.rs \) -prune -o \
           \( -name generators.rs -o -name making.rs -o -name carry.rs -o -name weekend.rs -o -name 'calibration' -o -name 'mtx-grader*' -o -path '*/crates/grader*' \) -print 2>/dev/null || true)"
         if [ -n "$gen_hits" ]; then
           echo "LEAK: generator source in $image:"; echo "$gen_hits" | sed 's/^/  /'; found=1
@@ -1086,7 +1094,7 @@ clock-probe task:
 # short sets), `out` the report directory (it keeps
 # `<out>/<task>/summary.json`, which `mtx gates` reads) and `public_seed`
 # draws fixed, public sets from a label instead of fresh hidden ones.
-ladder task="flash-crash-spcx" sets="4" jobs="4" parallel="1" count="" out="target/ladder" min_odds="" public_seed="":
+ladder task="flash-crash-nvda" sets="4" jobs="4" parallel="1" count="" out="target/ladder" min_odds="" public_seed="":
     #!/usr/bin/env bash
     set -euo pipefail
     [ -f "{{tasks}}/{{task}}/checks/ladder.json" ] || { echo "{{task}} has no checks/ladder.json"; exit 1; }
