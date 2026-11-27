@@ -353,3 +353,23 @@ What each task becomes, to be settled as the work goes:
   a watch that couldn't start: a validator restart at 06:10 UTC on
   2026-11-25 had left the markets, pools and obligations unwatched for 16
   hours, which is a hole in the quotes this RFD's book study reads.
+
+- 2026-11-27: funding-carry-sol's full ladder on the 0.15 release tree
+  completed four fresh hidden sets of 24 sessions. Blind-short beats the
+  reference on all four. Aggregate loss-weighted PnL is $979.09 for
+  blind-short, $645.30 for the reference and $1,107.91 for informed.
+  Informed earns 1.13 times blind-short, below the signal gate's 2 times.
+  The reference's strength band passes at 0.58 of informed, with
+  per-session Sharpe 0.53. The fatal-crash probe reports `no_power`:
+  not every set's grade went fatal. Blind-short also exceeds the
+  zero-edge and lucky-run probe limits. A larger reference position
+  alone would not repair the signal gate. The family's mostly positive
+  basis rewards a constant short under its compressed funding clock.
+  Release scope or a task redesign remains open; no thresholds changed.
+  The reference replay passes, with seven identical reports over three
+  runs of six sessions. Evidence is on `mtx-bench-2`, container
+  `mtx015b`, in `/work/fc-full-out/gates.json` and
+  `/work/fc-full-out/ladder/funding-carry-sol/summary.json`. The wrapper's
+  image checks failed in that container, which lacks Docker and Harbor
+  and retains a 0.14 image tag. Those failures do not establish the
+  status of the separate 0.15 Harbor runs on the host.
