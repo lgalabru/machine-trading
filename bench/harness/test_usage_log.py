@@ -93,6 +93,9 @@ class Totals(unittest.TestCase):
             log.write("r", "flash-crash-spcx__aaa1111", b"no usage here")
             self.assertIsNone(usage_log.totals(path, "flash-crash-spcx__aaa1111")["cost_usd"])
             self.assertIsNone(usage_log.totals(path, "nobody__ccc3333"))
+            # The proxy sees the trial lowercased; Harbor names it mixed-case.
+            log.write("r", "liquidation-flash__j62q5hi", body)
+            self.assertEqual(usage_log.totals(path, "liquidation-flash__J62Q5hI")["calls"], 1)
             self.assertIsNone(usage_log.totals(Path(tmp) / "missing.jsonl", "nobody__ccc3333"))
 
     def test_no_path_logs_nothing(self):
@@ -192,25 +195,37 @@ class AdapterNamesItsTrialAndReadsItsCost(unittest.TestCase):
         mtx_hermes.name_the_trial(untouched, None)
         self.assertEqual(untouched["custom_providers"][0]["base_url"], "http://x/r")
 
-    def test_the_cost_comes_from_the_usage_log(self):
-        import mtx_hermes
-        from harbor.models.agent.context import AgentContext
+class FinishTrials(unittest.TestCase):
+    """finish_trials.py, after Harbor: no Harbor needed while a trial already
+    has its trajectory."""
+
+    def test_finishing_a_trial_writes_its_cost_and_keeps_the_original(self):
+        import finish_trials
         with tempfile.TemporaryDirectory() as tmp:
             trial = Path(tmp) / "job" / "flash-crash-spcx__cq8nbXG"
             (trial / "agent").mkdir(parents=True)
+            (trial / "agent" / "trajectory.json").write_text("{}")
+            (trial / "result.json").write_text(json.dumps({"trial_name": trial.name, "agent_result": {"cost_usd": None}}))
             usage = Path(tmp) / "usage.jsonl"
             log = usage_log.UsageLog(str(usage))
             for _ in range(3):
-                log.write("r", trial.name, json.dumps(NOUS_JSON).encode())
+                log.write("r", trial.name.lower(), json.dumps(NOUS_JSON).encode())
+            done = finish_trials.finish_trial(trial, usage)
+            self.assertEqual(done, {"trajectory": "kept", "cost": "$0.0126"})
+            result = json.loads((trial / "result.json").read_text())
+            self.assertAlmostEqual(result["agent_result"]["cost_usd"], 0.0126)
+            self.assertEqual(result["agent_result"]["n_input_tokens"], 3600)
+            self.assertIsNone(json.loads((trial / "result.json.orig").read_text())["agent_result"]["cost_usd"])
 
-            context = AgentContext()
-            self.assertTrue(mtx_hermes.apply_proxy_usage(context, trial / "agent", trial.name, str(usage)))
-            self.assertFalse(mtx_hermes.apply_proxy_usage(AgentContext(), trial / "agent", "nobody__abc1234", str(usage)))
-            self.assertFalse(mtx_hermes.apply_proxy_usage(AgentContext(), trial / "agent", trial.name, None))
-            self.assertAlmostEqual(context.cost_usd, 0.0126)
-            self.assertEqual(context.n_input_tokens, 3600)
-            self.assertEqual(context.n_cache_tokens, 3000)
-            self.assertTrue((trial / "agent" / "usage.json").exists())
+    def test_a_tool_result_cut_off_mid_call_is_dropped_before_converting(self):
+        import finish_trials
+        session = {"source": "oneshot", "messages": [
+            {"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "function": {"name": "terminal"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+            {"role": "tool", "tool_call_id": "", "content": "cut off"}]}
+        kept = json.loads(finish_trials.without_orphan_results(json.dumps(session)))["messages"]
+        self.assertEqual([m.get("tool_call_id") for m in kept if m["role"] == "tool"], ["c1"])
 
 
 if __name__ == "__main__":
