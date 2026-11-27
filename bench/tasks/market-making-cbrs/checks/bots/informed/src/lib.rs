@@ -404,7 +404,7 @@ impl Flow {
                 .positions
                 .entries
                 .iter()
-                .filter(|(id, _)| u64::from(*id) == self.asset_id)
+                .filter(|(id, _)| *id == self.asset_id)
                 .map(|(_, p)| f64::from(p.base_lot_position) / self.lot_scale)
                 .sum(),
         )
