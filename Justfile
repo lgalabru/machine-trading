@@ -1009,9 +1009,10 @@ leak-audit task="":
         if docker run --rm --entrypoint mtx "$image" grade --help 2>&1 | grep -q -e '--draw'; then
           echo "LEAK: $image's mtx offers grade --draw"; found=1
         fi
-        # Generator source and family parameters: none ships with the agent.
+        # The SDK's making.rs holds public quoting helpers, not a generator.
+        # Keep checking every other path for generator source and parameters.
         local gen_hits
-        gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target \) -prune -o \
+        gen_hits="$(docker run --rm --entrypoint find "$image" / -xdev \( -path /proc -o -path /sys -o -path '*/registry' -o -path '*/.cargo' -o -path /opt/mtx/target -o -path /opt/mtx/sdk/crates/kit/src/making.rs \) -prune -o \
           \( -name generators.rs -o -name making.rs -o -name carry.rs -o -name weekend.rs -o -name 'calibration' -o -name 'mtx-grader*' -o -path '*/crates/grader*' \) -print 2>/dev/null || true)"
         if [ -n "$gen_hits" ]; then
           echo "LEAK: generator source in $image:"; echo "$gen_hits" | sed 's/^/  /'; found=1
