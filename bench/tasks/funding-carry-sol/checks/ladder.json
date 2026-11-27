@@ -110,8 +110,8 @@
       "env": {
         "MTX_PROBE": "honest",
         "MTX_PROBE_SALT": "1",
-        "MTX_PROBE_BLEND": "0.05",
-        "MTX_PROBE_SIZE": "0.427"
+        "MTX_PROBE_BLEND": "0.545",
+        "MTX_PROBE_SIZE": "0.381"
       },
       "may_breach": true
     },
@@ -121,8 +121,8 @@
       "env": {
         "MTX_PROBE": "honest",
         "MTX_PROBE_SALT": "2",
-        "MTX_PROBE_BLEND": "0.143",
-        "MTX_PROBE_SIZE": "0.427"
+        "MTX_PROBE_BLEND": "0.703",
+        "MTX_PROBE_SIZE": "0.381"
       },
       "may_breach": true
     },
@@ -132,8 +132,8 @@
       "env": {
         "MTX_PROBE": "honest",
         "MTX_PROBE_SALT": "3",
-        "MTX_PROBE_BLEND": "0.374",
-        "MTX_PROBE_SIZE": "0.427"
+        "MTX_PROBE_BLEND": "0.866",
+        "MTX_PROBE_SIZE": "0.381"
       },
       "may_breach": true
     },
@@ -144,7 +144,7 @@
         "MTX_PROBE": "honest",
         "MTX_PROBE_SALT": "4",
         "MTX_PROBE_BLEND": "0.97",
-        "MTX_PROBE_SIZE": "0.427"
+        "MTX_PROBE_SIZE": "0.381"
       },
       "may_breach": true
     },
@@ -154,9 +154,9 @@
       "env": {
         "MTX_PROBE": "honest",
         "MTX_PROBE_SALT": "2",
-        "MTX_PROBE_BLEND": "0.143",
+        "MTX_PROBE_BLEND": "0.703",
         "MTX_PROBE_CRASH_BELOW": "0.03",
-        "MTX_PROBE_SIZE": "0.427"
+        "MTX_PROBE_SIZE": "0.381"
       },
       "may_breach": true
     },
@@ -166,10 +166,10 @@
       "env": {
         "MTX_PROBE": "honest",
         "MTX_PROBE_SALT": "2",
-        "MTX_PROBE_BLEND": "0.143",
+        "MTX_PROBE_BLEND": "0.703",
         "MTX_PROBE_CRASH_BELOW": "0.03",
         "MTX_PROBE_CRASH": "fatal",
-        "MTX_PROBE_SIZE": "0.427"
+        "MTX_PROBE_SIZE": "0.381"
       },
       "may_breach": true
     }
