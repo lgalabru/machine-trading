@@ -219,13 +219,27 @@ fn states_in(journal: &[(u64, String, Read)], slot: u64) -> Vec<Read> {
     journal[began..=ended].iter().map(|line| line.2).collect()
 }
 
+fn task_snapshot(root: &Path, bot: &str) -> PathBuf {
+    let task = Path::new(bot)
+        .parent()
+        .expect("the reference's task folder");
+    let text = std::fs::read_to_string(root.join(task).join("task.toml")).unwrap();
+    let metadata: toml::Value = toml::from_str(&text).unwrap();
+    let name = metadata["metadata"]["snapshot"]
+        .as_str()
+        .expect("the task declares its snapshot");
+    let snapshot = root.join("snapshots").join(name);
+    assert!(snapshot.is_dir(), "{}", snapshot.display());
+    snapshot
+}
+
 async fn plays_as_the_grader_reads(bot: &str, scenario: &str, trades: Trades) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let plugin = PathBuf::from(
         std::env::var("MTX_TEST_GEYSER_PLUGIN").expect("MTX_TEST_GEYSER_PLUGIN: the built plugin"),
     );
     let scenario = Scenario::load(&root.join(scenario)).unwrap();
-    let snapshot = root.join("snapshots/phoenix-spcx-2026-10-29");
+    let snapshot = task_snapshot(&root, bot);
     let dir = std::env::temp_dir().join(format!(
         "mtx-geyser-parity-{}-{}",
         if trades == Trades::Takes {
@@ -382,9 +396,9 @@ async fn trades_as_the_grader_does(bot: &str, scenario: &str) {
     let plugin = PathBuf::from(
         std::env::var("MTX_TEST_GEYSER_PLUGIN").expect("MTX_TEST_GEYSER_PLUGIN: the built plugin"),
     );
+    let snapshot = task_snapshot(&root, bot);
     let bot = root.join(bot);
     let scenario = Scenario::load(&root.join(scenario)).unwrap();
-    let snapshot = root.join("snapshots/phoenix-spcx-2026-10-29");
     let dir = std::env::temp_dir().join(format!(
         "mtx-geyser-trades-{}-{}",
         scenario.name,

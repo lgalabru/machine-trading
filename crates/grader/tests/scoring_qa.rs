@@ -34,9 +34,19 @@ done
 }
 
 fn base() -> Scenario {
-    Scenario::load(
-        &root().join("bench/tasks/flash-crash-nvda/environment/practice/practice-1.json"),
-    )
+    // Scoring QA needs a fixed market without a task's evolving actors or impact.
+    serde_json::from_value(serde_json::json!({
+        "name": "scoring-qa",
+        "description": "SPCX held through a controlled price path",
+        "symbol": "SPCX",
+        "duration_slots": 60,
+        "mandate": {
+            "version": "v0.1.0",
+            "universe": [{"instrument": "phoenix:perp:SPCX", "max_position": 50.0}],
+            "limits": {"max_drawdown_usd": 1000.0}
+        },
+        "path": [{"slot": 0, "level_pct": 0.0}, {"slot": 60, "level_pct": 0.0}]
+    }))
     .unwrap()
 }
 
@@ -75,7 +85,6 @@ async fn grade_nop(scenarios: &[Scenario], v2_sessions: bool) -> GradeReport {
 /// SPCX's start mark is about $143: 40 of it is a $5,700 position.
 fn holding(path: Vec<Waypoint>, limit: f64) -> Scenario {
     let mut scenario = base();
-    scenario.duration_slots = 60;
     scenario.path = path;
     scenario.start_positions.insert("SPCX".into(), 40.0);
     scenario.mandate.limits.max_drawdown_usd = Some(limit);
