@@ -240,6 +240,10 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, trades: Trades) {
     );
     let scenario = Scenario::load(&root.join(scenario)).unwrap();
     let snapshot = task_snapshot(&root, bot);
+    let has_background_trades = scenario.actors.is_some()
+        || scenario.making.is_some()
+        || scenario.offhours.is_some()
+        || !scenario.tape.is_empty();
     let dir = std::env::temp_dir().join(format!(
         "mtx-geyser-parity-{}-{}",
         if trades == Trades::Takes {
@@ -287,20 +291,21 @@ async fn plays_as_the_grader_reads(bot: &str, scenario: &str, trades: Trades) {
     settled_journal(&watcher.journal()).await;
     let readings = journal(&watcher.journal(), trades);
     assert!(steps.len() > 100, "{} steps", steps.len());
+    let has_only_bot_trades = trades == Trades::Takes && !has_background_trades;
     let mut traded = 0;
     for (slot, sent, graded) in &steps {
         let states = states_in(&readings, *slot);
         // The grader reads between the slot's moves and the strategy's own
         // orders, where no slot event falls: its read is one of the states
         // the slot passed through, and the last of them unless the strategy
-        // traded, or rests quotes the takers fill after the read.
+        // traded, or background traders changed the book after the read.
         assert!(
             states.contains(graded),
             "slot {slot}: the grader read {graded:?}, the plugin {states:?}"
         );
         if *sent > 0 {
             traded += 1;
-        } else if trades == Trades::Takes {
+        } else if has_only_bot_trades {
             assert_eq!(states.last(), Some(graded), "slot {slot}");
         }
     }
